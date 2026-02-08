@@ -1,5 +1,3 @@
-# RR
-
 ![RR-Logo](./image/RR_banner.png)
 
 RR is an R-oriented compiler written in Rust.
