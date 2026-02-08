@@ -1,6 +1,4 @@
-# RR
-
-![RR-Logo](./image/RR_Logo.png)
+![RR-Logo](./image/RR_banner.png)
 
 RR is an R-oriented compiler written in Rust.
 It compiles `.rr` sources into self-contained `.R` output, with a MIR-based optimizer (`Tachyon Engine`) and runtime safety guards.
