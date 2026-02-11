@@ -28,7 +28,12 @@ pub enum TokenKind {
     String(String),
 
     // Operators
-    Assign, // =
+    Assign, // = or <-
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
+    PercentAssign, // += -= *= /= %=
     Plus,
     Minus,
     Star,

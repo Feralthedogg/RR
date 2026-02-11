@@ -4,6 +4,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::hash::{Hash, Hasher};
+use std::time::Instant;
 
 pub mod bce;
 pub mod de_ssa;
@@ -127,6 +128,30 @@ impl TachyonEngine {
         Self::env_usize("RR_INLINE_MAX_ROUNDS", 3)
     }
 
+    fn max_full_opt_ir() -> usize {
+        Self::env_usize("RR_MAX_FULL_OPT_IR", 2500)
+    }
+
+    fn max_full_opt_fn_ir() -> usize {
+        Self::env_usize("RR_MAX_FULL_OPT_FN_IR", 900)
+    }
+
+    fn heavy_pass_fn_ir() -> usize {
+        Self::env_usize("RR_HEAVY_PASS_FN_IR", 650)
+    }
+
+    fn max_fn_opt_ms() -> u128 {
+        Self::env_usize("RR_MAX_FN_OPT_MS", 250) as u128
+    }
+
+    fn licm_enabled() -> bool {
+        Self::env_bool("RR_ENABLE_LICM", false)
+    }
+
+    fn gvn_enabled() -> bool {
+        Self::env_bool("RR_ENABLE_GVN", false)
+    }
+
     fn fn_ir_fingerprint(fn_ir: &FnIR) -> u64 {
         fn hash_instr(h: &mut DefaultHasher, instr: &Instr) {
             match instr {
@@ -190,6 +215,11 @@ impl TachyonEngine {
         h.finish()
     }
 
+    fn fn_ir_size(fn_ir: &FnIR) -> usize {
+        let instrs: usize = fn_ir.blocks.iter().map(|b| b.instrs.len()).sum();
+        fn_ir.values.len() + instrs
+    }
+
     // Required lowering-to-codegen stabilization passes.
     // This must run even in O0, because codegen cannot emit Phi.
     pub fn stabilize_for_codegen(&self, all_fns: &mut std::collections::HashMap<String, FnIR>) {
@@ -249,6 +279,14 @@ impl TachyonEngine {
         */
 
         let mut stats = TachyonPulseStats::default();
+
+        let ir_size: usize = all_fns.values().map(Self::fn_ir_size).sum();
+        let max_fn_ir: usize = all_fns.values().map(Self::fn_ir_size).max().unwrap_or(0);
+        if ir_size > Self::max_full_opt_ir() || max_fn_ir > Self::max_full_opt_fn_ir() {
+            // Large programs prefer predictable compile time and correctness over aggressive search.
+            self.stabilize_for_codegen(all_fns);
+            return stats;
+        }
 
         let callmap_user_whitelist = Self::collect_callmap_user_whitelist(all_fns);
 
@@ -339,6 +377,18 @@ impl TachyonEngine {
         let loop_opt = loop_opt::MirLoopOptimizer::new();
         let mut iterations = 0;
         let mut seen_hashes = HashSet::new();
+        let start_time = Instant::now();
+        let fn_ir_size = Self::fn_ir_size(fn_ir);
+        let max_iters = if fn_ir_size > 2200 {
+            4
+        } else if fn_ir_size > 1400 {
+            8
+        } else if fn_ir_size > 900 {
+            12
+        } else {
+            Self::max_opt_iterations()
+        };
+        let heavy_pass_budgeted = fn_ir_size > Self::heavy_pass_fn_ir();
 
         // Initial Verify
         if !Self::verify_or_reject(fn_ir, "Start") {
@@ -346,28 +396,36 @@ impl TachyonEngine {
         }
         seen_hashes.insert(Self::fn_ir_fingerprint(fn_ir));
 
-        while changed && iterations < Self::max_opt_iterations() {
+        while changed && iterations < max_iters {
+            if start_time.elapsed().as_millis() > Self::max_fn_opt_ms() {
+                break;
+            }
             changed = false;
             iterations += 1;
             let before_hash = Self::fn_ir_fingerprint(fn_ir);
 
             // 1. Structural Transformations
             let mut pass_changed = false;
-            // Vectorization
-            let v_stats = v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
-            stats.vectorized += v_stats.vectorized;
-            stats.reduced += v_stats.reduced;
-            let v_changed = v_stats.changed();
-            Self::maybe_verify(fn_ir, "After Vectorization");
-            pass_changed |= v_changed;
+            let run_heavy_structural = !(heavy_pass_budgeted && iterations > 1);
 
-            // TCO
-            let tco_changed = tco::optimize(fn_ir);
-            if tco_changed {
-                stats.tco_hits += 1;
+            if run_heavy_structural {
+                // Vectorization
+                let v_stats =
+                    v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
+                stats.vectorized += v_stats.vectorized;
+                stats.reduced += v_stats.reduced;
+                let v_changed = v_stats.changed();
+                Self::maybe_verify(fn_ir, "After Vectorization");
+                pass_changed |= v_changed;
+
+                // TCO
+                let tco_changed = tco::optimize(fn_ir);
+                if tco_changed {
+                    stats.tco_hits += 1;
+                }
+                Self::maybe_verify(fn_ir, "After TCO");
+                pass_changed |= tco_changed;
             }
-            Self::maybe_verify(fn_ir, "After TCO");
-            pass_changed |= tco_changed;
 
             if pass_changed {
                 changed = true;
@@ -407,10 +465,15 @@ impl TachyonEngine {
             Self::maybe_verify(fn_ir, "After Intrinsics");
             changed |= intr_changed;
 
-            let gvn_changed = gvn::optimize(fn_ir);
-            if gvn_changed {
-                stats.gvn_hits += 1;
-            }
+            let gvn_changed = if Self::gvn_enabled() {
+                let c = gvn::optimize(fn_ir);
+                if c {
+                    stats.gvn_hits += 1;
+                }
+                c
+            } else {
+                false
+            };
             Self::maybe_verify(fn_ir, "After GVN");
             changed |= gvn_changed;
 
@@ -428,32 +491,39 @@ impl TachyonEngine {
             Self::maybe_verify(fn_ir, "After DCE");
             changed |= dce_changed;
 
-            let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
-            stats.simplified_loops += loop_changed_count;
-            let loop_changed = loop_changed_count > 0;
-            Self::maybe_verify(fn_ir, "After LoopOpt");
-            changed |= loop_changed;
+            if !(heavy_pass_budgeted && iterations > 1) {
+                let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
+                stats.simplified_loops += loop_changed_count;
+                let loop_changed = loop_changed_count > 0;
+                Self::maybe_verify(fn_ir, "After LoopOpt");
+                changed |= loop_changed;
 
-            let licm_changed = licm::MirLicm::new().optimize(fn_ir);
-            if licm_changed {
-                stats.licm_hits += 1;
-            }
-            Self::maybe_verify(fn_ir, "After LICM");
-            changed |= licm_changed;
+                let licm_changed = if Self::licm_enabled() {
+                    let c = licm::MirLicm::new().optimize(fn_ir);
+                    if c {
+                        stats.licm_hits += 1;
+                    }
+                    c
+                } else {
+                    false
+                };
+                Self::maybe_verify(fn_ir, "After LICM");
+                changed |= licm_changed;
 
-            let fresh_changed = fresh_alloc::optimize(fn_ir);
-            if fresh_changed {
-                stats.fresh_alloc_hits += 1;
-            }
-            Self::maybe_verify(fn_ir, "After FreshAlloc");
-            changed |= fresh_changed;
+                let fresh_changed = fresh_alloc::optimize(fn_ir);
+                if fresh_changed {
+                    stats.fresh_alloc_hits += 1;
+                }
+                Self::maybe_verify(fn_ir, "After FreshAlloc");
+                changed |= fresh_changed;
 
-            let bce_changed = bce::optimize(fn_ir);
-            if bce_changed {
-                stats.bce_hits += 1;
+                let bce_changed = bce::optimize(fn_ir);
+                if bce_changed {
+                    stats.bce_hits += 1;
+                }
+                Self::maybe_verify(fn_ir, "After BCE");
+                changed |= bce_changed;
             }
-            Self::maybe_verify(fn_ir, "After BCE");
-            changed |= bce_changed;
             // check_elimination remains disabled.
 
             let after_hash = Self::fn_ir_fingerprint(fn_ir);
@@ -469,7 +539,14 @@ impl TachyonEngine {
 
         // Final polishing pass
         let mut polishing = true;
-        while polishing {
+        let mut polish_guard = 0usize;
+        let mut polish_seen: HashSet<u64> = HashSet::new();
+        while polishing && polish_guard < 16 {
+            if start_time.elapsed().as_millis() > Self::max_fn_opt_ms() {
+                break;
+            }
+            polish_guard += 1;
+            let before_polish = Self::fn_ir_fingerprint(fn_ir);
             polishing = self.simplify_cfg(fn_ir);
             if polishing {
                 stats.simplify_hits += 1;
@@ -479,6 +556,10 @@ impl TachyonEngine {
                 stats.dce_hits += 1;
             }
             polishing |= dce_changed;
+            let after_polish = Self::fn_ir_fingerprint(fn_ir);
+            if after_polish == before_polish || !polish_seen.insert(after_polish) {
+                break;
+            }
         }
         let _ = Self::verify_or_reject(fn_ir, "End");
         stats

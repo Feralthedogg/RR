@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+rustc-hash = "2"
 
 [dependencies.RR]
 path = ".."

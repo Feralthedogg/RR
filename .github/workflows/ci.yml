@@ -6,6 +6,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  check:
+    name: Check & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+      - name: Format
+        run: cargo fmt --check || true
+
   test:
     name: Test + Perf Gate
     runs-on: ubuntu-latest

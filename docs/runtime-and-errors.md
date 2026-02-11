@@ -19,6 +19,20 @@ RR emits self-contained R scripts by prepending runtime helpers from `src/runtim
 - read index path keeps R-compatible NA behavior in reads (`x[NA]` style semantics)
 - write index path rejects NA index on assignment
 - BCE can mark index operations safe and remove runtime wrappers
+- optional strict read mode: set `RR_STRICT_INDEX_READ=1` to make NA read-index a hard error
+
+## Runtime Modes
+
+- `RR_RUNTIME_MODE=debug` (default): full checks + marks enabled
+- `RR_RUNTIME_MODE=release`: enables runtime fast-paths and disables marks by default
+- `RR_FAST_RUNTIME=1`: force fast-paths regardless of mode
+- `RR_ENABLE_MARKS=0|1`: explicitly disable/enable `rr_mark`
+
+Release mode behavior:
+
+- runtime helpers are rebound to lightweight versions (`rr_mark`, `rr_truthy1`, `rr_index1_read/write`, `rr_i0`)
+- this avoids per-call guard branching in hot loops when compiler invariants already guarantee safety
+- keep `debug` mode for diagnosis; use `release` for performance runs
 
 ## Error Object
 

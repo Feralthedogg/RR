@@ -18,6 +18,7 @@ It is organized by usage first, then internals.
 
 ## Project Snapshot
 
+- Surface language: R-first syntax (`<-`, `function`, dotted identifiers) with legacy aliases (`let`, `fn`)
 - Frontend: lexer + parser + AST (`src/syntax`)
 - Mid-level: HIR lowering + desugaring (`src/hir`)
 - Core IR: MIR SSA-like CFG (`src/mir`)

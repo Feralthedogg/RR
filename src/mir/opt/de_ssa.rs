@@ -1,7 +1,7 @@
 use crate::mir::opt::parallel_copy::{Move, emit_parallel_copy};
 use crate::mir::*;
 use crate::utils::Span;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub fn run(fn_ir: &mut FnIR) -> bool {
     let mut changed = false;
@@ -58,22 +58,29 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
     let mut moves_by_block: HashMap<BlockId, Vec<Move>> = HashMap::new();
     let mut phi_infos: Vec<(ValueId, VarId)> = Vec::new();
 
-    for (_bid, phis) in phi_blocks.iter() {
+    for (bid, phis) in phi_blocks.iter() {
         for &phi in phis {
             let dest = ensure_phi_var(fn_ir, phi);
             phi_infos.push((phi, dest.clone()));
             if let ValueKind::Phi { args } = &fn_ir.values[phi].kind {
                 for (src, pred) in args {
+                    if dest.starts_with(".arg_") {
+                        // Function parameters are lowered to immutable local copies.
+                        // Never synthesize phi-edge overwrites into parameter locals.
+                        continue;
+                    }
+                    let resolved_src =
+                        resolve_phi_source_for_pred(fn_ir, *src, *bid, *pred, &mut HashSet::new());
                     if let Some(block_map) = last_assign_map.get(pred) {
                         if let Some(existing) = block_map.get(&dest) {
-                            if *existing == *src {
+                            if *existing == resolved_src {
                                 continue;
                             }
                         }
                     }
                     moves_by_block.entry(*pred).or_default().push(Move {
                         dst: dest.clone(),
-                        src: *src,
+                        src: resolved_src,
                     });
                 }
             }
@@ -107,9 +114,17 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
         }
     }
 
-    // Eliminate any remaining Phi in unreachable blocks (or without a block).
+    // Eliminate any remaining Phi.
+    // Prefer preserving variable semantics when the Phi already has a bound var name.
     for val in &mut fn_ir.values {
         if let ValueKind::Phi { .. } = val.kind {
+            if let Some(var) = val.origin_var.clone() {
+                val.kind = ValueKind::Load { var };
+                val.phi_block = None;
+                changed = true;
+                continue;
+            }
+
             let unreachable_phi = match val.phi_block {
                 Some(bid) => !reachable.contains(&bid),
                 None => true,
@@ -249,4 +264,37 @@ fn split_edge(fn_ir: &mut FnIR, from: BlockId, to: BlockId) -> BlockId {
     }
 
     new_bid
+}
+
+fn resolve_phi_source_for_pred(
+    fn_ir: &FnIR,
+    src: ValueId,
+    target_block: BlockId,
+    pred: BlockId,
+    visiting: &mut HashSet<ValueId>,
+) -> ValueId {
+    if !visiting.insert(src) {
+        return src;
+    }
+    let out = match &fn_ir.values[src].kind {
+        ValueKind::Phi { args } if fn_ir.values[src].phi_block == Some(target_block) => args
+            .iter()
+            .find_map(|(arg, arg_pred)| {
+                if *arg_pred == pred {
+                    Some(resolve_phi_source_for_pred(
+                        fn_ir,
+                        *arg,
+                        target_block,
+                        pred,
+                        visiting,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(src),
+        _ => src,
+    };
+    visiting.remove(&src);
+    out
 }

@@ -1,3 +1,4 @@
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -19,7 +20,7 @@ fn build_mir_without_semantic_gate(src: &str) -> HashMap<String, RR::mir::FnIR> 
         .lower_module(ast, ModuleId(0))
         .expect("hir lowering must succeed for regression input");
 
-    let mut known_fn_arities: HashMap<String, usize> = HashMap::new();
+    let mut known_fn_arities: FxHashMap<String, usize> = FxHashMap::default();
     for item in &hir_mod.items {
         if let HirItem::Fn(f) = item
             && let Some(name) = symbols.get(&f.name).cloned()
@@ -27,6 +28,10 @@ fn build_mir_without_semantic_gate(src: &str) -> HashMap<String, RR::mir::FnIR> 
             known_fn_arities.insert(name, f.params.len());
         }
     }
+    let known_fn_arities_std: HashMap<String, usize> = known_fn_arities
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
 
     let mut desugarer = Desugarer::new();
     let desugared = desugarer
@@ -53,8 +58,8 @@ fn build_mir_without_semantic_gate(src: &str) -> HashMap<String, RR::mir::FnIR> 
                     fn_name.clone(),
                     params,
                     var_names,
-                    symbols.clone(),
-                    known_fn_arities.clone(),
+                    &symbols,
+                    &known_fn_arities_std,
                 );
                 if let Ok(fn_ir) = mir_lowerer.lower_fn(f) {
                     all_fns.insert(fn_name, fn_ir);

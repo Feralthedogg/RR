@@ -7,6 +7,10 @@ This document describes implemented compatibility behavior and known boundaries.
 - RR compiles to plain R scripts and executes via `Rscript`.
 - Runtime guard layer enforces scalar condition/index contracts with source-aware diagnostics.
 - NA-sensitive behavior is encoded in runtime helpers and MIR safety checks.
+- R-style surface syntax is first-class:
+  - `name <- function(...) { ... }`
+  - assignment with `<-` / `=`
+  - single-line `if/while/for` bodies
 - `<-` assignment is accepted (with optional strict mode for undeclared names).
 - Closures/lambdas are supported via lambda lifting + runtime closure wrappers.
 - Match/list/record patterns are supported in core forms.

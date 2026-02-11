@@ -20,17 +20,24 @@ pub struct Lowerer {
 
     // Global Symbol Table
     symbols: HashMap<SymbolId, String>,
+    symbols_rev: HashMap<String, SymbolId>,
     // Collected lowering warnings (reported by caller)
     warnings: Vec<String>,
     // If true, assignment to undeclared names is an error.
     strict_let: bool,
+    // If true, emit warnings for implicit declarations.
+    warn_implicit_decl: bool,
     // Lambda-lifted synthetic functions.
     pending_fns: Vec<HirFn>,
+    // Top-level aliases of function values, e.g. `let f = fn(...) { ... }`.
+    // Used so function bodies can resolve `f(...)` directly to lifted symbols.
+    global_fn_aliases: HashMap<String, SymbolId>,
 }
 
 impl Lowerer {
     pub fn new() -> Self {
         let strict_let = Self::env_truthy("RR_STRICT_LET") || Self::env_truthy("RR_STRICT_ASSIGN");
+        let warn_implicit_decl = Self::env_truthy("RR_WARN_IMPLICIT_DECL");
         Self {
             scopes: vec![HashMap::new()], // Global scope?
             next_local_id: 0,
@@ -38,9 +45,12 @@ impl Lowerer {
             in_tidy: false,
             local_names: HashMap::new(),
             symbols: HashMap::new(),
+            symbols_rev: HashMap::new(),
             warnings: Vec::new(),
             strict_let,
+            warn_implicit_decl,
             pending_fns: Vec::new(),
+            global_fn_aliases: HashMap::new(),
         }
     }
 
@@ -74,7 +84,12 @@ impl Lowerer {
     fn declare_local(&mut self, name: &str) -> LocalId {
         let id = LocalId(self.next_local_id);
         self.next_local_id += 1;
-        self.local_names.insert(id, name.to_string());
+        let emitted_name = if self.local_names.values().any(|n| n == name) {
+            format!("{}_{}", name, id.0)
+        } else {
+            name.to_string()
+        };
+        self.local_names.insert(id, emitted_name);
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), id);
         }
@@ -91,15 +106,14 @@ impl Lowerer {
     }
 
     fn intern_symbol(&mut self, name: &str) -> SymbolId {
-        // Proper interning: check existing
-        for (id, existing_name) in &self.symbols {
-            if existing_name == name {
-                return *id;
-            }
+        if let Some(&id) = self.symbols_rev.get(name) {
+            return id;
         }
         let id = SymbolId(self.next_sym_id);
         self.next_sym_id += 1;
-        self.symbols.insert(id, name.to_string());
+        let owned = name.to_string();
+        self.symbols.insert(id, owned.clone());
+        self.symbols_rev.insert(owned, id);
         id
     }
 
@@ -124,9 +138,95 @@ impl Lowerer {
         }
     }
 
+    fn apply_implicit_tail_return(mut body: HirBlock) -> HirBlock {
+        if body
+            .stmts
+            .iter()
+            .any(|s| matches!(s, HirStmt::Return { .. }))
+        {
+            return body;
+        }
+        if let Some(last) = body.stmts.pop() {
+            match last {
+                HirStmt::Expr { expr, span } => {
+                    body.stmts.push(HirStmt::Return {
+                        value: Some(expr),
+                        span,
+                    });
+                }
+                other => body.stmts.push(other),
+            }
+        }
+        body
+    }
+
+    fn dotted_name_from_expr(expr: &ast::Expr) -> Option<String> {
+        match &expr.kind {
+            ast::ExprKind::Name(n) => Some(n.clone()),
+            ast::ExprKind::Field { base, name } => {
+                let mut s = Self::dotted_name_from_expr(base)?;
+                s.push('.');
+                s.push_str(name);
+                Some(s)
+            }
+            _ => None,
+        }
+    }
+
+    fn dotted_name_from_field(base: &ast::Expr, field: &str) -> Option<String> {
+        let mut s = Self::dotted_name_from_expr(base)?;
+        s.push('.');
+        s.push_str(field);
+        Some(s)
+    }
+
+    fn root_is_unbound_for_dotted(&self, dotted: &str) -> bool {
+        let root = dotted.split('.').next().unwrap_or(dotted);
+        self.lookup(root).is_none()
+    }
+
+    fn lower_dotted_ref(&mut self, dotted: &str) -> HirExpr {
+        if let Some(lid) = self.lookup(dotted) {
+            HirExpr::Local(lid)
+        } else if let Some(sym) = self.global_fn_aliases.get(dotted).copied() {
+            HirExpr::Global(sym)
+        } else {
+            HirExpr::Global(self.intern_symbol(dotted))
+        }
+    }
+
+    fn resolve_or_declare_local_for_assign(&mut self, name: &str, span: Span) -> RR<LocalId> {
+        if let Some(lid) = self.lookup(name) {
+            return Ok(lid);
+        }
+        if self.strict_let {
+            return Err(RRException::new(
+                "RR.SemanticError",
+                RRCode::E1001,
+                Stage::Lower,
+                format!("assignment to undeclared variable '{}'", name),
+            )
+            .at(span)
+            .note("Declare it first with `let` before assignment."));
+        }
+        let lid = self.declare_local(name);
+        if self.warn_implicit_decl {
+            let where_msg = if span.start_line > 0 {
+                format!("{}:{}", span.start_line, span.start_col)
+            } else {
+                "unknown".to_string()
+            };
+            self.warnings.push(format!(
+                "implicit declaration via assignment: '{}' at {} (treated as `let {} = ...;`). Set RR_STRICT_LET=1 to forbid this.",
+                name, where_msg, name
+            ));
+        }
+        Ok(lid)
+    }
+
     fn collect_lambda_captures(
         &self,
-        params: &[String],
+        params: &[ast::FnParam],
         body: &ast::Block,
     ) -> Vec<(String, LocalId)> {
         fn in_scopes(scopes: &[HashSet<String>], name: &str) -> bool {
@@ -239,10 +339,14 @@ impl Lowerer {
                         scopes.pop();
                     }
                 }
-                ast::ExprKind::Lambda { params, body } => {
+                ast::ExprKind::Lambda {
+                    params,
+                    ret_ty_hint: _,
+                    body,
+                } => {
                     let mut lambda_scope = HashSet::new();
                     for p in params {
-                        lambda_scope.insert(p.clone());
+                        lambda_scope.insert(p.name.clone());
                     }
                     scopes.push(lambda_scope);
                     visit_block(lowerer, scopes, seen, captures, body);
@@ -260,7 +364,11 @@ impl Lowerer {
             stmt: &ast::Stmt,
         ) {
             match &stmt.kind {
-                ast::StmtKind::Let { name, init } => {
+                ast::StmtKind::Let {
+                    name,
+                    ty_hint: _,
+                    init,
+                } => {
                     if let Some(e) = init {
                         visit_expr(lowerer, scopes, seen, captures, e);
                     }
@@ -346,16 +454,41 @@ impl Lowerer {
             }
         }
 
-        let mut scopes: Vec<HashSet<String>> = vec![params.iter().cloned().collect()];
+        let mut scopes: Vec<HashSet<String>> =
+            vec![params.iter().map(|p| p.name.clone()).collect()];
         let mut seen = HashSet::new();
         let mut captures = Vec::new();
         visit_block(self, &mut scopes, &mut seen, &mut captures, body);
         captures
     }
 
+    fn infer_param_type_hint(default: &ast::Expr) -> Option<Ty> {
+        match &default.kind {
+            ast::ExprKind::Lit(ast::Lit::Int(_)) => Some(Ty::Int),
+            ast::ExprKind::Lit(ast::Lit::Float(_)) => Some(Ty::Double),
+            ast::ExprKind::Lit(ast::Lit::Bool(_)) => Some(Ty::Logical),
+            ast::ExprKind::Lit(ast::Lit::Str(_)) => Some(Ty::Char),
+            ast::ExprKind::Lit(ast::Lit::Null) => Some(Ty::Null),
+            _ => None,
+        }
+    }
+
+    fn parse_type_hint_name(name: &str) -> Option<Ty> {
+        match name.to_ascii_lowercase().as_str() {
+            "any" => Some(Ty::Any),
+            "null" => Some(Ty::Null),
+            "bool" | "boolean" | "logical" => Some(Ty::Logical),
+            "int" | "integer" | "i32" | "i64" | "isize" => Some(Ty::Int),
+            "float" | "double" | "numeric" | "f32" | "f64" => Some(Ty::Double),
+            "str" | "string" | "char" | "character" => Some(Ty::Char),
+            _ => None,
+        }
+    }
+
     fn lower_lambda_expr(
         &mut self,
-        params: Vec<String>,
+        params: Vec<ast::FnParam>,
+        ret_ty_hint: Option<String>,
         body: ast::Block,
         span: Span,
     ) -> RR<HirExpr> {
@@ -369,7 +502,7 @@ impl Lowerer {
         let saved_next_local = self.next_local_id;
         self.next_local_id = 0;
 
-        let mut hir_params = Vec::new();
+        let mut hir_params: Vec<HirParam> = Vec::new();
         for (cap_name, _) in &captures {
             let _cap_local = self.declare_local(cap_name);
             let cap_sym = self.intern_symbol(cap_name);
@@ -380,17 +513,31 @@ impl Lowerer {
                 span,
             });
         }
-        for p in params {
-            let _pid = self.declare_local(&p);
-            let psym = self.intern_symbol(&p);
+        let mut param_syms = Vec::with_capacity(params.len());
+        for p in &params {
+            let _pid = self.declare_local(&p.name);
+            let psym = self.intern_symbol(&p.name);
+            param_syms.push(psym);
+        }
+        for (p, psym) in params.into_iter().zip(param_syms.into_iter()) {
+            let ty_hint = p
+                .ty_hint
+                .as_deref()
+                .and_then(Self::parse_type_hint_name)
+                .or_else(|| p.default.as_ref().and_then(Self::infer_param_type_hint));
+            let default = if let Some(d) = p.default {
+                Some(self.lower_expr(d)?)
+            } else {
+                None
+            };
             hir_params.push(HirParam {
                 name: psym,
-                ty: None,
-                default: None,
-                span,
+                ty: ty_hint,
+                default,
+                span: p.span,
             });
         }
-        let hir_body = self.lower_block(body)?;
+        let hir_body = Self::apply_implicit_tail_return(self.lower_block(body)?);
         let lambda_local_names = std::mem::take(&mut self.local_names);
 
         self.scopes = saved_scopes;
@@ -402,7 +549,7 @@ impl Lowerer {
             name: lambda_sym,
             params: hir_params,
             has_varargs: false,
-            ret_ty: None,
+            ret_ty: ret_ty_hint.as_deref().and_then(Self::parse_type_hint_name),
             body: hir_body,
             attrs: HirFnAttrs {
                 inline_hint: InlineHint::Default,
@@ -441,8 +588,13 @@ impl Lowerer {
             // Top level statements become Module Items (Fn) or Stmt Items
             // For now, treat everything as Item::Stmt unless it's a FnDecl
             match stmt.kind {
-                ast::StmtKind::FnDecl { name, params, body } => {
-                    let fn_item = self.lower_fn(name, params, body, stmt.span)?;
+                ast::StmtKind::FnDecl {
+                    name,
+                    params,
+                    ret_ty_hint,
+                    body,
+                } => {
+                    let fn_item = self.lower_fn(name, params, ret_ty_hint, body, stmt.span)?;
                     items.push(HirItem::Fn(fn_item));
                     self.flush_pending_fns(&mut items);
                 }
@@ -456,8 +608,13 @@ impl Lowerer {
                     self.flush_pending_fns(&mut items);
                 }
                 ast::StmtKind::Export(fndecl) => {
-                    let mut fn_item =
-                        self.lower_fn(fndecl.name, fndecl.params, fndecl.body, stmt.span)?;
+                    let mut fn_item = self.lower_fn(
+                        fndecl.name,
+                        fndecl.params,
+                        fndecl.ret_ty_hint,
+                        fndecl.body,
+                        stmt.span,
+                    )?;
                     fn_item.public = true;
                     items.push(HirItem::Fn(fn_item));
                     self.flush_pending_fns(&mut items);
@@ -484,36 +641,62 @@ impl Lowerer {
     fn lower_fn(
         &mut self,
         name: String,
-        params: Vec<String>,
+        params: Vec<ast::FnParam>,
+        ret_ty_hint: Option<String>,
         body: ast::Block,
         span: Span,
     ) -> RR<HirFn> {
         let fn_id = self.alloc_fn_id();
         let sym_name = self.intern_symbol(&name);
 
+        // Isolate function-local scope from module-level bindings.
+        // Names not declared in the function should lower as globals.
+        let saved_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+        let saved_local_names = std::mem::take(&mut self.local_names);
+        let saved_next_local = self.next_local_id;
+        self.next_local_id = 0;
+
         self.enter_scope();
-        let mut hir_params = Vec::new();
-        for p in params {
-            let _pid = self.declare_local(&p);
-            let psym = self.intern_symbol(&p);
+        let mut hir_params: Vec<HirParam> = Vec::new();
+        let mut param_syms = Vec::with_capacity(params.len());
+        for p in &params {
+            let _pid = self.declare_local(&p.name);
+            let psym = self.intern_symbol(&p.name);
+            param_syms.push(psym);
+        }
+        for (p, psym) in params.into_iter().zip(param_syms.into_iter()) {
+            let ty_hint = p
+                .ty_hint
+                .as_deref()
+                .and_then(Self::parse_type_hint_name)
+                .or_else(|| p.default.as_ref().and_then(Self::infer_param_type_hint));
+            let default = if let Some(d) = p.default {
+                Some(self.lower_expr(d)?)
+            } else {
+                None
+            };
             hir_params.push(HirParam {
                 name: psym,
-                ty: None,
-                default: None,
-                span, // Param span?
+                ty: ty_hint,
+                default,
+                span: p.span,
             });
         }
 
-        let hir_body = self.lower_block(body)?;
+        let hir_body = Self::apply_implicit_tail_return(self.lower_block(body)?);
         self.exit_scope();
 
         let local_names = self.local_names.drain().collect();
+
+        self.scopes = saved_scopes;
+        self.local_names = saved_local_names;
+        self.next_local_id = saved_next_local;
 
         // These variables are not defined in the original code,
         // but the instruction implies they should be used as variables.
         // To maintain syntactic correctness, we'll define them with their original literal values.
         let has_varargs = false;
-        let ret_ty = None;
+        let ret_ty = ret_ty_hint.as_deref().and_then(Self::parse_type_hint_name);
 
         Ok(HirFn {
             id: fn_id,
@@ -545,7 +728,11 @@ impl Lowerer {
 
     fn lower_stmt(&mut self, stmt: ast::Stmt) -> RR<HirStmt> {
         match stmt.kind {
-            ast::StmtKind::Let { name, init } => {
+            ast::StmtKind::Let {
+                name,
+                ty_hint,
+                init,
+            } => {
                 let lid = self.declare_local(&name);
                 let sym = self.intern_symbol(&name);
                 let val = if let Some(e) = init {
@@ -553,10 +740,20 @@ impl Lowerer {
                 } else {
                     None
                 };
+                if self.scopes.len() == 1
+                    && let Some(HirExpr::Global(global_sym)) = &val
+                    && self
+                        .symbols
+                        .get(global_sym)
+                        .map(|s| s.starts_with("__lambda_"))
+                        .unwrap_or(false)
+                {
+                    self.global_fn_aliases.insert(name.clone(), *global_sym);
+                }
                 Ok(HirStmt::Let {
                     local: lid,
                     name: sym,
-                    ty: None,
+                    ty: ty_hint.as_deref().and_then(Self::parse_type_hint_name),
                     init: val,
                     span: stmt.span,
                 })
@@ -564,6 +761,18 @@ impl Lowerer {
             ast::StmtKind::Assign { target, value } => {
                 let lhs = self.lower_lvalue(target)?;
                 let rhs = self.lower_expr(value)?;
+                if self.scopes.len() == 1
+                    && let HirLValue::Local(_lid) = &lhs
+                    && let HirExpr::Global(global_sym) = &rhs
+                    && self
+                        .symbols
+                        .get(global_sym)
+                        .map(|s| s.starts_with("__lambda_"))
+                        .unwrap_or(false)
+                    && let Some(name) = self.local_name_of_lvalue(&lhs)
+                {
+                    self.global_fn_aliases.insert(name, *global_sym);
+                }
                 Ok(HirStmt::Assign {
                     target: lhs,
                     value: rhs,
@@ -699,6 +908,8 @@ impl Lowerer {
             ast::ExprKind::Name(n) => {
                 if let Some(lid) = self.lookup(&n) {
                     Ok(HirExpr::Local(lid))
+                } else if let Some(sym) = self.global_fn_aliases.get(&n).copied() {
+                    Ok(HirExpr::Global(sym))
                 } else {
                     Ok(HirExpr::Global(self.intern_symbol(&n)))
                 }
@@ -736,11 +947,20 @@ impl Lowerer {
                     expr: Box::new(self.lower_expr(*rhs)?),
                 })
             }
-            ast::ExprKind::Lambda { params, body } => {
-                self.lower_lambda_expr(params, body, expr.span)
-            }
+            ast::ExprKind::Lambda {
+                params,
+                ret_ty_hint,
+                body,
+            } => self.lower_lambda_expr(params, ret_ty_hint, body, expr.span),
             ast::ExprKind::Call { callee, args } => {
-                let c = self.lower_expr(*callee)?;
+                let dotted_callee = Self::dotted_name_from_expr(&callee);
+                let c = if let Some(dotted) =
+                    dotted_callee.filter(|d| self.root_is_unbound_for_dotted(d))
+                {
+                    self.lower_dotted_ref(&dotted)
+                } else {
+                    self.lower_expr(*callee)?
+                };
                 let mut hargs = Vec::new();
                 for a in args {
                     match a.kind {
@@ -825,6 +1045,11 @@ impl Lowerer {
                 }
             }
             ast::ExprKind::Field { base, name } => {
+                if let Some(dotted) = Self::dotted_name_from_field(&base, &name)
+                    .filter(|d| self.root_is_unbound_for_dotted(d))
+                {
+                    return Ok(self.lower_dotted_ref(&dotted));
+                }
                 let b = self.lower_expr(*base)?;
                 let sym = self.intern_symbol(&name);
                 Ok(HirExpr::Field {
@@ -967,31 +1192,7 @@ impl Lowerer {
         let lv_span = lval.span;
         match lval.kind {
             ast::LValueKind::Name(n) => {
-                let lid = if let Some(lid) = self.lookup(&n) {
-                    lid
-                } else {
-                    if self.strict_let {
-                        return Err(RRException::new(
-                            "RR.SemanticError",
-                            RRCode::E1001,
-                            Stage::Lower,
-                            format!("assignment to undeclared variable '{}'", n),
-                        )
-                        .at(lv_span)
-                        .note("Declare it first with `let` before using `<-`."));
-                    }
-                    let lid = self.declare_local(&n);
-                    let where_msg = if lv_span.start_line > 0 {
-                        format!("{}:{}", lv_span.start_line, lv_span.start_col)
-                    } else {
-                        "unknown".to_string()
-                    };
-                    self.warnings.push(format!(
-                        "implicit declaration via '<-': '{}' at {} (treated as `let {} = ...;`). Set RR_STRICT_LET=1 to forbid this.",
-                        n, where_msg, n
-                    ));
-                    lid
-                };
+                let lid = self.resolve_or_declare_local_for_assign(&n, lv_span)?;
                 Ok(HirLValue::Local(lid))
             }
             ast::LValueKind::Index { base, idx } => {
@@ -1006,10 +1207,23 @@ impl Lowerer {
                 })
             }
             ast::LValueKind::Field { base, name } => {
+                if let Some(dotted) = Self::dotted_name_from_field(&base, &name)
+                    .filter(|d| self.root_is_unbound_for_dotted(d))
+                {
+                    let lid = self.resolve_or_declare_local_for_assign(&dotted, lv_span)?;
+                    return Ok(HirLValue::Local(lid));
+                }
                 let b = self.lower_expr(base)?;
                 let sym = self.intern_symbol(&name);
                 Ok(HirLValue::Field { base: b, name: sym })
             }
+        }
+    }
+
+    fn local_name_of_lvalue(&self, lval: &HirLValue) -> Option<String> {
+        match lval {
+            HirLValue::Local(id) => self.local_names.get(id).cloned(),
+            _ => None,
         }
     }
 }

@@ -3,6 +3,11 @@
 RR is an R-oriented compiler written in Rust.
 It compiles `.rr` sources into self-contained `.R` output, with a MIR-based optimizer (`Tachyon Engine`) and runtime safety guards.
 
+Surface syntax supports both styles:
+
+- R style: `x <- 1`, `add <- function(a, b) { a + b }`, `for (i in 1..n) ...`
+- Native style: `x = 1`, `fn add(a, b) = a + b`, `for i in 1..n { x += i }`
+
 ## Quick Start
 
 ### Prerequisites
@@ -47,6 +52,11 @@ Options:
 - `-O0 | -O1 | -O2` (also accepts `-o0/-o1/-o2`)
 - `--keep-r` (keep generated `.gen.R` after `run`)
 - `--no-runtime` (compile only)
+
+Environment knobs:
+
+- `RR_STRICT_LET=1` disallow implicit declarations through assignment
+- `RR_WARN_IMPLICIT_DECL=1` print warnings for implicit declarations
 
 ## Tests
 

@@ -13,7 +13,7 @@ struct LoopTargets {
     continue_step: Option<(hir::LocalId, ValueId)>,
 }
 
-pub struct MirLowerer {
+pub struct MirLowerer<'a> {
     fn_ir: FnIR,
 
     // SSA construction state.
@@ -32,18 +32,18 @@ pub struct MirLowerer {
     var_names: HashMap<hir::LocalId, String>,
 
     // Symbol table snapshot.
-    symbols: HashMap<hir::SymbolId, String>,
-    known_functions: HashMap<String, usize>,
+    symbols: &'a HashMap<hir::SymbolId, String>,
+    known_functions: &'a HashMap<String, usize>,
     loop_stack: Vec<LoopTargets>,
 }
 
-impl MirLowerer {
+impl<'a> MirLowerer<'a> {
     pub fn new(
         name: String,
         params: Vec<String>,
         var_names: HashMap<hir::LocalId, String>,
-        symbols: HashMap<hir::SymbolId, String>,
-        known_functions: HashMap<String, usize>,
+        symbols: &'a HashMap<hir::SymbolId, String>,
+        known_functions: &'a HashMap<String, usize>,
     ) -> Self {
         let mut fn_ir = FnIR::new(name, params.clone());
         let entry = fn_ir.add_block();
@@ -236,11 +236,14 @@ impl MirLowerer {
             if let Some((&local_id, _)) =
                 self.var_names.iter().find(|(_, name)| **name == param_name)
             {
+                let local_param_name = self.unique_param_local_name(&param_name, local_id);
+                self.var_names.insert(local_id, local_param_name.clone());
                 // Initialize parameter Value
                 let param_val = self.add_value(ValueKind::Param { index: i }, param.span);
-                // Set the origin_var of the Param Value specifically to the original name
+                // Parameter writes always target an internal local copy to avoid accidental
+                // mutation/aliasing of the visible argument symbol in generated R.
                 if let Some(v) = self.fn_ir.values.get_mut(param_val) {
-                    v.origin_var = Some(param_name.clone());
+                    v.origin_var = Some(local_param_name);
                 }
                 // Write to the variable (this also emits Instr::Assign in entry block)
                 self.write_var(local_id, param_val);
@@ -289,6 +292,23 @@ impl MirLowerer {
             }
         }
         Ok(last_val)
+    }
+
+    fn lower_block_effects(&mut self, blk: hir::HirBlock) -> RR<()> {
+        for stmt in blk.stmts {
+            match stmt {
+                hir::HirStmt::Expr { expr, span } => {
+                    let val = self.lower_expr(expr)?;
+                    self.fn_ir.blocks[self.curr_block]
+                        .instrs
+                        .push(Instr::Eval { val, span });
+                }
+                other => {
+                    self.lower_stmt(other)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn lower_stmt(&mut self, stmt: hir::HirStmt) -> RR<()> {
@@ -432,7 +452,8 @@ impl MirLowerer {
                 // Then branch
                 self.add_pred(then_bb, pre_if_bb);
                 self.curr_block = then_bb;
-                self.lower_block(then_blk)?;
+                self.seal_block(then_bb)?;
+                self.lower_block_effects(then_blk)?;
                 if !self.is_terminated(self.curr_block) {
                     self.add_pred(join_bb, self.curr_block);
                     self.terminate(Terminator::Goto(join_bb));
@@ -441,8 +462,9 @@ impl MirLowerer {
                 // Else branch
                 self.add_pred(else_bb, pre_if_bb);
                 self.curr_block = else_bb;
+                self.seal_block(else_bb)?;
                 if let Some(eb) = else_blk {
-                    self.lower_block(eb)?;
+                    self.lower_block_effects(eb)?;
                 }
                 if !self.is_terminated(self.curr_block) {
                     self.add_pred(join_bb, self.curr_block);
@@ -474,12 +496,13 @@ impl MirLowerer {
 
                 self.add_pred(body_bb, header_bb);
                 self.curr_block = body_bb;
+                self.seal_block(body_bb)?;
                 self.loop_stack.push(LoopTargets {
                     break_bb: exit_bb,
                     continue_bb: header_bb,
                     continue_step: None,
                 });
-                self.lower_block(body)?;
+                self.lower_block_effects(body)?;
                 self.loop_stack.pop();
                 let curr_reachable = self
                     .preds
@@ -735,6 +758,9 @@ impl MirLowerer {
                                     | "pmax"
                                     | "pmin"
                                     | "print"
+                                    | "numeric"
+                                    | "rep.int"
+                                    | "vector"
                                     | "matrix"
                                     | "colSums"
                                     | "rowSums"
@@ -1278,6 +1304,14 @@ impl MirLowerer {
         }
     }
 
+    fn unique_param_local_name(&self, param_name: &str, local_id: hir::LocalId) -> String {
+        let mut candidate = format!(".arg_{}", param_name);
+        if self.var_names.values().any(|n| n == &candidate) {
+            candidate = format!(".arg_{}_{}", param_name, local_id.0);
+        }
+        candidate
+    }
+
     fn lower_for(&mut self, iter: hir::HirForIter, body: hir::HirBlock, span: Span) -> RR<()> {
         let (var, start_id, end_id) = match iter {
             hir::HirForIter::Range {
@@ -1336,7 +1370,7 @@ impl MirLowerer {
             continue_bb: header_bb,
             continue_step: Some((var, iv)),
         });
-        self.lower_block(body)?;
+        self.lower_block_effects(body)?;
         self.loop_stack.pop();
 
         let curr_reachable = self

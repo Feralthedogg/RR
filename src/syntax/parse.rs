@@ -61,6 +61,78 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_dotted_ident(&mut self, err_context: &str) -> RR<String> {
+        let mut out = match &self.current.kind {
+            TokenKind::Ident(n) => n.clone(),
+            _ => bail_at!(
+                self.current.span,
+                "RR.ParseError",
+                RRCode::E0001,
+                Stage::Parse,
+                "Expected identifier {}",
+                err_context
+            ),
+        };
+        self.advance();
+        while self.current.kind == TokenKind::Dot {
+            if !matches!(self.peek.kind, TokenKind::Ident(_)) {
+                break;
+            }
+            self.advance(); // dot
+            let seg = match &self.current.kind {
+                TokenKind::Ident(n) => n.clone(),
+                _ => break,
+            };
+            out.push('.');
+            out.push_str(&seg);
+            self.advance();
+        }
+        Ok(out)
+    }
+
+    fn parse_fn_params(&mut self) -> RR<Vec<FnParam>> {
+        let mut params = Vec::new();
+        if self.current.kind == TokenKind::RParen {
+            return Ok(params);
+        }
+        loop {
+            let p_start = self.current.span;
+            let name = self.parse_dotted_ident("in parameter list")?;
+            let ty_hint = if self.current.kind == TokenKind::Colon {
+                self.advance();
+                Some(self.parse_type_name("in parameter type annotation")?)
+            } else {
+                None
+            };
+            let default = if self.current.kind == TokenKind::Assign {
+                self.advance();
+                Some(self.parse_expr(Precedence::Lowest)?)
+            } else {
+                None
+            };
+            let p_end = default
+                .as_ref()
+                .map(|e| e.span)
+                .unwrap_or(self.current.span);
+            params.push(FnParam {
+                name,
+                ty_hint,
+                default,
+                span: p_start.merge(p_end),
+            });
+            if self.current.kind == TokenKind::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        Ok(params)
+    }
+
+    fn parse_type_name(&mut self, ctx: &str) -> RR<String> {
+        self.parse_dotted_ident(ctx)
+    }
+
     fn token_precedence(kind: &TokenKind) -> Precedence {
         match kind {
             TokenKind::Pipe => Precedence::Pipe,
@@ -76,6 +148,17 @@ impl<'a> Parser<'a> {
             TokenKind::LParen | TokenKind::LBracket | TokenKind::Dot => Precedence::Call,
             TokenKind::Question => Precedence::Try,
             _ => Precedence::Lowest,
+        }
+    }
+
+    fn compound_assign_binop(kind: &TokenKind) -> Option<BinOp> {
+        match kind {
+            TokenKind::PlusAssign => Some(BinOp::Add),
+            TokenKind::MinusAssign => Some(BinOp::Sub),
+            TokenKind::StarAssign => Some(BinOp::Mul),
+            TokenKind::SlashAssign => Some(BinOp::Div),
+            TokenKind::PercentAssign => Some(BinOp::Mod),
+            _ => None,
         }
     }
 
@@ -258,17 +341,13 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.advance(); // let
 
-        let name = match &self.current.kind {
-            TokenKind::Ident(n) => n.clone(),
-            _ => bail_at!(
-                self.current.span,
-                "RR.ParseError",
-                RRCode::E0001,
-                Stage::Parse,
-                "Expected identifier after let"
-            ),
+        let name = self.parse_dotted_ident("after let")?;
+        let ty_hint = if self.current.kind == TokenKind::Colon {
+            self.advance();
+            Some(self.parse_type_name("after ':' in let binding")?)
+        } else {
+            None
         };
-        self.advance();
 
         self.expect(TokenKind::Assign)?;
         let init = self.parse_expr(Precedence::Lowest)?;
@@ -277,6 +356,7 @@ impl<'a> Parser<'a> {
         Ok(Stmt {
             kind: StmtKind::Let {
                 name,
+                ty_hint,
                 init: Some(init),
             },
             span: start.merge(end),
@@ -286,46 +366,49 @@ impl<'a> Parser<'a> {
     fn parse_fn_decl(&mut self) -> RR<Stmt> {
         let start = self.current.span;
         self.advance(); // fn
-        let name = match &self.current.kind {
-            TokenKind::Ident(n) => n.clone(),
-            _ => bail!(
+        let name = self.parse_dotted_ident("for fn")?;
+
+        self.expect(TokenKind::LParen)?;
+        let params = self.parse_fn_params()?;
+        self.expect(TokenKind::RParen)?;
+        let ret_ty_hint = if self.current.kind == TokenKind::Arrow {
+            self.advance();
+            Some(self.parse_type_name("after function return arrow")?)
+        } else {
+            None
+        };
+
+        let body = if self.current.kind == TokenKind::LBrace {
+            self.parse_block()?
+        } else if self.current.kind == TokenKind::Assign {
+            // Expression-bodied function: fn f(a, b) = a + b
+            self.advance();
+            let expr = self.parse_expr(Precedence::Lowest)?;
+            let end = self.consume_stmt_end(expr.span)?;
+            let stmt = Stmt {
+                kind: StmtKind::ExprStmt { expr: expr.clone() },
+                span: expr.span,
+            };
+            Block {
+                stmts: vec![stmt],
+                span: start.merge(end),
+            }
+        } else {
+            bail_at!(
+                self.current.span,
                 "RR.ParseError",
                 RRCode::E0001,
                 Stage::Parse,
-                "Expected identifier for fn"
-            ),
+                "Expected function body ('{{ ... }}' or '= expr'), got {:?}",
+                self.current.kind
+            );
         };
-        self.advance();
-
-        self.expect(TokenKind::LParen)?;
-        let mut params = Vec::new();
-        if self.current.kind != TokenKind::RParen {
-            loop {
-                match &self.current.kind {
-                    TokenKind::Ident(p) => params.push(p.clone()),
-                    _ => bail!(
-                        "RR.ParseError",
-                        RRCode::E0001,
-                        Stage::Parse,
-                        "Expected param name"
-                    ),
-                }
-                self.advance();
-                if self.current.kind == TokenKind::Comma {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-        }
-        self.expect(TokenKind::RParen)?;
-
-        let body = self.parse_block()?;
 
         Ok(Stmt {
             kind: StmtKind::FnDecl {
                 name,
                 params,
+                ret_ty_hint,
                 body: body.clone(),
             },
             span: start.merge(body.span),
@@ -388,13 +471,19 @@ impl<'a> Parser<'a> {
     fn parse_if_stmt(&mut self) -> RR<Stmt> {
         let start = self.current.span;
         self.advance(); // if
-        self.expect(TokenKind::LParen)?;
-        let cond = self.parse_expr(Precedence::Lowest)?;
-        self.expect(TokenKind::RParen)?;
-        let then_blk = self.parse_block()?;
+        let cond = if self.current.kind == TokenKind::LParen {
+            self.advance();
+            let c = self.parse_expr(Precedence::Lowest)?;
+            self.expect(TokenKind::RParen)?;
+            c
+        } else {
+            // R++ style: if cond { ... } / if cond stmt
+            self.parse_expr(Precedence::Lowest)?
+        };
+        let then_blk = self.parse_stmt_or_block()?;
         let else_blk = if self.current.kind == TokenKind::Else {
             self.advance();
-            Some(self.parse_block()?)
+            Some(self.parse_stmt_or_block()?)
         } else {
             None
         };
@@ -410,13 +499,31 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_stmt_or_block(&mut self) -> RR<Block> {
+        if self.current.kind == TokenKind::LBrace {
+            return self.parse_block();
+        }
+        let stmt = self.parse_stmt()?;
+        let span = stmt.span;
+        Ok(Block {
+            stmts: vec![stmt],
+            span,
+        })
+    }
+
     fn parse_while_stmt(&mut self) -> RR<Stmt> {
         let start = self.current.span;
         self.advance(); // while
-        self.expect(TokenKind::LParen)?;
-        let cond = self.parse_expr(Precedence::Lowest)?;
-        self.expect(TokenKind::RParen)?;
-        let body = self.parse_block()?;
+        let cond = if self.current.kind == TokenKind::LParen {
+            self.advance();
+            let c = self.parse_expr(Precedence::Lowest)?;
+            self.expect(TokenKind::RParen)?;
+            c
+        } else {
+            // R++ style: while cond { ... } / while cond stmt
+            self.parse_expr(Precedence::Lowest)?
+        };
+        let body = self.parse_stmt_or_block()?;
         Ok(Stmt {
             kind: StmtKind::While {
                 cond,
@@ -429,7 +536,10 @@ impl<'a> Parser<'a> {
     fn parse_for_stmt(&mut self) -> RR<Stmt> {
         let start = self.current.span;
         self.advance(); // for
-        self.expect(TokenKind::LParen)?;
+        let has_paren = self.current.kind == TokenKind::LParen;
+        if has_paren {
+            self.advance();
+        }
         let var = match &self.current.kind {
             TokenKind::Ident(n) => n.clone(),
             _ => bail!(
@@ -442,8 +552,10 @@ impl<'a> Parser<'a> {
         self.advance();
         self.expect(TokenKind::In)?;
         let iter = self.parse_expr(Precedence::Lowest)?;
-        self.expect(TokenKind::RParen)?;
-        let body = self.parse_block()?;
+        if has_paren {
+            self.expect(TokenKind::RParen)?;
+        }
+        let body = self.parse_stmt_or_block()?;
         Ok(Stmt {
             kind: StmtKind::For {
                 var,
@@ -529,11 +641,18 @@ impl<'a> Parser<'a> {
         // Expect fn declaration
         let stmt = self.parse_fn_decl()?;
 
-        if let StmtKind::FnDecl { name, params, body } = stmt.kind {
+        if let StmtKind::FnDecl {
+            name,
+            params,
+            ret_ty_hint,
+            body,
+        } = stmt.kind
+        {
             Ok(Stmt {
                 kind: StmtKind::Export(FnDecl {
                     name,
                     params,
+                    ret_ty_hint,
                     body,
                     public: true,
                 }),
@@ -555,7 +674,34 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         let expr = self.parse_expr(Precedence::Lowest)?;
 
-        if self.current.kind == TokenKind::Assign {
+        if self.current.kind == TokenKind::Colon {
+            // Typed declaration sugar: x: int = expr
+            let name = match expr.kind {
+                ExprKind::Name(n) => n,
+                _ => {
+                    bail_at!(
+                        expr.span,
+                        "RR.ParseError",
+                        RRCode::E0001,
+                        Stage::Parse,
+                        "Typed declaration target must be a plain name"
+                    );
+                }
+            };
+            self.advance(); // :
+            let ty_hint = self.parse_type_name("after ':' in typed declaration")?;
+            self.expect(TokenKind::Assign)?;
+            let value = self.parse_expr(Precedence::Lowest)?;
+            let end = self.consume_stmt_end(value.span)?;
+            Ok(Stmt {
+                kind: StmtKind::Let {
+                    name,
+                    ty_hint: Some(ty_hint),
+                    init: Some(value),
+                },
+                span: start.merge(end),
+            })
+        } else if self.current.kind == TokenKind::Assign {
             // It's an assignment
             self.advance();
             let value = self.parse_expr(Precedence::Lowest)?;
@@ -563,6 +709,32 @@ impl<'a> Parser<'a> {
 
             // Convert expr to LValue
             let lvalue = self.expr_to_lvalue(expr)?;
+            Ok(Stmt {
+                kind: StmtKind::Assign {
+                    target: lvalue,
+                    value,
+                },
+                span: start.merge(end),
+            })
+        } else if let Some(op) = Self::compound_assign_binop(&self.current.kind) {
+            // Compound assignment sugar:
+            //   x += y       -> x = x + y
+            //   a[i] += y    -> a[i] = a[i] + y
+            //   rec.x += y   -> rec.x = rec.x + y
+            let lhs_expr = expr.clone();
+            self.advance();
+            let rhs = self.parse_expr(Precedence::Lowest)?;
+            let value_span = lhs_expr.span.merge(rhs.span);
+            let end = self.consume_stmt_end(rhs.span)?;
+            let lvalue = self.expr_to_lvalue(expr)?;
+            let value = Expr {
+                kind: ExprKind::Binary {
+                    op,
+                    lhs: Box::new(lhs_expr),
+                    rhs: Box::new(rhs),
+                },
+                span: value_span,
+            };
             Ok(Stmt {
                 kind: StmtKind::Assign {
                     target: lvalue,
@@ -609,6 +781,16 @@ impl<'a> Parser<'a> {
         while self.current.kind != TokenKind::Semicolon
             && precedence < Self::token_precedence(&self.current.kind)
         {
+            // R-style newline statement termination:
+            // don't continue postfix chains across a line break.
+            if self.current.span.start_line > left.span.end_line
+                && matches!(
+                    self.current.kind,
+                    TokenKind::LParen | TokenKind::LBracket | TokenKind::Dot
+                )
+            {
+                break;
+            }
             left = self.parse_infix(left)?;
         }
 
@@ -815,31 +997,42 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.advance(); // fn
         self.expect(TokenKind::LParen)?;
-        let mut params = Vec::new();
-        if self.current.kind != TokenKind::RParen {
-            loop {
-                match &self.current.kind {
-                    TokenKind::Ident(p) => params.push(p.clone()),
-                    _ => bail!(
-                        "RR.ParseError",
-                        RRCode::E0001,
-                        Stage::Parse,
-                        "Expected parameter name in lambda"
-                    ),
-                }
-                self.advance();
-                if self.current.kind == TokenKind::Comma {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-        }
+        let params = self.parse_fn_params()?;
         self.expect(TokenKind::RParen)?;
-        let body = self.parse_block()?;
+        let ret_ty_hint = if self.current.kind == TokenKind::Arrow {
+            self.advance();
+            Some(self.parse_type_name("after lambda return arrow")?)
+        } else {
+            None
+        };
+        let body = if self.current.kind == TokenKind::LBrace {
+            self.parse_block()?
+        } else if self.current.kind == TokenKind::Assign {
+            // Expression-bodied lambda: function(a, b) = a + b
+            self.advance();
+            let expr = self.parse_expr(Precedence::Lowest)?;
+            let stmt = Stmt {
+                kind: StmtKind::ExprStmt { expr: expr.clone() },
+                span: expr.span,
+            };
+            Block {
+                stmts: vec![stmt],
+                span: start.merge(expr.span),
+            }
+        } else {
+            bail_at!(
+                self.current.span,
+                "RR.ParseError",
+                RRCode::E0001,
+                Stage::Parse,
+                "Expected lambda body ('{{ ... }}' or '= expr'), got {:?}",
+                self.current.kind
+            );
+        };
         Ok(Expr {
             kind: ExprKind::Lambda {
                 params,
+                ret_ty_hint,
                 body: body.clone(),
             },
             span: start.merge(body.span),

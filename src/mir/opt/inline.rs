@@ -45,8 +45,9 @@ impl MirInliner {
                 }
                 let mut local_changed = true;
                 let mut iterations = 0;
+                let local_rounds = Self::env_usize("RR_INLINE_LOCAL_ROUNDS", 2);
 
-                while local_changed && iterations < 5 {
+                while local_changed && iterations < local_rounds {
                     local_changed = self.inline_calls(&mut fn_ir, all_fns);
                     if local_changed {
                         global_changed = true;
@@ -62,6 +63,11 @@ impl MirInliner {
 
     fn inline_calls(&self, caller: &mut FnIR, all_fns: &HashMap<String, FnIR>) -> bool {
         let mut changed = false;
+        let policy = Self::policy();
+        let caller_instr_cnt: usize = caller.blocks.iter().map(|b| b.instrs.len()).sum();
+        if caller_instr_cnt > policy.max_caller_instrs {
+            return false;
+        }
 
         if self.inline_value_calls(caller, all_fns) {
             return true;

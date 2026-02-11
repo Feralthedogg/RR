@@ -153,13 +153,17 @@ fn main() {
 }
 main();
 "#;
-    let (ok, _stdout, stderr) = run_compile(src, "implicit_decl_warn.rr");
+    let (ok, _stdout, stderr) = run_compile_with_env(
+        src,
+        "implicit_decl_warn.rr",
+        &[("RR_WARN_IMPLICIT_DECL", "1")],
+    );
     assert!(
         ok,
         "compile should succeed by default for implicit declaration"
     );
     assert!(
-        stderr.contains("implicit declaration via '<-'"),
+        stderr.contains("implicit declaration via assignment"),
         "expected implicit declaration warning in stderr, got:\n{}",
         stderr
     );

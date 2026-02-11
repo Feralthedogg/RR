@@ -15,6 +15,7 @@ pub struct Stmt {
 pub enum StmtKind {
     Let {
         name: String,
+        ty_hint: Option<String>,
         init: Option<Expr>,
     },
     Assign {
@@ -23,7 +24,8 @@ pub enum StmtKind {
     },
     FnDecl {
         name: String,
-        params: Vec<String>,
+        params: Vec<FnParam>,
+        ret_ty_hint: Option<String>,
         body: Block,
     }, // Global fn
     If {
@@ -54,9 +56,18 @@ pub enum StmtKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct FnParam {
+    pub name: String,
+    pub ty_hint: Option<String>,
+    pub default: Option<Expr>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub struct FnDecl {
     pub name: String,
-    pub params: Vec<String>,
+    pub params: Vec<FnParam>,
+    pub ret_ty_hint: Option<String>,
     pub body: Block,
     pub public: bool, // export
 }
@@ -107,7 +118,8 @@ pub enum ExprKind {
     }, // a..b
 
     Lambda {
-        params: Vec<String>,
+        params: Vec<FnParam>,
+        ret_ty_hint: Option<String>,
         body: Block,
     }, // fn(x, y) { ... }
 

@@ -283,6 +283,13 @@ impl RBackend {
                 then_body,
                 else_body,
             } => {
+                // Branch-local codegen state:
+                // emitting `then` must not invalidate value bindings for `else`.
+                // Otherwise, edge copies like `x <- x` on else-path can be mis-rendered
+                // as re-expanded expressions (e.g. `x <- x + dx`).
+                let before_bindings = self.value_bindings.clone();
+                let before_versions = self.var_versions.clone();
+
                 let cond_span = fn_ir.values[*cond].span;
                 self.emit_mark(cond_span, Some("if"));
                 self.record_span(cond_span);
@@ -292,6 +299,9 @@ impl RBackend {
                 self.emit_structured(then_body, fn_ir)?;
                 self.indent -= 1;
                 if let Some(else_body) = else_body {
+                    // Reset to pre-if state before emitting else branch.
+                    self.value_bindings = before_bindings.clone();
+                    self.var_versions = before_versions.clone();
                     self.write_stmt("} else {");
                     self.indent += 1;
                     self.emit_structured(else_body, fn_ir)?;
@@ -300,6 +310,10 @@ impl RBackend {
                 } else {
                     self.write_stmt("}");
                 }
+
+                // Join point: drop branch-local expression bindings conservatively.
+                self.value_bindings.clear();
+                self.var_versions = before_versions;
             }
             StructuredBlock::Loop {
                 header,
@@ -358,6 +372,12 @@ impl RBackend {
     ) -> String {
         let val = &values[val_id];
 
+        if !prefer_expr {
+            if let Some(bound) = self.resolve_bound_value(val_id) {
+                return bound;
+            }
+        }
+
         // Strategy:
         // 1. If prefer_expr is false (we are using the value) and it has a name, use the name.
         //    (Except for literals which are better as literals)
@@ -392,6 +412,12 @@ impl RBackend {
             ValueKind::Binary { op, lhs, rhs } => {
                 let l = self.resolve_val(*lhs, values, params, false);
                 let r = self.resolve_val(*rhs, values, params, false);
+                if matches!(op, BinOp::Add)
+                    && (matches!(values[*lhs].kind, ValueKind::Const(Lit::Str(_)))
+                        || matches!(values[*rhs].kind, ValueKind::Const(Lit::Str(_))))
+                {
+                    return format!("paste0({}, {})", l, r);
+                }
                 let op_str = match op {
                     BinOp::Add => "+",
                     BinOp::Sub => "-",

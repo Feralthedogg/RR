@@ -92,7 +92,7 @@ impl CliLog {
         println!(
             "{} {}",
             self.yellow_bold("[+]"),
-            self.red_bold("RR Tachyon v1.0")
+            self.red_bold("RR Tachyon v2.0")
         );
         println!(
             " {} {}",
@@ -699,8 +699,8 @@ fn compile(
                         fn_name.clone(),
                         params,
                         var_names,
-                        global_symbols.clone(),
-                        known_fn_arities.clone(),
+                        &global_symbols,
+                        &known_fn_arities,
                     );
                     let fn_ir = match lowerer.lower_fn(f) {
                         Ok(ir) => ir,
@@ -738,8 +738,8 @@ fn compile(
                 top_fn_name.clone(),
                 Vec::new(),
                 std::collections::HashMap::new(),
-                global_symbols.clone(),
-                known_fn_arities.clone(),
+                &global_symbols,
+                &known_fn_arities,
             );
             let fn_ir = match lowerer.lower_fn(top_fn) {
                 Ok(ir) => ir,
@@ -796,6 +796,7 @@ fn compile(
     } else {
         tachyon.stabilize_for_codegen(&mut all_fns);
     }
+    crate::mir::semantics::validate_program(&all_fns)?;
     crate::mir::semantics::validate_runtime_safety(&all_fns)?;
     if optimize {
         ui.step_line_ok(&format!(

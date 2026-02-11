@@ -1,0 +1,1528 @@
+// ------------------------------------------------------------------
+// RR Syntax Showcase
+// ------------------------------------------------------------------
+// 1) Assignment: x = 1.0  ~  x <- 1.0 (same meaning)
+// 2) Functions: f <- function(a,b){...}  ~  fn f(a,b){...}  ~  fn f(a,b)=expr
+// 3) Type hints: a: float, b: int, fn f(...) -> float
+// 4) Conditions: if (cond) { ... }  ~  if cond { ... }
+// 5) Loops: while (cond) { ... }  ~  while cond { ... }
+//    and native for-range: for i in 1..n { ... }
+// 6) Compound assign: x += 1.0  ~  x = x + 1.0
+// 6) Literals: [1,2,3], {name: "rr", ver: 1.0}
+//
+// The utility functions below intentionally mix equivalent syntax forms.
+// ------------------------------------------------------------------
+
+// Short fn + typed params/return
+// ~ floor = function(x) { x - (x % 1.0) }
+fn floor(x: float) -> float = x - (x % 1.0)
+
+// fn block + no-paren if
+// ~ abs = function(x) { if (x < 0.0) { return 0.0 - x } x }
+fn abs(x: float) -> float {
+    if x < 0.0 { return 0.0 - x }
+    x
+}
+
+// Classic R function assignment style
+fn max(a, b) {
+    if (a > b) { return a }
+    b
+}
+
+// Mixed assignment operators (= and <- are equivalent)
+fn exp(x) {
+    x2 = x * x
+    return 1.0 + x + x2 * 0.5 + (x2 * x) * 0.1666
+}
+
+// Lambda alias form
+// ~ sqrt = function(x) { ... }
+fn sqrt(x: float) -> float {
+    g = x / 2.0
+    if g == 0.0 { return 0.0 }
+    i = 0.0
+    while i < 5.0 {
+        g = (g + x / g) * 0.5
+        i += 1.0
+    }
+    g
+}
+fn barrier_alloc(n, val, depth) {
+    // Release-friendly fill allocation (much faster than scalar write loop).
+    rep.int(val, n)
+}
+fn round(x) {
+    r = x % 1.0
+    if (r >= 0.5) { return x - r + 1.0 }
+    x - r
+}
+
+// Canonical implementation (underscore style)
+fn idx_cube(f, x, y, size) {
+    ff = round(f)
+    xx = round(x)
+    yy = round(y)
+    ss = round(size)
+
+    if ff < 1.0 { ff = 1.0 }
+    if ff > 6.0 { ff = 6.0 }
+    if xx < 1.0 { xx = 1.0 }
+    if xx > ss { xx = ss }
+    if yy < 1.0 { yy = 1.0 }
+    if yy > ss { yy = ss }
+
+    (ff - 1.0) * ss * ss + (xx - 1.0) * ss + yy
+}
+
+// Dotted alias style (same behavior as idx_cube)
+fn idx.cube(f, x, y, size) { idx_cube(f, x, y, size) }
+fn get_lat(f, x, y, size) {
+    u = (x / size) * 2.0 - 1.0
+    v = (y / size) * 2.0 - 1.0
+    lat = 0.0
+    if (f == 5.0) { lat = 45.0 + (1.0 - (u * u + v * v) * 0.25) * 45.0 }
+    if (f == 6.0) { lat = -45.0 - (1.0 - (u * u + v * v) * 0.25) * 45.0 }
+    if (f < 5.0) { lat = v * 45.0 }
+    lat
+}
+
+// Vector/record literal demo (syntax showcase)
+fn syntax.demo() {
+    arr = [1.0, 2.0, 3.0]
+    meta = {name: "tesseract", version: 1.0}
+    // Pipe demo: a |> f() ~ f(a)
+    x = arr |> sum()
+    // Field access demo: meta.name
+    if meta.version >= 1.0 { x = x + 0.0 }
+    x
+}
+fn build_neighbor_table(dir, size) {
+    total = 6.0 * size * size
+
+    neighbors = barrier_alloc(total, 0.0, 2.0)
+
+    f = 1.0
+
+    while (f <= 6.0) {
+        x = 1.0
+
+        while (x <= size) {
+            y = 1.0
+
+            while (y <= size) {
+                f0 = f
+
+                x0 = x
+
+                y0 = y
+
+                nf = f0
+
+                nx = x0
+
+                ny = y0
+
+                if (dir == 1.0) { nx = x0 - 1.0
+ }
+                if (dir == 2.0) { nx = x0 + 1.0
+ }
+                if (dir == 3.0) { ny = y0 - 1.0
+ }
+                if (dir == 4.0) { ny = y0 + 1.0
+ }
+
+                is_bound = 0.0
+
+                if (nx < 1.0) { is_bound = 1.0
+ }
+                if (nx > size) { is_bound = 1.0
+ }
+                if (ny < 1.0) { is_bound = 1.0
+ }
+                if (ny > size) { is_bound = 1.0
+ }
+
+                if (is_bound > 0.0) {
+                    if (f0 == 1.0) {
+                        if (dir == 1.0) { nf = 4.0
+ nx = size
+ }
+                        if (dir == 2.0) { nf = 2.0
+ nx = 1.0
+ }
+                        if (dir == 3.0) { nf = 6.0
+ ny = size
+ }
+                        if (dir == 4.0) { nf = 5.0
+ ny = 1.0
+ }
+                    }
+                    if (f0 == 2.0) {
+                        if (dir == 1.0) { nf = 1.0
+ nx = size
+ }
+                        if (dir == 2.0) { nf = 3.0
+ nx = 1.0
+ }
+                        if (dir == 3.0) { nf = 6.0
+ nx = size
+ ny = x0
+ }
+                        if (dir == 4.0) { nf = 5.0
+ nx = size
+ ny = size - (x0 - 1.0)
+ }
+                    }
+                    if (f0 == 3.0) {
+                        if (dir == 1.0) { nf = 2.0
+ nx = size
+ }
+                        if (dir == 2.0) { nf = 4.0
+ nx = 1.0
+ }
+                        if (dir == 3.0) { nf = 6.0
+ ny = 1.0
+ nx = size - (x0 - 1.0)
+ }
+                        if (dir == 4.0) { nf = 5.0
+ ny = size
+ nx = size - (x0 - 1.0)
+ }
+                    }
+                    if (f0 == 4.0) {
+                        if (dir == 1.0) { nf = 3.0
+ nx = size
+ }
+                        if (dir == 2.0) { nf = 1.0
+ nx = 1.0
+ }
+                        if (dir == 3.0) { nf = 6.0
+ nx = 1.0
+ ny = size - (x0 - 1.0)
+ }
+                        if (dir == 4.0) { nf = 5.0
+ nx = 1.0
+ ny = x0
+ }
+                    }
+                    if (f0 == 5.0) {
+                        if (dir == 1.0) { nf = 4.0
+ ny = size
+ nx = y0
+ }
+                        if (dir == 2.0) { nf = 2.0
+ ny = size
+ nx = size - (y0 - 1.0)
+ }
+                        if (dir == 3.0) { nf = 1.0
+ ny = size
+ }
+                        if (dir == 4.0) { nf = 3.0
+ ny = size
+ nx = size - (x0 - 1.0)
+ }
+                    }
+                    if (f0 == 6.0) {
+                        if (dir == 1.0) { nf = 4.0
+ ny = 1.0
+ nx = size - (y0 - 1.0)
+ }
+                        if (dir == 2.0) { nf = 2.0
+ ny = 1.0
+ nx = y0
+ }
+                        if (dir == 3.0) { nf = 3.0
+ ny = 1.0
+ nx = size - (x0 - 1.0)
+ }
+                        if (dir == 4.0) { nf = 1.0
+ ny = 1.0
+ }
+                    }
+                }
+
+                idx = idx_cube(f0, x0, y0, size)
+
+                neighbors[idx] = idx_cube(nf, nx, ny, size)
+
+y += 1.0
+
+            }
+x += 1.0
+
+        }
+f += 1.0
+
+    }
+    return neighbors
+
+}
+fn build_rotation_table(dir, size) {
+    total = 6.0 * size * size
+
+    rotations = barrier_alloc(total, 0.0, 2.0)
+
+    f = 1.0
+
+    while (f <= 6.0) {
+        x = 1.0
+
+        while (x <= size) {
+            y = 1.0
+
+            while (y <= size) {
+                f0 = f
+
+                x0 = x
+
+                y0 = y
+
+                rot = 0.0
+
+                is_bound = 0.0
+
+                if (dir == 1.0 && x0 - 1.0 < 1.0) { is_bound = 1.0
+ }
+                if (dir == 2.0 && x0 + 1.0 > size) { is_bound = 1.0
+ }
+                if (dir == 3.0 && y0 - 1.0 < 1.0) { is_bound = 1.0
+ }
+                if (dir == 4.0 && y0 + 1.0 > size) { is_bound = 1.0
+ }
+
+                if (is_bound > 0.0) {
+                    if (f0 == 2.0) {
+                        if (dir == 3.0) { rot = 1.0
+ }
+                        if (dir == 4.0) { rot = 3.0
+ }
+                    }
+                    if (f0 == 4.0) {
+                        if (dir == 3.0) { rot = 3.0
+ }
+                        if (dir == 4.0) { rot = 1.0
+ }
+                    }
+                    if (f0 == 5.0) {
+                        if (dir == 1.0) { rot = 3.0
+ }
+                        if (dir == 2.0) { rot = 1.0
+ }
+                    }
+                    if (f0 == 6.0) {
+                        if (dir == 1.0) { rot = 1.0
+ }
+                        if (dir == 2.0) { rot = 3.0
+ }
+                    }
+                }
+
+                idx = idx_cube(f0, x0, y0, size)
+
+                rotations[idx] = rot
+
+y += 1.0
+
+            }
+x += 1.0
+
+        }
+f += 1.0
+
+    }
+    return rotations
+
+}
+fn vector_laplacian(field_u, field_v, n_l, n_r, n_d, n_u, r_l, r_r, r_d, r_u, size) {
+    lu = barrier_alloc(size, 0.0, 2.0)
+
+    
+    i = 1.0
+
+    idx = 0.0
+ rot = 0.0
+
+    comp_u = 0.0
+ comp_v = 0.0
+
+    u_rot = 0.0
+ v_rot = 0.0
+
+    uc = 0.0
+
+    
+    while (i <= size) {
+        ii = floor(i)
+
+        uc = field_u[ii]
+
+        
+        idx = floor(n_l[ii])
+ 
+        rot = r_l[ii]
+
+        
+        comp_u = field_u[idx]
+ 
+        comp_v = field_v[idx]
+
+        
+        u_rot = comp_u
+ v_rot = comp_v
+
+        
+        if (rot == 1.0) { u_rot = 0.0 - comp_v
+ v_rot = comp_u
+ }
+        if (rot == 2.0) { u_rot = 0.0 - comp_u
+ v_rot = 0.0 - comp_v
+ }
+        if (rot == 3.0) { u_rot = comp_v
+ v_rot = 0.0 - comp_u
+ }
+        
+        lu[ii] = 4.0 * uc - u_rot
+ 
+i += 1.0
+ 
+    }
+    return lu
+
+}
+fn dot_product(a, b, n) {
+    sum = 0.0
+ i = 1.0
+
+    while (i <= n) {
+        ii = floor(i)
+
+sum += a[ii] * b[ii]
+
+i += 1.0
+
+    }
+    return sum
+
+}
+fn sparse_mat_vec(x, n_l, n_r, n_d, n_u, size) {
+    y = barrier_alloc(size, 0.0, 2.0)
+
+    i = 1.0
+
+    l = 0.0
+ r = 0.0
+ d = 0.0
+ u = 0.0
+
+    
+    while (i <= size) {
+        ii = floor(i)
+
+        l = floor(n_l[ii])
+ r = floor(n_r[ii])
+ 
+        d = floor(n_d[ii])
+ u = floor(n_u[ii])
+
+        
+        y[ii] = 4.0001 * x[ii] - (x[l] + x[r] + x[d] + x[u])
+
+i += 1.0
+
+    }
+    return y
+
+}
+fn solve_cg(b, n_l, n_r, n_d, n_u, size) {
+    x = barrier_alloc(size, 0.0, 2.0)
+
+    r = barrier_alloc(size, 0.0, 2.0)
+
+    p = barrier_alloc(size, 0.0, 2.0)
+
+    
+    k = 1.0
+
+    ii = 0.0
+
+    while (k <= size) { 
+        ii = floor(k)
+ 
+        r[ii] = b[ii]
+ p[ii] = b[ii]
+ 
+k += 1.0
+ 
+    }
+    
+    rs_old = dot_product(r, r, size)
+
+    rs_new = 0.0
+ alpha = 0.0
+ beta = 0.0
+
+    p_Ap = 0.0
+
+    
+    i = 1.0
+
+    
+    iter = 1.0
+
+    while (iter <= 20.0) {
+        Ap = sparse_mat_vec(p, n_l, n_r, n_d, n_u, size)
+
+        p_Ap = dot_product(p, Ap, size)
+
+        if (p_Ap == 0.0) { p_Ap = 0.0000001
+ }
+        
+        alpha = rs_old / p_Ap
+
+        
+        i = 1.0
+
+        while (i <= size) {
+            ii = floor(i)
+
+            x[ii] = x[ii] + alpha * p[ii]
+
+            r[ii] = r[ii] - alpha * Ap[ii]
+
+i += 1.0
+
+        }
+        
+        rs_new = dot_product(r, r, size)
+
+        beta = rs_new / rs_old
+
+        
+        i = 1.0
+
+        while (i <= size) {
+            ii = floor(i)
+
+            p[ii] = r[ii] + beta * p[ii]
+
+i += 1.0
+
+        }
+        
+        rs_old = rs_new
+
+iter += 1.0
+
+    }
+    return x
+
+}
+fn kessler_physics(temp, q_v, q_c, q_r, size) {
+    heating = barrier_alloc(size, 0.0, 2.0)
+
+    L_v = 2500000.0
+ cp = 1004.0
+ q_sat_base = 0.02
+
+    k_conv = 0.001
+ q_th = 0.0005
+
+    
+    i = 1.0
+
+    ii = 0.0
+
+    T = 0.0
+ qv = 0.0
+ qc = 0.0
+ qr = 0.0
+
+    q_sat = 0.0
+ cond = 0.0
+ evap = 0.0
+
+    
+    while (i <= size) {
+        ii = floor(i)
+
+        T = temp[ii]
+ qv = q_v[ii]
+ qc = q_c[ii]
+ qr = q_r[ii]
+
+        
+        q_sat = q_sat_base * exp(0.06 * (T - 273.15))
+
+        cond = 0.0
+ evap = 0.0
+
+        
+        if (qv > q_sat) { cond = (qv - q_sat) * 0.5
+ }
+        if (qv < q_sat) { if (qr > 0.0) { evap = 0.0001 * (q_sat - qv) * qr
+ } }
+        
+        heating[ii] = (L_v / cp) * (cond - evap)
+
+i += 1.0
+
+    }
+    return heating
+
+}
+fn smagorinsky_visc(u, v, n_l, n_r, n_d, n_u, size) {
+    visc = barrier_alloc(size, 0.0, 2.0)
+
+    Cs = 0.15
+ DX = 10000.0
+ mix_sq = (Cs*DX)*(Cs*DX)
+
+    
+    i = 1.0
+
+    ii = 0.0
+
+    l = 0.0
+ r = 0.0
+ d = 0.0
+ u_idx = 0.0
+
+    du_dx = 0.0
+ du_dy = 0.0
+ dv_dx = 0.0
+ dv_dy = 0.0
+
+    ten = 0.0
+ shr = 0.0
+ def = 0.0
+
+    
+    while (i <= size) {
+        ii = floor(i)
+
+        l = floor(n_l[ii])
+ r = floor(n_r[ii])
+ d = floor(n_d[ii])
+ u_idx = floor(n_u[ii])
+
+        
+        du_dx = (u[r] - u[l]) / (2.0*DX)
+
+        du_dy = (u[u_idx] - u[d]) / (2.0*DX)
+
+        dv_dx = (v[r] - v[l]) / (2.0*DX)
+
+        dv_dy = (v[u_idx] - v[d]) / (2.0*DX)
+
+        
+        ten = du_dx - dv_dy
+
+        shr = du_dy + dv_dx
+
+        def = sqrt(ten*ten + shr*shr)
+
+        
+        visc[ii] = mix_sq * def
+
+i += 1.0
+
+    }
+    return visc
+
+}
+fn compute_tendency(u, v, h, h_trn, coriolis, visc, n_l, n_r, n_d, n_u, size) {
+    du = barrier_alloc(size, 0.0, 2.0)
+
+    DX = 10000.0
+ G = 9.81
+
+    
+    i = 1.0
+
+    ii = 0.0
+
+    l = 0.0
+ r = 0.0
+ d = 0.0
+ u_idx = 0.0
+
+    h_l = 0.0
+ h_r = 0.0
+
+    pgf_x = 0.0
+ cor_f = 0.0
+ diff = 0.0
+
+    
+    while (i <= size) {
+        ii = floor(i)
+
+        l = floor(n_l[ii])
+ r = floor(n_r[ii])
+ 
+        d = floor(n_d[ii])
+ u_idx = floor(n_u[ii])
+
+        
+        h_l = h[l] + h_trn[l]
+
+        h_r = h[r] + h_trn[r]
+
+        pgf_x = 0.0 - G * (h_r - h_l) / (2.0 * DX)
+
+        
+        cor_f = coriolis[ii] * v[ii]
+
+        
+        diff = visc[ii] * (u[l] - 2.0*u[ii] + u[r]) / (DX*DX)
+
+        
+        du[ii] = pgf_x + cor_f + diff
+
+i += 1.0
+
+    }
+    return du
+
+}
+fn alloc_particles(n) {
+    p = seq_len(n)
+
+    i = 1.0
+
+    seed = 12345.0
+
+    while (i <= n) {
+        seed = (seed * 1103515245.0 + 12345.0) % 2147483648.0
+
+        p[i] = (seed / 2147483648.0)
+
+i += 1.0
+
+    }
+    return p
+
+}
+fn advect_particles(px, py, pf, u, v, dt, N, total_grid) {
+    i = 1.0
+
+    num_p = 0.0
+ 
+    LIMIT = 1000.0
+ 
+    
+    x = 0.0
+ y = 0.0
+ f = 0.0
+
+    x_idx = 0.0
+ y_idx = 0.0
+
+    idx_bl = 0.0
+ 
+    u_val = 0.0
+ v_val = 0.0
+
+    
+    while (i <= LIMIT) {
+        x = px[i]
+ y = py[i]
+ f = pf[i]
+
+        
+        gx = x * N + 1.0
+ 
+        gy = y * N + 1.0
+
+        
+        if (gx < 1.0) { gx = 1.0
+ } if (gx > N) { gx = N
+ }
+        if (gy < 1.0) { gy = 1.0
+ } if (gy > N) { gy = N
+ }
+        
+        ix = floor(gx)
+
+        iy = floor(gy)
+
+        
+        idx = idx_cube(f, ix, iy, N)
+
+        
+        u_val = u[idx]
+
+        v_val = v[idx]
+
+        
+        dx = (u_val * dt) / 400000.0
+
+        dy = (v_val * dt) / 400000.0
+
+x += dx
+
+y += dy
+
+        
+        if (x > 1.0) { x = x - 1.0
+ f = f + 1.0
+ }
+        if (x < 0.0) { x = x + 1.0
+ f = f - 1.0
+ }
+        if (y > 1.0) { y = y - 1.0
+ }
+        if (y < 0.0) { y = y + 1.0
+ }
+        
+        if (f > 6.0) { f = 1.0
+ }
+        if (f < 1.0) { f = 6.0
+ }
+        
+        px[i] = x
+
+        py[i] = y
+
+        pf[i] = f
+
+i += 1.0
+
+    }
+    
+    return px
+
+}
+fn idx_torus(x, y, w, h) {
+    xx = x
+ yy = y
+
+    if (xx < 1.0) { xx = w
+ } if (xx > w) { xx = 1.0
+ }
+    if (yy < 1.0) { yy = h
+ } if (yy > h) { yy = 1.0
+ }
+    return (yy - 1.0) * w + xx
+
+}
+fn compute_laplacian(field, w, h) {
+    size = w * h
+
+    lap = barrier_alloc(size, 0.0, 2.0)
+
+    
+    i = 1.0
+
+    
+    ii = 0.0
+ r = 0.0
+ y = 0.0
+ x = 0.0
+
+    c = 0.0
+
+    l = 0.0
+ r_val = 0.0
+ u = 0.0
+ d = 0.0
+
+    ul = 0.0
+ ur = 0.0
+ dl = 0.0
+ dr = 0.0
+
+    sum_ortho = 0.0
+ sum_diag = 0.0
+
+    
+    while (i <= size) {
+        ii = floor(i)
+
+        r = (ii - 1.0) % w
+
+        y = floor((ii - 1.0) / w) + 1.0
+
+        x = r + 1.0
+
+        
+        c = field[ii]
+
+        
+        l = field[idx_torus(x - 1.0, y, w, h)]
+
+        r_val = field[idx_torus(x + 1.0, y, w, h)]
+
+        u = field[idx_torus(x, y + 1.0, w, h)]
+
+        d = field[idx_torus(x, y - 1.0, w, h)]
+
+        
+        ul = field[idx_torus(x - 1.0, y + 1.0, w, h)]
+
+        ur = field[idx_torus(x + 1.0, y + 1.0, w, h)]
+
+        dl = field[idx_torus(x - 1.0, y - 1.0, w, h)]
+
+        dr = field[idx_torus(x + 1.0, y - 1.0, w, h)]
+
+        
+        sum_ortho = l + r_val + u + d
+
+        sum_diag = ul + ur + dl + dr
+
+        
+        lap[ii] = (sum_ortho * 0.2) + (sum_diag * 0.05) - c
+
+i += 1.0
+
+    }
+    return lap
+
+}
+fn morphogenesis() {
+    print("Initializing Project MORPHOGENESIS: The Beauty of Chaos...")
+
+    
+    W = 64.0
+
+    H = 64.0
+
+    SIZE = W * H
+
+    
+    A = barrier_alloc(SIZE, 1.0, 3.0)
+
+    
+    B = barrier_alloc(SIZE, 0.0, 3.0)
+
+    
+    cx = 32.0
+ cy = 32.0
+
+    r = 8.0
+
+    y = 1.0
+
+    
+    x = 0.0
+ dx = 0.0
+ dy = 0.0
+ id = 0.0
+
+    
+    while (y <= H) {
+        x = 1.0
+
+        while (x <= W) {
+            dx = x - cx
+ dy = y - cy
+
+            if (dx*dx + dy*dy < r*r) {
+                id = idx_torus(x, y, W, H)
+
+                B[id] = 1.0
+
+            }
+x += 1.0
+
+        }
+y += 1.0
+
+    }
+    
+    DA = 1.0
+   
+    DB = 0.5
+   
+    f = 0.0545
+
+    k = 0.0620
+
+    dt = 0.5
+
+    
+    t = 0.0
+
+    STEPS = 20.0
+ 
+    
+    print("  Watching the pattern emerge...")
+
+    
+    i = 1.0
+
+    ii = 0.0
+ a = 0.0
+ b = 0.0
+ reaction = 0.0
+
+    new_a = 0.0
+ new_b = 0.0
+
+    
+    while (t < STEPS) {
+        lapA = compute_laplacian(A, W, H)
+
+        lapB = compute_laplacian(B, W, H)
+
+        
+        i = 1.0
+
+        while (i <= SIZE) {
+            ii = floor(i)
+
+            a = A[ii]
+
+            b = B[ii]
+
+            
+            reaction = a * b * b
+
+            
+            new_a = a + (DA * lapA[ii] - reaction + f * (1.0 - a)) * dt
+
+            new_b = b + (DB * lapB[ii] + reaction - (k + f) * b) * dt
+
+            
+            if (new_a < 0.0) { new_a = 0.0
+ } if (new_a > 1.0) { new_a = 1.0
+ }
+            if (new_b < 0.0) { new_b = 0.0
+ } if (new_b > 1.0) { new_b = 1.0
+ }
+            
+            A[ii] = new_a
+
+            B[ii] = new_b
+
+i += 1.0
+
+        }
+t += 1.0
+
+        
+        print("  [Growth Pulse] Step:")
+
+        print(t)
+
+        center_idx = idx_torus(32.0, 32.0, W, H)
+
+        side_idx = idx_torus(40.0, 32.0, W, H)
+
+        print("    Center B:")
+ 
+        print(B[center_idx])
+
+        print("    Wave B:")
+ 
+        print(B[side_idx])
+
+    }
+    
+    print("Morphogenesis Complete. The pattern has formed.")
+
+    return 0
+
+}
+
+print(morphogenesis())
+
+fn weno5_flux(v_m2, v_m1, v_c, v_p1, v_p2) {
+    b1 = 1.0833 * (v_m2 - 2.0*v_m1 + v_c) * (v_m2 - 2.0*v_m1 + v_c) + 
+             0.25 * (v_m2 - 4.0*v_m1 + 3.0*v_c) * (v_m2 - 4.0*v_m1 + 3.0*v_c)
+
+             
+    b2 = 1.0833 * (v_m1 - 2.0*v_c + v_p1) * (v_m1 - 2.0*v_c + v_p1) + 
+             0.25 * (v_m1 - v_p1) * (v_m1 - v_p1)
+
+             
+    b3 = 1.0833 * (v_c - 2.0*v_p1 + v_p2) * (v_c - 2.0*v_p1 + v_p2) + 
+             0.25 * (3.0*v_c - 4.0*v_p1 + v_p2) * (3.0*v_c - 4.0*v_p1 + v_p2)
+
+             
+    d1 = 0.1
+ d2 = 0.6
+ d3 = 0.3
+
+    eps = 0.000001
+
+    
+    a1 = d1 / ((eps + b1) * (eps + b1))
+
+    a2 = d2 / ((eps + b2) * (eps + b2))
+
+    a3 = d3 / ((eps + b3) * (eps + b3))
+
+    sum_a = a1 + a2 + a3
+
+    
+    w1 = a1 / sum_a
+
+    w2 = a2 / sum_a
+
+    w3 = a3 / sum_a
+
+    
+    q1 = 0.3333*v_m2 - 1.1666*v_m1 + 1.8333*v_c
+
+    q2 = -0.1666*v_m1 + 0.8333*v_c + 0.3333*v_p1
+
+    q3 = 0.3333*v_c + 0.8333*v_p1 - 0.1666*v_p2
+
+    
+    return w1*q1 + w2*q2 + w3*q3
+
+}
+fn advect_weno(field, u_vel, n_l, n_r, n_ll, n_rr, size) {
+    flux = barrier_alloc(size, 0.0, 2.0)
+
+    
+    i = 1.0
+
+    ii = 0.0
+
+    vel = 0.0
+
+    
+    vm2 = 0.0
+ vm1 = 0.0
+ vc = 0.0
+ vp1 = 0.0
+ vp2 = 0.0
+
+    val_L = 0.0
+ val_R = 0.0
+
+    idx_l = 0.0
+ idx_r = 0.0
+ idx_ll = 0.0
+ idx_rr = 0.0
+
+    idx_rrr = 0.0
+
+    
+    while (i <= size) {
+        ii = floor(i)
+
+        vel = u_vel[ii]
+
+        
+        if (vel > 0.0) {
+            idx_ll = floor(n_ll[ii])
+
+            idx_l = floor(n_l[ii])
+
+            idx_r = floor(n_r[ii])
+
+            idx_rr = floor(n_rr[ii])
+
+            
+            vm2 = field[idx_ll]
+
+            vm1 = field[idx_l]
+
+            vc  = field[ii]
+
+            vp1 = field[idx_r]
+
+            vp2 = field[idx_rr]
+
+            
+            val_L = weno5_flux(vm2, vm1, vc, vp1, vp2)
+
+            
+            // True right stencil: (l, c, r, rr, rrr)
+            idx_rrr = floor(n_r[idx_rr])
+
+            val_R = weno5_flux(vm1, vc, vp1, vp2, field[idx_rrr])
+ 
+            
+            flux[ii] = vel * (val_R - val_L)
+
+        } else {
+            idx_l = floor(n_l[ii])
+
+            idx_r = floor(n_r[ii])
+
+            flux[ii] = vel * (field[idx_r] - field[idx_l]) * 0.5
+ 
+        }
+i += 1.0
+
+    }
+    return flux
+
+}
+fn ice_physics(temp, q_v, q_c, q_r, q_i, q_s, q_g, size) {
+    heat = barrier_alloc(size, 0.0, 2.0)
+
+    
+    L_v = 2500000.0
+ 
+    L_f = 330000.0
+ 
+    L_s = 2800000.0
+ 
+    cp = 1004.0
+
+    
+    i = 1.0
+
+    
+    ii = 0.0
+
+    T = 0.0
+ T_c = 0.0
+
+    qv = 0.0
+ qc = 0.0
+ qr = 0.0
+
+    qi = 0.0
+ qs = 0.0
+ qg = 0.0
+
+    tendency_T = 0.0
+
+    rate = 0.0
+
+    es_ice = 0.0
+
+    melt_rate = 0.0
+
+    
+    while (i <= size) {
+        ii = floor(i)
+
+        T = temp[ii]
+
+        T_c = T - 273.15
+
+        
+        qv = q_v[ii]
+ qc = q_c[ii]
+ qr = q_r[ii]
+
+        qi = q_i[ii]
+ qs = q_s[ii]
+ qg = q_g[ii]
+
+        
+        tendency_T = 0.0
+
+        
+        if (T_c < -5.0) {
+            if (qc > 0.0001) {
+                rate = 0.01 * qc
+
+tendency_T += rate * L_f
+
+            }
+        }
+        
+        if (T_c < -15.0) {
+            es_ice = 6.11 * exp(22.5 * T_c / (T + 273.15))
+ 
+            if (qv > 0.01) { 
+tendency_T += 0.005 * L_s
+ 
+            }
+        }
+        
+        if (T_c > 0.0) {
+            melt_rate = 0.0
+
+            if (qs > 0.0) { melt_rate = melt_rate + qs * 0.05
+ }
+            if (qg > 0.0) { melt_rate = melt_rate + qg * 0.02
+ }
+tendency_T -= melt_rate * L_f
+
+        }
+        
+        heat[ii] = tendency_T / cp
+
+i += 1.0
+
+    }
+    return heat
+
+}
+fn tesseract_main() {
+    print("Initializing TESSERACT: UNIFIED MODEL (Ocean + Omega + Particles)...")
+
+    
+    N = 40.0
+
+    TOTAL = 6.0 * N * N
+
+    
+    print("  Building Topology...")
+
+    adj_l = build_neighbor_table(1.0, N)
+
+    adj_r = build_neighbor_table(2.0, N)
+
+    adj_d = build_neighbor_table(3.0, N)
+
+    adj_u = build_neighbor_table(4.0, N)
+
+    
+    print("  Building Rotation Matrices...")
+
+    rot_l = build_rotation_table(1.0, N)
+
+    rot_r = build_rotation_table(2.0, N)
+
+    
+    print("  Allocating State...")
+
+    u = barrier_alloc(TOTAL, 10.0, 3.0)
+
+    v = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    h = barrier_alloc(TOTAL, 8000.0, 3.0)
+ 
+    temp = barrier_alloc(TOTAL, 300.0, 3.0)
+
+    qv = barrier_alloc(TOTAL, 0.015, 3.0)
+
+    qc = barrier_alloc(TOTAL, 0.001, 3.0)
+
+    qr = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    qi = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    qs = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    qg = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    
+    print("  Building Extended Topology (WENO-5 Order)...")
+
+    adj_ll = barrier_alloc(TOTAL, 0.0, 2.0)
+
+    adj_rr = barrier_alloc(TOTAL, 0.0, 2.0)
+
+    
+    i = 1.0
+
+    idx_l = 0.0
+ idx_r = 0.0
+
+    while (i <= TOTAL) {
+        ii = floor(i)
+
+        idx_l = adj_l[ii]
+
+        idx_r = adj_r[ii]
+
+        adj_ll[ii] = adj_l[floor(idx_l)]
+
+        adj_rr[ii] = adj_r[floor(idx_r)]
+
+i += 1.0
+
+    }
+    
+    h_trn = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    coriolis = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    
+    print("  Initializing Environment...")
+
+    k = 1.0
+
+    grid_sq = N*N
+
+    mtn_h = 4000.0
+
+    
+    k0 = 0.0
+ rem = 0.0
+ 
+    f_curr = 0.0
+ x_curr = 0.0
+ y_curr = 0.0
+
+    dx_m = 0.0
+ dy_m = 0.0
+ dist = 0.0
+
+    lat = 0.0
+
+    
+    while (k <= TOTAL) {
+        k0 = k - 1.0
+
+        f_curr = floor(k0 / grid_sq) + 1.0
+
+        rem = k0 % grid_sq
+
+        x_curr = floor(rem / N) + 1.0
+
+        y_curr = (rem % N) + 1.0
+
+        
+        if (f_curr == 1.0) {
+            dx_m = x_curr - 20.0
+ dy_m = y_curr - 20.0
+
+            dist = dx_m*dx_m + dy_m*dy_m
+
+            h_trn[k] = mtn_h / (1.0 + dist * 0.1)
+
+        }
+        
+        lat = get_lat(f_curr, x_curr, y_curr, N)
+
+        coriolis[k] = 0.00014 * (lat / 90.0)
+
+k += 1.0
+
+    }
+    
+    print("  Verifying CG Solver (Pressure Poisson)...")
+
+    b_cg = barrier_alloc(TOTAL, 1.0, 2.0)
+
+    x_cg = solve_cg(b_cg, adj_l, adj_r, adj_d, adj_u, TOTAL)
+
+    print("    CG Solve complete. Sample x:")
+
+    print(x_cg[1])
+
+    
+    u_stage = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    u_new = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    
+    steps = 0.0
+ MAX_STEPS = 5.0
+ dt = 0.1
+
+    
+    print("  Initializing Lagrangian Drifters (1000 particles)...")
+
+    p_x = alloc_particles(1000.0)
+
+    p_y = alloc_particles(1000.0)
+
+    p_f = barrier_alloc(1000.0, 1.0, 2.0)
+
+    
+    print("  Starting RK3 Integration...")
+
+    
+    i = 1.0
+ ii = 0.0
+
+    max_u = 0.0
+
+    
+    while (steps < MAX_STEPS) {
+        visc = smagorinsky_visc(u, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+
+        
+        heat = ice_physics(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+
+        
+        adv_u = advect_weno(u, u, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+
+        
+        du1 = compute_tendency(u, v, h, h_trn, coriolis, visc, adj_l, adj_r, adj_d, adj_u, TOTAL)
+
+        
+        p_check = advect_particles(p_x, p_y, p_f, u, v, dt, N, TOTAL)
+
+        
+        i = 1.0
+
+        while (i <= TOTAL) {
+            ii = floor(i)
+
+            u_stage[ii] = u[ii] + dt * (du1[ii] - adv_u[ii])
+
+i += 1.0
+
+        }
+        
+        visc2 = smagorinsky_visc(u_stage, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+
+        heat2 = ice_physics(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+
+        adv_u2 = advect_weno(u_stage, u_stage, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+
+        du2 = compute_tendency(u_stage, v, h, h_trn, coriolis, visc2, adj_l, adj_r, adj_d, adj_u, TOTAL)
+
+        
+        i = 1.0
+
+        while (i <= TOTAL) {
+            ii = floor(i)
+
+            u_stage[ii] = 0.75 * u[ii] + 0.25 * u_stage[ii] + 0.25 * dt * (du2[ii] - adv_u2[ii])
+
+i += 1.0
+
+        }
+        
+        visc3 = smagorinsky_visc(u_stage, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+
+        heat3 = ice_physics(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+
+        adv_u3 = advect_weno(u_stage, u_stage, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+
+        du3 = compute_tendency(u_stage, v, h, h_trn, coriolis, visc3, adj_l, adj_r, adj_d, adj_u, TOTAL)
+
+        
+        i = 1.0
+ max_u = -1000.0
+
+        while (i <= TOTAL) {
+            ii = floor(i)
+
+            u_new[ii] = 0.3333 * u[ii] + 0.6667 * u_stage[ii] + 0.6667 * dt * (du3[ii] - adv_u3[ii])
+
+            
+            u_new[ii] = u_new[ii] + heat[ii] * 0.001
+ 
+            
+            if (u_new[ii] > max_u) { max_u = u_new[ii]
+ }
+i += 1.0
+
+        }
+        
+        // Swap buffers to avoid aliasing u and u_new (prevents CoW blow-ups).
+        tmp_u = u
+
+        u = u_new
+
+        u_new = tmp_u
+
+        
+        print("  Step Complete. Max U:")
+
+        print(max_u)
+
+        print("    Particle 1 Position (X):")
+
+        print(p_x[1])
+ 
+steps += 1.0
+
+    }
+    
+    print("TESSERACT: UNIFIED Model Complete.")
+
+    return 0
+
+}
+
+print(tesseract_main())
+

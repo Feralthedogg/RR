@@ -586,7 +586,12 @@ fn builtin_arity(name: &str) -> Option<(usize, Option<usize>)> {
         "atan2" => Some((2, Some(2))),
         "round" | "log" => Some((1, Some(2))),
         "pmax" | "pmin" => Some((2, None)),
-        "sum" | "mean" | "min" | "max" | "print" | "c" | "list" => Some((1, None)),
+        "sum" | "mean" | "var" | "sd" | "min" | "max" | "prod" | "print" | "c" | "list" => {
+            Some((1, None))
+        }
+        "numeric" => Some((1, Some(1))),
+        "rep.int" => Some((2, Some(2))),
+        "vector" => Some((1, Some(2))),
         "matrix" => Some((1, Some(4))),
         "crossprod" | "tcrossprod" => Some((1, Some(2))),
         _ => None,

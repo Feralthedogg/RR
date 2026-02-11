@@ -109,6 +109,7 @@ impl<'a> Lexer<'a> {
                 let ident = self.read_while(|c| c.is_alphanumeric() || c == '_');
                 match ident.as_str() {
                     "fn" => TokenKind::Fn,
+                    "function" => TokenKind::Fn,
                     "let" => TokenKind::Let,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
@@ -299,19 +300,42 @@ impl<'a> Lexer<'a> {
             }
             Some('+') => {
                 self.advance();
-                TokenKind::Plus
+                if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::PlusAssign
+                } else {
+                    TokenKind::Plus
+                }
             }
             Some('-') => {
                 self.advance();
-                TokenKind::Minus
+                if let Some('>') = self.peek() {
+                    self.advance();
+                    TokenKind::Arrow
+                } else if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::MinusAssign
+                } else {
+                    TokenKind::Minus
+                }
             }
             Some('*') => {
                 self.advance();
-                TokenKind::Star
+                if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::StarAssign
+                } else {
+                    TokenKind::Star
+                }
             }
             Some('/') => {
                 self.advance();
-                TokenKind::Slash
+                if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::SlashAssign
+                } else {
+                    TokenKind::Slash
+                }
             }
             Some('%') => {
                 self.advance();
@@ -323,6 +347,9 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Percent
                     }
+                } else if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::PercentAssign
                 } else {
                     TokenKind::Percent
                 }

@@ -7,8 +7,17 @@ pub const R_RUNTIME: &str = r#"
 .rr_env$line <- 1L
 .rr_env$col  <- 1L
 .rr_env$file <- "RR"
+.rr_env$runtime_mode <- tolower(Sys.getenv("RR_RUNTIME_MODE", "debug"))
+.rr_env$fast_runtime <- identical(.rr_env$runtime_mode, "release") ||
+                       identical(Sys.getenv("RR_FAST_RUNTIME", "0"), "1")
+.rr_env$strict_index_read <- identical(Sys.getenv("RR_STRICT_INDEX_READ", "0"), "1")
+.rr_env$enable_marks <- !identical(Sys.getenv("RR_ENABLE_MARKS", "1"), "0")
+if (.rr_env$fast_runtime && identical(Sys.getenv("RR_ENABLE_MARKS", ""), "")) {
+  .rr_env$enable_marks <- FALSE
+}
 
 rr_mark <- function(line, col) {
+  if (!.rr_env$enable_marks) return(invisible(NULL))
   .rr_env$line <- as.integer(line)
   .rr_env$col  <- as.integer(col)
 }
@@ -59,7 +68,14 @@ rr_value_error <- function(msg, code="E2001", ctx=NULL, hint=NULL) {
 }
 
 rr_bool <- function(x, ctx="condition") {
+  if (.rr_env$fast_runtime &&
+      length(x) == 1L &&
+      is.logical(x) &&
+      !is.na(x)) {
+    return(isTRUE(x))
+  }
   if (length(x) != 1) rr_type_error(paste0(ctx, " must be scalar boolean"), "E1002", ctx)
+  if (!is.logical(x)) rr_type_error(paste0(ctx, " must be logical"), "E1002", ctx)
   if (is.na(x)) rr_value_error(
     paste0(ctx, " is NA"),
     "E2001",
@@ -103,7 +119,33 @@ rr_i0_read <- function(i, ctx="index") {
   i
 }
 
+rr_index1_read_strict <- function(base, i, ctx="index") {
+  if (length(i)!=1) rr_type_error(paste0(ctx, " must be scalar"), "E1002", ctx)
+  if (is.na(i)) rr_value_error(paste0(ctx, " is NA"), "E2001", ctx)
+  if (!is.numeric(i)) rr_type_error(paste0(ctx, " must be numeric"), "E1002", ctx)
+  if (i != floor(i)) rr_type_error(paste0(ctx, " must be integer"), "E1002", ctx)
+  i <- as.integer(i)
+  if (i < 1L) rr_bounds_error(
+    paste0(ctx, " must be >= 1"),
+    "E2007",
+    ctx,
+    "R indexing is 1-based at runtime."
+  )
+  base[i]
+}
+
 rr_index1_read <- function(base, i, ctx="index") {
+  if (.rr_env$strict_index_read) {
+    return(rr_index1_read_strict(base, i, ctx))
+  }
+  if (.rr_env$fast_runtime &&
+      length(i) == 1L &&
+      !is.na(i) &&
+      is.numeric(i) &&
+      i == floor(i)) {
+    ii <- as.integer(i)
+    if (ii >= 1L) return(base[ii])
+  }
   if (length(i)!=1) rr_type_error(paste0(ctx, " must be scalar"), "E1002", ctx)
   # Keep R semantics for logical NA indexing: x[NA] -> length(x) NA vector.
   if (is.na(i)) return(base[NA])
@@ -120,6 +162,14 @@ rr_index1_read <- function(base, i, ctx="index") {
 }
 
 rr_index1_write <- function(i, ctx="index") {
+  if (.rr_env$fast_runtime &&
+      length(i) == 1L &&
+      !is.na(i) &&
+      is.numeric(i) &&
+      i == floor(i)) {
+    ii <- as.integer(i)
+    if (ii >= 1L) return(ii)
+  }
   if (length(i)!=1) rr_type_error(paste0(ctx, " must be scalar"), "E1002", ctx)
   if (is.na(i)) rr_value_error(paste0(ctx, " is NA"), "E2001", ctx)
   if (!is.numeric(i)) rr_type_error(paste0(ctx, " must be numeric"), "E1002", ctx)
@@ -507,10 +557,13 @@ rr_call_closure <- function(callee, ...) {
     if (!is.function(fn)) {
       rr_type_error("closure payload is not callable", "E1002", "call")
     }
+    if (length(caps) == 0L) {
+      return(fn(...))
+    }
     return(do.call(fn, c(caps, args)))
   }
   if (is.function(callee)) {
-    return(do.call(callee, args))
+    return(callee(...))
   }
   rr_type_error(
     paste0("callee is not a function: ", typeof(callee)),
@@ -556,6 +609,19 @@ rr_recur_add_const <- function(base, start, end, delta) {
   step <- as.numeric(delta)
   base[s:e] <- base[s - 1L] + cumsum(rep(step, n))
   base
+}
+
+# Fast-path rebinding for release mode:
+# avoid per-call branch/check overhead in hot loops when compiler guarantees safety.
+if (.rr_env$fast_runtime) {
+  rr_mark <- function(line, col) invisible(NULL)
+  rr_bool <- function(x, ctx="condition") isTRUE(x)
+  rr_truthy1 <- rr_bool
+  rr_i0 <- function(i, ctx="index") as.integer(i)
+  rr_i0_read <- function(i, ctx="index") as.integer(i)
+  rr_i1 <- function(i, ctx="index") as.integer(i)
+  rr_index1_read <- function(base, i, ctx="index") base[as.integer(i)]
+  rr_index1_write <- function(i, ctx="index") as.integer(i)
 }
 
 # -----------------------------------
