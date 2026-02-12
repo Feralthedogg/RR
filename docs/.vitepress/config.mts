@@ -45,7 +45,7 @@ export default defineConfig({
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/levish0/RR' },
+      { icon: 'github', link: 'https://github.com/Feralthedogg/RR' },
     ],
 
     search: {
