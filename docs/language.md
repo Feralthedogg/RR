@@ -19,6 +19,72 @@ Literal keywords:
 - null: `null`, `NULL`
 - missing: `na`, `NA`
 
+## Modern vs. Traditional Syntax Examples
+
+RR allows developers to write in a modern, Rust-like syntax, while fully supporting traditional R syntax to ensure seamless portability of existing code. You can mix and match these styles.
+
+### 1. Assignment and Declarations
+**Traditional R:**
+```R
+x <- 10L
+y <- "hello"
+```
+**Modern RR:**
+```rust
+let x = 10L
+let y = "hello"
+
+// Or with type hints:
+x: int = 10L
+```
+
+### 2. Function Definitions
+**Traditional R:**
+```R
+add <- function(a, b) {
+  return(a + b)
+}
+```
+**Modern RR:**
+```rust
+fn add(a, b) {
+    return a + b
+}
+
+// Or as a typed expression-bodied function:
+fn add(a: float, b: float) -> float = a + b
+```
+
+### 3. Control Flow (Loops and Ifs)
+**Traditional R:**
+```R
+if (x > 0) {
+  for (i in 1:n) {
+    x <- x + i
+  }
+}
+```
+**Modern RR:**
+```rust
+if x > 0 {
+    for i in 1..n {
+        x += i  // Compound assignments are supported!
+    }
+}
+```
+
+### 4. Data Structures
+**Traditional R:**
+```R
+vec <- c(1, 2, 3)
+lst <- list(name = "rr", ver = 1.0)
+```
+**Modern RR:**
+```rust
+let vec = [1, 2, 3]
+let lst = {name: "rr", ver: 1.0}
+```
+
 ## Lexical Rules
 
 ### Numbers
