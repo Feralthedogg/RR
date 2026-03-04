@@ -318,7 +318,9 @@ impl MirLicm {
                     .all(|(a, _)| *a == val_id || invariants.contains(a))
             }
             // Be conservative
-            ValueKind::Load { .. } | ValueKind::Index2D { .. } => false,
+            ValueKind::Load { .. } | ValueKind::Index2D { .. } | ValueKind::Intrinsic { .. } => {
+                false
+            }
         }
     }
 

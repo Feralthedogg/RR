@@ -1,5 +1,8 @@
-use RR::compiler::{compile, CliLog, OptLevel};
+use RR::compiler::{
+    CliLog, OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs,
+};
 use RR::runtime::runner::Runner;
+use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,6 +34,12 @@ fn print_usage() {
     eprintln!("  -o <file> / --out-dir <dir>   Output file (legacy) or build output dir");
     eprintln!("  -O0, -O1, -O2                 Optimization level (default O1)");
     eprintln!("  -o0, -o1, -o2                 (Also accepted) Optimization level");
+    eprintln!("  --type-mode <strict|gradual>  Static typing mode (default strict)");
+    eprintln!("  --native-backend <off|optional|required>  Native intrinsic backend mode");
+    eprintln!("  --parallel-mode <off|optional|required>   Parallel execution mode");
+    eprintln!("  --parallel-backend <auto|r|openmp>        Parallel backend selection");
+    eprintln!("  --parallel-threads <N>                    Parallel worker threads (0=auto)");
+    eprintln!("  --parallel-min-trip <N>                   Minimum trip-count for parallel path");
     eprintln!("  --keep-r                      Keep generated .gen.R when running");
     eprintln!("  --no-runtime                  Compile only (legacy mode)");
 }
@@ -50,6 +59,206 @@ fn apply_opt_flag(arg: &str, level: &mut OptLevel) -> bool {
     }
 }
 
+fn type_config_from_env() -> TypeConfig {
+    let mode = env::var("RR_TYPE_MODE")
+        .ok()
+        .and_then(|v| TypeMode::from_str(&v))
+        .unwrap_or(TypeMode::Strict);
+    let native_backend = env::var("RR_NATIVE_BACKEND")
+        .ok()
+        .and_then(|v| NativeBackend::from_str(&v))
+        .unwrap_or(NativeBackend::Off);
+    TypeConfig {
+        mode,
+        native_backend,
+    }
+}
+
+fn parse_nonnegative_usize(raw: &str) -> Option<usize> {
+    raw.trim().parse::<usize>().ok()
+}
+
+fn parallel_config_from_env() -> ParallelConfig {
+    let mode = env::var("RR_PARALLEL_MODE")
+        .ok()
+        .and_then(|v| ParallelMode::from_str(&v))
+        .unwrap_or(ParallelMode::Off);
+    let backend = env::var("RR_PARALLEL_BACKEND")
+        .ok()
+        .and_then(|v| ParallelBackend::from_str(&v))
+        .unwrap_or(ParallelBackend::Auto);
+    let threads = env::var("RR_PARALLEL_THREADS")
+        .ok()
+        .and_then(|v| parse_nonnegative_usize(&v))
+        .unwrap_or(0);
+    let min_trip = env::var("RR_PARALLEL_MIN_TRIP")
+        .ok()
+        .and_then(|v| parse_nonnegative_usize(&v))
+        .unwrap_or(4096);
+    ParallelConfig {
+        mode,
+        backend,
+        threads,
+        min_trip,
+    }
+}
+
+fn apply_type_mode_flag(
+    args: &[String],
+    i: &mut usize,
+    cfg: &mut TypeConfig,
+    ui: &CliLog,
+) -> Result<bool, i32> {
+    let arg = &args[*i];
+    if arg == "--type-mode" {
+        if *i + 1 >= args.len() {
+            ui.error("Missing value after --type-mode (strict|gradual)");
+            return Err(1);
+        }
+        let v = &args[*i + 1];
+        cfg.mode = match TypeMode::from_str(v) {
+            Some(m) => m,
+            None => {
+                ui.error("Invalid --type-mode. Use strict|gradual");
+                return Err(1);
+            }
+        };
+        *i += 1;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn apply_native_backend_flag(
+    args: &[String],
+    i: &mut usize,
+    cfg: &mut TypeConfig,
+    ui: &CliLog,
+) -> Result<bool, i32> {
+    let arg = &args[*i];
+    if arg == "--native-backend" {
+        if *i + 1 >= args.len() {
+            ui.error("Missing value after --native-backend (off|optional|required)");
+            return Err(1);
+        }
+        let v = &args[*i + 1];
+        cfg.native_backend = match NativeBackend::from_str(v) {
+            Some(m) => m,
+            None => {
+                ui.error("Invalid --native-backend. Use off|optional|required");
+                return Err(1);
+            }
+        };
+        *i += 1;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn apply_parallel_mode_flag(
+    args: &[String],
+    i: &mut usize,
+    cfg: &mut ParallelConfig,
+    ui: &CliLog,
+) -> Result<bool, i32> {
+    let arg = &args[*i];
+    if arg == "--parallel-mode" {
+        if *i + 1 >= args.len() {
+            ui.error("Missing value after --parallel-mode (off|optional|required)");
+            return Err(1);
+        }
+        let v = &args[*i + 1];
+        cfg.mode = match ParallelMode::from_str(v) {
+            Some(m) => m,
+            None => {
+                ui.error("Invalid --parallel-mode. Use off|optional|required");
+                return Err(1);
+            }
+        };
+        *i += 1;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn apply_parallel_backend_flag(
+    args: &[String],
+    i: &mut usize,
+    cfg: &mut ParallelConfig,
+    ui: &CliLog,
+) -> Result<bool, i32> {
+    let arg = &args[*i];
+    if arg == "--parallel-backend" {
+        if *i + 1 >= args.len() {
+            ui.error("Missing value after --parallel-backend (auto|r|openmp)");
+            return Err(1);
+        }
+        let v = &args[*i + 1];
+        cfg.backend = match ParallelBackend::from_str(v) {
+            Some(m) => m,
+            None => {
+                ui.error("Invalid --parallel-backend. Use auto|r|openmp");
+                return Err(1);
+            }
+        };
+        *i += 1;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn apply_parallel_threads_flag(
+    args: &[String],
+    i: &mut usize,
+    cfg: &mut ParallelConfig,
+    ui: &CliLog,
+) -> Result<bool, i32> {
+    let arg = &args[*i];
+    if arg == "--parallel-threads" {
+        if *i + 1 >= args.len() {
+            ui.error("Missing value after --parallel-threads");
+            return Err(1);
+        }
+        let v = &args[*i + 1];
+        cfg.threads = match parse_nonnegative_usize(v) {
+            Some(n) => n,
+            None => {
+                ui.error("Invalid --parallel-threads. Use a non-negative integer.");
+                return Err(1);
+            }
+        };
+        *i += 1;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn apply_parallel_min_trip_flag(
+    args: &[String],
+    i: &mut usize,
+    cfg: &mut ParallelConfig,
+    ui: &CliLog,
+) -> Result<bool, i32> {
+    let arg = &args[*i];
+    if arg == "--parallel-min-trip" {
+        if *i + 1 >= args.len() {
+            ui.error("Missing value after --parallel-min-trip");
+            return Err(1);
+        }
+        let v = &args[*i + 1];
+        cfg.min_trip = match parse_nonnegative_usize(v) {
+            Some(n) => n,
+            None => {
+                ui.error("Invalid --parallel-min-trip. Use a non-negative integer.");
+                return Err(1);
+            }
+        };
+        *i += 1;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 fn cmd_legacy(args: &[String]) -> i32 {
     let ui = CliLog::new();
     let mut input_path = String::new();
@@ -57,6 +266,8 @@ fn cmd_legacy(args: &[String]) -> i32 {
     let mut keep_r = false;
     let mut opt_level = OptLevel::O1;
     let mut no_runtime = false;
+    let mut type_cfg = type_config_from_env();
+    let mut parallel_cfg = parallel_config_from_env();
 
     let mut i = 0;
     while i < args.len() {
@@ -71,16 +282,62 @@ fn cmd_legacy(args: &[String]) -> i32 {
             }
         } else if apply_opt_flag(arg, &mut opt_level) {
             // handled
-        } else if arg == "--keep-r" {
-            keep_r = true;
-        } else if arg == "--no-runtime" {
-            no_runtime = true;
-        } else if arg == "--mir" {
-            if matches!(opt_level, OptLevel::O0) {
-                opt_level = OptLevel::O1;
+        } else if let Ok(applied) = apply_type_mode_flag(args, &mut i, &mut type_cfg, &ui) {
+            if applied {
+                // handled
+            } else if let Ok(native_applied) =
+                apply_native_backend_flag(args, &mut i, &mut type_cfg, &ui)
+            {
+                if native_applied {
+                    // handled
+                } else if let Ok(par_mode_applied) =
+                    apply_parallel_mode_flag(args, &mut i, &mut parallel_cfg, &ui)
+                {
+                    if par_mode_applied {
+                        // handled
+                    } else if let Ok(par_backend_applied) =
+                        apply_parallel_backend_flag(args, &mut i, &mut parallel_cfg, &ui)
+                    {
+                        if par_backend_applied {
+                            // handled
+                        } else if let Ok(par_threads_applied) =
+                            apply_parallel_threads_flag(args, &mut i, &mut parallel_cfg, &ui)
+                        {
+                            if par_threads_applied {
+                                // handled
+                            } else if let Ok(par_min_trip_applied) =
+                                apply_parallel_min_trip_flag(args, &mut i, &mut parallel_cfg, &ui)
+                            {
+                                if par_min_trip_applied {
+                                    // handled
+                                } else if arg == "--keep-r" {
+                                    keep_r = true;
+                                } else if arg == "--no-runtime" {
+                                    no_runtime = true;
+                                } else if arg == "--mir" {
+                                    if matches!(opt_level, OptLevel::O0) {
+                                        opt_level = OptLevel::O1;
+                                    }
+                                } else if !arg.starts_with('-') {
+                                    input_path = arg.clone();
+                                }
+                            } else {
+                                return 1;
+                            }
+                        } else {
+                            return 1;
+                        }
+                    } else {
+                        return 1;
+                    }
+                } else {
+                    return 1;
+                }
+            } else {
+                return 1;
             }
-        } else if !arg.starts_with('-') {
-            input_path = arg.clone();
+        } else {
+            return 1;
         }
         i += 1;
     }
@@ -105,7 +362,7 @@ fn cmd_legacy(args: &[String]) -> i32 {
         }
     };
 
-    let result = compile(&input_path, &input, opt_level);
+    let result = compile_with_configs(&input_path, &input, opt_level, type_cfg, parallel_cfg);
     match result {
         Ok((r_code, source_map)) => {
             if let Some(out_path) = output_path {
@@ -157,16 +414,64 @@ fn cmd_run(args: &[String]) -> i32 {
     let mut target = ".".to_string();
     let mut keep_r = false;
     let mut opt_level = OptLevel::O1;
+    let mut type_cfg = type_config_from_env();
+    let mut parallel_cfg = parallel_config_from_env();
 
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
         if apply_opt_flag(arg, &mut opt_level) {
             // handled
-        } else if arg == "--keep-r" {
-            keep_r = true;
-        } else if !arg.starts_with('-') {
-            target = arg.clone();
+        } else if let Ok(applied) = apply_type_mode_flag(args, &mut i, &mut type_cfg, &ui) {
+            if applied {
+                // handled
+            } else if let Ok(native_applied) =
+                apply_native_backend_flag(args, &mut i, &mut type_cfg, &ui)
+            {
+                if native_applied {
+                    // handled
+                } else if let Ok(par_mode_applied) =
+                    apply_parallel_mode_flag(args, &mut i, &mut parallel_cfg, &ui)
+                {
+                    if par_mode_applied {
+                        // handled
+                    } else if let Ok(par_backend_applied) =
+                        apply_parallel_backend_flag(args, &mut i, &mut parallel_cfg, &ui)
+                    {
+                        if par_backend_applied {
+                            // handled
+                        } else if let Ok(par_threads_applied) =
+                            apply_parallel_threads_flag(args, &mut i, &mut parallel_cfg, &ui)
+                        {
+                            if par_threads_applied {
+                                // handled
+                            } else if let Ok(par_min_trip_applied) =
+                                apply_parallel_min_trip_flag(args, &mut i, &mut parallel_cfg, &ui)
+                            {
+                                if par_min_trip_applied {
+                                    // handled
+                                } else if arg == "--keep-r" {
+                                    keep_r = true;
+                                } else if !arg.starts_with('-') {
+                                    target = arg.clone();
+                                }
+                            } else {
+                                return 1;
+                            }
+                        } else {
+                            return 1;
+                        }
+                    } else {
+                        return 1;
+                    }
+                } else {
+                    return 1;
+                }
+            } else {
+                return 1;
+            }
+        } else {
+            return 1;
         }
         i += 1;
     }
@@ -187,7 +492,7 @@ fn cmd_run(args: &[String]) -> i32 {
         }
     };
 
-    match compile(&input_path_str, &input, opt_level) {
+    match compile_with_configs(&input_path_str, &input, opt_level, type_cfg, parallel_cfg) {
         Ok((r_code, source_map)) => {
             Runner::run(&input_path_str, &input, &r_code, &source_map, None, keep_r)
         }
@@ -220,6 +525,8 @@ fn cmd_build(args: &[String]) -> i32 {
     let mut target = ".".to_string();
     let mut out_dir = "build".to_string();
     let mut opt_level = OptLevel::O1;
+    let mut type_cfg = type_config_from_env();
+    let mut parallel_cfg = parallel_config_from_env();
 
     let mut i = 0;
     while i < args.len() {
@@ -234,8 +541,54 @@ fn cmd_build(args: &[String]) -> i32 {
             }
         } else if apply_opt_flag(arg, &mut opt_level) {
             // handled
-        } else if !arg.starts_with('-') {
-            target = arg.clone();
+        } else if let Ok(applied) = apply_type_mode_flag(args, &mut i, &mut type_cfg, &ui) {
+            if applied {
+                // handled
+            } else if let Ok(native_applied) =
+                apply_native_backend_flag(args, &mut i, &mut type_cfg, &ui)
+            {
+                if native_applied {
+                    // handled
+                } else if let Ok(par_mode_applied) =
+                    apply_parallel_mode_flag(args, &mut i, &mut parallel_cfg, &ui)
+                {
+                    if par_mode_applied {
+                        // handled
+                    } else if let Ok(par_backend_applied) =
+                        apply_parallel_backend_flag(args, &mut i, &mut parallel_cfg, &ui)
+                    {
+                        if par_backend_applied {
+                            // handled
+                        } else if let Ok(par_threads_applied) =
+                            apply_parallel_threads_flag(args, &mut i, &mut parallel_cfg, &ui)
+                        {
+                            if par_threads_applied {
+                                // handled
+                            } else if let Ok(par_min_trip_applied) =
+                                apply_parallel_min_trip_flag(args, &mut i, &mut parallel_cfg, &ui)
+                            {
+                                if par_min_trip_applied {
+                                    // handled
+                                } else if !arg.starts_with('-') {
+                                    target = arg.clone();
+                                }
+                            } else {
+                                return 1;
+                            }
+                        } else {
+                            return 1;
+                        }
+                    } else {
+                        return 1;
+                    }
+                } else {
+                    return 1;
+                }
+            } else {
+                return 1;
+            }
+        } else {
+            return 1;
         }
         i += 1;
     }
@@ -304,13 +657,14 @@ fn cmd_build(args: &[String]) -> i32 {
             }
         };
 
-        let (r_code, _source_map) = match compile(&rr_path_str, &input, opt_level) {
-            Ok(v) => v,
-            Err(e) => {
-                e.display(Some(&input), Some(&rr_path_str));
-                return 1;
-            }
-        };
+        let (r_code, _source_map) =
+            match compile_with_configs(&rr_path_str, &input, opt_level, type_cfg, parallel_cfg) {
+                Ok(v) => v,
+                Err(e) => {
+                    e.display(Some(&input), Some(&rr_path_str));
+                    return 1;
+                }
+            };
 
         let out_file = if dir_mode {
             let rel = rr_abs.strip_prefix(&root_abs).unwrap_or(&rr_abs);

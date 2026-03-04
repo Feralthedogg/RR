@@ -439,6 +439,14 @@ print(mat_col_reduce(3, 4, 2));
         "expected call-map vectorization to keep rr_same_len guard when lengths are not provably equal"
     );
     assert!(
+        code.contains("rr_intrinsic_vec_abs_f64(")
+            || code.contains("rr_intrinsic_vec_pmax_f64(")
+            || code.contains("rr_intrinsic_vec_sum_f64(")
+            || code.contains("rr_intrinsic_vec_mean_f64(")
+            || code.contains("abs("),
+        "expected intrinsic or builtin vectorized call emission"
+    );
+    assert!(
         code.contains("rr_row_binop_assign("),
         "expected row matrix vectorization to use rr_row_binop_assign(...)"
     );

@@ -25,6 +25,11 @@ pub enum VerifyError {
         var: VarId,
         value: ValueId,
     },
+    InvalidIntrinsicArity {
+        value: ValueId,
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl fmt::Display for VerifyError {
@@ -54,6 +59,15 @@ impl fmt::Display for VerifyError {
             VerifyError::UndefinedVar { var, value } => {
                 write!(f, "Value {} refers to undefined var '{}'", value, var)
             }
+            VerifyError::InvalidIntrinsicArity {
+                value,
+                expected,
+                got,
+            } => write!(
+                f,
+                "Intrinsic value {} has invalid arity: expected {}, got {}",
+                value, expected, got
+            ),
         }
     }
 }
@@ -96,6 +110,31 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
                 }
             }
             ValueKind::Call { args, .. } => {
+                for a in args {
+                    check_val(fn_ir, *a)?;
+                }
+            }
+            ValueKind::Intrinsic { op, args } => {
+                let expected = match op {
+                    IntrinsicOp::VecAddF64
+                    | IntrinsicOp::VecSubF64
+                    | IntrinsicOp::VecMulF64
+                    | IntrinsicOp::VecDivF64
+                    | IntrinsicOp::VecPmaxF64
+                    | IntrinsicOp::VecPminF64 => 2,
+                    IntrinsicOp::VecAbsF64
+                    | IntrinsicOp::VecLogF64
+                    | IntrinsicOp::VecSqrtF64
+                    | IntrinsicOp::VecSumF64
+                    | IntrinsicOp::VecMeanF64 => 1,
+                };
+                if args.len() != expected {
+                    return Err(VerifyError::InvalidIntrinsicArity {
+                        value: vid,
+                        expected,
+                        got: args.len(),
+                    });
+                }
                 for a in args {
                     check_val(fn_ir, *a)?;
                 }

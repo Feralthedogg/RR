@@ -73,6 +73,13 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
                     NaState::Maybe
                 }
                 ValueKind::Call { callee, args, .. } => call_na_behavior(callee, args, &states),
+                ValueKind::Intrinsic { args, .. } => {
+                    let mut acc = NaState::Never;
+                    for a in args {
+                        acc = NaState::propagate(acc, states[*a]);
+                    }
+                    acc
+                }
                 ValueKind::Param { .. } | ValueKind::Load { .. } => NaState::Maybe,
             };
 

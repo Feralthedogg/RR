@@ -1,4 +1,5 @@
 use crate::syntax::parse::Parser;
+use crate::typeck::{NativeBackend, TypeConfig, TypeMode};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
 use std::fs;
@@ -27,9 +28,120 @@ impl OptLevel {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParallelMode {
+    Off,
+    Optional,
+    Required,
+}
+
+impl ParallelMode {
+    pub fn from_str(v: &str) -> Option<Self> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "optional" => Some(Self::Optional),
+            "required" => Some(Self::Required),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Optional => "optional",
+            Self::Required => "required",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParallelBackend {
+    Auto,
+    R,
+    OpenMp,
+}
+
+impl ParallelBackend {
+    pub fn from_str(v: &str) -> Option<Self> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "r" => Some(Self::R),
+            "openmp" => Some(Self::OpenMp),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::R => "r",
+            Self::OpenMp => "openmp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ParallelConfig {
+    pub mode: ParallelMode,
+    pub backend: ParallelBackend,
+    pub threads: usize,
+    pub min_trip: usize,
+}
+
+impl Default for ParallelConfig {
+    fn default() -> Self {
+        Self {
+            mode: ParallelMode::Off,
+            backend: ParallelBackend::Auto,
+            threads: 0,
+            min_trip: 4096,
+        }
+    }
+}
+
 pub struct CliLog {
     color: bool,
     detailed: bool,
+}
+
+fn type_config_from_env() -> TypeConfig {
+    let mode = env::var("RR_TYPE_MODE")
+        .ok()
+        .and_then(|v| TypeMode::from_str(&v))
+        .unwrap_or(TypeMode::Strict);
+    let native_backend = env::var("RR_NATIVE_BACKEND")
+        .ok()
+        .and_then(|v| NativeBackend::from_str(&v))
+        .unwrap_or(NativeBackend::Off);
+    TypeConfig {
+        mode,
+        native_backend,
+    }
+}
+
+fn parse_nonnegative_usize_env(key: &str) -> Option<usize> {
+    env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+}
+
+fn parallel_config_from_env() -> ParallelConfig {
+    let mode = env::var("RR_PARALLEL_MODE")
+        .ok()
+        .and_then(|v| ParallelMode::from_str(&v))
+        .unwrap_or(ParallelMode::Off);
+    let backend = env::var("RR_PARALLEL_BACKEND")
+        .ok()
+        .and_then(|v| ParallelBackend::from_str(&v))
+        .unwrap_or(ParallelBackend::Auto);
+    let threads = parse_nonnegative_usize_env("RR_PARALLEL_THREADS").unwrap_or(0);
+    let min_trip = parse_nonnegative_usize_env("RR_PARALLEL_MIN_TRIP").unwrap_or(4096);
+    ParallelConfig {
+        mode,
+        backend,
+        threads,
+        min_trip,
+    }
 }
 
 impl CliLog {
@@ -183,6 +295,37 @@ pub fn compile(
     entry_input: &str,
     opt_level: OptLevel,
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    compile_with_configs(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_config_from_env(),
+        parallel_config_from_env(),
+    )
+}
+
+pub fn compile_with_config(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    compile_with_configs(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_config_from_env(),
+    )
+}
+
+pub fn compile_with_configs(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
     let ui = CliLog::new();
     let compile_started = Instant::now();
     let optimize = opt_level.is_optimized();
@@ -266,10 +409,7 @@ pub fn compile(
                                 "RR.ParseError",
                                 crate::error::RRCode::E0001,
                                 crate::error::Stage::Parse,
-                                format!(
-                                    "failed to load imported module '{}': {}",
-                                    target_lossy, e
-                                ),
+                                format!("failed to load imported module '{}': {}", target_lossy, e),
                             ));
                         }
                     }
@@ -328,8 +468,7 @@ pub fn compile(
     let mut all_fns = FxHashMap::default();
     let mut emit_order: Vec<String> = Vec::new();
     let mut top_level_calls: Vec<String> = Vec::new();
-    let mut known_fn_arities: FxHashMap<String, usize> =
-        FxHashMap::default();
+    let mut known_fn_arities: FxHashMap<String, usize> = FxHashMap::default();
 
     for module in &desugared_hir.modules {
         for item in &module.items {
@@ -420,6 +559,8 @@ pub fn compile(
         all_fns.len(),
         format_duration(step_ssa.elapsed())
     ));
+
+    crate::typeck::solver::analyze_program(&mut all_fns, type_cfg)?;
     crate::mir::semantics::validate_program(&all_fns)?;
     crate::mir::semantics::validate_runtime_safety(&all_fns)?;
 
@@ -542,6 +683,30 @@ pub fn compile(
     with_runtime.push_str(&format!(
         "rr_set_source(\"{}\");\n",
         escape_r_string(source_label)
+    ));
+    with_runtime.push_str(&format!(
+        "rr_set_type_mode(\"{}\");\n",
+        type_cfg.mode.as_str()
+    ));
+    with_runtime.push_str(&format!(
+        "rr_set_native_backend(\"{}\");\n",
+        type_cfg.native_backend.as_str()
+    ));
+    with_runtime.push_str(&format!(
+        "rr_set_parallel_mode(\"{}\");\n",
+        parallel_cfg.mode.as_str()
+    ));
+    with_runtime.push_str(&format!(
+        "rr_set_parallel_backend(\"{}\");\n",
+        parallel_cfg.backend.as_str()
+    ));
+    with_runtime.push_str(&format!(
+        "rr_set_parallel_threads({});\n",
+        parallel_cfg.threads
+    ));
+    with_runtime.push_str(&format!(
+        "rr_set_parallel_min_trip({});\n",
+        parallel_cfg.min_trip
     ));
     with_runtime.push_str(&final_output);
     ui.step_line_ok(&format!("Output size: {}", human_size(with_runtime.len())));

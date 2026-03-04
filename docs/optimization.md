@@ -20,6 +20,7 @@
 Core loop (bounded by `RR_OPT_MAX_ITERS`):
 
 1. Structural transforms
+- type-based specialization (`type_specialize`)
 - vectorization (`v_opt`)
 - tail-call optimization (`tco`)
 - immediate cleanup (`simplify_cfg` + `dce`) if changed
@@ -37,6 +38,22 @@ Core loop (bounded by `RR_OPT_MAX_ITERS`):
 - bounds-check elimination (`bce`)
 
 3. Always verify MIR invariants at key boundaries.
+
+Type-specialization policy:
+
+- Guard/intrinsic rewrites are proof-based only.
+- If static proof is missing, optimizer keeps the original safe runtime path.
+
+## SCCP Safety Contract
+
+SCCP constant folding is intentionally fail-safe:
+
+- integer folds (`+`, `-`, `*`, `/`, `%`) use checked arithmetic
+- overflow or invalid arithmetic (`div/mod by zero`, `i64::MIN / -1`) is treated as "not foldable"
+- range-length/index folds use checked length/index math and checked integer casts
+- float-to-int fold is accepted only when finite, integral, and within `i64` range
+
+If any proof step fails, SCCP preserves runtime evaluation instead of panicking or emitting an invalid constant.
 
 ## Inlining Controls
 

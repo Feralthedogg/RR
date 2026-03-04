@@ -81,7 +81,10 @@ jobs:
           cargo install cargo-fuzz --version 0.13.1 --locked
 
       - name: Parser Fuzz Smoke
-        run: cargo fuzz run parser fuzz/corpus/parser -- -max_total_time=20 -rss_limit_mb=2048
+        run: cargo fuzz run parser fuzz/corpus/parser -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
 
       - name: Pipeline Fuzz Smoke
-        run: cargo fuzz run pipeline fuzz/corpus/pipeline -- -max_total_time=20 -rss_limit_mb=2048
+        run: cargo fuzz run pipeline fuzz/corpus/pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
+
+      - name: Type Solver Fuzz Smoke
+        run: cargo fuzz run type_solver fuzz/corpus/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048

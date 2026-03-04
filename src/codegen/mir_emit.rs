@@ -1,6 +1,9 @@
 use crate::error::RR;
-use crate::mir::def::{BinOp, FnIR, Instr, Lit, Terminator, UnaryOp, Value, ValueKind};
+use crate::mir::def::{
+    BinOp, FnIR, Instr, IntrinsicOp, Lit, Terminator, UnaryOp, Value, ValueKind,
+};
 use crate::mir::structurizer::{StructuredBlock, Structurizer};
+use crate::typeck::{PrimTy, ShapeTy};
 use crate::utils::Span;
 use std::collections::HashMap;
 
@@ -236,11 +239,8 @@ impl RBackend {
                 then_bb,
                 else_bb,
             } => {
-                let c = self.resolve_val(*cond, values, params, false);
-                self.write_stmt(&format!(
-                    "if (rr_truthy1({}, \"condition\")) {{ # goto {}/{}",
-                    c, then_bb, else_bb
-                ));
+                let c = self.resolve_cond(*cond, values, params);
+                self.write_stmt(&format!("if ({}) {{ # goto {}/{}", c, then_bb, else_bb));
                 self.write_stmt("}");
             }
             Terminator::Return(Some(v)) => {
@@ -293,8 +293,8 @@ impl RBackend {
                 let cond_span = fn_ir.values[*cond].span;
                 self.emit_mark(cond_span, Some("if"));
                 self.record_span(cond_span);
-                let c = self.resolve_val(*cond, &fn_ir.values, &fn_ir.params, false);
-                self.write_stmt(&format!("if (rr_truthy1({}, \"condition\")) {{", c));
+                let c = self.resolve_cond(*cond, &fn_ir.values, &fn_ir.params);
+                self.write_stmt(&format!("if ({}) {{", c));
                 self.indent += 1;
                 self.emit_structured(then_body, fn_ir)?;
                 self.indent -= 1;
@@ -335,11 +335,11 @@ impl RBackend {
                 let cond_span = fn_ir.values[*cond].span;
                 self.emit_mark(cond_span, Some("loop-cond"));
                 self.record_span(cond_span);
-                let c = self.resolve_val(*cond, &fn_ir.values, &fn_ir.params, false);
+                let c = self.resolve_cond(*cond, &fn_ir.values, &fn_ir.params);
                 if *continue_on_true {
-                    self.write_stmt(&format!("if (!rr_truthy1({}, \"condition\")) break", c));
+                    self.write_stmt(&format!("if (!{}) break", c));
                 } else {
-                    self.write_stmt(&format!("if (rr_truthy1({}, \"condition\")) break", c));
+                    self.write_stmt(&format!("if ({}) break", c));
                 }
                 self.emit_structured(body, fn_ir)?;
 
@@ -423,6 +423,16 @@ impl RBackend {
                 {
                     return format!("paste0({}, {})", l, r);
                 }
+                let ty = val.value_ty;
+                if ty.shape == ShapeTy::Vector && ty.prim == PrimTy::Double {
+                    match op {
+                        BinOp::Add => return format!("rr_parallel_vec_add_f64({}, {})", l, r),
+                        BinOp::Sub => return format!("rr_parallel_vec_sub_f64({}, {})", l, r),
+                        BinOp::Mul => return format!("rr_parallel_vec_mul_f64({}, {})", l, r),
+                        BinOp::Div => return format!("rr_parallel_vec_div_f64({}, {})", l, r),
+                        _ => {}
+                    }
+                }
                 let op_str = match op {
                     BinOp::Add => "+",
                     BinOp::Sub => "-",
@@ -465,6 +475,26 @@ impl RBackend {
                 }
                 format!("{}({})", callee, arg_strs.join(", "))
             }
+            ValueKind::Intrinsic { op, args } => {
+                let mut arg_strs: Vec<String> = Vec::with_capacity(args.len());
+                for a in args {
+                    arg_strs.push(self.resolve_val(*a, values, params, false));
+                }
+                let helper = match op {
+                    IntrinsicOp::VecAddF64 => "rr_intrinsic_vec_add_f64",
+                    IntrinsicOp::VecSubF64 => "rr_intrinsic_vec_sub_f64",
+                    IntrinsicOp::VecMulF64 => "rr_intrinsic_vec_mul_f64",
+                    IntrinsicOp::VecDivF64 => "rr_intrinsic_vec_div_f64",
+                    IntrinsicOp::VecAbsF64 => "rr_intrinsic_vec_abs_f64",
+                    IntrinsicOp::VecLogF64 => "rr_intrinsic_vec_log_f64",
+                    IntrinsicOp::VecSqrtF64 => "rr_intrinsic_vec_sqrt_f64",
+                    IntrinsicOp::VecPmaxF64 => "rr_intrinsic_vec_pmax_f64",
+                    IntrinsicOp::VecPminF64 => "rr_intrinsic_vec_pmin_f64",
+                    IntrinsicOp::VecSumF64 => "rr_intrinsic_vec_sum_f64",
+                    IntrinsicOp::VecMeanF64 => "rr_intrinsic_vec_mean_f64",
+                };
+                format!("{}({})", helper, arg_strs.join(", "))
+            }
             ValueKind::Len { base } => {
                 format!("length({})", self.resolve_val(*base, values, params, false))
             }
@@ -505,6 +535,15 @@ impl RBackend {
                 )
             }
             ValueKind::Load { var } => var.clone(),
+        }
+    }
+
+    fn resolve_cond(&self, cond: usize, values: &[Value], params: &[String]) -> String {
+        let c = self.resolve_val(cond, values, params, false);
+        if values[cond].value_ty.is_logical_scalar_non_na() {
+            c
+        } else {
+            format!("rr_truthy1({}, \"condition\")", c)
         }
     }
 

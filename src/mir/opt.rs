@@ -1,7 +1,7 @@
 use crate::mir::*;
 use crate::syntax::ast::BinOp;
-use std::collections::hash_map::DefaultHasher;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
@@ -19,6 +19,7 @@ pub mod parallel_copy;
 pub mod sccp;
 pub mod simplify;
 pub mod tco;
+pub mod type_specialize;
 pub mod v_opt;
 
 pub struct TachyonEngine;
@@ -409,6 +410,10 @@ impl TachyonEngine {
             let run_heavy_structural = !(heavy_pass_budgeted && iterations > 1);
 
             if run_heavy_structural {
+                let type_spec_changed = type_specialize::optimize(fn_ir);
+                Self::maybe_verify(fn_ir, "After TypeSpecialize");
+                pass_changed |= type_spec_changed;
+
                 // Vectorization
                 let v_stats =
                     v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
@@ -417,6 +422,10 @@ impl TachyonEngine {
                 let v_changed = v_stats.changed();
                 Self::maybe_verify(fn_ir, "After Vectorization");
                 pass_changed |= v_changed;
+
+                let type_spec_post_vec = type_specialize::optimize(fn_ir);
+                Self::maybe_verify(fn_ir, "After TypeSpecialize(PostVec)");
+                pass_changed |= type_spec_post_vec;
 
                 // TCO
                 let tco_changed = tco::optimize(fn_ir);
@@ -668,6 +677,9 @@ impl TachyonEngine {
                         .iter()
                         .all(|a| Self::is_vector_safe_user_expr(fn_ir, *a, user_whitelist, seen))
             }
+            ValueKind::Intrinsic { args, .. } => args
+                .iter()
+                .all(|a| Self::is_vector_safe_user_expr(fn_ir, *a, user_whitelist, seen)),
             ValueKind::Phi { args } => args
                 .iter()
                 .all(|(a, _)| Self::is_vector_safe_user_expr(fn_ir, *a, user_whitelist, seen)),
@@ -1033,10 +1045,7 @@ impl TachyonEngine {
         idx_id: ValueId,
         facts: &FxHashMap<ValueId, crate::mir::flow::Facts>,
     ) -> bool {
-        let f = facts
-            .get(&idx_id)
-            .cloned()
-            .unwrap_or(Facts::empty());
+        let f = facts.get(&idx_id).cloned().unwrap_or(Facts::empty());
 
         // Basic check: If it's ONE_BASED and fits in length.
         // Proving "fits in length" is hard without symbolic intervals.
@@ -1071,8 +1080,7 @@ impl TachyonEngine {
                 lhs,
                 rhs,
             } => {
-                if let ValueKind::Const(Lit::Int(1)) = &fn_ir.values[*rhs].kind
-                {
+                if let ValueKind::Const(Lit::Int(1)) = &fn_ir.values[*rhs].kind {
                     return self.is_loop_induction(fn_ir, *lhs, base_id);
                 }
                 false

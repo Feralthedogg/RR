@@ -148,7 +148,15 @@ Current lexer limits:
 - Type hints:
   - params: `fn add(a: float, b: int) { ... }`
   - return: `fn add(a: float, b: float) -> float { ... }`
+  - generic hints: `vector<float>`, `matrix<float>`, `option<int>`, `list<float>`, `box<float>`
+  - nested generics are accepted, e.g. `list<box<float>>`
+  - supported primitive names: `int`, `float`, `bool`, `str`, `any`, `null`
   - parser accepts both `->` and `=>` as return-arrow tokens
+
+Type mode behavior:
+
+- `strict` (default): compiler reports hint conflicts, call mismatches, and unresolved strict positions (`E1010`/`E1011`/`E1012`)
+- `gradual`: unresolved regions keep runtime-guarded dynamic behavior
 
 ### Control Flow
 
@@ -274,6 +282,12 @@ From `src/hir/lower.rs`:
   - bools: `bool`, `boolean`, `logical`
   - strings: `str`, `string`, `char`, `character`
   - `any`, `null`
+- Generic containers lowered from type hints:
+  - `vector<T>`
+  - `matrix<T>`
+  - `option<T>`
+  - `list<T>`
+  - `box<T>`
 - If a function/lambda body has no explicit `return` statements, the trailing expression statement is converted to an implicit return
 - Lambdas are lambda-lifted; captures are packed through runtime closure helpers
 

@@ -122,6 +122,7 @@ fn value_reads_var(fn_ir: &FnIR, src: ValueId, var: &VarId) -> bool {
         }
         ValueKind::Unary { rhs, .. } => value_reads_var(fn_ir, *rhs, var),
         ValueKind::Call { args, .. } => args.iter().any(|a| value_reads_var(fn_ir, *a, var)),
+        ValueKind::Intrinsic { args, .. } => args.iter().any(|a| value_reads_var(fn_ir, *a, var)),
         ValueKind::Phi { .. } => false,
         ValueKind::Index1D { base, idx, .. } => {
             value_reads_var(fn_ir, *base, var) || value_reads_var(fn_ir, *idx, var)
@@ -193,6 +194,13 @@ fn replace_var_read(fn_ir: &mut FnIR, src: ValueId, old_var: &VarId, new_var: &V
                 args: new_args,
                 names,
             }
+        }
+        ValueKind::Intrinsic { op, args } => {
+            let new_args = args
+                .iter()
+                .map(|a| replace_var_read(fn_ir, *a, old_var, new_var))
+                .collect();
+            ValueKind::Intrinsic { op, args: new_args }
         }
         ValueKind::Phi { .. } => {
             if let Some(name) = &val.origin_var {

@@ -1,0 +1,11 @@
+fn f(xs: list<box<float>>, n: int) -> float {
+  let x = seq_len(n);
+  let y = abs((x * 2L) + 1L);
+  if (n > 3L) {
+    return mean(y);
+  } else {
+    return sum(y);
+  }
+}
+
+print(f(list(c(1.0), c(2.0)), 5L));

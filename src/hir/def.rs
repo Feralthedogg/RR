@@ -1,6 +1,5 @@
-
-use rustc_hash::FxHashMap;
 use crate::utils::Span;
+use rustc_hash::FxHashMap;
 
 // ----- IDs -----
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -26,6 +25,7 @@ pub enum Ty {
     Char,
     Vector(Box<Ty>),
     List(Box<Ty>),
+    Box(Box<Ty>),
     DataFrame(Vec<(SymbolId, Ty)>), // schema: col -> type
     Option(Box<Ty>),                // Some/None
     Result(Box<Ty>, Box<Ty>),       // Ok/Err

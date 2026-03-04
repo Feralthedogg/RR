@@ -1,0 +1,17 @@
+fn ok(xs: list<vector<float>>) -> int {
+  return length(xs);
+}
+
+fn bad(xs: list<box<float>>, n: int) -> float {
+  let x = seq_len(n);
+  let y = abs((x * 3L) + 2L);
+  return mean(y);
+}
+
+fn main() -> float {
+  let seed = list(c(1.0, 2.0), c(3.0));
+  print(ok(seed));
+  return bad(seed, 6L);
+}
+
+print(main());

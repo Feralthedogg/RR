@@ -278,9 +278,27 @@ impl MirSCCP {
     fn eval_binary(&self, op: BinOp, l: Lattice, r: Lattice) -> Lattice {
         match (l, r) {
             (Lattice::Constant(Lit::Int(lv)), Lattice::Constant(Lit::Int(rv))) => match op {
-                BinOp::Add => Lattice::Constant(Lit::Int(lv + rv)),
-                BinOp::Sub => Lattice::Constant(Lit::Int(lv - rv)),
-                BinOp::Mul => Lattice::Constant(Lit::Int(lv * rv)),
+                // Never panic in optimizer: overflow means "not safely foldable".
+                BinOp::Add => match lv.checked_add(rv) {
+                    Some(v) => Lattice::Constant(Lit::Int(v)),
+                    None => Lattice::Bottom,
+                },
+                BinOp::Sub => match lv.checked_sub(rv) {
+                    Some(v) => Lattice::Constant(Lit::Int(v)),
+                    None => Lattice::Bottom,
+                },
+                BinOp::Mul => match lv.checked_mul(rv) {
+                    Some(v) => Lattice::Constant(Lit::Int(v)),
+                    None => Lattice::Bottom,
+                },
+                BinOp::Div => match lv.checked_div(rv) {
+                    Some(v) => Lattice::Constant(Lit::Int(v)),
+                    None => Lattice::Bottom,
+                },
+                BinOp::Mod => match lv.checked_rem(rv) {
+                    Some(v) => Lattice::Constant(Lit::Int(v)),
+                    None => Lattice::Bottom,
+                },
                 BinOp::Lt => Lattice::Constant(Lit::Bool(lv < rv)),
                 BinOp::Le => Lattice::Constant(Lit::Bool(lv <= rv)),
                 BinOp::Gt => Lattice::Constant(Lit::Bool(lv > rv)),
@@ -413,11 +431,11 @@ impl MirSCCP {
             ValueKind::Range { start, end } => {
                 let s = self.const_int_from_value(*start, fn_ir, lattice)?;
                 let e = self.const_int_from_value(*end, fn_ir, lattice)?;
-                Some((e - s).abs() + 1)
+                Self::checked_range_len(s, e)
             }
             ValueKind::Indices { base } => self.try_const_len(*base, fn_ir, lattice),
             ValueKind::Call { callee, args, .. } if (callee == "c" || callee == "list") => {
-                Some(args.len() as i64)
+                i64::try_from(args.len()).ok()
             }
             ValueKind::Call { callee, args, .. } if callee == "seq_along" && args.len() == 1 => {
                 self.try_const_len(args[0], fn_ir, lattice)
@@ -444,24 +462,20 @@ impl MirSCCP {
             ValueKind::Range { start, end } => {
                 let s = self.const_int_from_value(*start, fn_ir, lattice)?;
                 let e = self.const_int_from_value(*end, fn_ir, lattice)?;
-                let len = (e - s).abs() + 1;
-                if index1 > len {
-                    return None;
-                }
-                let step = if e >= s { 1 } else { -1 };
-                Some(Lit::Int(s + (index1 - 1) * step))
+                let v = Self::checked_range_at_1based(s, e, index1)?;
+                Some(Lit::Int(v))
             }
             ValueKind::Indices { base: src } => {
                 let len = self.try_const_len(*src, fn_ir, lattice)?;
                 if index1 > len {
                     return None;
                 }
-                Some(Lit::Int(index1 - 1))
+                Some(Lit::Int(index1.checked_sub(1)?))
             }
             ValueKind::Call { callee, args, .. }
                 if (callee == "c" || callee == "list") && !args.is_empty() =>
             {
-                let idx0 = (index1 - 1) as usize;
+                let idx0 = usize::try_from(index1.checked_sub(1)?).ok()?;
                 if idx0 >= args.len() {
                     return None;
                 }
@@ -647,7 +661,7 @@ impl MirSCCP {
         let lit = self.const_lit_from_value(id, fn_ir, lattice)?;
         match lit {
             Lit::Int(i) => Some(i),
-            Lit::Float(f) if (f.fract()).abs() < 1e-12 => Some(f as i64),
+            Lit::Float(f) => Self::float_to_i64_exact(f),
             _ => None,
         }
     }
@@ -655,7 +669,7 @@ impl MirSCCP {
     fn const_index_value(&self, state: &Lattice) -> Option<i64> {
         match state {
             Lattice::Constant(Lit::Int(i)) => Some(*i),
-            Lattice::Constant(Lit::Float(f)) if (f.fract()).abs() < 1e-12 => Some(*f as i64),
+            Lattice::Constant(Lit::Float(f)) => Self::float_to_i64_exact(*f),
             _ => None,
         }
     }
@@ -671,9 +685,48 @@ impl MirSCCP {
     fn lit_from_f64(v: f64) -> Lit {
         let rounded = v.round();
         if (v - rounded).abs() < 1e-12 {
-            Lit::Int(rounded as i64)
+            match Self::float_to_i64_exact(rounded) {
+                Some(i) => Lit::Int(i),
+                None => Lit::Float(v),
+            }
         } else {
             Lit::Float(v)
+        }
+    }
+
+    fn float_to_i64_exact(f: f64) -> Option<i64> {
+        if !f.is_finite() {
+            return None;
+        }
+        if (f.fract()).abs() >= 1e-12 {
+            return None;
+        }
+        if f < i64::MIN as f64 || f > i64::MAX as f64 {
+            return None;
+        }
+        Some(f as i64)
+    }
+
+    fn checked_range_len(start: i64, end: i64) -> Option<i64> {
+        let diff = i128::from(end) - i128::from(start);
+        let abs = if diff < 0 { -diff } else { diff };
+        let len = abs.checked_add(1)?;
+        i64::try_from(len).ok()
+    }
+
+    fn checked_range_at_1based(start: i64, end: i64, index1: i64) -> Option<i64> {
+        if index1 < 1 {
+            return None;
+        }
+        let len = Self::checked_range_len(start, end)?;
+        if index1 > len {
+            return None;
+        }
+        let offset = index1.checked_sub(1)?;
+        if end >= start {
+            start.checked_add(offset)
+        } else {
+            start.checked_sub(offset)
         }
     }
 
@@ -1355,5 +1408,87 @@ mod tests {
             opt.values[log].kind,
             ValueKind::Const(Lit::Int(1))
         ));
+    }
+
+    #[test]
+    fn test_div_overflow_is_not_folded() {
+        let mut fn_ir = FnIR::new("div_overflow".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let min_i64 = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(i64::MIN)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let neg_one = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let div = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Div,
+                lhs: min_i64,
+                rhs: neg_one,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(div));
+
+        let sccp = MirSCCP::new();
+        let mut opt = fn_ir.clone();
+        let _ = sccp.optimize(&mut opt);
+        assert!(
+            !matches!(opt.values[div].kind, ValueKind::Const(_)),
+            "overflowing i64::MIN / -1 must stay runtime-evaluated"
+        );
+    }
+
+    #[test]
+    fn test_range_len_overflow_is_not_folded() {
+        let mut fn_ir = FnIR::new("range_len_overflow".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let start = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(i64::MIN)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let end = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(i64::MAX)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let range = fn_ir.add_value(
+            ValueKind::Range { start, end },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let len = fn_ir.add_value(
+            ValueKind::Len { base: range },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(len));
+
+        let sccp = MirSCCP::new();
+        let mut opt = fn_ir.clone();
+        let _ = sccp.optimize(&mut opt);
+        assert!(
+            !matches!(opt.values[len].kind, ValueKind::Const(_)),
+            "range length overflow must not fold to an invalid constant"
+        );
     }
 }

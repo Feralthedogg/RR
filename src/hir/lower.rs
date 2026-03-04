@@ -472,22 +472,55 @@ impl Lowerer {
         }
     }
 
-    fn parse_type_hint_name(name: &str) -> Option<Ty> {
-        match name.to_ascii_lowercase().as_str() {
-            "any" => Some(Ty::Any),
-            "null" => Some(Ty::Null),
-            "bool" | "boolean" | "logical" => Some(Ty::Logical),
-            "int" | "integer" | "i32" | "i64" | "isize" => Some(Ty::Int),
-            "float" | "double" | "numeric" | "f32" | "f64" => Some(Ty::Double),
-            "str" | "string" | "char" | "character" => Some(Ty::Char),
-            _ => None,
+    fn parse_type_hint_expr(expr: &ast::TypeExpr) -> Option<Ty> {
+        match expr {
+            ast::TypeExpr::Named(name) => match name.to_ascii_lowercase().as_str() {
+                "any" => Some(Ty::Any),
+                "null" => Some(Ty::Null),
+                "bool" | "boolean" | "logical" => Some(Ty::Logical),
+                "int" | "integer" | "i32" | "i64" | "isize" => Some(Ty::Int),
+                "float" | "double" | "numeric" | "f32" | "f64" => Some(Ty::Double),
+                "str" | "string" | "char" | "character" => Some(Ty::Char),
+                _ => None,
+            },
+            ast::TypeExpr::Generic { base, args } => {
+                let base = base.to_ascii_lowercase();
+                if base == "vector" && args.len() == 1 {
+                    return Some(Ty::Vector(Box::new(
+                        Self::parse_type_hint_expr(&args[0]).unwrap_or(Ty::Any),
+                    )));
+                }
+                if base == "matrix" && args.len() == 1 {
+                    // RR currently models matrix as vector-valued numeric container in HIR type.
+                    // Keep representation simple and conservative for downstream lowering.
+                    return Some(Ty::Vector(Box::new(
+                        Self::parse_type_hint_expr(&args[0]).unwrap_or(Ty::Any),
+                    )));
+                }
+                if base == "option" && args.len() == 1 {
+                    return Some(Ty::Option(Box::new(
+                        Self::parse_type_hint_expr(&args[0]).unwrap_or(Ty::Any),
+                    )));
+                }
+                if base == "list" && args.len() == 1 {
+                    return Some(Ty::List(Box::new(
+                        Self::parse_type_hint_expr(&args[0]).unwrap_or(Ty::Any),
+                    )));
+                }
+                if base == "box" && args.len() == 1 {
+                    return Some(Ty::Box(Box::new(
+                        Self::parse_type_hint_expr(&args[0]).unwrap_or(Ty::Any),
+                    )));
+                }
+                None
+            }
         }
     }
 
     fn lower_lambda_expr(
         &mut self,
         params: Vec<ast::FnParam>,
-        ret_ty_hint: Option<String>,
+        ret_ty_hint: Option<ast::TypeExpr>,
         body: ast::Block,
         span: Span,
     ) -> RR<HirExpr> {
@@ -521,8 +554,8 @@ impl Lowerer {
         for (p, psym) in params.into_iter().zip(param_syms.into_iter()) {
             let ty_hint = p
                 .ty_hint
-                .as_deref()
-                .and_then(Self::parse_type_hint_name)
+                .as_ref()
+                .and_then(Self::parse_type_hint_expr)
                 .or_else(|| p.default.as_ref().and_then(Self::infer_param_type_hint));
             let default = if let Some(d) = p.default {
                 Some(self.lower_expr(d)?)
@@ -548,7 +581,7 @@ impl Lowerer {
             name: lambda_sym,
             params: hir_params,
             has_varargs: false,
-            ret_ty: ret_ty_hint.as_deref().and_then(Self::parse_type_hint_name),
+            ret_ty: ret_ty_hint.as_ref().and_then(Self::parse_type_hint_expr),
             body: hir_body,
             attrs: HirFnAttrs {
                 inline_hint: InlineHint::Default,
@@ -641,7 +674,7 @@ impl Lowerer {
         &mut self,
         name: String,
         params: Vec<ast::FnParam>,
-        ret_ty_hint: Option<String>,
+        ret_ty_hint: Option<ast::TypeExpr>,
         body: ast::Block,
         span: Span,
     ) -> RR<HirFn> {
@@ -666,8 +699,8 @@ impl Lowerer {
         for (p, psym) in params.into_iter().zip(param_syms.into_iter()) {
             let ty_hint = p
                 .ty_hint
-                .as_deref()
-                .and_then(Self::parse_type_hint_name)
+                .as_ref()
+                .and_then(Self::parse_type_hint_expr)
                 .or_else(|| p.default.as_ref().and_then(Self::infer_param_type_hint));
             let default = if let Some(d) = p.default {
                 Some(self.lower_expr(d)?)
@@ -695,7 +728,7 @@ impl Lowerer {
         // but the instruction implies they should be used as variables.
         // To maintain syntactic correctness, we'll define them with their original literal values.
         let has_varargs = false;
-        let ret_ty = ret_ty_hint.as_deref().and_then(Self::parse_type_hint_name);
+        let ret_ty = ret_ty_hint.as_ref().and_then(Self::parse_type_hint_expr);
 
         Ok(HirFn {
             id: fn_id,
@@ -752,7 +785,7 @@ impl Lowerer {
                 Ok(HirStmt::Let {
                     local: lid,
                     name: sym,
-                    ty: ty_hint.as_deref().and_then(Self::parse_type_hint_name),
+                    ty: ty_hint.as_ref().and_then(Self::parse_type_hint_expr),
                     init: val,
                     span: stmt.span,
                 })

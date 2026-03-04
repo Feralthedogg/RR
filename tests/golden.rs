@@ -1,6 +1,6 @@
 mod common;
 
-use common::{compile_rr, normalize, rscript_available, rscript_path, run_rscript, RunResult};
+use common::{RunResult, compile_rr, normalize, rscript_available, rscript_path, run_rscript};
 use std::fs;
 use std::path::PathBuf;
 

@@ -1,6 +1,6 @@
 mod common;
 
-use RR::compiler::{compile, OptLevel};
+use RR::compiler::{OptLevel, compile};
 use RR::error::{RRCode, Stage};
 use common::unique_dir;
 use std::fs;

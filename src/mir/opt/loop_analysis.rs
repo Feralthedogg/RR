@@ -5,8 +5,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 #[derive(Debug, Clone)]
 pub struct LoopInfo {
     pub header: BlockId,
-    pub latch: BlockId,         // The block that jumps back to header
-    pub exits: Vec<BlockId>,    // Blocks outside loop targeted by loop blocks
+    pub latch: BlockId,           // The block that jumps back to header
+    pub exits: Vec<BlockId>,      // Blocks outside loop targeted by loop blocks
     pub body: FxHashSet<BlockId>, // All blocks in the loop
 
     pub is_seq_len: Option<ValueId>,   // If it's 1:N, stores N

@@ -16,7 +16,10 @@ fn licm_does_not_speculate_potentially_failing_call_from_zero_iter_loop() {
     };
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let sandbox_root = root.join("target").join("tests").join("licm_speculation_safety");
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("licm_speculation_safety");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "proj");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");

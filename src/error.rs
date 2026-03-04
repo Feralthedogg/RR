@@ -12,6 +12,12 @@ pub enum RRCode {
     E1001,   // Undefined Variable
     E1002,   // Type Mismatch
     E1003,   // Definite Assignment Violation
+    E1010,   // Type Hint Conflict
+    E1011,   // Call Signature Type Mismatch
+    E1012,   // Unresolved Type In Strict Mode
+    E1030,   // Parallel Safety Proof Failed (required mode)
+    E1031,   // Parallel Backend Load/Call Failure (required mode)
+    E1032,   // Non-deterministic Parallel Reduction Rejected
     E2001,   // Bound Check Failure
     E2007,   // Index out of bounds (logical)
     E9999,   // Internal Error
@@ -25,6 +31,12 @@ impl RRCode {
             Self::E1001 => "E1001",
             Self::E1002 => "E1002",
             Self::E1003 => "E1003",
+            Self::E1010 => "E1010",
+            Self::E1011 => "E1011",
+            Self::E1012 => "E1012",
+            Self::E1030 => "E1030",
+            Self::E1031 => "E1031",
+            Self::E1032 => "E1032",
             Self::E2001 => "E2001",
             Self::E2007 => "E2007",
             Self::E9999 => "E9999",
@@ -38,6 +50,12 @@ impl RRCode {
             "E1001" => Some(Self::E1001),
             "E1002" => Some(Self::E1002),
             "E1003" => Some(Self::E1003),
+            "E1010" => Some(Self::E1010),
+            "E1011" => Some(Self::E1011),
+            "E1012" => Some(Self::E1012),
+            "E1030" => Some(Self::E1030),
+            "E1031" => Some(Self::E1031),
+            "E1032" => Some(Self::E1032),
             "E2001" => Some(Self::E2001),
             "E2007" => Some(Self::E2007),
             "E9999" => Some(Self::E9999),

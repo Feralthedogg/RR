@@ -6,6 +6,16 @@ fn run_compile(source: &str, file_name: &str) -> (bool, String, String) {
     run_compile_case("runtime_static_errors", source, file_name, "-O1", &[])
 }
 
+fn run_compile_strict(source: &str, file_name: &str) -> (bool, String, String) {
+    run_compile_case(
+        "runtime_static_errors",
+        source,
+        file_name,
+        "-O1",
+        &[("RR_TYPE_MODE", "strict")],
+    )
+}
+
 #[test]
 fn static_if_na_condition_must_fail() {
     let src = r#"
@@ -111,6 +121,23 @@ main();
     assert!(
         stdout.contains("out of bounds"),
         "missing index error:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn strict_mode_reports_type_hint_conflict() {
+    let src = r#"
+fn bad(a: float) -> float {
+  return "oops";
+}
+bad(1.0);
+"#;
+    let (ok, stdout, _stderr) = run_compile_strict(src, "strict_type_conflict.rr");
+    assert!(!ok, "strict compile must fail for hint conflict");
+    assert!(
+        stdout.contains("E1010"),
+        "missing strict type conflict error code:\n{}",
         stdout
     );
 }

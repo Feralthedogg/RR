@@ -3,6 +3,7 @@ use crate::hir::def as hir;
 use crate::mir::flow::Facts;
 use crate::mir::*;
 use crate::syntax::ast::{BinOp, Lit};
+use crate::typeck::solver::{hir_ty_to_type_state, hir_ty_to_type_term};
 use crate::utils::Span;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -265,6 +266,27 @@ impl<'a> MirLowerer<'a> {
     // Call update: terminate must track preds
 
     pub fn lower_fn(mut self, f: hir::HirFn) -> RR<FnIR> {
+        self.fn_ir.param_ty_hints = f
+            .params
+            .iter()
+            .map(|p| {
+                p.ty.as_ref()
+                    .map(hir_ty_to_type_state)
+                    .unwrap_or(crate::typeck::TypeState::unknown())
+            })
+            .collect();
+        self.fn_ir.param_term_hints = f
+            .params
+            .iter()
+            .map(|p| {
+                p.ty.as_ref()
+                    .map(hir_ty_to_type_term)
+                    .unwrap_or(crate::typeck::TypeTerm::Any)
+            })
+            .collect();
+        self.fn_ir.ret_ty_hint = f.ret_ty.as_ref().map(hir_ty_to_type_state);
+        self.fn_ir.ret_term_hint = f.ret_ty.as_ref().map(hir_ty_to_type_term);
+
         // 1. Bind parameters in the entry block
         for (i, param) in f.params.iter().enumerate() {
             let param_name = self.symbols[&param.name].clone(); // Clone early to avoid borrow conflict

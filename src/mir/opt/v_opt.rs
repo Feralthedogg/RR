@@ -705,7 +705,24 @@ pub(crate) fn is_builtin_vector_safe_call(callee: &str, arity: usize) -> bool {
     }
 }
 
-fn is_vector_safe_call(callee: &str, arity: usize, user_call_whitelist: &FxHashSet<String>) -> bool {
+fn intrinsic_for_call(callee: &str, arity: usize) -> Option<IntrinsicOp> {
+    match (callee, arity) {
+        ("abs", 1) => Some(IntrinsicOp::VecAbsF64),
+        ("log", 1) => Some(IntrinsicOp::VecLogF64),
+        ("sqrt", 1) => Some(IntrinsicOp::VecSqrtF64),
+        ("pmax", 2) => Some(IntrinsicOp::VecPmaxF64),
+        ("pmin", 2) => Some(IntrinsicOp::VecPminF64),
+        ("sum", 1) => Some(IntrinsicOp::VecSumF64),
+        ("mean", 1) => Some(IntrinsicOp::VecMeanF64),
+        _ => None,
+    }
+}
+
+fn is_vector_safe_call(
+    callee: &str,
+    arity: usize,
+    user_call_whitelist: &FxHashSet<String>,
+) -> bool {
     is_builtin_vector_safe_call(callee, arity) || user_call_whitelist.contains(callee)
 }
 
@@ -777,6 +794,9 @@ fn is_loop_invariant_scalar_expr(
                         .iter()
                         .all(|a| rec(fn_ir, *a, iv_phi, user_call_whitelist, seen))
             }
+            ValueKind::Intrinsic { args, .. } => args
+                .iter()
+                .all(|a| rec(fn_ir, *a, iv_phi, user_call_whitelist, seen)),
             ValueKind::Phi { args } => args
                 .iter()
                 .all(|(a, _)| rec(fn_ir, *a, iv_phi, user_call_whitelist, seen)),
@@ -832,6 +852,9 @@ fn is_vector_safe_call_chain_expr(
                         .iter()
                         .all(|a| rec(fn_ir, *a, iv_phi, _lp, user_call_whitelist, seen))
             }
+            ValueKind::Intrinsic { args, .. } => args
+                .iter()
+                .all(|a| rec(fn_ir, *a, iv_phi, _lp, user_call_whitelist, seen)),
             ValueKind::Index1D {
                 base: _base,
                 idx,
@@ -1565,12 +1588,22 @@ fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> boo
                     });
                 }
             }
-            let mapped_val = fn_ir.add_value(
+            let mapped_args_vals: Vec<ValueId> = mapped_args.iter().map(|(a, _)| *a).collect();
+            let mapped_kind = if let Some(op) = intrinsic_for_call(&callee, mapped_args_vals.len())
+            {
+                ValueKind::Intrinsic {
+                    op,
+                    args: mapped_args_vals,
+                }
+            } else {
                 ValueKind::Call {
                     callee: callee.clone(),
-                    args: mapped_args.iter().map(|(a, _)| *a).collect(),
+                    args: mapped_args_vals,
                     names: vec![None; mapped_args.len()],
-                },
+                }
+            };
+            let mapped_val = fn_ir.add_value(
+                mapped_kind,
                 crate::utils::Span::dummy(),
                 crate::mir::def::Facts::empty(),
                 None,
@@ -2327,6 +2360,34 @@ fn materialize_vector_expr(
                 )
             }
         }
+        ValueKind::Intrinsic { op, args } => {
+            let mut new_args = Vec::with_capacity(args.len());
+            let mut changed = false;
+            for a in args {
+                let na = materialize_vector_expr(
+                    fn_ir,
+                    a,
+                    iv_phi,
+                    idx_vec,
+                    lp,
+                    memo,
+                    allow_any_base,
+                    require_safe_index,
+                )?;
+                changed |= na != a;
+                new_args.push(na);
+            }
+            if !changed {
+                root
+            } else {
+                fn_ir.add_value(
+                    ValueKind::Intrinsic { op, args: new_args },
+                    span,
+                    facts,
+                    None,
+                )
+            }
+        }
         ValueKind::Index1D {
             base,
             idx,
@@ -2530,6 +2591,11 @@ fn same_length_proven(fn_ir: &FnIR, a: ValueId, b: ValueId) -> bool {
     let a = canonical_value(fn_ir, a);
     let b = canonical_value(fn_ir, b);
     if a == b {
+        return true;
+    }
+    if fn_ir.values[a].value_ty.len_sym.is_some()
+        && fn_ir.values[a].value_ty.len_sym == fn_ir.values[b].value_ty.len_sym
+    {
         return true;
     }
     match (vector_length_key(fn_ir, a), vector_length_key(fn_ir, b)) {

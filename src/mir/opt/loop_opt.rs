@@ -131,7 +131,7 @@ impl MirLoopOptimizer {
                 let v_lhs = self.try_vectorize_value(fn_ir, lhs, iv_id)?;
                 let v_rhs = self.try_vectorize_value(fn_ir, rhs, iv_id)?;
 
-                Some(fn_ir.add_value(
+                let new_id = fn_ir.add_value(
                     ValueKind::Binary {
                         op,
                         lhs: v_lhs,
@@ -140,7 +140,10 @@ impl MirLoopOptimizer {
                     span,
                     facts,
                     None,
-                ))
+                );
+                fn_ir.values[new_id].value_ty = fn_ir.values[val_id].value_ty;
+                fn_ir.values[new_id].value_term = fn_ir.values[val_id].value_term.clone();
+                Some(new_id)
             }
             ValueKind::Index1D { base, idx, .. } => {
                 if idx == iv_id {

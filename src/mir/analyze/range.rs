@@ -299,6 +299,7 @@ fn ensure_value_range_inner(
         }
         ValueKind::Param { .. }
         | ValueKind::Call { .. }
+        | ValueKind::Intrinsic { .. }
         | ValueKind::Index1D { .. }
         | ValueKind::Index2D { .. }
         | ValueKind::Load { .. }
@@ -390,50 +391,51 @@ fn narrow_facts(facts: &mut RangeFacts, cond_id: ValueId, is_then: bool, fn_ir: 
 
 fn add_bound(a: &SymbolicBound, b: &SymbolicBound, is_lo: bool) -> SymbolicBound {
     match (a, b) {
-        (SymbolicBound::Const(x), SymbolicBound::Const(y)) => SymbolicBound::Const(x + y),
+        (SymbolicBound::Const(x), SymbolicBound::Const(y)) => x
+            .checked_add(*y)
+            .map(SymbolicBound::Const)
+            .unwrap_or_else(|| unknown_bound(is_lo)),
         (SymbolicBound::LenOf(base, off), SymbolicBound::Const(c))
-        | (SymbolicBound::Const(c), SymbolicBound::LenOf(base, off)) => {
-            SymbolicBound::LenOf(*base, off + c)
-        }
+        | (SymbolicBound::Const(c), SymbolicBound::LenOf(base, off)) => off
+            .checked_add(*c)
+            .map(|sum| SymbolicBound::LenOf(*base, sum))
+            .unwrap_or_else(|| unknown_bound(is_lo)),
         (SymbolicBound::VarPlus(v, off), SymbolicBound::Const(c))
-        | (SymbolicBound::Const(c), SymbolicBound::VarPlus(v, off)) => {
-            SymbolicBound::VarPlus(*v, off + c)
-        }
-        _ => {
-            if is_lo {
-                SymbolicBound::NegInf
-            } else {
-                SymbolicBound::PosInf
-            }
-        }
+        | (SymbolicBound::Const(c), SymbolicBound::VarPlus(v, off)) => off
+            .checked_add(*c)
+            .map(|sum| SymbolicBound::VarPlus(*v, sum))
+            .unwrap_or_else(|| unknown_bound(is_lo)),
+        _ => unknown_bound(is_lo),
     }
 }
 
 fn sub_bound(a: &SymbolicBound, b: &SymbolicBound, is_lo: bool) -> SymbolicBound {
     match (a, b) {
-        (SymbolicBound::Const(x), SymbolicBound::Const(y)) => SymbolicBound::Const(x - y),
-        (SymbolicBound::LenOf(base, off), SymbolicBound::Const(c)) => {
-            SymbolicBound::LenOf(*base, off - c)
-        }
-        (SymbolicBound::VarPlus(v, off), SymbolicBound::Const(c)) => {
-            SymbolicBound::VarPlus(*v, off - c)
-        }
+        (SymbolicBound::Const(x), SymbolicBound::Const(y)) => x
+            .checked_sub(*y)
+            .map(SymbolicBound::Const)
+            .unwrap_or_else(|| unknown_bound(is_lo)),
+        (SymbolicBound::LenOf(base, off), SymbolicBound::Const(c)) => off
+            .checked_sub(*c)
+            .map(|diff| SymbolicBound::LenOf(*base, diff))
+            .unwrap_or_else(|| unknown_bound(is_lo)),
+        (SymbolicBound::VarPlus(v, off), SymbolicBound::Const(c)) => off
+            .checked_sub(*c)
+            .map(|diff| SymbolicBound::VarPlus(*v, diff))
+            .unwrap_or_else(|| unknown_bound(is_lo)),
         // (v + a) - (v + b) -> const (a - b)
-        (SymbolicBound::VarPlus(v1, off1), SymbolicBound::VarPlus(v2, off2)) if v1 == v2 => {
-            SymbolicBound::Const(off1 - off2)
-        }
+        (SymbolicBound::VarPlus(v1, off1), SymbolicBound::VarPlus(v2, off2)) if v1 == v2 => off1
+            .checked_sub(*off2)
+            .map(SymbolicBound::Const)
+            .unwrap_or_else(|| unknown_bound(is_lo)),
         (SymbolicBound::LenOf(base1, off1), SymbolicBound::LenOf(base2, off2))
             if base1 == base2 =>
         {
-            SymbolicBound::Const(off1 - off2)
+            off1.checked_sub(*off2)
+                .map(SymbolicBound::Const)
+                .unwrap_or_else(|| unknown_bound(is_lo))
         }
-        _ => {
-            if is_lo {
-                SymbolicBound::NegInf
-            } else {
-                SymbolicBound::PosInf
-            }
-        }
+        _ => unknown_bound(is_lo),
     }
 }
 
@@ -468,11 +470,36 @@ fn bound_max(current: &SymbolicBound, candidate: &SymbolicBound) -> SymbolicBoun
 impl SymbolicBound {
     fn shift(&self, delta: i64) -> SymbolicBound {
         match self {
-            SymbolicBound::Const(n) => SymbolicBound::Const(n + delta),
-            SymbolicBound::LenOf(b, off) => SymbolicBound::LenOf(*b, off + delta),
-            SymbolicBound::VarPlus(v, off) => SymbolicBound::VarPlus(*v, off + delta),
+            SymbolicBound::Const(n) => n
+                .checked_add(delta)
+                .map(SymbolicBound::Const)
+                .unwrap_or_else(|| overflow_bound_from_delta(delta)),
+            SymbolicBound::LenOf(b, off) => off
+                .checked_add(delta)
+                .map(|sum| SymbolicBound::LenOf(*b, sum))
+                .unwrap_or_else(|| overflow_bound_from_delta(delta)),
+            SymbolicBound::VarPlus(v, off) => off
+                .checked_add(delta)
+                .map(|sum| SymbolicBound::VarPlus(*v, sum))
+                .unwrap_or_else(|| overflow_bound_from_delta(delta)),
             SymbolicBound::NegInf => SymbolicBound::NegInf,
             SymbolicBound::PosInf => SymbolicBound::PosInf,
         }
+    }
+}
+
+fn unknown_bound(is_lo: bool) -> SymbolicBound {
+    if is_lo {
+        SymbolicBound::NegInf
+    } else {
+        SymbolicBound::PosInf
+    }
+}
+
+fn overflow_bound_from_delta(delta: i64) -> SymbolicBound {
+    if delta < 0 {
+        SymbolicBound::NegInf
+    } else {
+        SymbolicBound::PosInf
     }
 }

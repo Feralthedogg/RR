@@ -31,14 +31,21 @@ Core:
   - `blocks: Vec<Block>`
   - `values: Vec<Value>`
   - `entry`, `body_head`
+  - type metadata:
+    - `param_ty_hints`, `param_term_hints`
+    - `ret_ty_hint`, `ret_term_hint`
+    - `inferred_ret_ty`, `inferred_ret_term`
   - `unsupported_dynamic` + `fallback_reasons`
 - `Block`:
   - instruction list + terminator
 - `ValueKind`:
   - SSA primitives: `Const`, `Phi`, `Param`, `Load`
   - structural primitives: `Len`, `Indices`, `Range`
-  - compute: `Binary`, `Unary`, `Call`
+  - compute: `Binary`, `Unary`, `Call`, `Intrinsic`
   - memory-like access: `Index1D`, `Index2D`
+- `Value` carries static analysis metadata used by optimizer/codegen:
+  - `value_ty` (type lattice state)
+  - `value_term` (structural generic term)
 - `Instr`:
   - `Assign`, `Eval`
   - `StoreIndex1D`, `StoreIndex2D`
@@ -49,6 +56,7 @@ Core:
 
 - Phi nodes must be eliminated before codegen.
 - Value/Block IDs must remain valid under transforms.
+- `value_ty`/`value_term` facts must remain conservative under rewrites.
 - Runtime safety validator checks static error cases (e.g., guaranteed division by zero).
 
 ## Why MIR Is Central

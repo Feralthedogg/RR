@@ -99,7 +99,8 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
         for ins in &block.instrs {
             match ins {
                 Instr::StoreIndex1D { idx, span, .. } => {
-                    if let Some(lit) = eval_const(fn_ir, *idx, &mut memo, &mut FxHashSet::default()) {
+                    if let Some(lit) = eval_const(fn_ir, *idx, &mut memo, &mut FxHashSet::default())
+                    {
                         if let Err(e) = validate_index_lit_for_write(lit, *span) {
                             errors.push(e);
                         }
@@ -166,7 +167,8 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                 }
             }
             ValueKind::Call { callee, args, .. } if callee == "seq_len" && args.len() == 1 => {
-                if let Some(lit) = eval_const(fn_ir, args[0], &mut memo, &mut FxHashSet::default()) {
+                if let Some(lit) = eval_const(fn_ir, args[0], &mut memo, &mut FxHashSet::default())
+                {
                     if let Some(n) = as_integral(&lit) {
                         if n < 0 {
                             errors.push(
@@ -231,7 +233,10 @@ fn collect_reachable_blocks(fn_ir: &FnIR) -> FxHashSet<BlockId> {
     seen
 }
 
-fn collect_reachable_values(fn_ir: &FnIR, reachable_blocks: &FxHashSet<BlockId>) -> FxHashSet<ValueId> {
+fn collect_reachable_values(
+    fn_ir: &FnIR,
+    reachable_blocks: &FxHashSet<BlockId>,
+) -> FxHashSet<ValueId> {
     let mut roots = Vec::new();
     for (bid, block) in fn_ir.blocks.iter().enumerate() {
         if !reachable_blocks.contains(&bid) {
@@ -294,6 +299,11 @@ fn collect_reachable_values(fn_ir: &FnIR, reachable_blocks: &FxHashSet<BlockId>)
                     stack.push(*arg);
                 }
             }
+            ValueKind::Intrinsic { args, .. } => {
+                for arg in args {
+                    stack.push(*arg);
+                }
+            }
             ValueKind::Index1D { base, idx, .. } => {
                 stack.push(*base);
                 stack.push(*idx);
@@ -349,6 +359,7 @@ fn eval_const(
                 Some(first)
             }
         }
+        ValueKind::Intrinsic { .. } => None,
         _ => None,
     };
     visiting.remove(&vid);
@@ -580,10 +591,8 @@ fn builtin_arity(name: &str) -> Option<(usize, Option<usize>)> {
     match name {
         "length" | "seq_len" | "seq_along" | "abs" | "sqrt" | "sin" | "cos" | "tan" | "asin"
         | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "log10" | "log2" | "exp" | "sign"
-        | "gamma" | "lgamma" | "floor" | "ceiling" | "trunc" | "colSums" | "rowSums"
-        | "is.na" | "is.finite" => {
-            Some((1, Some(1)))
-        }
+        | "gamma" | "lgamma" | "floor" | "ceiling" | "trunc" | "colSums" | "rowSums" | "is.na"
+        | "is.finite" => Some((1, Some(1))),
         "atan2" => Some((2, Some(2))),
         "round" | "log" => Some((1, Some(2))),
         "pmax" | "pmin" => Some((2, None)),

@@ -480,6 +480,21 @@ fn collect_index_safety(
                 );
             }
         }
+        ValueKind::Intrinsic { args, .. } => {
+            for a in args {
+                collect_index_safety(
+                    *a,
+                    bid,
+                    facts,
+                    fn_ir,
+                    canonical_ivs,
+                    na_states,
+                    safe_values,
+                    non_na_values,
+                    seen,
+                );
+            }
+        }
         ValueKind::Phi { args } => {
             for (a, _) in args {
                 collect_index_safety(

@@ -111,7 +111,7 @@ impl<'a> Parser<'a> {
             let name = self.parse_dotted_ident("in parameter list")?;
             let ty_hint = if self.current.kind == TokenKind::Colon {
                 self.advance();
-                Some(self.parse_type_name("in parameter type annotation")?)
+                Some(self.parse_type_expr("in parameter type annotation")?)
             } else {
                 None
             };
@@ -140,8 +140,34 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    fn parse_type_name(&mut self, ctx: &str) -> RR<String> {
-        self.parse_dotted_ident(ctx)
+    fn parse_type_expr(&mut self, ctx: &str) -> RR<TypeExpr> {
+        let base = self.parse_dotted_ident(ctx)?;
+        if self.current.kind != TokenKind::Lt {
+            return Ok(TypeExpr::Named(base));
+        }
+
+        self.advance(); // <
+        let mut args = Vec::new();
+        loop {
+            args.push(self.parse_type_expr("in type parameter list")?);
+            if self.current.kind == TokenKind::Comma {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        if self.current.kind != TokenKind::Gt {
+            bail_at!(
+                self.current.span,
+                "RR.ParseError",
+                RRCode::E0001,
+                Stage::Parse,
+                "Expected '>' to close generic type '{}'",
+                base
+            );
+        }
+        self.advance(); // >
+        Ok(TypeExpr::Generic { base, args })
     }
 
     fn token_precedence(kind: &TokenKind) -> Precedence {
@@ -355,7 +381,7 @@ impl<'a> Parser<'a> {
         let name = self.parse_dotted_ident("after let")?;
         let ty_hint = if self.current.kind == TokenKind::Colon {
             self.advance();
-            Some(self.parse_type_name("after ':' in let binding")?)
+            Some(self.parse_type_expr("after ':' in let binding")?)
         } else {
             None
         };
@@ -384,7 +410,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RParen)?;
         let ret_ty_hint = if self.current.kind == TokenKind::Arrow {
             self.advance();
-            Some(self.parse_type_name("after function return arrow")?)
+            Some(self.parse_type_expr("after function return arrow")?)
         } else {
             None
         };
@@ -700,7 +726,7 @@ impl<'a> Parser<'a> {
                 }
             };
             self.advance(); // :
-            let ty_hint = self.parse_type_name("after ':' in typed declaration")?;
+            let ty_hint = self.parse_type_expr("after ':' in typed declaration")?;
             self.expect(TokenKind::Assign)?;
             let value = self.parse_expr(Precedence::Lowest)?;
             let end = self.consume_stmt_end(value.span)?;
@@ -1012,7 +1038,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RParen)?;
         let ret_ty_hint = if self.current.kind == TokenKind::Arrow {
             self.advance();
-            Some(self.parse_type_name("after lambda return arrow")?)
+            Some(self.parse_type_expr("after lambda return arrow")?)
         } else {
             None
         };

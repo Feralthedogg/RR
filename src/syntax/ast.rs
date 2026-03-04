@@ -1,5 +1,11 @@
 use crate::utils::Span;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TypeExpr {
+    Named(String),
+    Generic { base: String, args: Vec<TypeExpr> },
+}
+
 #[derive(Debug, Clone)]
 pub struct Program {
     pub stmts: Vec<Stmt>,
@@ -15,7 +21,7 @@ pub struct Stmt {
 pub enum StmtKind {
     Let {
         name: String,
-        ty_hint: Option<String>,
+        ty_hint: Option<TypeExpr>,
         init: Option<Expr>,
     },
     Assign {
@@ -25,7 +31,7 @@ pub enum StmtKind {
     FnDecl {
         name: String,
         params: Vec<FnParam>,
-        ret_ty_hint: Option<String>,
+        ret_ty_hint: Option<TypeExpr>,
         body: Block,
     }, // Global fn
     If {
@@ -58,7 +64,7 @@ pub enum StmtKind {
 #[derive(Debug, Clone)]
 pub struct FnParam {
     pub name: String,
-    pub ty_hint: Option<String>,
+    pub ty_hint: Option<TypeExpr>,
     pub default: Option<Expr>,
     pub span: Span,
 }
@@ -67,7 +73,7 @@ pub struct FnParam {
 pub struct FnDecl {
     pub name: String,
     pub params: Vec<FnParam>,
-    pub ret_ty_hint: Option<String>,
+    pub ret_ty_hint: Option<TypeExpr>,
     pub body: Block,
     pub public: bool, // export
 }
@@ -119,7 +125,7 @@ pub enum ExprKind {
 
     Lambda {
         params: Vec<FnParam>,
-        ret_ty_hint: Option<String>,
+        ret_ty_hint: Option<TypeExpr>,
         body: Block,
     }, // fn(x, y) { ... }
 

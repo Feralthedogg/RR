@@ -55,6 +55,7 @@ This writes a self-contained `.R` script with RR runtime helpers injected at the
 - Type hints are accepted:
   - params/return: `fn add(a: float, b: int) -> float = a + b`
   - declarations: `x: int = 10L`
+  - generic containers: `vector<float>`, `matrix<float>`, `option<int>`, `list<box<float>>`
 - `if/while/for` support single-statement bodies (no braces required).
 - `if` / `while` conditions may be written with or without parentheses:
   - `if (x < 1) y <- 1 else y <- 2`

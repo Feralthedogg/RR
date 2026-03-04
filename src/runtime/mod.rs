@@ -26,6 +26,440 @@ rr_set_source <- function(file) {
   .rr_env$file <- as.character(file)
 }
 
+rr_set_type_mode <- function(mode) {
+  m <- tolower(as.character(mode))
+  if (!(m %in% c("strict", "gradual"))) {
+    m <- "strict"
+  }
+  .rr_env$type_mode <- m
+}
+
+rr_set_native_backend <- function(mode) {
+  m <- tolower(as.character(mode))
+  if (!(m %in% c("off", "optional", "required"))) {
+    m <- "off"
+  }
+  .rr_env$native_backend <- m
+}
+
+rr_set_parallel_mode <- function(mode) {
+  m <- tolower(as.character(mode))
+  if (!(m %in% c("off", "optional", "required"))) {
+    m <- "off"
+  }
+  .rr_env$parallel_mode <- m
+}
+
+rr_set_parallel_backend <- function(backend) {
+  b <- tolower(as.character(backend))
+  if (!(b %in% c("auto", "r", "openmp"))) {
+    b <- "auto"
+  }
+  .rr_env$parallel_backend <- b
+}
+
+rr_set_parallel_threads <- function(n) {
+  v <- suppressWarnings(as.integer(n))
+  if (is.na(v) || v < 0L) v <- 0L
+  .rr_env$parallel_threads <- v
+}
+
+rr_set_parallel_min_trip <- function(n) {
+  v <- suppressWarnings(as.integer(n))
+  if (is.na(v) || v < 0L) v <- 4096L
+  .rr_env$parallel_min_trip <- v
+}
+
+rr_set_native_lib <- function(path) {
+  if (is.null(path) || !nzchar(as.character(path))) {
+    .rr_env$native_lib <- ""
+    .rr_env$native_loaded <- FALSE
+    return(invisible(NULL))
+  }
+  .rr_env$native_lib <- as.character(path)
+  .rr_env$native_loaded <- FALSE
+}
+
+.rr_env$type_mode <- "strict"
+.rr_env$native_backend <- tolower(Sys.getenv("RR_NATIVE_BACKEND", "off"))
+if (!(.rr_env$native_backend %in% c("off", "optional", "required"))) {
+  .rr_env$native_backend <- "off"
+}
+.rr_env$parallel_mode <- tolower(Sys.getenv("RR_PARALLEL_MODE", "off"))
+if (!(.rr_env$parallel_mode %in% c("off", "optional", "required"))) {
+  .rr_env$parallel_mode <- "off"
+}
+.rr_env$parallel_backend <- tolower(Sys.getenv("RR_PARALLEL_BACKEND", "auto"))
+if (!(.rr_env$parallel_backend %in% c("auto", "r", "openmp"))) {
+  .rr_env$parallel_backend <- "auto"
+}
+.rr_env$parallel_threads <- suppressWarnings(as.integer(Sys.getenv("RR_PARALLEL_THREADS", "0")))
+if (is.na(.rr_env$parallel_threads) || .rr_env$parallel_threads < 0L) {
+  .rr_env$parallel_threads <- 0L
+}
+.rr_env$parallel_min_trip <- suppressWarnings(as.integer(Sys.getenv("RR_PARALLEL_MIN_TRIP", "4096")))
+if (is.na(.rr_env$parallel_min_trip) || .rr_env$parallel_min_trip < 0L) {
+  .rr_env$parallel_min_trip <- 4096L
+}
+.rr_env$native_lib <- Sys.getenv("RR_NATIVE_LIB", "")
+.rr_env$native_loaded <- FALSE
+
+rr_native_try_load <- function() {
+  if (isTRUE(.rr_env$native_loaded)) return(TRUE)
+  if (is.null(.rr_env$native_lib) || !nzchar(.rr_env$native_lib)) return(FALSE)
+  ok <- tryCatch({
+    dyn.load(.rr_env$native_lib)
+    TRUE
+  }, error = function(e) FALSE)
+  .rr_env$native_loaded <- isTRUE(ok)
+  isTRUE(ok)
+}
+
+rr_native_call <- function(sym, fallback, ...) {
+  backend <- .rr_env$native_backend
+  if (is.null(backend) || backend == "off") {
+    return(fallback(...))
+  }
+  loaded <- rr_native_try_load()
+  if (!loaded) {
+    if (backend == "required") {
+      rr_fail(
+        "RR.RuntimeError",
+        "E2001",
+        paste0("native backend required but library is not loaded: ", .rr_env$native_lib),
+        "native backend",
+        "Set RR_NATIVE_LIB to a valid shared library or use --native-backend optional/off."
+      )
+    }
+    return(fallback(...))
+  }
+  out <- tryCatch(
+    list(ok = TRUE, val = do.call(".Call", c(list(sym), list(...)))),
+    error = function(e) list(ok = FALSE, err = conditionMessage(e))
+  )
+  if (!isTRUE(out$ok)) {
+    if (backend == "required") {
+      rr_fail(
+        "RR.RuntimeError",
+        "E2001",
+        paste0("native call failed for symbol ", sym, ": ", out$err),
+        "native backend"
+      )
+    }
+    return(fallback(...))
+  }
+  out$val
+}
+
+rr_parallel_native_call <- function(sym, fallback, ...) {
+  mode <- .rr_env$parallel_mode
+  if (is.null(mode) || mode == "off") {
+    return(fallback(...))
+  }
+  loaded <- rr_native_try_load()
+  if (!loaded) {
+    if (mode == "required") {
+      rr_fail(
+        "RR.RuntimeError",
+        "E1031",
+        paste0("parallel backend requires native library but load failed: ", .rr_env$native_lib),
+        "parallel backend",
+        "Set RR_NATIVE_LIB to a valid shared library or use --parallel-mode optional/off."
+      )
+    }
+    return(fallback(...))
+  }
+  out <- tryCatch(
+    list(ok = TRUE, val = do.call(".Call", c(list(sym), list(...)))),
+    error = function(e) list(ok = FALSE, err = conditionMessage(e))
+  )
+  if (!isTRUE(out$ok)) {
+    if (mode == "required") {
+      rr_fail(
+        "RR.RuntimeError",
+        "E1031",
+        paste0("parallel native call failed for symbol ", sym, ": ", out$err),
+        "parallel backend"
+      )
+    }
+    return(fallback(...))
+  }
+  out$val
+}
+
+rr_parallel_enabled <- function(n) {
+  mode <- .rr_env$parallel_mode
+  if (is.null(mode) || mode == "off") return(FALSE)
+  if (is.na(n) || n <= 0L) return(FALSE)
+  n >= as.integer(.rr_env$parallel_min_trip)
+}
+
+rr_parallel_resolve_cores <- function(n) {
+  cores <- suppressWarnings(as.integer(.rr_env$parallel_threads))
+  if (is.na(cores) || cores <= 0L) {
+    dc <- suppressWarnings(parallel::detectCores(logical = FALSE))
+    if (is.na(dc) || dc <= 0L) {
+      dc <- suppressWarnings(parallel::detectCores(logical = TRUE))
+    }
+    if (is.na(dc) || dc <= 0L) {
+      cores <- 1L
+    } else {
+      cores <- as.integer(dc)
+    }
+  }
+  if (cores < 1L) cores <- 1L
+  if (!is.na(n) && n > 0L) {
+    cores <- min(cores, as.integer(n))
+  }
+  cores
+}
+
+rr_parallel_binop_r <- function(op, a, b) {
+  if (!requireNamespace("parallel", quietly = TRUE)) return(NULL)
+  if (identical(.Platform$OS.type, "windows")) return(NULL)
+  la <- length(a)
+  lb <- length(b)
+  if (la == 0L || lb == 0L) return(NULL)
+  if (!(la == lb || la == 1L || lb == 1L)) return(NULL)
+  n <- max(la, lb)
+  cores <- rr_parallel_resolve_cores(n)
+  if (cores <= 1L) return(NULL)
+  chunks <- split(seq_len(n), as.integer(cut(seq_len(n), breaks = min(cores, n), labels = FALSE)))
+  parts <- parallel::mclapply(
+    chunks,
+    function(ix) {
+      av <- if (la == 1L) rep(a[1L], length(ix)) else a[ix]
+      bv <- if (lb == 1L) rep(b[1L], length(ix)) else b[ix]
+      switch(
+        op,
+        add = av + bv,
+        sub = av - bv,
+        mul = av * bv,
+        div = av / bv,
+        pmax = pmax(av, bv),
+        pmin = pmin(av, bv),
+        NULL
+      )
+    },
+    mc.cores = cores
+  )
+  if (any(vapply(parts, is.null, logical(1)))) return(NULL)
+  unlist(parts, use.names = FALSE)
+}
+
+rr_parallel_unary_r <- function(op, a) {
+  if (!requireNamespace("parallel", quietly = TRUE)) return(NULL)
+  if (identical(.Platform$OS.type, "windows")) return(NULL)
+  n <- length(a)
+  if (n == 0L) return(NULL)
+  cores <- rr_parallel_resolve_cores(n)
+  if (cores <= 1L) return(NULL)
+  chunks <- split(seq_len(n), as.integer(cut(seq_len(n), breaks = min(cores, n), labels = FALSE)))
+  parts <- parallel::mclapply(
+    chunks,
+    function(ix) {
+      av <- a[ix]
+      switch(
+        op,
+        abs = abs(av),
+        log = log(av),
+        sqrt = sqrt(av),
+        NULL
+      )
+    },
+    mc.cores = cores
+  )
+  if (any(vapply(parts, is.null, logical(1)))) return(NULL)
+  unlist(parts, use.names = FALSE)
+}
+
+rr_parallel_vec2_f64 <- function(native_sym, op, base, a, b) {
+  n <- max(length(a), length(b))
+  if (!rr_parallel_enabled(n)) {
+    return(base(a, b))
+  }
+
+  backend <- .rr_env$parallel_backend
+  if (backend %in% c("auto", "openmp")) {
+    out <- rr_parallel_native_call(
+      native_sym,
+      function(...) NULL,
+      a,
+      b,
+      as.integer(.rr_env$parallel_threads),
+      as.integer(.rr_env$parallel_min_trip)
+    )
+    if (!is.null(out)) return(out)
+    if (backend == "openmp") return(base(a, b))
+  }
+
+  if (backend %in% c("auto", "r")) {
+    out <- rr_parallel_binop_r(op, a, b)
+    if (!is.null(out)) return(out)
+  }
+
+  if (.rr_env$parallel_mode == "required") {
+    rr_fail(
+      "RR.RuntimeError",
+      "E1031",
+      "parallel backend failed and no fallback path was available",
+      "parallel backend"
+    )
+  }
+  base(a, b)
+}
+
+rr_parallel_vec1_f64 <- function(native_sym, op, base, a) {
+  n <- length(a)
+  if (!rr_parallel_enabled(n)) {
+    return(base(a))
+  }
+
+  backend <- .rr_env$parallel_backend
+  if (backend %in% c("auto", "openmp")) {
+    out <- rr_parallel_native_call(
+      native_sym,
+      function(...) NULL,
+      a,
+      as.integer(.rr_env$parallel_threads),
+      as.integer(.rr_env$parallel_min_trip)
+    )
+    if (!is.null(out)) return(out)
+    if (backend == "openmp") return(base(a))
+  }
+
+  if (backend %in% c("auto", "r")) {
+    out <- rr_parallel_unary_r(op, a)
+    if (!is.null(out)) return(out)
+  }
+
+  if (.rr_env$parallel_mode == "required") {
+    rr_fail(
+      "RR.RuntimeError",
+      "E1031",
+      "parallel backend failed and no fallback path was available",
+      "parallel backend"
+    )
+  }
+  base(a)
+}
+
+rr_intrinsic_base_vec_add_f64 <- function(a, b) {
+  rr_native_call("rr_vec_add_f64", function(x, y) x + y, a, b)
+}
+
+rr_intrinsic_base_vec_sub_f64 <- function(a, b) {
+  rr_native_call("rr_vec_sub_f64", function(x, y) x - y, a, b)
+}
+
+rr_intrinsic_base_vec_mul_f64 <- function(a, b) {
+  rr_native_call("rr_vec_mul_f64", function(x, y) x * y, a, b)
+}
+
+rr_intrinsic_base_vec_div_f64 <- function(a, b) {
+  rr_native_call("rr_vec_div_f64", function(x, y) x / y, a, b)
+}
+
+rr_intrinsic_base_vec_abs_f64 <- function(a) {
+  rr_native_call("rr_vec_abs_f64", function(x) abs(x), a)
+}
+
+rr_intrinsic_base_vec_log_f64 <- function(a) {
+  rr_native_call("rr_vec_log_f64", function(x) log(x), a)
+}
+
+rr_intrinsic_base_vec_sqrt_f64 <- function(a) {
+  rr_native_call("rr_vec_sqrt_f64", function(x) sqrt(x), a)
+}
+
+rr_intrinsic_base_vec_pmax_f64 <- function(a, b) {
+  rr_native_call("rr_vec_pmax_f64", function(x, y) pmax(x, y), a, b)
+}
+
+rr_intrinsic_base_vec_pmin_f64 <- function(a, b) {
+  rr_native_call("rr_vec_pmin_f64", function(x, y) pmin(x, y), a, b)
+}
+
+rr_parallel_vec_add_f64 <- function(a, b) {
+  rr_parallel_vec2_f64("rr_vec_add_f64_omp", "add", rr_intrinsic_base_vec_add_f64, a, b)
+}
+
+rr_parallel_vec_sub_f64 <- function(a, b) {
+  rr_parallel_vec2_f64("rr_vec_sub_f64_omp", "sub", rr_intrinsic_base_vec_sub_f64, a, b)
+}
+
+rr_parallel_vec_mul_f64 <- function(a, b) {
+  rr_parallel_vec2_f64("rr_vec_mul_f64_omp", "mul", rr_intrinsic_base_vec_mul_f64, a, b)
+}
+
+rr_parallel_vec_div_f64 <- function(a, b) {
+  rr_parallel_vec2_f64("rr_vec_div_f64_omp", "div", rr_intrinsic_base_vec_div_f64, a, b)
+}
+
+rr_parallel_vec_abs_f64 <- function(a) {
+  rr_parallel_vec1_f64("rr_vec_abs_f64_omp", "abs", rr_intrinsic_base_vec_abs_f64, a)
+}
+
+rr_parallel_vec_log_f64 <- function(a) {
+  rr_parallel_vec1_f64("rr_vec_log_f64_omp", "log", rr_intrinsic_base_vec_log_f64, a)
+}
+
+rr_parallel_vec_sqrt_f64 <- function(a) {
+  rr_parallel_vec1_f64("rr_vec_sqrt_f64_omp", "sqrt", rr_intrinsic_base_vec_sqrt_f64, a)
+}
+
+rr_parallel_vec_pmax_f64 <- function(a, b) {
+  rr_intrinsic_base_vec_pmax_f64(a, b)
+}
+
+rr_parallel_vec_pmin_f64 <- function(a, b) {
+  rr_intrinsic_base_vec_pmin_f64(a, b)
+}
+
+rr_intrinsic_vec_add_f64 <- function(a, b) {
+  rr_parallel_vec_add_f64(a, b)
+}
+
+rr_intrinsic_vec_sub_f64 <- function(a, b) {
+  rr_parallel_vec_sub_f64(a, b)
+}
+
+rr_intrinsic_vec_mul_f64 <- function(a, b) {
+  rr_parallel_vec_mul_f64(a, b)
+}
+
+rr_intrinsic_vec_div_f64 <- function(a, b) {
+  rr_parallel_vec_div_f64(a, b)
+}
+
+rr_intrinsic_vec_abs_f64 <- function(a) {
+  rr_parallel_vec_abs_f64(a)
+}
+
+rr_intrinsic_vec_log_f64 <- function(a) {
+  rr_parallel_vec_log_f64(a)
+}
+
+rr_intrinsic_vec_sqrt_f64 <- function(a) {
+  rr_parallel_vec_sqrt_f64(a)
+}
+
+rr_intrinsic_vec_pmax_f64 <- function(a, b) {
+  rr_parallel_vec_pmax_f64(a, b)
+}
+
+rr_intrinsic_vec_pmin_f64 <- function(a, b) {
+  rr_parallel_vec_pmin_f64(a, b)
+}
+
+rr_intrinsic_vec_sum_f64 <- function(a) {
+  rr_native_call("rr_vec_sum_f64", function(x) sum(x), a)
+}
+
+rr_intrinsic_vec_mean_f64 <- function(a) {
+  rr_native_call("rr_vec_mean_f64", function(x) mean(x), a)
+}
+
 rr_escape_diag <- function(x) {
   x <- as.character(x)
   x <- gsub("\\n", " ", x)

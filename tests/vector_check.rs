@@ -19,6 +19,36 @@ fn compile_rr(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) {
     );
 }
 
+fn compile_rr_with_modes(
+    rr_bin: &Path,
+    rr_src: &Path,
+    out: &Path,
+    level: &str,
+    type_mode: &str,
+    native_backend: &str,
+) {
+    let status = Command::new(rr_bin)
+        .arg(rr_src)
+        .arg("-o")
+        .arg(out)
+        .arg("--no-runtime")
+        .arg(level)
+        .arg("--type-mode")
+        .arg(type_mode)
+        .arg("--native-backend")
+        .arg(native_backend)
+        .status()
+        .expect("failed to run RR compiler");
+    assert!(
+        status.success(),
+        "RR compile failed for {} ({}, {}, {})",
+        rr_src.display(),
+        level,
+        type_mode,
+        native_backend
+    );
+}
+
 fn rscript_path() -> Option<String> {
     if let Ok(path) = std::env::var("RRSCRIPT") {
         if !path.trim().is_empty() {
@@ -66,9 +96,18 @@ fn vector_check_compiles_and_preserves_semantics() {
     let o0 = out_dir.join("vector_check_o0.R");
     let o1 = out_dir.join("vector_check_o1.R");
     let o2 = out_dir.join("vector_check_o2.R");
+    let o2_typed_optional = out_dir.join("vector_check_o2_typed_optional.R");
     compile_rr(&rr_bin, &rr_src, &o0, "-O0");
     compile_rr(&rr_bin, &rr_src, &o1, "-O1");
     compile_rr(&rr_bin, &rr_src, &o2, "-O2");
+    compile_rr_with_modes(
+        &rr_bin,
+        &rr_src,
+        &o2_typed_optional,
+        "-O2",
+        "strict",
+        "optional",
+    );
 
     let o1_code = fs::read_to_string(&o1).expect("failed to read O1 output");
     assert!(o1_code.contains("sum("), "expected numeric reduction path");
@@ -80,12 +119,24 @@ fn vector_check_compiles_and_preserves_semantics() {
         let (s0, out0, err0) = run_rscript(&rscript, &o0);
         let (s1, out1, err1) = run_rscript(&rscript, &o1);
         let (s2, out2, err2) = run_rscript(&rscript, &o2);
+        let (s3, out3, err3) = run_rscript(&rscript, &o2_typed_optional);
         assert_eq!(s0, 0, "O0 failed: {}", err0);
         assert_eq!(s1, 0, "O1 failed: {}", err1);
         assert_eq!(s2, 0, "O2 failed: {}", err2);
+        assert_eq!(s3, 0, "O2 strict/optional failed: {}", err3);
         assert_eq!(norm(&out0), norm(&out1), "stdout mismatch O0 vs O1");
         assert_eq!(norm(&out0), norm(&out2), "stdout mismatch O0 vs O2");
+        assert_eq!(
+            norm(&out0),
+            norm(&out3),
+            "stdout mismatch O0 vs O2(strict+optional)"
+        );
         assert_eq!(norm(&err0), norm(&err1), "stderr mismatch O0 vs O1");
         assert_eq!(norm(&err0), norm(&err2), "stderr mismatch O0 vs O2");
+        assert_eq!(
+            norm(&err0),
+            norm(&err3),
+            "stderr mismatch O0 vs O2(strict+optional)"
+        );
     }
 }

@@ -18,6 +18,26 @@ This page lists environment variables recognized by RR codebase.
 - `RR_STRICT_ASSIGN`
   - Alias trigger for strict-let behavior.
 
+## Type and Native Backend
+
+- `RR_TYPE_MODE` (`strict` | `gradual`, default `strict`)
+  - Controls strict type-checking policy.
+- `RR_NATIVE_BACKEND` (`off` | `optional` | `required`, default `off`)
+  - Controls intrinsic backend strategy.
+- `RR_NATIVE_LIB`
+  - Optional shared library path used by native intrinsic dispatch.
+
+## Parallel Backend
+
+- `RR_PARALLEL_MODE` (`off` | `optional` | `required`, default `off`)
+  - Controls whether parallel paths may be used and whether fallback is allowed.
+- `RR_PARALLEL_BACKEND` (`auto` | `r` | `openmp`, default `auto`)
+  - Selects backend preference (`auto` tries OpenMP native first, then R backend).
+- `RR_PARALLEL_THREADS` (default `0`)
+  - Parallel worker count (`0` means auto-detect).
+- `RR_PARALLEL_MIN_TRIP` (default `4096`)
+  - Minimum vector length before attempting parallel dispatch.
+
 ## Optimizer Control
 
 - `RR_VERIFY_EACH_PASS` (default `false`)

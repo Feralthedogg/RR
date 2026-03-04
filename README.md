@@ -60,6 +60,12 @@ Options:
 - `-o <file>` (legacy output file mode)
 - `--out-dir <dir>` (`build` command output root)
 - `-O0 | -O1 | -O2` (also accepts `-o0/-o1/-o2`)
+- `--type-mode strict|gradual` (default `strict`)
+- `--native-backend off|optional|required` (default `off`)
+- `--parallel-mode off|optional|required` (default `off`)
+- `--parallel-backend auto|r|openmp` (default `auto`)
+- `--parallel-threads <N>` (default `0`, auto-detect)
+- `--parallel-min-trip <N>` (default `4096`)
 - `--keep-r` (keep generated `.gen.R` after `run`)
 - `--no-runtime` (compile only)
 
@@ -67,6 +73,13 @@ Environment knobs:
 
 - `RR_STRICT_LET=1` disallow implicit declarations through assignment
 - `RR_WARN_IMPLICIT_DECL=1` print warnings for implicit declarations
+- `RR_TYPE_MODE=strict|gradual` type checking policy
+- `RR_NATIVE_BACKEND=off|optional|required` intrinsic backend policy
+- `RR_NATIVE_LIB=/path/to/librr_native.{so,dylib}` optional native intrinsic library
+- `RR_PARALLEL_MODE=off|optional|required` parallel execution policy
+- `RR_PARALLEL_BACKEND=auto|r|openmp` parallel backend selector
+- `RR_PARALLEL_THREADS=<N>` parallel worker threads (`0` = auto)
+- `RR_PARALLEL_MIN_TRIP=<N>` minimum vector length to attempt parallel path
 
 ## Tests
 
@@ -78,6 +91,16 @@ cargo test -q
 
 Golden tests compare RR output against R execution (`tests/golden`).
 If `Rscript` is unavailable, those tests are skipped.
+
+Additional semantic-differential coverage:
+
+- `tests/rr_logic_equivalence_matrix.rs`
+  - validates RR vs reference R logic on multiple hand-written programs
+  - matrix axes: `-O0/-O1/-O2` x `strict/gradual` x `off/optional`
+  - compares `exit code`, `stdout`, and `stderr`
+- `tests/sccp_overflow_regression.rs`
+  - guards against optimizer-stage integer overflow panics in `-O2` path
+  - verifies unsafe folds stay as runtime expressions
 
 ## Performance Gate
 
@@ -92,18 +115,20 @@ Targets:
 
 - `parser`
 - `pipeline`
+- `type_solver`
 
 Run:
 
 ```bash
 cargo install cargo-fuzz --locked
-cargo fuzz run parser fuzz/corpus/parser -- -max_total_time=60
-cargo fuzz run pipeline fuzz/corpus/pipeline -- -max_total_time=60
+cargo +nightly fuzz run parser fuzz/corpus/parser -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
+cargo +nightly fuzz run pipeline fuzz/corpus/pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
+cargo +nightly fuzz run type_solver fuzz/corpus/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 ```
 
 ## Documentation
 
-Full documentation is in [docs](./docs/README.md).
+Full documentation is in [docs](./docs/index.md).
 
 ## License
 [MIT](LICENSE)

@@ -1,5 +1,6 @@
 pub use crate::mir::flow::Facts;
 pub use crate::syntax::ast::{BinOp, Lit, UnaryOp};
+use crate::typeck::{TypeState, TypeTerm};
 use crate::utils::Span;
 
 impl Span {
@@ -23,6 +24,12 @@ pub type VarId = String;
 pub struct FnIR {
     pub name: String,
     pub params: Vec<VarId>,
+    pub param_ty_hints: Vec<TypeState>,
+    pub param_term_hints: Vec<TypeTerm>,
+    pub ret_ty_hint: Option<TypeState>,
+    pub ret_term_hint: Option<TypeTerm>,
+    pub inferred_ret_ty: TypeState,
+    pub inferred_ret_term: TypeTerm,
     pub blocks: Vec<Block>, // indices are BlockIds
     pub values: Vec<Value>, // indices are ValueIds. SSA-like values.
     pub entry: BlockId,
@@ -91,9 +98,26 @@ pub struct Value {
     pub kind: ValueKind,
     pub span: Span,                 // Originating source
     pub facts: Facts,               // Type/Range facts
+    pub value_ty: TypeState,        // Static type facts
+    pub value_term: TypeTerm,       // Structural generic type facts
     pub origin_var: Option<VarId>,  // Original variable name (if any)
     pub phi_block: Option<BlockId>, // Owning block for Phi values
     pub escape: EscapeStatus,       // Optimization: Escape Analysis result
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntrinsicOp {
+    VecAddF64,
+    VecSubF64,
+    VecMulF64,
+    VecDivF64,
+    VecAbsF64,
+    VecLogF64,
+    VecSqrtF64,
+    VecPmaxF64,
+    VecPminF64,
+    VecSumF64,
+    VecMeanF64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -141,6 +165,11 @@ pub enum ValueKind {
         names: Vec<Option<String>>,
     },
 
+    Intrinsic {
+        op: IntrinsicOp,
+        args: Vec<ValueId>,
+    },
+
     // Access (Load is implicit via ValueId, this is for calculating offsets/pointers if needed?)
     Index1D {
         base: ValueId,
@@ -162,9 +191,17 @@ pub enum ValueKind {
 
 impl FnIR {
     pub fn new(name: String, params: Vec<VarId>) -> Self {
+        let param_ty_hints = vec![TypeState::unknown(); params.len()];
+        let param_term_hints = vec![TypeTerm::Any; params.len()];
         Self {
             name,
             params,
+            param_ty_hints,
+            param_term_hints,
+            ret_ty_hint: None,
+            ret_term_hint: None,
+            inferred_ret_ty: TypeState::unknown(),
+            inferred_ret_term: TypeTerm::Any,
             blocks: Vec::new(),
             values: Vec::new(),
             entry: 0,
@@ -187,6 +224,8 @@ impl FnIR {
             kind,
             span,
             facts,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
             origin_var,
             phi_block: None,
             escape: EscapeStatus::Unknown,

@@ -8,4 +8,5 @@ pub mod hir;
 pub mod mir;
 pub mod runtime;
 pub mod syntax;
+pub mod typeck;
 pub mod utils;

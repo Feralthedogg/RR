@@ -27,3 +27,10 @@ path = "fuzz_targets/pipeline.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "type_solver"
+path = "fuzz_targets/type_solver.rs"
+test = false
+doc = false
+bench = false

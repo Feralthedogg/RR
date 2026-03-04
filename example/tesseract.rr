@@ -97,6 +97,24 @@ fn syntax.demo() {
     if meta.version >= 1.0 { x = x + 0.0 }
     x
 }
+
+// ------------------------------------------------------------------
+// New typed/parallel showcase helpers (safe, side-effect free)
+// ------------------------------------------------------------------
+fn typed.vec.fused(a: vector<float>, b: vector<float>) -> vector<float> {
+    // At O2 this pattern is a candidate for vector intrinsic + parallel wrapper path.
+    return (a + b) * 0.5
+}
+
+fn typed.vec.energy(a: vector<float>, b: vector<float>) {
+    mix = typed.vec.fused(a, b)
+    return mean(abs(mix))
+}
+
+fn typed.generic.count.samples(xs: list<vector<float>>) -> int {
+    return length(xs)
+}
+
 fn build_neighbor_table(dir, size) {
     total = 6.0 * size * size
 
@@ -1300,6 +1318,17 @@ fn tesseract_main() {
     qs = barrier_alloc(TOTAL, 0.0, 3.0)
 
     qg = barrier_alloc(TOTAL, 0.0, 3.0)
+
+    print("  Typed/Parallel Feature Probe...")
+    probe_vec = typed.vec.fused(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))
+    probe_energy = typed.vec.energy(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))
+    probe_generic = typed.generic.count.samples(list(c(1.0), c(2.0), c(3.0)))
+    print("    Probe Vec[1]:")
+    print(probe_vec[1.0])
+    print("    Probe Energy:")
+    print(probe_energy)
+    print("    Probe Generic Count:")
+    print(probe_generic)
 
     
     print("  Building Extended Topology (WENO-5 Order)...")
