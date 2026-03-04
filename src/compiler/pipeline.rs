@@ -1,4 +1,4 @@
-use crate::syntax::parse::Parser;
+﻿use crate::syntax::parse::Parser;
 use crate::typeck::{NativeBackend, TypeConfig, TypeMode};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
@@ -104,7 +104,7 @@ pub struct CliLog {
     detailed: bool,
 }
 
-fn type_config_from_env() -> TypeConfig {
+pub fn type_config_from_env() -> TypeConfig {
     let mode = env::var("RR_TYPE_MODE")
         .ok()
         .and_then(|v| TypeMode::from_str(&v))
@@ -125,7 +125,7 @@ fn parse_nonnegative_usize_env(key: &str) -> Option<usize> {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
 }
 
-fn parallel_config_from_env() -> ParallelConfig {
+pub fn parallel_config_from_env() -> ParallelConfig {
     let mode = env::var("RR_PARALLEL_MODE")
         .ok()
         .and_then(|v| ParallelMode::from_str(&v))
@@ -200,7 +200,7 @@ impl CliLog {
         );
         println!(
             " {} {}",
-            self.dim("└─"),
+            self.dim("|-"),
             self.white_bold(&format!("Input: {} ({})", input, level.label()))
         );
     }
@@ -218,7 +218,7 @@ impl CliLog {
     }
 
     fn step_line_ok(&self, detail: &str) {
-        println!("   {} {}", self.green_bold("✓"), self.white_bold(detail));
+        println!("   {} {}", self.green_bold("[ok]"), self.white_bold(detail));
     }
 
     fn trace(&self, label: &str, detail: &str) {
@@ -235,14 +235,14 @@ impl CliLog {
     fn pulse_success(&self, total: Duration) {
         println!(
             "{} {} {}",
-            self.green_bold("✔"),
+            self.green_bold("[ok]"),
             self.green_bold("Tachyon Pulse Successful in"),
             self.green_bold(&format_duration(total))
         );
     }
 
     pub fn success(&self, msg: &str) {
-        println!("{} {}", self.green_bold("✔"), self.white_bold(msg));
+        println!("{} {}", self.green_bold("[ok]"), self.white_bold(msg));
     }
     pub fn warn(&self, msg: &str) {
         eprintln!("{} {}", self.yellow_bold("!"), self.yellow_bold(msg));
@@ -290,52 +290,23 @@ fn normalize_module_path(path: &Path) -> PathBuf {
     }
 }
 
-pub fn compile(
-    entry_path: &str,
-    entry_input: &str,
-    opt_level: OptLevel,
-) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
-    compile_with_configs(
-        entry_path,
-        entry_input,
-        opt_level,
-        type_config_from_env(),
-        parallel_config_from_env(),
-    )
+struct SourceAnalysisOutput {
+    desugared_hir: crate::hir::def::HirProgram,
+    global_symbols: FxHashMap<crate::hir::def::SymbolId, String>,
 }
 
-pub fn compile_with_config(
-    entry_path: &str,
-    entry_input: &str,
-    opt_level: OptLevel,
-    type_cfg: TypeConfig,
-) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
-    compile_with_configs(
-        entry_path,
-        entry_input,
-        opt_level,
-        type_cfg,
-        parallel_config_from_env(),
-    )
+struct MirSynthesisOutput {
+    all_fns: FxHashMap<String, crate::mir::def::FnIR>,
+    emit_order: Vec<String>,
+    top_level_calls: Vec<String>,
 }
 
-pub fn compile_with_configs(
+fn run_source_analysis_and_canonicalization(
+    ui: &CliLog,
     entry_path: &str,
     entry_input: &str,
-    opt_level: OptLevel,
-    type_cfg: TypeConfig,
-    parallel_cfg: ParallelConfig,
-) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
-    let ui = CliLog::new();
-    let compile_started = Instant::now();
-    let optimize = opt_level.is_optimized();
-    const TOTAL_STEPS: usize = 6;
-    let input_label = std::path::Path::new(entry_path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(entry_path);
-    ui.banner(input_label, opt_level);
-
+    total_steps: usize,
+) -> crate::error::RR<SourceAnalysisOutput> {
     // Module Loader State
     let mut loaded_paths: FxHashSet<PathBuf> = FxHashSet::default();
     let mut queue = std::collections::VecDeque::new();
@@ -348,10 +319,9 @@ pub fn compile_with_configs(
     // Helper for generating IDs
     let mut next_mod_id = 1;
 
-    // 1. & 2. Loading Loop (Parse + Lower)
     let step_load = ui.step_start(
         1,
-        TOTAL_STEPS,
+        total_steps,
         "Source Analysis",
         "parse + scope resolution",
     );
@@ -389,7 +359,6 @@ pub fn compile_with_configs(
         // Scan for imports
         for item in &hir_mod.items {
             if let crate::hir::def::HirItem::Import(imp) = item {
-                // Resolve path (imp.module is String)
                 let import_path = &imp.module;
                 let curr_dir = curr_path.parent().unwrap_or(Path::new("."));
                 let target = normalize_module_path(&curr_dir.join(import_path));
@@ -440,10 +409,9 @@ pub fn compile_with_configs(
         modules: hir_modules,
     };
 
-    // 3. Desugar
     let step_desugar = ui.step_start(
         2,
-        TOTAL_STEPS,
+        total_steps,
         "Canonicalization",
         "normalize HIR structure",
     );
@@ -455,13 +423,55 @@ pub fn compile_with_configs(
         format_duration(step_desugar.elapsed())
     ));
 
+    Ok(SourceAnalysisOutput {
+        desugared_hir,
+        global_symbols,
+    })
+}
+
+fn emit_r_functions(
+    ui: &CliLog,
+    total_steps: usize,
+    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+    emit_order: &[String],
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    let step_emit = ui.step_start(
+        5,
+        total_steps,
+        "R Code Emission",
+        "reconstruct control flow",
+    );
     let mut final_output = String::new();
     let mut final_source_map = Vec::new();
 
-    // 4. MIR Lowering
+    for fn_name in emit_order {
+        if let Some(fn_ir) = all_fns.get(fn_name) {
+            let (code, map) = crate::codegen::mir_emit::MirEmitter::new().emit(fn_ir)?;
+            final_output.push_str(&code);
+            final_output.push('\n');
+            final_source_map.extend(map);
+        }
+    }
+    ui.step_line_ok(&format!(
+        "Emitted {} functions ({} debug maps) in {}",
+        emit_order.len(),
+        final_source_map.len(),
+        format_duration(step_emit.elapsed())
+    ));
+
+    Ok((final_output, final_source_map))
+}
+
+fn run_mir_synthesis(
+    ui: &CliLog,
+    total_steps: usize,
+    desugared_hir: crate::hir::def::HirProgram,
+    global_symbols: &FxHashMap<crate::hir::def::SymbolId, String>,
+    type_cfg: TypeConfig,
+) -> crate::error::RR<MirSynthesisOutput> {
     let step_ssa = ui.step_start(
         3,
-        TOTAL_STEPS,
+        total_steps,
         "SSA Graph Synthesis",
         "build dominator tree & phi nodes",
     );
@@ -503,7 +513,7 @@ pub fn compile_with_configs(
                         fn_name.clone(),
                         params,
                         var_names,
-                        &global_symbols,
+                        global_symbols,
                         &known_fn_arities,
                     );
                     let fn_ir = match lowerer.lower_fn(f) {
@@ -542,7 +552,7 @@ pub fn compile_with_configs(
                 top_fn_name.clone(),
                 Vec::new(),
                 FxHashMap::default(),
-                &global_symbols,
+                global_symbols,
                 &known_fn_arities,
             );
             let fn_ir = match lowerer.lower_fn(top_fn) {
@@ -564,11 +574,23 @@ pub fn compile_with_configs(
     crate::mir::semantics::validate_program(&all_fns)?;
     crate::mir::semantics::validate_runtime_safety(&all_fns)?;
 
-    // 5. Optimization & Codegen
+    Ok(MirSynthesisOutput {
+        all_fns,
+        emit_order,
+        top_level_calls,
+    })
+}
+
+fn run_tachyon_phase(
+    ui: &CliLog,
+    total_steps: usize,
+    optimize: bool,
+    all_fns: &mut FxHashMap<String, crate::mir::def::FnIR>,
+) -> crate::error::RR<()> {
     let tachyon = crate::mir::opt::TachyonEngine::new();
     let step_opt = ui.step_start(
         4,
-        TOTAL_STEPS,
+        total_steps,
         if optimize {
             "Tachyon Optimization"
         } else {
@@ -598,12 +620,12 @@ pub fn compile_with_configs(
     }
     let mut pulse_stats = crate::mir::opt::TachyonPulseStats::default();
     if optimize {
-        pulse_stats = tachyon.run_program_with_stats(&mut all_fns);
+        pulse_stats = tachyon.run_program_with_stats(all_fns);
     } else {
-        tachyon.stabilize_for_codegen(&mut all_fns);
+        tachyon.stabilize_for_codegen(all_fns);
     }
-    crate::mir::semantics::validate_program(&all_fns)?;
-    crate::mir::semantics::validate_runtime_safety(&all_fns)?;
+    crate::mir::semantics::validate_program(all_fns)?;
+    crate::mir::semantics::validate_runtime_safety(all_fns)?;
     if optimize {
         ui.step_line_ok(&format!(
             "Vectorized: {} | Reduced: {} | Simplified: {} loops",
@@ -653,34 +675,16 @@ pub fn compile_with_configs(
         ));
     }
 
-    let step_emit = ui.step_start(
-        5,
-        TOTAL_STEPS,
-        "R Code Emission",
-        "reconstruct control flow",
-    );
-    for fn_name in &emit_order {
-        if let Some(fn_ir) = all_fns.get(fn_name) {
-            let (code, map) = crate::codegen::mir_emit::MirEmitter::new().emit(fn_ir)?;
-            final_output.push_str(&code);
-            final_output.push('\n');
-            final_source_map.extend(map);
-        }
-    }
-    ui.step_line_ok(&format!(
-        "Emitted {} functions ({} debug maps) in {}",
-        emit_order.len(),
-        final_source_map.len(),
-        format_duration(step_emit.elapsed())
-    ));
+    Ok(())
+}
 
-    let step_runtime = ui.step_start(
-        6,
-        TOTAL_STEPS,
-        "Runtime Injection",
-        "link static analysis guards",
-    );
-
+fn inject_runtime_prelude(
+    entry_path: &str,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    mut final_output: String,
+    top_level_calls: &[String],
+) -> String {
     for call in top_level_calls {
         final_output.push_str(&format!("{}()\n", call));
     }
@@ -724,6 +728,91 @@ pub fn compile_with_configs(
         parallel_cfg.min_trip
     ));
     with_runtime.push_str(&final_output);
+    with_runtime
+}
+
+pub fn compile(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    compile_with_configs(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_config_from_env(),
+        parallel_config_from_env(),
+    )
+}
+
+pub fn compile_with_config(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    compile_with_configs(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_config_from_env(),
+    )
+}
+
+pub fn compile_with_configs(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    let ui = CliLog::new();
+    let compile_started = Instant::now();
+    let optimize = opt_level.is_optimized();
+    const TOTAL_STEPS: usize = 6;
+    let input_label = std::path::Path::new(entry_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(entry_path);
+    ui.banner(input_label, opt_level);
+
+    let SourceAnalysisOutput {
+        desugared_hir,
+        global_symbols,
+    } = run_source_analysis_and_canonicalization(&ui, entry_path, entry_input, TOTAL_STEPS)?;
+
+    let MirSynthesisOutput {
+        mut all_fns,
+        emit_order,
+        top_level_calls,
+    } = run_mir_synthesis(
+        &ui,
+        TOTAL_STEPS,
+        desugared_hir,
+        &global_symbols,
+        type_cfg,
+    )?;
+
+    run_tachyon_phase(&ui, TOTAL_STEPS, optimize, &mut all_fns)?;
+
+    let (final_output, final_source_map) =
+        emit_r_functions(&ui, TOTAL_STEPS, &all_fns, &emit_order)?;
+
+    let step_runtime = ui.step_start(
+        6,
+        TOTAL_STEPS,
+        "Runtime Injection",
+        "link static analysis guards",
+    );
+
+    let with_runtime = inject_runtime_prelude(
+        entry_path,
+        type_cfg,
+        parallel_cfg,
+        final_output,
+        &top_level_calls,
+    );
     ui.step_line_ok(&format!("Output size: {}", human_size(with_runtime.len())));
     ui.trace(
         "runtime",
@@ -733,3 +822,4 @@ pub fn compile_with_configs(
 
     Ok((with_runtime, final_source_map))
 }
+

@@ -1,5 +1,6 @@
-use RR::compiler::{
+﻿use RR::compiler::{
     CliLog, OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs,
+    parallel_config_from_env, type_config_from_env,
 };
 use RR::runtime::runner::Runner;
 use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
@@ -59,288 +60,266 @@ fn apply_opt_flag(arg: &str, level: &mut OptLevel) -> bool {
     }
 }
 
-fn type_config_from_env() -> TypeConfig {
-    let mode = env::var("RR_TYPE_MODE")
-        .ok()
-        .and_then(|v| TypeMode::from_str(&v))
-        .unwrap_or(TypeMode::Strict);
-    let native_backend = env::var("RR_NATIVE_BACKEND")
-        .ok()
-        .and_then(|v| NativeBackend::from_str(&v))
-        .unwrap_or(NativeBackend::Off);
-    TypeConfig {
-        mode,
-        native_backend,
-    }
-}
-
 fn parse_nonnegative_usize(raw: &str) -> Option<usize> {
     raw.trim().parse::<usize>().ok()
 }
 
-fn parallel_config_from_env() -> ParallelConfig {
-    let mode = env::var("RR_PARALLEL_MODE")
-        .ok()
-        .and_then(|v| ParallelMode::from_str(&v))
-        .unwrap_or(ParallelMode::Off);
-    let backend = env::var("RR_PARALLEL_BACKEND")
-        .ok()
-        .and_then(|v| ParallelBackend::from_str(&v))
-        .unwrap_or(ParallelBackend::Auto);
-    let threads = env::var("RR_PARALLEL_THREADS")
-        .ok()
-        .and_then(|v| parse_nonnegative_usize(&v))
-        .unwrap_or(0);
-    let min_trip = env::var("RR_PARALLEL_MIN_TRIP")
-        .ok()
-        .and_then(|v| parse_nonnegative_usize(&v))
-        .unwrap_or(4096);
-    ParallelConfig {
-        mode,
-        backend,
-        threads,
-        min_trip,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommonCompileFlag {
+    TypeMode,
+    NativeBackend,
+    ParallelMode,
+    ParallelBackend,
+    ParallelThreads,
+    ParallelMinTrip,
+}
+
+impl CommonCompileFlag {
+    fn from_arg(arg: &str) -> Option<Self> {
+        match arg {
+            "--type-mode" => Some(Self::TypeMode),
+            "--native-backend" => Some(Self::NativeBackend),
+            "--parallel-mode" => Some(Self::ParallelMode),
+            "--parallel-backend" => Some(Self::ParallelBackend),
+            "--parallel-threads" => Some(Self::ParallelThreads),
+            "--parallel-min-trip" => Some(Self::ParallelMinTrip),
+            _ => None,
+        }
+    }
+
+    fn missing_value_error(self) -> &'static str {
+        match self {
+            Self::TypeMode => "Missing value after --type-mode (strict|gradual)",
+            Self::NativeBackend => "Missing value after --native-backend (off|optional|required)",
+            Self::ParallelMode => "Missing value after --parallel-mode (off|optional|required)",
+            Self::ParallelBackend => "Missing value after --parallel-backend (auto|r|openmp)",
+            Self::ParallelThreads => "Missing value after --parallel-threads",
+            Self::ParallelMinTrip => "Missing value after --parallel-min-trip",
+        }
     }
 }
 
-fn apply_type_mode_flag(
-    args: &[String],
+fn next_flag_value<'a>(
+    args: &'a [String],
     i: &mut usize,
-    cfg: &mut TypeConfig,
-    ui: &CliLog,
-) -> Result<bool, i32> {
-    let arg = &args[*i];
-    if arg == "--type-mode" {
-        if *i + 1 >= args.len() {
-            ui.error("Missing value after --type-mode (strict|gradual)");
-            return Err(1);
-        }
-        let v = &args[*i + 1];
-        cfg.mode = match TypeMode::from_str(v) {
-            Some(m) => m,
-            None => {
-                ui.error("Invalid --type-mode. Use strict|gradual");
-                return Err(1);
-            }
-        };
-        *i += 1;
-        return Ok(true);
+    _ui: &CliLog,
+) -> Result<&'a str, i32> {
+    if *i + 1 >= args.len() {
+        return Err(1);
     }
-    Ok(false)
+    *i += 1;
+    Ok(&args[*i])
 }
 
-fn apply_native_backend_flag(
+fn apply_common_compile_flags(
     args: &[String],
     i: &mut usize,
-    cfg: &mut TypeConfig,
+    opt_level: &mut OptLevel,
+    type_cfg: &mut TypeConfig,
+    parallel_cfg: &mut ParallelConfig,
     ui: &CliLog,
 ) -> Result<bool, i32> {
     let arg = &args[*i];
-    if arg == "--native-backend" {
-        if *i + 1 >= args.len() {
-            ui.error("Missing value after --native-backend (off|optional|required)");
-            return Err(1);
-        }
-        let v = &args[*i + 1];
-        cfg.native_backend = match NativeBackend::from_str(v) {
-            Some(m) => m,
-            None => {
-                ui.error("Invalid --native-backend. Use off|optional|required");
-                return Err(1);
-            }
-        };
-        *i += 1;
+    if apply_opt_flag(arg, opt_level) {
         return Ok(true);
     }
-    Ok(false)
+    let Some(flag) = CommonCompileFlag::from_arg(arg) else {
+        return Ok(false);
+    };
+
+    let v = match next_flag_value(args, i, ui) {
+        Ok(value) => value,
+        Err(code) => {
+            ui.error(flag.missing_value_error());
+            return Err(code);
+        }
+    };
+
+    match flag {
+        CommonCompileFlag::TypeMode => {
+            type_cfg.mode = match TypeMode::from_str(v) {
+                Some(m) => m,
+                None => {
+                    ui.error("Invalid --type-mode. Use strict|gradual");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::NativeBackend => {
+            type_cfg.native_backend = match NativeBackend::from_str(v) {
+                Some(m) => m,
+                None => {
+                    ui.error("Invalid --native-backend. Use off|optional|required");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::ParallelMode => {
+            parallel_cfg.mode = match ParallelMode::from_str(v) {
+                Some(m) => m,
+                None => {
+                    ui.error("Invalid --parallel-mode. Use off|optional|required");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::ParallelBackend => {
+            parallel_cfg.backend = match ParallelBackend::from_str(v) {
+                Some(m) => m,
+                None => {
+                    ui.error("Invalid --parallel-backend. Use auto|r|openmp");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::ParallelThreads => {
+            parallel_cfg.threads = match parse_nonnegative_usize(v) {
+                Some(n) => n,
+                None => {
+                    ui.error("Invalid --parallel-threads. Use a non-negative integer.");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::ParallelMinTrip => {
+            parallel_cfg.min_trip = match parse_nonnegative_usize(v) {
+                Some(n) => n,
+                None => {
+                    ui.error("Invalid --parallel-min-trip. Use a non-negative integer.");
+                    return Err(1);
+                }
+            };
+        }
+    }
+    Ok(true)
 }
 
-fn apply_parallel_mode_flag(
-    args: &[String],
-    i: &mut usize,
-    cfg: &mut ParallelConfig,
-    ui: &CliLog,
-) -> Result<bool, i32> {
-    let arg = &args[*i];
-    if arg == "--parallel-mode" {
-        if *i + 1 >= args.len() {
-            ui.error("Missing value after --parallel-mode (off|optional|required)");
-            return Err(1);
-        }
-        let v = &args[*i + 1];
-        cfg.mode = match ParallelMode::from_str(v) {
-            Some(m) => m,
-            None => {
-                ui.error("Invalid --parallel-mode. Use off|optional|required");
-                return Err(1);
-            }
-        };
-        *i += 1;
-        return Ok(true);
-    }
-    Ok(false)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommandMode {
+    Legacy,
+    Run,
+    Build,
 }
 
-fn apply_parallel_backend_flag(
-    args: &[String],
-    i: &mut usize,
-    cfg: &mut ParallelConfig,
-    ui: &CliLog,
-) -> Result<bool, i32> {
-    let arg = &args[*i];
-    if arg == "--parallel-backend" {
-        if *i + 1 >= args.len() {
-            ui.error("Missing value after --parallel-backend (auto|r|openmp)");
-            return Err(1);
+impl CommandMode {
+    fn default_target(self) -> &'static str {
+        match self {
+            Self::Legacy => "",
+            Self::Run | Self::Build => ".",
         }
-        let v = &args[*i + 1];
-        cfg.backend = match ParallelBackend::from_str(v) {
-            Some(m) => m,
-            None => {
-                ui.error("Invalid --parallel-backend. Use auto|r|openmp");
-                return Err(1);
-            }
-        };
-        *i += 1;
-        return Ok(true);
     }
-    Ok(false)
+
+    fn default_output_path(self) -> Option<String> {
+        match self {
+            Self::Build => Some("build".to_string()),
+            _ => None,
+        }
+    }
+
+    fn takes_output_arg(self, arg: &str) -> bool {
+        match self {
+            Self::Legacy => arg == "-o",
+            Self::Build => arg == "--out-dir" || arg == "-o",
+            Self::Run => false,
+        }
+    }
+
+    fn allow_keep_r(self) -> bool {
+        matches!(self, Self::Legacy | Self::Run)
+    }
+
+    fn allow_no_runtime(self) -> bool {
+        matches!(self, Self::Legacy)
+    }
+
+    fn allow_legacy_mir(self) -> bool {
+        matches!(self, Self::Legacy)
+    }
 }
 
-fn apply_parallel_threads_flag(
-    args: &[String],
-    i: &mut usize,
-    cfg: &mut ParallelConfig,
-    ui: &CliLog,
-) -> Result<bool, i32> {
-    let arg = &args[*i];
-    if arg == "--parallel-threads" {
-        if *i + 1 >= args.len() {
-            ui.error("Missing value after --parallel-threads");
-            return Err(1);
-        }
-        let v = &args[*i + 1];
-        cfg.threads = match parse_nonnegative_usize(v) {
-            Some(n) => n,
-            None => {
-                ui.error("Invalid --parallel-threads. Use a non-negative integer.");
-                return Err(1);
-            }
-        };
-        *i += 1;
-        return Ok(true);
-    }
-    Ok(false)
+#[derive(Clone, Debug)]
+struct CommonOpts {
+    target: String,
+    output_path: Option<String>,
+    keep_r: bool,
+    no_runtime: bool,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
 }
 
-fn apply_parallel_min_trip_flag(
-    args: &[String],
-    i: &mut usize,
-    cfg: &mut ParallelConfig,
-    ui: &CliLog,
-) -> Result<bool, i32> {
-    let arg = &args[*i];
-    if arg == "--parallel-min-trip" {
-        if *i + 1 >= args.len() {
-            ui.error("Missing value after --parallel-min-trip");
-            return Err(1);
+impl CommonOpts {
+    fn new(mode: CommandMode) -> Self {
+        Self {
+            target: mode.default_target().to_string(),
+            output_path: mode.default_output_path(),
+            keep_r: false,
+            no_runtime: false,
+            opt_level: OptLevel::O1,
+            type_cfg: type_config_from_env(),
+            parallel_cfg: parallel_config_from_env(),
         }
-        let v = &args[*i + 1];
-        cfg.min_trip = match parse_nonnegative_usize(v) {
-            Some(n) => n,
-            None => {
-                ui.error("Invalid --parallel-min-trip. Use a non-negative integer.");
+    }
+}
+
+fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result<CommonOpts, i32> {
+    let mut opts = CommonOpts::new(mode);
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if mode.takes_output_arg(arg) {
+            if i + 1 >= args.len() {
+                if matches!(mode, CommandMode::Legacy) {
+                    ui.error("Missing output file after -o");
+                } else {
+                    ui.error(&format!("Missing directory path after {}", arg));
+                }
                 return Err(1);
             }
-        };
-        *i += 1;
-        return Ok(true);
+            opts.output_path = Some(args[i + 1].clone());
+            i += 1;
+        } else {
+            match apply_common_compile_flags(
+                args,
+                &mut i,
+                &mut opts.opt_level,
+                &mut opts.type_cfg,
+                &mut opts.parallel_cfg,
+                ui,
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    if mode.allow_keep_r() && arg == "--keep-r" {
+                        opts.keep_r = true;
+                    } else if mode.allow_no_runtime() && arg == "--no-runtime" {
+                        opts.no_runtime = true;
+                    } else if mode.allow_legacy_mir() && arg == "--mir" {
+                        if matches!(opts.opt_level, OptLevel::O0) {
+                            opts.opt_level = OptLevel::O1;
+                        }
+                    } else if !arg.starts_with('-') {
+                        opts.target = arg.clone();
+                    } else {
+                        ui.error(&format!("Unknown option: {}", arg));
+                        return Err(1);
+                    }
+                }
+                Err(code) => return Err(code),
+            }
+        }
+        i += 1;
     }
-    Ok(false)
+
+    Ok(opts)
 }
 
 fn cmd_legacy(args: &[String]) -> i32 {
     let ui = CliLog::new();
-    let mut input_path = String::new();
-    let mut output_path = None;
-    let mut keep_r = false;
-    let mut opt_level = OptLevel::O1;
-    let mut no_runtime = false;
-    let mut type_cfg = type_config_from_env();
-    let mut parallel_cfg = parallel_config_from_env();
-
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-o" {
-            if i + 1 < args.len() {
-                output_path = Some(args[i + 1].clone());
-                i += 1;
-            } else {
-                ui.error("Missing output file after -o");
-                return 1;
-            }
-        } else if apply_opt_flag(arg, &mut opt_level) {
-            // handled
-        } else if let Ok(applied) = apply_type_mode_flag(args, &mut i, &mut type_cfg, &ui) {
-            if applied {
-                // handled
-            } else if let Ok(native_applied) =
-                apply_native_backend_flag(args, &mut i, &mut type_cfg, &ui)
-            {
-                if native_applied {
-                    // handled
-                } else if let Ok(par_mode_applied) =
-                    apply_parallel_mode_flag(args, &mut i, &mut parallel_cfg, &ui)
-                {
-                    if par_mode_applied {
-                        // handled
-                    } else if let Ok(par_backend_applied) =
-                        apply_parallel_backend_flag(args, &mut i, &mut parallel_cfg, &ui)
-                    {
-                        if par_backend_applied {
-                            // handled
-                        } else if let Ok(par_threads_applied) =
-                            apply_parallel_threads_flag(args, &mut i, &mut parallel_cfg, &ui)
-                        {
-                            if par_threads_applied {
-                                // handled
-                            } else if let Ok(par_min_trip_applied) =
-                                apply_parallel_min_trip_flag(args, &mut i, &mut parallel_cfg, &ui)
-                            {
-                                if par_min_trip_applied {
-                                    // handled
-                                } else if arg == "--keep-r" {
-                                    keep_r = true;
-                                } else if arg == "--no-runtime" {
-                                    no_runtime = true;
-                                } else if arg == "--mir" {
-                                    if matches!(opt_level, OptLevel::O0) {
-                                        opt_level = OptLevel::O1;
-                                    }
-                                } else if !arg.starts_with('-') {
-                                    input_path = arg.clone();
-                                }
-                            } else {
-                                return 1;
-                            }
-                        } else {
-                            return 1;
-                        }
-                    } else {
-                        return 1;
-                    }
-                } else {
-                    return 1;
-                }
-            } else {
-                return 1;
-            }
-        } else {
-            return 1;
-        }
-        i += 1;
-    }
+    let opts = match parse_command_opts(args, CommandMode::Legacy, &ui) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let input_path = opts.target;
 
     if input_path.is_empty() {
         print_usage();
@@ -362,10 +341,16 @@ fn cmd_legacy(args: &[String]) -> i32 {
         }
     };
 
-    let result = compile_with_configs(&input_path, &input, opt_level, type_cfg, parallel_cfg);
+    let result = compile_with_configs(
+        &input_path,
+        &input,
+        opts.opt_level,
+        opts.type_cfg,
+        opts.parallel_cfg,
+    );
     match result {
         Ok((r_code, source_map)) => {
-            if let Some(out_path) = output_path {
+            if let Some(out_path) = opts.output_path {
                 if let Err(e) = fs::write(&out_path, &r_code) {
                     ui.error(&format!(
                         "Failed to write output file '{}': {}",
@@ -375,8 +360,8 @@ fn cmd_legacy(args: &[String]) -> i32 {
                 }
                 ui.success(&format!("Compiled to {}", out_path));
                 0
-            } else if !no_runtime {
-                Runner::run(&input_path, &input, &r_code, &source_map, None, keep_r)
+            } else if !opts.no_runtime {
+                Runner::run(&input_path, &input, &r_code, &source_map, None, opts.keep_r)
             } else {
                 ui.success("Compilation successful (runtime skipped)");
                 0
@@ -411,72 +396,11 @@ fn resolve_run_input(raw: &str) -> Result<PathBuf, String> {
 
 fn cmd_run(args: &[String]) -> i32 {
     let ui = CliLog::new();
-    let mut target = ".".to_string();
-    let mut keep_r = false;
-    let mut opt_level = OptLevel::O1;
-    let mut type_cfg = type_config_from_env();
-    let mut parallel_cfg = parallel_config_from_env();
-
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        if apply_opt_flag(arg, &mut opt_level) {
-            // handled
-        } else if let Ok(applied) = apply_type_mode_flag(args, &mut i, &mut type_cfg, &ui) {
-            if applied {
-                // handled
-            } else if let Ok(native_applied) =
-                apply_native_backend_flag(args, &mut i, &mut type_cfg, &ui)
-            {
-                if native_applied {
-                    // handled
-                } else if let Ok(par_mode_applied) =
-                    apply_parallel_mode_flag(args, &mut i, &mut parallel_cfg, &ui)
-                {
-                    if par_mode_applied {
-                        // handled
-                    } else if let Ok(par_backend_applied) =
-                        apply_parallel_backend_flag(args, &mut i, &mut parallel_cfg, &ui)
-                    {
-                        if par_backend_applied {
-                            // handled
-                        } else if let Ok(par_threads_applied) =
-                            apply_parallel_threads_flag(args, &mut i, &mut parallel_cfg, &ui)
-                        {
-                            if par_threads_applied {
-                                // handled
-                            } else if let Ok(par_min_trip_applied) =
-                                apply_parallel_min_trip_flag(args, &mut i, &mut parallel_cfg, &ui)
-                            {
-                                if par_min_trip_applied {
-                                    // handled
-                                } else if arg == "--keep-r" {
-                                    keep_r = true;
-                                } else if !arg.starts_with('-') {
-                                    target = arg.clone();
-                                }
-                            } else {
-                                return 1;
-                            }
-                        } else {
-                            return 1;
-                        }
-                    } else {
-                        return 1;
-                    }
-                } else {
-                    return 1;
-                }
-            } else {
-                return 1;
-            }
-        } else {
-            return 1;
-        }
-        i += 1;
-    }
-
-    let input_path = match resolve_run_input(&target) {
+    let opts = match parse_command_opts(args, CommandMode::Run, &ui) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let input_path = match resolve_run_input(&opts.target) {
         Ok(p) => p,
         Err(msg) => {
             ui.error(&msg);
@@ -492,9 +416,15 @@ fn cmd_run(args: &[String]) -> i32 {
         }
     };
 
-    match compile_with_configs(&input_path_str, &input, opt_level, type_cfg, parallel_cfg) {
+    match compile_with_configs(
+        &input_path_str,
+        &input,
+        opts.opt_level,
+        opts.type_cfg,
+        opts.parallel_cfg,
+    ) {
         Ok((r_code, source_map)) => {
-            Runner::run(&input_path_str, &input, &r_code, &source_map, None, keep_r)
+            Runner::run(&input_path_str, &input, &r_code, &source_map, None, opts.keep_r)
         }
         Err(e) => {
             e.display(Some(&input), Some(&input_path_str));
@@ -522,76 +452,12 @@ fn collect_rr_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()>
 
 fn cmd_build(args: &[String]) -> i32 {
     let ui = CliLog::new();
-    let mut target = ".".to_string();
-    let mut out_dir = "build".to_string();
-    let mut opt_level = OptLevel::O1;
-    let mut type_cfg = type_config_from_env();
-    let mut parallel_cfg = parallel_config_from_env();
-
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "--out-dir" || arg == "-o" {
-            if i + 1 < args.len() {
-                out_dir = args[i + 1].clone();
-                i += 1;
-            } else {
-                ui.error(&format!("Missing directory path after {}", arg));
-                return 1;
-            }
-        } else if apply_opt_flag(arg, &mut opt_level) {
-            // handled
-        } else if let Ok(applied) = apply_type_mode_flag(args, &mut i, &mut type_cfg, &ui) {
-            if applied {
-                // handled
-            } else if let Ok(native_applied) =
-                apply_native_backend_flag(args, &mut i, &mut type_cfg, &ui)
-            {
-                if native_applied {
-                    // handled
-                } else if let Ok(par_mode_applied) =
-                    apply_parallel_mode_flag(args, &mut i, &mut parallel_cfg, &ui)
-                {
-                    if par_mode_applied {
-                        // handled
-                    } else if let Ok(par_backend_applied) =
-                        apply_parallel_backend_flag(args, &mut i, &mut parallel_cfg, &ui)
-                    {
-                        if par_backend_applied {
-                            // handled
-                        } else if let Ok(par_threads_applied) =
-                            apply_parallel_threads_flag(args, &mut i, &mut parallel_cfg, &ui)
-                        {
-                            if par_threads_applied {
-                                // handled
-                            } else if let Ok(par_min_trip_applied) =
-                                apply_parallel_min_trip_flag(args, &mut i, &mut parallel_cfg, &ui)
-                            {
-                                if par_min_trip_applied {
-                                    // handled
-                                } else if !arg.starts_with('-') {
-                                    target = arg.clone();
-                                }
-                            } else {
-                                return 1;
-                            }
-                        } else {
-                            return 1;
-                        }
-                    } else {
-                        return 1;
-                    }
-                } else {
-                    return 1;
-                }
-            } else {
-                return 1;
-            }
-        } else {
-            return 1;
-        }
-        i += 1;
-    }
+    let opts = match parse_command_opts(args, CommandMode::Build, &ui) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let target = opts.target;
+    let out_dir = opts.output_path.unwrap_or_else(|| "build".to_string());
 
     let target_path = PathBuf::from(&target);
     if !target_path.exists() {
@@ -610,12 +476,12 @@ fn cmd_build(args: &[String]) -> i32 {
     println!("{} {}", ui.yellow_bold("[+]"), ui.red_bold("RR Build"));
     println!(
         " {} {}",
-        ui.dim("└─"),
+        ui.dim("|-"),
         ui.white_bold(&format!(
             "Target: {} | Out: {} ({})",
             target,
             out_dir,
-            opt_level.label()
+            opts.opt_level.label()
         ))
     );
 
@@ -658,7 +524,13 @@ fn cmd_build(args: &[String]) -> i32 {
         };
 
         let (r_code, _source_map) =
-            match compile_with_configs(&rr_path_str, &input, opt_level, type_cfg, parallel_cfg) {
+            match compile_with_configs(
+                &rr_path_str,
+                &input,
+                opts.opt_level,
+                opts.type_cfg,
+                opts.parallel_cfg,
+            ) {
                 Ok(v) => v,
                 Err(e) => {
                     e.display(Some(&input), Some(&rr_path_str));
@@ -696,3 +568,4 @@ fn cmd_build(args: &[String]) -> i32 {
     ));
     0
 }
+

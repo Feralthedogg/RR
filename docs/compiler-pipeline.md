@@ -1,8 +1,18 @@
 # Compiler Pipeline
 
-RR compile path in `src/compiler/pipeline.rs::compile()` uses a 6-step pipeline.
+RR compile path in `src/compiler/pipeline.rs::compile_with_configs()` uses a 6-step pipeline.
 
 CLI entrypoints in `src/main.rs` call this pipeline API.
+
+## Implementation Layout
+
+`compile_with_configs()` is an orchestrator that delegates to phase helpers:
+
+- `run_source_analysis_and_canonicalization()`
+- `run_mir_synthesis()`
+- `run_tachyon_phase()`
+- `emit_r_functions()`
+- `inject_runtime_prelude()`
 
 ## High-Level Flow
 
