@@ -168,7 +168,7 @@ impl Lowerer {
                     let c = Box::new(iter.next().unwrap());
                     Ok(IRLValue::Index2D { base: ir_base, r, c })
                 } else {
-                    bail!("RR.SemanticError", RRCode::E1002, Stage::Lower, "RR v2.0 only supports 1D and 2D indexing");
+                    bail!("RR.SemanticError", RRCode::E1002, Stage::Lower, "RR v3.0 only supports 1D and 2D indexing");
                 }
             }
         }
@@ -245,7 +245,7 @@ impl Lowerer {
                     let c = Box::new(it.next().unwrap());
                     IRExprKind::Index2D { base: ir_base, r, c }
                 } else {
-                    bail!("RR.SemanticError", RRCode::E1002, Stage::Lower, "RR v2.0 only supports 1D and 2D indexing");
+                    bail!("RR.SemanticError", RRCode::E1002, Stage::Lower, "RR v3.0 only supports 1D and 2D indexing");
                 }
             }
             ExprKind::Pipe { lhs, rhs_call } => {

@@ -3,6 +3,7 @@ use crate::syntax::ast::BinOp;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::env;
+use std::fs;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
@@ -41,6 +42,14 @@ pub struct TachyonPulseStats {
     pub inline_rounds: usize,
     pub inline_cleanup_hits: usize,
     pub de_ssa_hits: usize,
+    pub always_tier_functions: usize,
+    pub optimized_functions: usize,
+    pub skipped_functions: usize,
+    pub full_opt_ir_limit: usize,
+    pub full_opt_fn_limit: usize,
+    pub total_program_ir: usize,
+    pub max_function_ir: usize,
+    pub selective_budget_mode: bool,
 }
 
 impl TachyonPulseStats {
@@ -60,7 +69,31 @@ impl TachyonPulseStats {
         self.inline_rounds += other.inline_rounds;
         self.inline_cleanup_hits += other.inline_cleanup_hits;
         self.de_ssa_hits += other.de_ssa_hits;
+        self.always_tier_functions += other.always_tier_functions;
+        self.optimized_functions += other.optimized_functions;
+        self.skipped_functions += other.skipped_functions;
     }
+}
+
+#[derive(Debug, Clone)]
+struct FunctionBudgetProfile {
+    name: String,
+    ir_size: usize,
+    score: usize,
+    weighted_score: usize,
+    density: usize,
+    hot_weight: usize,
+    within_fn_limit: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ProgramOptPlan {
+    program_limit: usize,
+    fn_limit: usize,
+    total_ir: usize,
+    max_fn_ir: usize,
+    selective_mode: bool,
+    selected_functions: FxHashSet<String>,
 }
 
 // Backward compatibility alias for older call sites.
@@ -137,6 +170,14 @@ impl TachyonEngine {
         Self::env_usize("RR_MAX_FULL_OPT_FN_IR", 900)
     }
 
+    fn adaptive_ir_budget_enabled() -> bool {
+        Self::env_bool("RR_ADAPTIVE_IR_BUDGET", false)
+    }
+
+    fn selective_budget_enabled() -> bool {
+        Self::env_bool("RR_SELECTIVE_OPT_BUDGET", false) || Self::adaptive_ir_budget_enabled()
+    }
+
     fn heavy_pass_fn_ir() -> usize {
         Self::env_usize("RR_HEAVY_PASS_FN_IR", 650)
     }
@@ -145,12 +186,106 @@ impl TachyonEngine {
         Self::env_usize("RR_MAX_FN_OPT_MS", 250) as u128
     }
 
+    fn always_tier_max_iters() -> usize {
+        Self::env_usize("RR_ALWAYS_TIER_ITERS", 2).clamp(1, 6)
+    }
+
     fn licm_enabled() -> bool {
         Self::env_bool("RR_ENABLE_LICM", false)
     }
 
     fn gvn_enabled() -> bool {
         Self::env_bool("RR_ENABLE_GVN", false)
+    }
+
+    fn profile_use_path() -> Option<String> {
+        env::var("RR_PROFILE_USE").ok().and_then(|v| {
+            let p = v.trim();
+            if p.is_empty() {
+                None
+            } else {
+                Some(p.to_string())
+            }
+        })
+    }
+
+    fn load_hot_profile_counts() -> FxHashMap<String, usize> {
+        let mut counts = FxHashMap::default();
+        let Some(path) = Self::profile_use_path() else {
+            return counts;
+        };
+        let Ok(content) = fs::read_to_string(path) else {
+            return counts;
+        };
+
+        for raw in content.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (name, count_str) = if let Some((k, v)) = line.split_once('=') {
+                (k.trim(), v.trim())
+            } else if let Some((k, v)) = line.split_once(':') {
+                (k.trim(), v.trim())
+            } else {
+                let mut parts = line.split_whitespace();
+                let Some(k) = parts.next() else { continue };
+                let Some(v) = parts.next() else { continue };
+                (k, v)
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let Ok(parsed) = count_str.parse::<usize>() else {
+                continue;
+            };
+            let entry = counts.entry(name.to_string()).or_insert(0);
+            *entry = (*entry).saturating_add(parsed);
+        }
+        counts
+    }
+
+    fn fn_static_hotness(fn_ir: &FnIR) -> usize {
+        let mut loops = 0usize;
+        let mut branches = 0usize;
+        let mut calls = 0usize;
+        let mut stores = 0usize;
+        for (bid, bb) in fn_ir.blocks.iter().enumerate() {
+            match bb.term {
+                Terminator::If {
+                    then_bb, else_bb, ..
+                } => {
+                    branches += 1;
+                    if then_bb <= bid {
+                        loops += 1;
+                    }
+                    if else_bb <= bid {
+                        loops += 1;
+                    }
+                }
+                Terminator::Goto(t) => {
+                    if t <= bid {
+                        loops += 1;
+                    }
+                }
+                _ => {}
+            }
+            for ins in &bb.instrs {
+                if matches!(ins, Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. }) {
+                    stores += 1;
+                }
+            }
+        }
+        for v in &fn_ir.values {
+            if matches!(v.kind, ValueKind::Call { .. } | ValueKind::Intrinsic { .. }) {
+                calls += 1;
+            }
+        }
+        loops
+            .saturating_mul(20)
+            .saturating_add(branches.saturating_mul(8))
+            .saturating_add(calls.saturating_mul(6))
+            .saturating_add(stores.saturating_mul(4))
     }
 
     fn fn_ir_fingerprint(fn_ir: &FnIR) -> u64 {
@@ -221,6 +356,225 @@ impl TachyonEngine {
         fn_ir.values.len() + instrs
     }
 
+    fn fn_opt_score(fn_ir: &FnIR) -> usize {
+        let mut score = 0usize;
+        for v in &fn_ir.values {
+            score += match &v.kind {
+                ValueKind::Binary { .. } => 3,
+                ValueKind::Unary { .. } => 2,
+                ValueKind::Call { .. } => 5,
+                ValueKind::Intrinsic { .. } => 8,
+                ValueKind::Index1D { .. } | ValueKind::Index2D { .. } => 4,
+                ValueKind::Phi { .. } => 2,
+                ValueKind::Len { .. } | ValueKind::Range { .. } => 2,
+                _ => 1,
+            };
+        }
+        for b in &fn_ir.blocks {
+            if matches!(b.term, Terminator::If { .. }) {
+                score += 8;
+            }
+            for ins in &b.instrs {
+                score += match ins {
+                    Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. } => 6,
+                    Instr::Eval { .. } => 2,
+                    Instr::Assign { .. } => 1,
+                };
+            }
+        }
+        // Mild size-bias so tiny helper functions don't always dominate ranking.
+        score.saturating_add(Self::fn_ir_size(fn_ir) / 12)
+    }
+
+    fn adaptive_full_opt_limits(
+        all_fns: &FxHashMap<String, FnIR>,
+        total_ir: usize,
+        max_fn_ir: usize,
+    ) -> (usize, usize) {
+        let base_prog = Self::max_full_opt_ir();
+        let base_fn = Self::max_full_opt_fn_ir();
+        if !Self::adaptive_ir_budget_enabled() {
+            return (base_prog, base_fn);
+        }
+
+        let fn_count = all_fns.len().max(1);
+        let avg_ir = total_ir / fn_count;
+        let mut branch_terms = 0usize;
+        let mut call_like = 0usize;
+        let mut mem_like = 0usize;
+        let mut arith_like = 0usize;
+
+        for fn_ir in all_fns.values() {
+            for blk in &fn_ir.blocks {
+                if matches!(blk.term, Terminator::If { .. }) {
+                    branch_terms += 1;
+                }
+                for ins in &blk.instrs {
+                    if matches!(ins, Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. }) {
+                        mem_like += 1;
+                    }
+                }
+            }
+            for v in &fn_ir.values {
+                match &v.kind {
+                    ValueKind::Binary { .. } | ValueKind::Unary { .. } => arith_like += 1,
+                    ValueKind::Call { .. } | ValueKind::Intrinsic { .. } => call_like += 1,
+                    ValueKind::Index1D { .. } | ValueKind::Index2D { .. } => mem_like += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        let hot_ops = branch_terms
+            .saturating_add(call_like)
+            .saturating_add(mem_like)
+            .saturating_add(arith_like);
+        let hot_density_permille = if total_ir == 0 {
+            0
+        } else {
+            hot_ops.saturating_mul(1000) / total_ir
+        };
+        let fn_bonus = fn_count.saturating_mul(32).min(1800);
+        let avg_bonus = avg_ir.saturating_mul(2).min(3200);
+        let density_bonus = hot_density_permille.saturating_mul(3).min(1400);
+        let max_skew_bonus = max_fn_ir.saturating_sub(avg_ir).min(1200);
+
+        let program_upper = base_prog.max(12_000);
+        let fn_upper = base_fn.max(1_600);
+
+        let program_limit = base_prog
+            .saturating_add(fn_bonus)
+            .saturating_add(avg_bonus)
+            .saturating_add(density_bonus)
+            .saturating_add(max_skew_bonus / 4)
+            .clamp(base_prog, program_upper);
+
+        let fn_limit = base_fn
+            .saturating_add(avg_ir.saturating_mul(2).min(500))
+            .saturating_add(hot_density_permille.min(300))
+            .clamp(base_fn, fn_upper);
+
+        (program_limit, fn_limit)
+    }
+
+    fn fn_hot_weight(
+        name: &str,
+        fn_ir: &FnIR,
+        profile_counts: &FxHashMap<String, usize>,
+        max_profile_count: usize,
+    ) -> usize {
+        let static_hot = Self::fn_static_hotness(fn_ir).min(800);
+        let static_weight = 1024usize.saturating_add(static_hot.saturating_mul(3));
+        let profile_weight = match profile_counts.get(name).copied() {
+            Some(count) if max_profile_count > 0 => {
+                1024usize.saturating_add(count.saturating_mul(3072) / max_profile_count)
+            }
+            _ => 1024usize,
+        };
+        static_weight
+            .saturating_mul(profile_weight)
+            .saturating_div(1024)
+    }
+
+    fn build_opt_plan_with_profile(
+        all_fns: &FxHashMap<String, FnIR>,
+        profile_counts: &FxHashMap<String, usize>,
+    ) -> ProgramOptPlan {
+        let total_ir: usize = all_fns.values().map(Self::fn_ir_size).sum();
+        let max_fn_ir: usize = all_fns.values().map(Self::fn_ir_size).max().unwrap_or(0);
+        let (program_limit, fn_limit) =
+            Self::adaptive_full_opt_limits(all_fns, total_ir, max_fn_ir);
+
+        let mut selected = FxHashSet::default();
+        let needs_budget = total_ir > program_limit || max_fn_ir > fn_limit;
+        if !needs_budget {
+            for (name, fn_ir) in all_fns {
+                if !fn_ir.unsupported_dynamic {
+                    selected.insert(name.clone());
+                }
+            }
+            return ProgramOptPlan {
+                program_limit,
+                fn_limit,
+                total_ir,
+                max_fn_ir,
+                selective_mode: false,
+                selected_functions: selected,
+            };
+        }
+
+        let mut profiles = Vec::new();
+        let soft_fn_limit = fn_limit.min(Self::heavy_pass_fn_ir().max(64));
+        let max_profile_count = profile_counts.values().copied().max().unwrap_or(0);
+        for (name, fn_ir) in all_fns {
+            if fn_ir.unsupported_dynamic {
+                continue;
+            }
+            let ir_size = Self::fn_ir_size(fn_ir);
+            let score = Self::fn_opt_score(fn_ir);
+            let hot_weight = Self::fn_hot_weight(name, fn_ir, profile_counts, max_profile_count);
+            let weighted_score = score.saturating_mul(hot_weight).saturating_div(1024);
+            let density = weighted_score.saturating_mul(1024) / ir_size.max(1);
+            profiles.push(FunctionBudgetProfile {
+                name: name.clone(),
+                ir_size,
+                score,
+                weighted_score,
+                density,
+                hot_weight,
+                within_fn_limit: ir_size <= soft_fn_limit,
+            });
+        }
+
+        profiles.sort_by(|a, b| {
+            b.within_fn_limit
+                .cmp(&a.within_fn_limit)
+                .then_with(|| b.density.cmp(&a.density))
+                .then_with(|| b.hot_weight.cmp(&a.hot_weight))
+                .then_with(|| b.weighted_score.cmp(&a.weighted_score))
+                .then_with(|| b.score.cmp(&a.score))
+                .then_with(|| a.ir_size.cmp(&b.ir_size))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+
+        let mut used_budget = 0usize;
+        for p in &profiles {
+            if !p.within_fn_limit {
+                continue;
+            }
+            if used_budget.saturating_add(p.ir_size) > program_limit {
+                continue;
+            }
+            used_budget = used_budget.saturating_add(p.ir_size);
+            selected.insert(p.name.clone());
+        }
+
+        if selected.is_empty() {
+            if let Some(fallback) = profiles
+                .iter()
+                .filter(|p| p.ir_size <= soft_fn_limit.saturating_mul(2))
+                .min_by_key(|p| p.ir_size)
+                .or_else(|| profiles.iter().min_by_key(|p| p.ir_size))
+            {
+                selected.insert(fallback.name.clone());
+            }
+        }
+
+        ProgramOptPlan {
+            program_limit,
+            fn_limit,
+            total_ir,
+            max_fn_ir,
+            selective_mode: true,
+            selected_functions: selected,
+        }
+    }
+
+    fn build_opt_plan(all_fns: &FxHashMap<String, FnIR>) -> ProgramOptPlan {
+        let profile_counts = Self::load_hot_profile_counts();
+        Self::build_opt_plan_with_profile(all_fns, &profile_counts)
+    }
+
     // Required lowering-to-codegen stabilization passes.
     // This must run even in O0, because codegen cannot emit Phi.
     pub fn stabilize_for_codegen(&self, all_fns: &mut FxHashMap<String, FnIR>) {
@@ -243,6 +597,71 @@ impl TachyonEngine {
             }
             let _ = Self::verify_or_reject(fn_ir, "PrepareForCodegen/End");
         }
+    }
+
+    fn run_always_tier_with_stats(&self, fn_ir: &mut FnIR) -> TachyonPulseStats {
+        let mut stats = TachyonPulseStats::default();
+        if fn_ir.unsupported_dynamic {
+            return stats;
+        }
+        if !Self::verify_or_reject(fn_ir, "AlwaysTier/Start") {
+            return stats;
+        }
+
+        stats.always_tier_functions = 1;
+        let mut changed = true;
+        let mut iter = 0usize;
+        let max_iters = Self::always_tier_max_iters();
+        let mut seen = FxHashSet::default();
+        seen.insert(Self::fn_ir_fingerprint(fn_ir));
+        let run_light_sccp = Self::fn_ir_size(fn_ir) <= Self::heavy_pass_fn_ir().saturating_mul(2);
+
+        while changed && iter < max_iters {
+            iter += 1;
+            changed = false;
+            let before_hash = Self::fn_ir_fingerprint(fn_ir);
+
+            let sc_changed = self.simplify_cfg(fn_ir);
+            if sc_changed {
+                stats.simplify_hits += 1;
+                changed = true;
+            }
+            Self::maybe_verify(fn_ir, "After AlwaysTier/SimplifyCFG");
+
+            if run_light_sccp {
+                let sccp_changed = sccp::MirSCCP::new().optimize(fn_ir);
+                if sccp_changed {
+                    stats.sccp_hits += 1;
+                    changed = true;
+                }
+                Self::maybe_verify(fn_ir, "After AlwaysTier/SCCP");
+
+                let intr_changed = intrinsics::optimize(fn_ir);
+                if intr_changed {
+                    stats.intrinsics_hits += 1;
+                    changed = true;
+                }
+                Self::maybe_verify(fn_ir, "After AlwaysTier/Intrinsics");
+            }
+
+            let dce_changed = self.dce(fn_ir);
+            if dce_changed {
+                stats.dce_hits += 1;
+                changed = true;
+            }
+            Self::maybe_verify(fn_ir, "After AlwaysTier/DCE");
+
+            let after_hash = Self::fn_ir_fingerprint(fn_ir);
+            if after_hash == before_hash {
+                break;
+            }
+            if !seen.insert(after_hash) {
+                break;
+            }
+        }
+
+        let _ = Self::verify_or_reject(fn_ir, "AlwaysTier/End");
+        stats
     }
 
     pub fn run_program(&self, all_fns: &mut FxHashMap<String, FnIR>) {
@@ -280,63 +699,97 @@ impl TachyonEngine {
         */
 
         let mut stats = TachyonPulseStats::default();
+        let plan = Self::build_opt_plan(all_fns);
+        let selective_enabled = Self::selective_budget_enabled();
+        let run_heavy_tier = !plan.selective_mode || selective_enabled;
+        let run_full_inline_tier = run_heavy_tier;
+        stats.total_program_ir = plan.total_ir;
+        stats.max_function_ir = plan.max_fn_ir;
+        stats.full_opt_ir_limit = plan.program_limit;
+        stats.full_opt_fn_limit = plan.fn_limit;
+        stats.selective_budget_mode = plan.selective_mode && selective_enabled;
 
-        let ir_size: usize = all_fns.values().map(Self::fn_ir_size).sum();
-        let max_fn_ir: usize = all_fns.values().map(Self::fn_ir_size).max().unwrap_or(0);
-        if ir_size > Self::max_full_opt_ir() || max_fn_ir > Self::max_full_opt_fn_ir() {
-            // Large programs prefer predictable compile time and correctness over aggressive search.
-            self.stabilize_for_codegen(all_fns);
-            return stats;
+        // Tier A (always): lightweight canonicalization for every safe function.
+        for (_, fn_ir) in all_fns.iter_mut() {
+            let s = self.run_always_tier_with_stats(fn_ir);
+            stats.accumulate(s);
         }
 
-        let callmap_user_whitelist = Self::collect_callmap_user_whitelist(all_fns);
+        let heavy_targets_exist =
+            run_heavy_tier && (!plan.selective_mode || !plan.selected_functions.is_empty());
+        let callmap_user_whitelist = if heavy_targets_exist {
+            Self::collect_callmap_user_whitelist(all_fns)
+        } else {
+            FxHashSet::default()
+        };
 
-        // 1. Initial independent optimization for all functions
-        for (_, fn_ir) in all_fns.iter_mut() {
+        // Tier B (selective-heavy): optimize full pass pipeline only for selected functions.
+        for (name, fn_ir) in all_fns.iter_mut() {
             if fn_ir.unsupported_dynamic {
+                stats.skipped_functions += 1;
                 let _ = Self::verify_or_reject(fn_ir, "SkipOpt/UnsupportedDynamic");
                 continue;
             }
+            let selected = !plan.selective_mode || plan.selected_functions.contains(name);
+            if !run_heavy_tier || !selected {
+                stats.skipped_functions += 1;
+                let reason = if !run_heavy_tier {
+                    "SkipOpt/HeavyTierDisabled"
+                } else {
+                    "SkipOpt/Budget"
+                };
+                let _ = Self::verify_or_reject(fn_ir, reason);
+                continue;
+            }
+            stats.optimized_functions += 1;
             let s = self.run_function_with_stats(fn_ir, &callmap_user_whitelist);
             stats.accumulate(s);
         }
 
-        // 2. Inter-procedural Inlining
-        let mut changed = true;
-        let mut iter = 0;
-        while changed && iter < Self::max_inline_rounds() {
-            changed = false;
-            iter += 1;
-            // Inlining needs access to the whole map
-            let local_changed = inline::MirInliner::new().optimize(all_fns);
-            for (_, fn_ir) in all_fns.iter() {
-                Self::maybe_verify(fn_ir, "After Inlining");
-            }
-            if local_changed {
-                stats.inline_rounds += 1;
-                changed = true;
-                // Re-optimize each function if inlining happened
-                for (_, fn_ir) in all_fns.iter_mut() {
-                    if fn_ir.unsupported_dynamic {
-                        Self::maybe_verify(
-                            fn_ir,
-                            "After Inline Cleanup (Skipped: UnsupportedDynamic)",
-                        );
-                        continue;
+        // Tier C (full-program): bounded inter-procedural inlining.
+        if run_full_inline_tier {
+            let mut changed = true;
+            let mut iter = 0;
+            let inliner = inline::MirInliner::new();
+            let hot_filter = if plan.selective_mode {
+                Some(&plan.selected_functions)
+            } else {
+                None
+            };
+            while changed && iter < Self::max_inline_rounds() {
+                changed = false;
+                iter += 1;
+                // Inlining needs access to the whole map
+                let local_changed = inliner.optimize_with_hot_filter(all_fns, hot_filter);
+                for (_, fn_ir) in all_fns.iter() {
+                    Self::maybe_verify(fn_ir, "After Inlining");
+                }
+                if local_changed {
+                    stats.inline_rounds += 1;
+                    changed = true;
+                    // Re-optimize each function if inlining happened
+                    for (_, fn_ir) in all_fns.iter_mut() {
+                        if fn_ir.unsupported_dynamic {
+                            Self::maybe_verify(
+                                fn_ir,
+                                "After Inline Cleanup (Skipped: UnsupportedDynamic)",
+                            );
+                            continue;
+                        }
+                        // Run lightweight cleanup after inlining.
+                        let inline_sc_changed = self.simplify_cfg(fn_ir);
+                        let inline_dce_changed = self.dce(fn_ir);
+                        if inline_sc_changed || inline_dce_changed {
+                            stats.inline_cleanup_hits += 1;
+                        }
+                        if inline_sc_changed {
+                            stats.simplify_hits += 1;
+                        }
+                        if inline_dce_changed {
+                            stats.dce_hits += 1;
+                        }
+                        Self::maybe_verify(fn_ir, "After Inline Cleanup");
                     }
-                    // Run lightweight cleanup after inlining.
-                    let inline_sc_changed = self.simplify_cfg(fn_ir);
-                    let inline_dce_changed = self.dce(fn_ir);
-                    if inline_sc_changed || inline_dce_changed {
-                        stats.inline_cleanup_hits += 1;
-                    }
-                    if inline_sc_changed {
-                        stats.simplify_hits += 1;
-                    }
-                    if inline_dce_changed {
-                        stats.dce_hits += 1;
-                    }
-                    Self::maybe_verify(fn_ir, "After Inline Cleanup");
                 }
             }
         }
@@ -1104,5 +1557,102 @@ impl TachyonEngine {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::Span;
+
+    fn dummy_fn(name: &str, approx_size: usize) -> FnIR {
+        let mut fn_ir = FnIR::new(name.to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let mut ret = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        // fn_ir_size = values + instrs; keep instrs=0 and control value count directly.
+        let target_values = approx_size.max(1);
+        while fn_ir.values.len() < target_values {
+            ret = fn_ir.add_value(
+                ValueKind::Const(Lit::Int(fn_ir.values.len() as i64)),
+                Span::default(),
+                Facts::empty(),
+                None,
+            );
+        }
+        fn_ir.blocks[entry].term = Terminator::Return(Some(ret));
+        fn_ir
+    }
+
+    fn fn_with_unreachable_block(name: &str) -> FnIR {
+        let mut fn_ir = FnIR::new(name.to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+        let dead = fn_ir.add_block();
+        let ret = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(7)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(ret));
+        fn_ir.blocks[dead].term = Terminator::Return(Some(ret));
+        fn_ir
+    }
+
+    #[test]
+    fn opt_plan_selects_all_under_budget() {
+        let mut all = FxHashMap::default();
+        all.insert("a".to_string(), dummy_fn("a", 120));
+        all.insert("b".to_string(), dummy_fn("b", 180));
+
+        let plan = TachyonEngine::build_opt_plan(&all);
+        assert!(!plan.selective_mode);
+        assert_eq!(plan.selected_functions.len(), all.len());
+    }
+
+    #[test]
+    fn opt_plan_selects_subset_over_budget() {
+        let mut all = FxHashMap::default();
+        for i in 0..5 {
+            let name = format!("f{}", i);
+            all.insert(name.clone(), dummy_fn(&name, 700));
+        }
+
+        let plan = TachyonEngine::build_opt_plan(&all);
+        assert!(plan.selective_mode);
+        assert!(!plan.selected_functions.is_empty());
+        assert!(plan.selected_functions.len() < all.len());
+    }
+
+    #[test]
+    fn opt_plan_prefers_profile_hot_function_under_budget() {
+        let mut all = FxHashMap::default();
+        all.insert("a".to_string(), dummy_fn("a", 620));
+        all.insert("b".to_string(), dummy_fn("b", 620));
+        all.insert("c".to_string(), dummy_fn("c", 620));
+        all.insert("d".to_string(), dummy_fn("d", 620));
+        all.insert("hot".to_string(), dummy_fn("hot", 620));
+
+        let mut profile = FxHashMap::default();
+        profile.insert("hot".to_string(), 1000usize);
+        let plan = TachyonEngine::build_opt_plan_with_profile(&all, &profile);
+        assert!(plan.selected_functions.contains("hot"));
+    }
+
+    #[test]
+    fn always_tier_runs_light_cleanup() {
+        let mut f = fn_with_unreachable_block("cleanup");
+        let stats = TachyonEngine::new().run_always_tier_with_stats(&mut f);
+        assert_eq!(stats.always_tier_functions, 1);
+        assert!(crate::mir::verify::verify_ir(&f).is_ok());
     }
 }

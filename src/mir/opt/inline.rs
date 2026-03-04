@@ -32,13 +32,28 @@ impl MirInliner {
     }
 
     pub fn optimize(&self, all_fns: &mut FxHashMap<String, FnIR>) -> bool {
+        self.optimize_with_hot_filter(all_fns, None)
+    }
+
+    pub fn optimize_with_hot_filter(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        hot_callers: Option<&FxHashSet<String>>,
+    ) -> bool {
         if Self::inline_disabled() {
             return false;
         }
+        let policy = Self::policy();
+        let mut growth = InlineGrowthBudget::new(all_fns, &policy);
         let mut global_changed = false;
         let fn_names: Vec<String> = all_fns.keys().cloned().collect();
 
         for name in fn_names {
+            if let Some(hot_set) = hot_callers {
+                if !hot_set.contains(&name) {
+                    continue;
+                }
+            }
             if let Some(mut fn_ir) = all_fns.remove(&name) {
                 if fn_ir.unsupported_dynamic {
                     all_fns.insert(name, fn_ir);
@@ -49,7 +64,8 @@ impl MirInliner {
                 let local_rounds = Self::env_usize("RR_INLINE_LOCAL_ROUNDS", 2);
 
                 while local_changed && iterations < local_rounds {
-                    local_changed = self.inline_calls(&mut fn_ir, all_fns);
+                    local_changed =
+                        self.inline_calls(&mut fn_ir, &name, all_fns, &policy, &mut growth);
                     if local_changed {
                         global_changed = true;
                     }
@@ -62,15 +78,25 @@ impl MirInliner {
         global_changed
     }
 
-    fn inline_calls(&self, caller: &mut FnIR, all_fns: &FxHashMap<String, FnIR>) -> bool {
+    fn inline_calls(
+        &self,
+        caller: &mut FnIR,
+        caller_name: &str,
+        all_fns: &FxHashMap<String, FnIR>,
+        policy: &InlinePolicy,
+        growth: &mut InlineGrowthBudget,
+    ) -> bool {
         let mut changed = false;
-        let policy = Self::policy();
         let caller_instr_cnt: usize = caller.blocks.iter().map(|b| b.instrs.len()).sum();
         if caller_instr_cnt > policy.max_caller_instrs {
             return false;
         }
+        let caller_growth_limit = growth.caller_limit(caller_name);
+        if Self::fn_ir_size(caller) > caller_growth_limit {
+            return false;
+        }
 
-        if self.inline_value_calls(caller, all_fns) {
+        if self.inline_value_calls(caller, all_fns, policy, growth, caller_growth_limit) {
             return true;
         }
 
@@ -89,18 +115,23 @@ impl MirInliner {
                         if callee.unsupported_dynamic {
                             continue;
                         }
-                        if self.should_inline(callee, caller) {
-                            candidate = Some((
-                                bid,
-                                idx,
-                                callee_name,
-                                args,
-                                target_val,
-                                call_dst,
-                                call_span,
-                            ));
-                            break 'scan;
+                        if !self.should_inline(callee, caller, policy) {
+                            continue;
                         }
+                        let predicted_growth = Self::estimate_inline_growth(callee);
+                        if !growth.can_inline(
+                            Self::fn_ir_size(caller),
+                            caller_growth_limit,
+                            predicted_growth,
+                        ) {
+                            continue;
+                        }
+                        if self.inline_callsite_cost(callee) > policy.max_callsite_cost {
+                            continue;
+                        }
+                        candidate =
+                            Some((bid, idx, callee_name, args, target_val, call_dst, call_span));
+                        break 'scan;
                     }
                 }
             }
@@ -108,9 +139,12 @@ impl MirInliner {
 
         if let Some((bid, idx, callee_name, args, target_val, call_dst, call_span)) = candidate {
             let callee = all_fns.get(&callee_name).unwrap();
+            let before_size = Self::fn_ir_size(caller);
             self.perform_inline(
                 caller, bid, idx, &args, target_val, call_dst, callee, call_span,
             );
+            let after_size = Self::fn_ir_size(caller);
+            growth.apply_resize(before_size, after_size);
             changed = true;
         }
 
@@ -152,14 +186,13 @@ impl MirInliner {
         None
     }
 
-    fn should_inline(&self, target: &FnIR, caller: &FnIR) -> bool {
+    fn should_inline(&self, target: &FnIR, caller: &FnIR, policy: &InlinePolicy) -> bool {
         if target.unsupported_dynamic {
             return false;
         }
         if target.name.starts_with("Sym_top_") {
             return false;
         }
-        let policy = Self::policy();
         let caller_instr_cnt: usize = caller.blocks.iter().map(|b| b.instrs.len()).sum();
         if caller_instr_cnt > policy.max_caller_instrs {
             return false;
@@ -174,15 +207,7 @@ impl MirInliner {
         }
 
         let mut loop_edges = 0usize;
-        let mut call_count = 0usize;
         for (bid, bb) in target.blocks.iter().enumerate() {
-            for ins in &bb.instrs {
-                if let Instr::Assign { src, .. } | Instr::Eval { val: src, .. } = ins {
-                    if matches!(target.values[*src].kind, ValueKind::Call { .. }) {
-                        call_count += 1;
-                    }
-                }
-            }
             match bb.term {
                 Terminator::Goto(t) => {
                     if t <= bid {
@@ -206,8 +231,8 @@ impl MirInliner {
             return false;
         }
 
-        let cost = instr_cnt + (block_cnt * 2) + (loop_edges * 40) + (call_count * 8);
-        cost <= policy.max_cost
+        let cost = self.inline_callsite_cost(target);
+        cost <= policy.max_cost && cost <= policy.max_callsite_cost
     }
 
     fn inline_disabled() -> bool {
@@ -242,8 +267,11 @@ impl MirInliner {
             max_blocks: Self::env_usize("RR_INLINE_MAX_BLOCKS", 24),
             max_instrs: Self::env_usize("RR_INLINE_MAX_INSTRS", 160),
             max_cost: Self::env_usize("RR_INLINE_MAX_COST", 220),
+            max_callsite_cost: Self::env_usize("RR_INLINE_MAX_CALLSITE_COST", 240),
             max_caller_instrs: Self::env_usize("RR_INLINE_MAX_CALLER_INSTRS", 480),
             max_total_instrs: Self::env_usize("RR_INLINE_MAX_TOTAL_INSTRS", 900),
+            max_unit_growth_pct: Self::env_usize("RR_INLINE_MAX_UNIT_GROWTH_PCT", 25),
+            max_fn_growth_pct: Self::env_usize("RR_INLINE_MAX_FN_GROWTH_PCT", 35),
             allow_loops: Self::env_bool("RR_INLINE_ALLOW_LOOPS", false),
         }
     }
@@ -476,7 +504,66 @@ impl MirInliner {
         }
     }
 
-    fn inline_value_calls(&self, caller: &mut FnIR, all_fns: &FxHashMap<String, FnIR>) -> bool {
+    fn fn_ir_size(fn_ir: &FnIR) -> usize {
+        let instrs: usize = fn_ir.blocks.iter().map(|b| b.instrs.len()).sum();
+        fn_ir.values.len().saturating_add(instrs)
+    }
+
+    fn inline_callsite_cost(&self, target: &FnIR) -> usize {
+        let block_cnt = target.blocks.len();
+        let instr_cnt: usize = target.blocks.iter().map(|b| b.instrs.len()).sum();
+        let mut loop_edges = 0usize;
+        let mut call_count = 0usize;
+        for (bid, bb) in target.blocks.iter().enumerate() {
+            for ins in &bb.instrs {
+                if let Instr::Assign { src, .. } | Instr::Eval { val: src, .. } = ins {
+                    if matches!(target.values[*src].kind, ValueKind::Call { .. }) {
+                        call_count += 1;
+                    }
+                }
+            }
+            match bb.term {
+                Terminator::Goto(t) => {
+                    if t <= bid {
+                        loop_edges += 1;
+                    }
+                }
+                Terminator::If {
+                    then_bb, else_bb, ..
+                } => {
+                    if then_bb <= bid {
+                        loop_edges += 1;
+                    }
+                    if else_bb <= bid {
+                        loop_edges += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        instr_cnt
+            .saturating_add(block_cnt.saturating_mul(2))
+            .saturating_add(loop_edges.saturating_mul(40))
+            .saturating_add(call_count.saturating_mul(8))
+    }
+
+    fn estimate_inline_growth(callee: &FnIR) -> usize {
+        // Conservative upper-bound estimate to avoid overshooting growth budgets.
+        let callee_ir = Self::fn_ir_size(callee);
+        callee_ir
+            .saturating_add(callee.values.len())
+            .saturating_add(callee.blocks.len().saturating_mul(4))
+            .saturating_add(16)
+    }
+
+    fn inline_value_calls(
+        &self,
+        caller: &mut FnIR,
+        all_fns: &FxHashMap<String, FnIR>,
+        policy: &InlinePolicy,
+        growth: &mut InlineGrowthBudget,
+        caller_growth_limit: usize,
+    ) -> bool {
         for val_id in 0..caller.values.len() {
             let (callee_name, args) = match &caller.values[val_id].kind {
                 ValueKind::Call { callee, args, .. } => {
@@ -490,16 +577,34 @@ impl MirInliner {
                 None => continue,
             };
 
+            if !self.should_inline(callee, caller, policy) {
+                continue;
+            }
+            if self.inline_callsite_cost(callee) > policy.max_callsite_cost {
+                continue;
+            }
+            let predicted_growth = Self::estimate_inline_growth(callee);
+            if !growth.can_inline(
+                Self::fn_ir_size(caller),
+                caller_growth_limit,
+                predicted_growth,
+            ) {
+                continue;
+            }
+
             let ret_val = match self.can_inline_expr(callee) {
                 Some(v) => v,
                 None => continue,
             };
 
+            let before_size = Self::fn_ir_size(caller);
             if let Some(replacement) =
                 self.inline_call_value(caller, val_id, callee, ret_val, &args)
             {
                 self.replace_uses(caller, val_id, replacement);
                 caller.values[val_id].kind = ValueKind::Const(crate::syntax::ast::Lit::Null);
+                let after_size = Self::fn_ir_size(caller);
+                growth.apply_resize(before_size, after_size);
                 return true;
             }
         }
@@ -1003,9 +1108,70 @@ struct InlinePolicy {
     max_blocks: usize,
     max_instrs: usize,
     max_cost: usize,
+    max_callsite_cost: usize,
     max_caller_instrs: usize,
     max_total_instrs: usize,
+    max_unit_growth_pct: usize,
+    max_fn_growth_pct: usize,
     allow_loops: bool,
+}
+
+struct InlineGrowthBudget {
+    total_ir: usize,
+    max_total_ir: usize,
+    fn_limits: FxHashMap<String, usize>,
+}
+
+impl InlineGrowthBudget {
+    fn growth_cap(base: usize, pct: usize) -> usize {
+        let capped_pct = pct.min(1000);
+        let bonus = base
+            .saturating_mul(capped_pct)
+            .saturating_add(99)
+            .saturating_div(100);
+        base.saturating_add(bonus).max(base)
+    }
+
+    fn new(all_fns: &FxHashMap<String, FnIR>, policy: &InlinePolicy) -> Self {
+        let mut fn_limits = FxHashMap::default();
+        let mut total_ir = 0usize;
+        for (name, fn_ir) in all_fns {
+            let ir = MirInliner::fn_ir_size(fn_ir);
+            total_ir = total_ir.saturating_add(ir);
+            let limit = Self::growth_cap(ir, policy.max_fn_growth_pct);
+            fn_limits.insert(name.clone(), limit);
+        }
+        let max_total_ir = Self::growth_cap(total_ir, policy.max_unit_growth_pct);
+        Self {
+            total_ir,
+            max_total_ir,
+            fn_limits,
+        }
+    }
+
+    fn caller_limit(&self, caller: &str) -> usize {
+        self.fn_limits
+            .get(caller)
+            .copied()
+            .unwrap_or(usize::MAX.saturating_div(2))
+    }
+
+    fn can_inline(&self, caller_ir: usize, caller_limit: usize, predicted_growth: usize) -> bool {
+        let next_caller = caller_ir.saturating_add(predicted_growth);
+        if next_caller > caller_limit {
+            return false;
+        }
+        let next_total = self.total_ir.saturating_add(predicted_growth);
+        next_total <= self.max_total_ir
+    }
+
+    fn apply_resize(&mut self, before: usize, after: usize) {
+        if after >= before {
+            self.total_ir = self.total_ir.saturating_add(after - before);
+        } else {
+            self.total_ir = self.total_ir.saturating_sub(before - after);
+        }
+    }
 }
 
 fn term_successors(term: &Terminator) -> Vec<BlockId> {
@@ -1020,4 +1186,57 @@ fn term_successors(term: &Terminator) -> Vec<BlockId> {
 
 fn new_bid_offset(_fn_ir: &FnIR, bid: BlockId) -> String {
     format!("{}", bid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mir::flow::Facts;
+    use crate::syntax::ast::Lit;
+    use crate::utils::Span;
+
+    fn tiny_fn(name: &str) -> FnIR {
+        let mut f = FnIR::new(name.to_string(), vec![]);
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+        let c = f.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        f.blocks[entry].term = Terminator::Return(Some(c));
+        f
+    }
+
+    #[test]
+    fn inline_growth_cap_is_saturating() {
+        let cap = InlineGrowthBudget::growth_cap(100, 25);
+        assert!(cap >= 125);
+        let huge = InlineGrowthBudget::growth_cap(usize::MAX - 16, 1000);
+        assert!(huge >= usize::MAX - 16);
+    }
+
+    #[test]
+    fn inline_growth_budget_blocks_when_no_growth_allowed() {
+        let mut all = FxHashMap::default();
+        all.insert("caller".to_string(), tiny_fn("caller"));
+        let policy = InlinePolicy {
+            max_blocks: 24,
+            max_instrs: 160,
+            max_cost: 220,
+            max_callsite_cost: 240,
+            max_caller_instrs: 480,
+            max_total_instrs: 900,
+            max_unit_growth_pct: 0,
+            max_fn_growth_pct: 0,
+            allow_loops: false,
+        };
+        let budget = InlineGrowthBudget::new(&all, &policy);
+        let caller = all.get("caller").unwrap();
+        let caller_ir = MirInliner::fn_ir_size(caller);
+        let caller_limit = budget.caller_limit("caller");
+        assert!(!budget.can_inline(caller_ir, caller_limit, 1));
+    }
 }

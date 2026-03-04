@@ -10,10 +10,11 @@
 
 ## Program-Level Strategy
 
-1. Optimize each function independently.
-2. Run inter-procedural inlining rounds (bounded).
-3. Run De-SSA globally before emission.
-4. Cleanup after De-SSA.
+1. Tier A (always): run low-cost canonical passes on every safe function.
+2. Tier B (selective-heavy): run full per-function pipeline on budget-selected targets.
+3. Tier C (full-program): run bounded inter-procedural inlining only when heavy tier is enabled.
+4. Run De-SSA globally before emission.
+5. Cleanup after De-SSA.
 
 ## Function-Level Iterative Passes
 
@@ -55,7 +56,7 @@ SCCP constant folding is intentionally fail-safe:
 
 If any proof step fails, SCCP preserves runtime evaluation instead of panicking or emitting an invalid constant.
 
-## Inlining Controls
+## Inlining Controls and Growth Safety
 
 Inlining is cost-model driven and constrained by environment policy.
 
@@ -64,11 +65,16 @@ Defaults from `src/mir/opt/inline.rs`:
 - `RR_INLINE_MAX_BLOCKS=24`
 - `RR_INLINE_MAX_INSTRS=160`
 - `RR_INLINE_MAX_COST=220`
+- `RR_INLINE_MAX_CALLSITE_COST=240`
 - `RR_INLINE_MAX_CALLER_INSTRS=480`
 - `RR_INLINE_MAX_TOTAL_INSTRS=900`
+- `RR_INLINE_MAX_UNIT_GROWTH_PCT=25`
+- `RR_INLINE_MAX_FN_GROWTH_PCT=35`
 - `RR_INLINE_ALLOW_LOOPS=false`
 - `RR_DISABLE_INLINE=false` (set true-like value to disable)
 - `RR_INLINE_MAX_ROUNDS=3` (from `src/mir/opt.rs`)
+
+Growth limits are enforced both per function and per compilation unit; predicted overshoot skips the inline site.
 
 ## Vectorization Coverage (current implementation)
 

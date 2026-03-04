@@ -196,7 +196,7 @@ impl CliLog {
         println!(
             "{} {}",
             self.yellow_bold("[+]"),
-            self.red_bold("RR Tachyon v2.0")
+            self.red_bold("RR Tachyon v3.0")
         );
         println!(
             " {} {}",
@@ -625,6 +625,21 @@ pub fn compile_with_configs(
             pulse_stats.simplify_hits,
             pulse_stats.inline_rounds,
             pulse_stats.de_ssa_hits
+        ));
+        ui.step_line_ok(&format!(
+            "Budget: IR {}/{} | MaxFn {}/{} | AlwaysFns {} | OptimizedFns {} | SkippedFns {}{}",
+            pulse_stats.total_program_ir,
+            pulse_stats.full_opt_ir_limit,
+            pulse_stats.max_function_ir,
+            pulse_stats.full_opt_fn_limit,
+            pulse_stats.always_tier_functions,
+            pulse_stats.optimized_functions,
+            pulse_stats.skipped_functions,
+            if pulse_stats.selective_budget_mode {
+                " | selective"
+            } else {
+                ""
+            }
         ));
         ui.step_line_ok(&format!(
             "Finished in {}",

@@ -53,6 +53,10 @@ CLI entrypoints in `src/main.rs` call this pipeline API.
 4. `Tachyon Optimization` or `Tachyon Stabilization`
 - `-O1/-O2`: full Tachyon optimization pipeline.
 - `-O0`: stabilization-only path (still includes mandatory De-SSA before codegen).
+- O1/O2 budget model:
+  1. Tier A always pass for all safe functions.
+  2. Tier B selective-heavy pass for scored functions under IR budget.
+  3. Tier C inter-procedural inlining only when heavy tier is enabled.
 - Type-directed pass order for optimized mode:
   1. `type_specialize`
   2. existing vectorization (`v_opt`)
@@ -60,6 +64,7 @@ CLI entrypoints in `src/main.rs` call this pipeline API.
   4. cleanup/de-ssa chain
 - Guard removal policy: remove only when MIR type/range proof exists (`value_ty` + `value_term` + range facts);
   otherwise preserve original guard calls.
+- Optional hotness hints (`RR_PROFILE_USE`) can bias selective Tier-B function choice without changing semantics.
 - SCCP/analysis arithmetic is fail-safe: when compile-time arithmetic overflows or is invalid,
   optimization falls back to non-folded runtime evaluation instead of panicking.
 

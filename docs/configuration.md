@@ -44,6 +44,23 @@ This page lists environment variables recognized by RR codebase.
   - Run MIR verifier after each pass.
 - `RR_OPT_MAX_ITERS` (default `24`)
   - Max per-function optimization iterations.
+- `RR_MAX_FN_OPT_MS` (default `250`)
+  - Soft per-function optimization time budget (milliseconds).
+- `RR_ALWAYS_TIER_ITERS` (default `2`)
+  - Max iterations for always-on low-cost Tier-A passes (`simplify + light SCCP + DCE`).
+- `RR_MAX_FULL_OPT_IR` (default `2500`)
+  - Program-level full-optimization IR-size threshold.
+- `RR_MAX_FULL_OPT_FN_IR` (default `900`)
+  - Function-level full-optimization IR-size threshold.
+- `RR_HEAVY_PASS_FN_IR` (default `650`)
+  - Function IR-size threshold above which heavy structural passes are budgeted.
+- `RR_SELECTIVE_OPT_BUDGET` (default `false`)
+  - Enable selective optimization under budget pressure (optimize scored subset of functions instead of all-or-nothing fallback).
+- `RR_ADAPTIVE_IR_BUDGET` (default `false`)
+  - Enable code-analysis-driven dynamic IR budget estimation.
+- `RR_PROFILE_USE` (default unset)
+  - Optional profile hints file for hot-function prioritization in selective budget mode.
+  - Format: one entry per line, `function=count` (also accepts `function:count` or `function count`).
 - `RR_INLINE_MAX_ROUNDS` (default `3`)
   - Max inter-procedural inline rounds.
 
@@ -56,6 +73,9 @@ This page lists environment variables recognized by RR codebase.
 - `RR_INLINE_MAX_CALLER_INSTRS` (default `480`)
 - `RR_INLINE_MAX_TOTAL_INSTRS` (default `900`)
 - `RR_INLINE_ALLOW_LOOPS` (default `false`)
+- `RR_INLINE_MAX_CALLSITE_COST` (default `240`)
+- `RR_INLINE_MAX_UNIT_GROWTH_PCT` (default `25`)
+- `RR_INLINE_MAX_FN_GROWTH_PCT` (default `35`)
 
 ## Test and CI Performance Gates
 
