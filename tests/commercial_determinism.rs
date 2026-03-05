@@ -2,9 +2,9 @@ mod common;
 
 use common::{compile_rr, unique_dir};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-fn compile_to(rr_path: &PathBuf, out_path: &PathBuf, level: &str) {
+fn compile_to(rr_path: &Path, out_path: &Path, level: &str) {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     compile_rr(&rr_bin, rr_path, out_path, level);
 }

@@ -68,11 +68,10 @@ pub fn optimize_with_stats_with_whitelist(
             if apply_vectorization(fn_ir, &lp, plan) {
                 stats.vectorized += 1;
             }
-        } else if let Some(plan) = match_map(fn_ir, &lp) {
-            if apply_vectorization(fn_ir, &lp, plan) {
+        } else if let Some(plan) = match_map(fn_ir, &lp)
+            && apply_vectorization(fn_ir, &lp, plan) {
                 stats.vectorized += 1;
             }
-        }
     }
 
     stats
@@ -176,8 +175,8 @@ fn match_reduction(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
     }
 
     for (id, val) in fn_ir.values.iter().enumerate() {
-        if let ValueKind::Phi { args } = &val.kind {
-            if args.len() == 2 && args.iter().any(|(_, b)| *b == lp.latch) {
+        if let ValueKind::Phi { args } = &val.kind
+            && args.len() == 2 && args.iter().any(|(_, b)| *b == lp.latch) {
                 let (next_val, _) = args.iter().find(|(_, b)| *b == lp.latch).unwrap();
                 let next_v = &fn_ir.values[*next_val];
 
@@ -231,8 +230,8 @@ fn match_reduction(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                         } else {
                             None
                         };
-                        if let Some(other) = acc_side {
-                            if expr_has_iv_dependency(fn_ir, other, iv_phi)
+                        if let Some(other) = acc_side
+                            && expr_has_iv_dependency(fn_ir, other, iv_phi)
                                 && is_vectorizable_expr(fn_ir, other, iv_phi, lp, false, true)
                             {
                                 let kind = if callee == "min" {
@@ -247,12 +246,10 @@ fn match_reduction(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                                     iv_phi,
                                 });
                             }
-                        }
                     }
                     _ => {}
                 }
             }
-        }
     }
     None
 }
@@ -376,16 +373,15 @@ fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                 is_na_safe,
                 ..
             } = instr
-            {
-                if is_iv_equivalent(fn_ir, *idx, iv_phi) && *is_safe && *is_na_safe {
+                && is_iv_equivalent(fn_ir, *idx, iv_phi) && *is_safe && *is_na_safe {
                     let rhs_val = &fn_ir.values[*val];
                     if let ValueKind::Binary { op, lhs, rhs } = &rhs_val.kind {
                         let lhs_idx = as_safe_loop_index(fn_ir, *lhs, iv_phi);
                         let rhs_idx = as_safe_loop_index(fn_ir, *rhs, iv_phi);
 
                         // x[i] OP x[i]  ->  x OP x
-                        if let (Some(lbase), Some(rbase)) = (lhs_idx, rhs_idx) {
-                            if lbase == rbase && loop_matches_vec(lp, fn_ir, lbase) {
+                        if let (Some(lbase), Some(rbase)) = (lhs_idx, rhs_idx)
+                            && lbase == rbase && loop_matches_vec(lp, fn_ir, lbase) {
                                 return Some(VectorPlan::Map {
                                     dest: *base,
                                     src: lbase,
@@ -393,11 +389,10 @@ fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                                     other: rbase,
                                 });
                             }
-                        }
 
                         // x[i] OP k  ->  x OP k
-                        if let Some(x_base) = lhs_idx {
-                            if loop_matches_vec(lp, fn_ir, x_base) {
+                        if let Some(x_base) = lhs_idx
+                            && loop_matches_vec(lp, fn_ir, x_base) {
                                 return Some(VectorPlan::Map {
                                     dest: *base,
                                     src: x_base,
@@ -405,11 +400,10 @@ fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                                     other: *rhs,
                                 });
                             }
-                        }
 
                         // k OP x[i]  ->  k OP x
-                        if let Some(x_base) = rhs_idx {
-                            if loop_matches_vec(lp, fn_ir, x_base) {
+                        if let Some(x_base) = rhs_idx
+                            && loop_matches_vec(lp, fn_ir, x_base) {
                                 return Some(VectorPlan::Map {
                                     dest: *base,
                                     src: *lhs,
@@ -417,10 +411,8 @@ fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                                     other: x_base,
                                 });
                             }
-                        }
                     }
                 }
-            }
         }
     }
     None
@@ -1121,11 +1113,9 @@ fn as_safe_loop_index(fn_ir: &FnIR, vid: ValueId, iv_phi: ValueId) -> Option<Val
         is_safe,
         is_na_safe,
     } = &fn_ir.values[vid].kind
-    {
-        if is_iv_equivalent(fn_ir, *idx, iv_phi) && *is_safe && *is_na_safe {
+        && is_iv_equivalent(fn_ir, *idx, iv_phi) && *is_safe && *is_na_safe {
             return Some(canonical_value(fn_ir, *base));
         }
-    }
     None
 }
 
@@ -1797,16 +1787,14 @@ fn affine_iv_offset(fn_ir: &FnIR, idx: ValueId, iv_phi: ValueId) -> Option<i64> 
             lhs,
             rhs,
         } => {
-            if is_iv_equivalent(fn_ir, *lhs, iv_phi) {
-                if let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*rhs].kind {
+            if is_iv_equivalent(fn_ir, *lhs, iv_phi)
+                && let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*rhs].kind {
                     return Some(k);
                 }
-            }
-            if is_iv_equivalent(fn_ir, *rhs, iv_phi) {
-                if let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*lhs].kind {
+            if is_iv_equivalent(fn_ir, *rhs, iv_phi)
+                && let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*lhs].kind {
                     return Some(k);
                 }
-            }
             None
         }
         ValueKind::Binary {
@@ -1814,11 +1802,10 @@ fn affine_iv_offset(fn_ir: &FnIR, idx: ValueId, iv_phi: ValueId) -> Option<i64> 
             lhs,
             rhs,
         } => {
-            if is_iv_equivalent(fn_ir, *lhs, iv_phi) {
-                if let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*rhs].kind {
+            if is_iv_equivalent(fn_ir, *lhs, iv_phi)
+                && let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*rhs].kind {
                     return Some(-k);
                 }
-            }
             None
         }
         _ => None,
@@ -1860,31 +1847,27 @@ fn loop_matches_vec(lp: &LoopInfo, fn_ir: &FnIR, base: ValueId) -> bool {
     if lp.is_seq_along.map(|b| canonical_value(fn_ir, b)) == Some(base) {
         return true;
     }
-    if let Some(loop_base) = lp.is_seq_along {
-        if let (Some(a), Some(b)) = (
+    if let Some(loop_base) = lp.is_seq_along
+        && let (Some(a), Some(b)) = (
             resolve_base_var(fn_ir, base),
             resolve_base_var(fn_ir, loop_base),
-        ) {
-            if a == b {
+        )
+            && a == b {
                 return true;
             }
-        }
-    }
-    if let Some(limit) = lp.is_seq_len {
-        if let ValueKind::Len { base: len_base } = fn_ir.values[limit].kind {
+    if let Some(limit) = lp.is_seq_len
+        && let ValueKind::Len { base: len_base } = fn_ir.values[limit].kind {
             if canonical_value(fn_ir, len_base) == base {
                 return true;
             }
             if let (Some(a), Some(b)) = (
                 resolve_base_var(fn_ir, base),
                 resolve_base_var(fn_ir, len_base),
-            ) {
-                if a == b {
+            )
+                && a == b {
                     return true;
                 }
-            }
         }
-    }
     false
 }
 
@@ -1911,11 +1894,10 @@ fn resolve_base_var(fn_ir: &FnIR, base: ValueId) -> Option<VarId> {
 
 fn rewrite_returns_for_var(fn_ir: &mut FnIR, var: &str, new_val: ValueId) {
     for bid in 0..fn_ir.blocks.len() {
-        if let Terminator::Return(Some(ret_vid)) = fn_ir.blocks[bid].term {
-            if fn_ir.values[ret_vid].origin_var.as_deref() == Some(var) {
+        if let Terminator::Return(Some(ret_vid)) = fn_ir.blocks[bid].term
+            && fn_ir.values[ret_vid].origin_var.as_deref() == Some(var) {
                 fn_ir.blocks[bid].term = Terminator::Return(Some(new_val));
             }
-        }
     }
 }
 
@@ -2257,6 +2239,7 @@ fn build_loop_index_vector(fn_ir: &mut FnIR, lp: &LoopInfo) -> Option<ValueId> {
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn materialize_vector_expr(
     fn_ir: &mut FnIR,
     root: ValueId,
@@ -2687,10 +2670,10 @@ fn canonical_value(fn_ir: &FnIR, mut vid: ValueId) -> ValueId {
 }
 
 fn should_hoist_callmap_arg_expr(fn_ir: &FnIR, vid: ValueId) -> bool {
-    match &fn_ir.values[canonical_value(fn_ir, vid)].kind {
-        ValueKind::Const(_) | ValueKind::Load { .. } | ValueKind::Param { .. } => false,
-        _ => true,
-    }
+    !matches!(
+        &fn_ir.values[canonical_value(fn_ir, vid)].kind,
+        ValueKind::Const(_) | ValueKind::Load { .. } | ValueKind::Param { .. }
+    )
 }
 
 fn next_callmap_tmp_var(fn_ir: &FnIR, prefix: &str) -> VarId {
@@ -2727,9 +2710,9 @@ fn maybe_hoist_callmap_arg_expr(
 
 fn resolve_materialized_value(fn_ir: &mut FnIR, vid: ValueId) -> ValueId {
     let c = canonical_value(fn_ir, vid);
-    if let ValueKind::Phi { args } = &fn_ir.values[c].kind {
-        if args.is_empty() {
-            if let Some(var) = fn_ir.values[c].origin_var.clone() {
+    if let ValueKind::Phi { args } = &fn_ir.values[c].kind
+        && args.is_empty()
+            && let Some(var) = fn_ir.values[c].origin_var.clone() {
                 return fn_ir.add_value(
                     ValueKind::Load { var: var.clone() },
                     fn_ir.values[c].span,
@@ -2737,8 +2720,6 @@ fn resolve_materialized_value(fn_ir: &mut FnIR, vid: ValueId) -> ValueId {
                     Some(var),
                 );
             }
-        }
-    }
     c
 }
 
@@ -2767,15 +2748,11 @@ fn resolve_load_alias_value(fn_ir: &FnIR, vid: ValueId) -> ValueId {
     let mut cur = canonical_value(fn_ir, vid);
     let mut seen = FxHashSet::default();
     while seen.insert(cur) {
-        match &fn_ir.values[cur].kind {
-            ValueKind::Load { var } => {
-                if let Some(src) = unique_assign_source(fn_ir, var) {
-                    cur = canonical_value(fn_ir, src);
-                    continue;
-                }
+        if let ValueKind::Load { var } = &fn_ir.values[cur].kind
+            && let Some(src) = unique_assign_source(fn_ir, var) {
+                cur = canonical_value(fn_ir, src);
+                continue;
             }
-            _ => {}
-        }
         break;
     }
     cur

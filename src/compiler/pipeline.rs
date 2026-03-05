@@ -36,15 +36,6 @@ pub enum ParallelMode {
 }
 
 impl ParallelMode {
-    pub fn from_str(v: &str) -> Option<Self> {
-        match v.trim().to_ascii_lowercase().as_str() {
-            "off" => Some(Self::Off),
-            "optional" => Some(Self::Optional),
-            "required" => Some(Self::Required),
-            _ => None,
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",
@@ -62,20 +53,37 @@ pub enum ParallelBackend {
 }
 
 impl ParallelBackend {
-    pub fn from_str(v: &str) -> Option<Self> {
-        match v.trim().to_ascii_lowercase().as_str() {
-            "auto" => Some(Self::Auto),
-            "r" => Some(Self::R),
-            "openmp" => Some(Self::OpenMp),
-            _ => None,
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
             Self::R => "r",
             Self::OpenMp => "openmp",
+        }
+    }
+}
+
+impl std::str::FromStr for ParallelMode {
+    type Err = ();
+
+    fn from_str(v: &str) -> Result<Self, Self::Err> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "off" => Ok(Self::Off),
+            "optional" => Ok(Self::Optional),
+            "required" => Ok(Self::Required),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::str::FromStr for ParallelBackend {
+    type Err = ();
+
+    fn from_str(v: &str) -> Result<Self, Self::Err> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "r" => Ok(Self::R),
+            "openmp" => Ok(Self::OpenMp),
+            _ => Err(()),
         }
     }
 }
@@ -107,11 +115,11 @@ pub struct CliLog {
 pub fn type_config_from_env() -> TypeConfig {
     let mode = env::var("RR_TYPE_MODE")
         .ok()
-        .and_then(|v| TypeMode::from_str(&v))
+        .and_then(|v| v.parse::<TypeMode>().ok())
         .unwrap_or(TypeMode::Strict);
     let native_backend = env::var("RR_NATIVE_BACKEND")
         .ok()
-        .and_then(|v| NativeBackend::from_str(&v))
+        .and_then(|v| v.parse::<NativeBackend>().ok())
         .unwrap_or(NativeBackend::Off);
     TypeConfig {
         mode,
@@ -128,11 +136,11 @@ fn parse_nonnegative_usize_env(key: &str) -> Option<usize> {
 pub fn parallel_config_from_env() -> ParallelConfig {
     let mode = env::var("RR_PARALLEL_MODE")
         .ok()
-        .and_then(|v| ParallelMode::from_str(&v))
+        .and_then(|v| v.parse::<ParallelMode>().ok())
         .unwrap_or(ParallelMode::Off);
     let backend = env::var("RR_PARALLEL_BACKEND")
         .ok()
-        .and_then(|v| ParallelBackend::from_str(&v))
+        .and_then(|v| v.parse::<ParallelBackend>().ok())
         .unwrap_or(ParallelBackend::Auto);
     let threads = parse_nonnegative_usize_env("RR_PARALLEL_THREADS").unwrap_or(0);
     let min_trip = parse_nonnegative_usize_env("RR_PARALLEL_MIN_TRIP").unwrap_or(4096);
@@ -144,6 +152,12 @@ pub fn parallel_config_from_env() -> ParallelConfig {
     }
 }
 
+impl Default for CliLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CliLog {
     pub fn new() -> Self {
         let is_tty = std::io::stdout().is_terminal();
@@ -151,7 +165,7 @@ impl CliLog {
         let force_color = env::var_os("RR_FORCE_COLOR").is_some();
         let force_verbose = env::var_os("RR_VERBOSE_LOG").is_some();
         Self {
-            color: ((is_tty && !no_color) || (force_color && !no_color)),
+            color: (force_color || is_tty) && !no_color,
             detailed: is_tty || force_verbose,
         }
     }
@@ -482,11 +496,10 @@ fn run_mir_synthesis(
 
     for module in &desugared_hir.modules {
         for item in &module.items {
-            if let crate::hir::def::HirItem::Fn(f) = item {
-                if let Some(name) = global_symbols.get(&f.name).cloned() {
+            if let crate::hir::def::HirItem::Fn(f) = item
+                && let Some(name) = global_symbols.get(&f.name).cloned() {
                     known_fn_arities.insert(name, f.params.len());
                 }
-            }
         }
     }
 
@@ -506,7 +519,6 @@ fn run_mir_synthesis(
                         .local_names
                         .clone()
                         .into_iter()
-                        .map(|(id, name)| (id, name))
                         .collect();
 
                     let lowerer = crate::mir::lower_hir::MirLowerer::new(
@@ -516,10 +528,7 @@ fn run_mir_synthesis(
                         global_symbols,
                         &known_fn_arities,
                     );
-                    let fn_ir = match lowerer.lower_fn(f) {
-                        Ok(ir) => ir,
-                        Err(e) => return Err(e),
-                    };
+                    let fn_ir = lowerer.lower_fn(f)?;
                     all_fns.insert(fn_name.clone(), fn_ir);
                     emit_order.push(fn_name);
                 }
@@ -555,10 +564,7 @@ fn run_mir_synthesis(
                 global_symbols,
                 &known_fn_arities,
             );
-            let fn_ir = match lowerer.lower_fn(top_fn) {
-                Ok(ir) => ir,
-                Err(e) => return Err(e),
-            };
+            let fn_ir = lowerer.lower_fn(top_fn)?;
             all_fns.insert(top_fn_name.clone(), fn_ir);
             emit_order.push(top_fn_name.clone());
             top_level_calls.push(top_fn_name);

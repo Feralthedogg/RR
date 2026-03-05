@@ -33,11 +33,10 @@ impl EscapeAnalysis {
             }
 
             // C. Function Parameters (Incoming values escape by definition/conservative)
-            if let Some(var_name) = &val.origin_var {
-                if fn_ir.params.contains(var_name) {
+            if let Some(var_name) = &val.origin_var
+                && fn_ir.params.contains(var_name) {
                     worklist.push_back(val.id);
                 }
-            }
         }
 
         // 3. Build Dependency Graph (Adjacency List)
@@ -46,13 +45,10 @@ impl EscapeAnalysis {
 
         // A. Phi Nodes: v = Phi(args). If v escapes, args escape.
         for val in &fn_ir.values {
-            match &val.kind {
-                ValueKind::Phi { args } => {
-                    for (arg, _) in args {
-                        graph[val.id].push(*arg);
-                    }
+            if let ValueKind::Phi { args } = &val.kind {
+                for (arg, _) in args {
+                    graph[val.id].push(*arg);
                 }
-                _ => {}
             }
         }
 

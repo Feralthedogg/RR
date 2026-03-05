@@ -44,11 +44,7 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
 
         let len_source = if let Some(x) = lp.is_seq_along {
             Some(LenSource::Along(x))
-        } else if let Some(n) = lp.is_seq_len {
-            Some(LenSource::Len(n))
-        } else {
-            None
-        };
+        } else { lp.is_seq_len.map(LenSource::Len) };
 
         let len_source = match len_source {
             Some(s) => s,
@@ -132,8 +128,8 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
     let mut candidates = vec![];
 
     for (i, val) in fn_ir.values.iter().enumerate() {
-        if val.escape == EscapeStatus::Local {
-            if let ValueKind::Call { callee, .. } = &val.kind {
+        if val.escape == EscapeStatus::Local
+            && let ValueKind::Call { callee, .. } = &val.kind {
                 if callee.starts_with("Sym_") {
                     continue;
                 }
@@ -144,7 +140,6 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                     candidates.push(i);
                 }
             }
-        }
     }
 
     for vid in candidates {

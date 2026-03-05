@@ -311,7 +311,7 @@ impl<'a> Parser<'a> {
                         "RR.ParseError",
                         RRCode::E0001,
                         Stage::Parse,
-                        format!("{}", msg),
+                        msg.to_string(),
                     )
                     .at(self.current.span)
                     .push_frame("Parser.parse_program/1", Some(self.current.span)),

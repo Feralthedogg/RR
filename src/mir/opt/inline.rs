@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::env;
 
 pub struct MirInliner;
+type InlineCall = (String, Vec<ValueId>, ValueId, Option<VarId>, Span);
 
 #[derive(Default)]
 struct InlineMap {
@@ -23,6 +24,12 @@ impl InlineMap {
         let new_name = format!("inlined_{}_{}", self.inline_tag, old);
         self.vars.insert(old.clone(), new_name.clone());
         new_name
+    }
+}
+
+impl Default for MirInliner {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -49,11 +56,10 @@ impl MirInliner {
         let fn_names: Vec<String> = all_fns.keys().cloned().collect();
 
         for name in fn_names {
-            if let Some(hot_set) = hot_callers {
-                if !hot_set.contains(&name) {
+            if let Some(hot_set) = hot_callers
+                && !hot_set.contains(&name) {
                     continue;
                 }
-            }
             if let Some(mut fn_ir) = all_fns.remove(&name) {
                 if fn_ir.unsupported_dynamic {
                     all_fns.insert(name, fn_ir);
@@ -156,7 +162,7 @@ impl MirInliner {
         caller: &FnIR,
         instr: &Instr,
         all_fns: &FxHashMap<String, FnIR>,
-    ) -> Option<(String, Vec<ValueId>, ValueId, Option<VarId>, Span)> {
+    ) -> Option<InlineCall> {
         match instr {
             Instr::Assign { dst, src, span, .. } => {
                 if let ValueKind::Call { callee, args, .. } = &caller.values[*src].kind {
@@ -276,6 +282,7 @@ impl MirInliner {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn perform_inline(
         &self,
         caller: &mut FnIR,
@@ -299,15 +306,12 @@ impl MirInliner {
         let mut mutated_params: FxHashSet<usize> = FxHashSet::default();
         for blk in &callee.blocks {
             for instr in &blk.instrs {
-                if let Instr::Assign { dst, src, .. } = instr {
-                    if let Some(idx) = callee.params.iter().position(|p| p == dst) {
-                        if let Some(&param_vid) = param_val_ids.get(&idx) {
-                            if *src != param_vid {
+                if let Instr::Assign { dst, src, .. } = instr
+                    && let Some(idx) = callee.params.iter().position(|p| p == dst)
+                        && let Some(&param_vid) = param_val_ids.get(&idx)
+                            && *src != param_vid {
                                 mutated_params.insert(idx);
                             }
-                        }
-                    }
-                }
             }
         }
 
@@ -353,7 +357,7 @@ impl MirInliner {
             let new_vid = caller.add_value(
                 ValueKind::Const(crate::syntax::ast::Lit::Null),
                 val.span,
-                val.facts.clone(),
+                val.facts,
                 None,
             );
 
@@ -361,11 +365,10 @@ impl MirInliner {
                 let new_name = map.map_var(name);
                 caller.values[new_vid].origin_var = Some(new_name);
             }
-            if let Some(old_bb) = val.phi_block {
-                if let Some(&new_bb) = map.b.get(&old_bb) {
+            if let Some(old_bb) = val.phi_block
+                && let Some(&new_bb) = map.b.get(&old_bb) {
                     caller.values[new_vid].phi_block = Some(new_bb);
                 }
-            }
 
             map.v.insert(cvid, new_vid);
         }
@@ -416,17 +419,15 @@ impl MirInliner {
         let old_succs = term_successors(&old_term);
         if !old_succs.is_empty() {
             for val in &mut caller.values {
-                if let ValueKind::Phi { args } = &mut val.kind {
-                    if let Some(phi_bb) = val.phi_block {
-                        if old_succs.contains(&phi_bb) {
+                if let ValueKind::Phi { args } = &mut val.kind
+                    && let Some(phi_bb) = val.phi_block
+                        && old_succs.contains(&phi_bb) {
                             for (_, pred_bb) in args.iter_mut() {
                                 if *pred_bb == call_block {
                                     *pred_bb = continuation_bb;
                                 }
                             }
                         }
-                    }
-                }
             }
         }
 
@@ -483,25 +484,19 @@ impl MirInliner {
             );
         }
 
-        if !mutated_param_inits.is_empty() {
-            if let Some(&entry_bid) = map.b.get(&callee.entry) {
+        if !mutated_param_inits.is_empty()
+            && let Some(&entry_bid) = map.b.get(&callee.entry) {
                 for instr in &mut caller.blocks[entry_bid].instrs {
-                    if let Instr::Assign { dst, src, .. } = instr {
-                        if let Some(&arg_val) = mutated_param_inits.get(dst) {
+                    if let Instr::Assign { dst, src, .. } = instr
+                        && let Some(&arg_val) = mutated_param_inits.get(dst) {
                             *src = arg_val;
                         }
-                    }
                 }
             }
-        }
     }
 
     fn resolve_callee_name<'a>(&self, callee: &'a str) -> &'a str {
-        if callee.ends_with("_fresh") {
-            &callee[..callee.len() - 6]
-        } else {
-            callee
-        }
+        callee.strip_suffix("_fresh").unwrap_or(callee)
     }
 
     fn fn_ir_size(fn_ir: &FnIR) -> usize {
@@ -516,11 +511,10 @@ impl MirInliner {
         let mut call_count = 0usize;
         for (bid, bb) in target.blocks.iter().enumerate() {
             for ins in &bb.instrs {
-                if let Instr::Assign { src, .. } | Instr::Eval { val: src, .. } = ins {
-                    if matches!(target.values[*src].kind, ValueKind::Call { .. }) {
+                if let Instr::Assign { src, .. } | Instr::Eval { val: src, .. } = ins
+                    && matches!(target.values[*src].kind, ValueKind::Call { .. }) {
                         call_count += 1;
                     }
-                }
             }
             match bb.term {
                 Terminator::Goto(t) => {
@@ -707,17 +701,17 @@ impl MirInliner {
                             map.insert(vid, mapped);
                             return Some(mapped);
                         }
-                        return None;
+                        None
                     }
                     ValueKind::Const(lit) => {
                         let new_id = caller.add_value(
                             ValueKind::Const(lit.clone()),
                             val.span,
-                            val.facts.clone(),
+                            val.facts,
                             None,
                         );
                         map.insert(vid, new_id);
-                        return Some(new_id);
+                        Some(new_id)
                     }
                     ValueKind::Binary { op, lhs, rhs } => {
                         let l = clone_rec(*lhs, caller, callee, map, args)?;
@@ -729,44 +723,44 @@ impl MirInliner {
                                 rhs: r,
                             },
                             val.span,
-                            val.facts.clone(),
+                            val.facts,
                             None,
                         );
                         map.insert(vid, new_id);
-                        return Some(new_id);
+                        Some(new_id)
                     }
                     ValueKind::Unary { op, rhs } => {
                         let r = clone_rec(*rhs, caller, callee, map, args)?;
                         let new_id = caller.add_value(
                             ValueKind::Unary { op: *op, rhs: r },
                             val.span,
-                            val.facts.clone(),
+                            val.facts,
                             None,
                         );
                         map.insert(vid, new_id);
-                        return Some(new_id);
+                        Some(new_id)
                     }
                     ValueKind::Len { base } => {
                         let b = clone_rec(*base, caller, callee, map, args)?;
                         let new_id = caller.add_value(
                             ValueKind::Len { base: b },
                             val.span,
-                            val.facts.clone(),
+                            val.facts,
                             None,
                         );
                         map.insert(vid, new_id);
-                        return Some(new_id);
+                        Some(new_id)
                     }
                     ValueKind::Indices { base } => {
                         let b = clone_rec(*base, caller, callee, map, args)?;
                         let new_id = caller.add_value(
                             ValueKind::Indices { base: b },
                             val.span,
-                            val.facts.clone(),
+                            val.facts,
                             None,
                         );
                         map.insert(vid, new_id);
-                        return Some(new_id);
+                        Some(new_id)
                     }
                     ValueKind::Range { start, end } => {
                         let s = clone_rec(*start, caller, callee, map, args)?;
@@ -774,11 +768,11 @@ impl MirInliner {
                         let new_id = caller.add_value(
                             ValueKind::Range { start: s, end: e },
                             val.span,
-                            val.facts.clone(),
+                            val.facts,
                             None,
                         );
                         map.insert(vid, new_id);
-                        return Some(new_id);
+                        Some(new_id)
                     }
                     ValueKind::Index1D {
                         base,
@@ -796,11 +790,11 @@ impl MirInliner {
                                 is_na_safe: *is_na_safe,
                             },
                             val.span,
-                            val.facts.clone(),
+                            val.facts,
                             None,
                         );
                         map.insert(vid, new_id);
-                        return Some(new_id);
+                        Some(new_id)
                     }
                     ValueKind::Index2D { base, r, c } => {
                         let b = clone_rec(*base, caller, callee, map, args)?;
@@ -813,11 +807,11 @@ impl MirInliner {
                                 c: cv,
                             },
                             val.span,
-                            val.facts.clone(),
+                            val.facts,
                             None,
                         );
                         map.insert(vid, new_id);
-                        return Some(new_id);
+                        Some(new_id)
                     }
                     _ => None,
                 }

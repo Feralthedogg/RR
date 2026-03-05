@@ -64,7 +64,7 @@ print(sum(z))
         compiled.contains("rr_parallel_vec_add_f64 <- function"),
         "runtime must define parallel wrapper helper"
     );
-    compiled.push_str("\n");
+    compiled.push('\n');
     compiled.push_str("z <- rr_parallel_vec_add_f64(c(1.0, 2.0, 3.0), c(2.0, 4.0, 8.0))\n");
     compiled.push_str("print(z)\n");
     compiled.push_str("print(sum(z))\n");

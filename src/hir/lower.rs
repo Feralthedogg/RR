@@ -33,6 +33,12 @@ pub struct Lowerer {
     global_fn_aliases: FxHashMap<String, SymbolId>,
 }
 
+impl Default for Lowerer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Lowerer {
     pub fn new() -> Self {
         let strict_let = Self::env_truthy("RR_STRICT_LET") || Self::env_truthy("RR_STRICT_ASSIGN");
@@ -242,11 +248,10 @@ impl Lowerer {
             if in_scopes(scopes, name) {
                 return;
             }
-            if let Some(lid) = lowerer.lookup(name) {
-                if seen.insert(name.to_string()) {
+            if let Some(lid) = lowerer.lookup(name)
+                && seen.insert(name.to_string()) {
                     captures.push((name.to_string(), lid));
                 }
-            }
         }
 
         fn collect_pat_binders(p: &ast::Pattern, out: &mut FxHashSet<String>) {
@@ -379,11 +384,10 @@ impl Lowerer {
                     visit_expr(lowerer, scopes, seen, captures, value);
                     match &target.kind {
                         ast::LValueKind::Name(n) => {
-                            if !in_scopes(scopes, n) && lowerer.lookup(n).is_none() {
-                                if let Some(scope) = scopes.last_mut() {
+                            if !in_scopes(scopes, n) && lowerer.lookup(n).is_none()
+                                && let Some(scope) = scopes.last_mut() {
                                     scope.insert(n.clone());
                                 }
-                            }
                         }
                         ast::LValueKind::Index { base, idx } => {
                             visit_expr(lowerer, scopes, seen, captures, base);

@@ -31,8 +31,7 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                     args: inner_args,
                     ..
                 } = &fn_ir.values[args[0]].kind
-                {
-                    if inner == "var" && inner_args.len() == 1 {
+                    && inner == "var" && inner_args.len() == 1 {
                         let base = inner_args[0];
                         fn_ir.values[vid].kind = ValueKind::Call {
                             callee: "sd".to_string(),
@@ -41,7 +40,6 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         };
                         changed = true;
                     }
-                }
             }
             _ => {}
         }
@@ -74,10 +72,9 @@ fn sum_len_ordered(fn_ir: &FnIR, sum_id: ValueId, len_id: ValueId) -> Option<Val
         None
     }?;
 
-    if let ValueKind::Len { base: len_base } = len_kind {
-        if *len_base == base {
+    if let ValueKind::Len { base: len_base } = len_kind
+        && *len_base == base {
             return Some(base);
         }
-    }
     None
 }

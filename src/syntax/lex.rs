@@ -66,12 +66,11 @@ impl<'a> Lexer<'a> {
                         self.advance();
                         self.advance(); // eat /*
                         while let Some(nc) = self.advance() {
-                            if nc == '*' {
-                                if let Some('/') = self.peek() {
+                            if nc == '*'
+                                && let Some('/') = self.peek() {
                                     self.advance(); // eat /
                                     break;
                                 }
-                            }
                         }
                     }
                     _ => break,
@@ -138,11 +137,10 @@ impl<'a> Lexer<'a> {
                     // Clone iterator is cheap
                     let mut lookahead = self.chars.clone();
                     lookahead.next(); // skip .
-                    if let Some(next_c) = lookahead.peek() {
-                        if next_c.is_ascii_digit() {
+                    if let Some(next_c) = lookahead.peek()
+                        && next_c.is_ascii_digit() {
                             is_float = true;
                         }
-                    }
                 }
 
                 if is_float {
@@ -276,11 +274,10 @@ impl<'a> Lexer<'a> {
                 {
                     let mut lookahead = self.chars.clone();
                     lookahead.next(); // skip .
-                    if let Some(c) = lookahead.peek() {
-                        if c.is_ascii_digit() {
+                    if let Some(c) = lookahead.peek()
+                        && c.is_ascii_digit() {
                             is_start_float = true;
                         }
-                    }
                 }
 
                 if is_start_float {

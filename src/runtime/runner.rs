@@ -1,8 +1,10 @@
 use crate::codegen::mir_emit::MapEntry;
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::io::IsTerminal;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::Command;
 
 use regex::Regex;
@@ -20,7 +22,7 @@ impl Runner {
     ) -> i32 {
         let color = color_enabled_stderr();
         let runner_color = palette_for_module("RR.RunnerError");
-        let gen_path = source_path.replace(".rr", ".gen.R");
+        let gen_path = PathBuf::from(source_path).with_extension("gen.R");
 
         if let Err(e) = fs::write(&gen_path, r_code) {
             eprintln!(
@@ -64,7 +66,29 @@ impl Runner {
         };
 
         // Stdout
-        std::io::stdout().write_all(&output.stdout).unwrap();
+        if let Err(e) = std::io::stdout().write_all(&output.stdout) {
+            if e.kind() == ErrorKind::BrokenPipe {
+                if !keep_r {
+                    fs::remove_file(&gen_path).ok();
+                }
+                return 0;
+            }
+            eprintln!(
+                "{}",
+                style(
+                    color,
+                    runner_color,
+                    &format!(
+                        "** (RR.RunnerError) {}: failed to write stdout: {}",
+                        source_path, e
+                    ),
+                )
+            );
+            if !keep_r {
+                fs::remove_file(&gen_path).ok();
+            }
+            return 1;
+        }
 
         // Stderr Mapping
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -189,7 +213,7 @@ fn color_enabled_stderr() -> bool {
     let no_color = env::var_os("NO_COLOR").is_some();
     let force_color = env::var_os("RR_FORCE_COLOR").is_some();
     let is_tty = std::io::stderr().is_terminal();
-    (is_tty && !no_color) || (force_color && !no_color)
+    (force_color || is_tty) && !no_color
 }
 
 fn style(color: bool, code: &str, text: &str) -> String {

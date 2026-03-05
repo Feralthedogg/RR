@@ -147,6 +147,12 @@ impl Facts {
 
 pub struct DataflowSolver;
 
+impl Default for DataflowSolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataflowSolver {
     pub fn new() -> Self {
         Self

@@ -6,6 +6,12 @@ pub struct Desugarer {
     next_local_temp: u32,
 }
 
+impl Default for Desugarer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Desugarer {
     pub fn new() -> Self {
         Self {
@@ -346,17 +352,14 @@ impl Desugarer {
         stmts: &mut Vec<HirStmt>,
         span: Span,
     ) -> RR<()> {
-        match pat {
-            HirPat::Bind { name, local } => {
-                stmts.push(HirStmt::Let {
-                    local: *local,
-                    name: *name,
-                    ty: None,
-                    init: Some(HirExpr::Local(root)),
-                    span,
-                });
-            }
-            _ => {}
+        if let HirPat::Bind { name, local } = pat {
+            stmts.push(HirStmt::Let {
+                local: *local,
+                name: *name,
+                ty: None,
+                init: Some(HirExpr::Local(root)),
+                span,
+            });
         }
         Ok(())
     }

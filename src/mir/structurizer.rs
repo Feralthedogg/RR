@@ -67,11 +67,10 @@ impl<'a> Structurizer<'a> {
         let mut cur = Some(start);
 
         while let Some(bid) = cur {
-            if let Some(stop_bid) = stop {
-                if bid == stop_bid {
+            if let Some(stop_bid) = stop
+                && bid == stop_bid {
                     break;
                 }
-            }
 
             if let Some(ctx) = &loop_ctx {
                 if bid == ctx.header {
@@ -271,7 +270,7 @@ fn compute_loop_headers(
         if !reachable.contains(&lp.header) {
             continue;
         }
-        let entry = grouped.entry(lp.header).or_insert_with(FxHashSet::default);
+        let entry = grouped.entry(lp.header).or_default();
         for b in lp.body {
             entry.insert(b);
         }
@@ -362,12 +361,11 @@ fn compute_postdom_depth(
                 if d == c {
                     continue;
                 }
-                if let Some(d_set) = postdoms.get(&d) {
-                    if d_set.contains(&c) {
+                if let Some(d_set) = postdoms.get(&d)
+                    && d_set.contains(&c) {
                         dominated_by_other = true;
                         break;
                     }
-                }
             }
             if !dominated_by_other {
                 chosen = Some(c);

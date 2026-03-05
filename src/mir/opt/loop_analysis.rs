@@ -94,15 +94,15 @@ impl<'a> LoopAnalyzer<'a> {
         let mut is_seq_len = None;
         let mut is_seq_along = None;
         if let (Some(iv_val), Some(limit_val)) = (&iv, limit) {
-            let init_is_1 = match &self.fn_ir.values[iv_val.init_val].kind {
-                ValueKind::Const(Lit::Int(1)) => true,
-                _ => false,
-            };
+            let init_is_1 = matches!(
+                &self.fn_ir.values[iv_val.init_val].kind,
+                ValueKind::Const(Lit::Int(1))
+            );
 
             if init_is_1 && iv_val.step == 1 && iv_val.step_op == BinOp::Add {
                 // Check if condition is Le (<=)
-                if let Terminator::If { cond, .. } = &self.fn_ir.blocks[header].term {
-                    if let ValueKind::Binary { op: BinOp::Le, .. } = self.fn_ir.values[*cond].kind {
+                if let Terminator::If { cond, .. } = &self.fn_ir.blocks[header].term
+                    && let ValueKind::Binary { op: BinOp::Le, .. } = self.fn_ir.values[*cond].kind {
                         is_seq_len = Some(limit_val);
 
                         // NEW: Check if limit is length(X)
@@ -110,7 +110,6 @@ impl<'a> LoopAnalyzer<'a> {
                             is_seq_along = Some(*base);
                         }
                     }
-                }
             }
         }
 
@@ -155,8 +154,8 @@ impl<'a> LoopAnalyzer<'a> {
         }
 
         let mut limit: Option<ValueId> = None;
-        if let Some(iv) = &iv_candidate {
-            if let Terminator::If { cond, .. } = &self.fn_ir.blocks[header].term {
+        if let Some(iv) = &iv_candidate
+            && let Terminator::If { cond, .. } = &self.fn_ir.blocks[header].term {
                 let cond_val = &self.fn_ir.values[*cond];
                 if let ValueKind::Binary { op: _, lhs, rhs } = &cond_val.kind {
                     if *lhs == iv.phi_val {
@@ -166,7 +165,6 @@ impl<'a> LoopAnalyzer<'a> {
                     }
                 }
             }
-        }
 
         (iv_candidate, limit)
     }
@@ -182,16 +180,14 @@ impl<'a> LoopAnalyzer<'a> {
                 }
             };
 
-            if *lhs == phi_id {
-                if let Some(n) = simple_const(*rhs) {
+            if *lhs == phi_id
+                && let Some(n) = simple_const(*rhs) {
                     return Some((n, *op));
                 }
-            }
-            if *op == BinOp::Add && *rhs == phi_id {
-                if let Some(n) = simple_const(*lhs) {
+            if *op == BinOp::Add && *rhs == phi_id
+                && let Some(n) = simple_const(*lhs) {
                     return Some((n, *op));
                 }
-            }
         }
         None
     }

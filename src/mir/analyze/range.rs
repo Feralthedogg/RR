@@ -103,6 +103,12 @@ pub struct RangeFacts {
     pub values: HashMap<ValueId, RangeInterval>,
 }
 
+impl Default for RangeFacts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RangeFacts {
     pub fn new() -> Self {
         Self {
@@ -152,17 +158,14 @@ pub fn analyze_ranges(fn_ir: &FnIR) -> Vec<RangeFacts> {
     // Seed parameters and constants
     let mut initial_facts = RangeFacts::new();
     for (id, val) in fn_ir.values.iter().enumerate() {
-        match &val.kind {
-            ValueKind::Const(Lit::Int(n)) => {
-                initial_facts.set(
-                    id,
-                    RangeInterval {
-                        lo: SymbolicBound::Const(*n),
-                        hi: SymbolicBound::Const(*n),
-                    },
-                );
-            }
-            _ => {}
+        if let ValueKind::Const(Lit::Int(n)) = &val.kind {
+            initial_facts.set(
+                id,
+                RangeInterval {
+                    lo: SymbolicBound::Const(*n),
+                    hi: SymbolicBound::Const(*n),
+                },
+            );
         }
     }
     bb_facts[fn_ir.entry] = initial_facts;

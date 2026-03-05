@@ -40,9 +40,9 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
 
     for (pred, bid) in edges_to_split {
         let key = (pred, bid);
-        if !split_map.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = split_map.entry(key) {
             let new_bid = split_edge(fn_ir, pred, bid);
-            split_map.insert(key, new_bid);
+            e.insert(new_bid);
             changed = true;
         }
     }
@@ -71,13 +71,11 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
                     }
                     let resolved_src =
                         resolve_phi_source_for_pred(fn_ir, *src, *bid, *pred, &mut HashSet::new());
-                    if let Some(block_map) = last_assign_map.get(pred) {
-                        if let Some(existing) = block_map.get(&dest) {
-                            if *existing == resolved_src {
+                    if let Some(block_map) = last_assign_map.get(pred)
+                        && let Some(existing) = block_map.get(&dest)
+                            && *existing == resolved_src {
                                 continue;
                             }
-                        }
-                    }
                     moves_by_block.entry(*pred).or_default().push(Move {
                         dst: dest.clone(),
                         src: resolved_src,
@@ -152,11 +150,10 @@ fn ensure_phi_var(fn_ir: &mut FnIR, phi: ValueId) -> VarId {
 fn collect_phi_blocks(fn_ir: &FnIR) -> HashMap<BlockId, Vec<ValueId>> {
     let mut map: HashMap<BlockId, Vec<ValueId>> = HashMap::new();
     for (vid, val) in fn_ir.values.iter().enumerate() {
-        if let ValueKind::Phi { .. } = val.kind {
-            if let Some(bid) = val.phi_block {
+        if let ValueKind::Phi { .. } = val.kind
+            && let Some(bid) = val.phi_block {
                 map.entry(bid).or_default().push(vid);
             }
-        }
     }
     map
 }

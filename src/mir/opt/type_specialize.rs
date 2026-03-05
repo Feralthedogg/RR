@@ -89,12 +89,10 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                 ref mut is_na_safe,
                 ..
             } = fn_ir.blocks[bb].instrs[ins]
-            {
-                if !*is_na_safe && fn_ir.values[idx].value_ty.is_int_scalar_non_na() {
+                && !*is_na_safe && fn_ir.values[idx].value_ty.is_int_scalar_non_na() {
                     *is_na_safe = true;
                     changed = true;
                 }
-            }
         }
     }
 

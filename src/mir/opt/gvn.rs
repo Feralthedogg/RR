@@ -71,12 +71,11 @@ fn build_cse_context(fn_ir: &FnIR) -> CseContext {
     }
 
     for val in &fn_ir.values {
-        if let ValueKind::Call { callee, .. } = &val.kind {
-            if !effects::call_is_pure(callee) {
+        if let ValueKind::Call { callee, .. } = &val.kind
+            && !effects::call_is_pure(callee) {
                 ctx.has_impure_call = true;
                 break;
             }
-        }
     }
 
     ctx
@@ -590,7 +589,7 @@ fn dominates_value(
                 existing < current
             } else {
                 doms.get(&def_current)
-                    .map_or(false, |set| set.contains(&def_existing))
+                    .is_some_and(|set| set.contains(&def_existing))
             }
         }
         _ => false,

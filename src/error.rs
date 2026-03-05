@@ -44,23 +44,28 @@ impl RRCode {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+}
+
+impl std::str::FromStr for RRCode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "E0001" => Some(Self::E0001),
-            "E1001" => Some(Self::E1001),
-            "E1002" => Some(Self::E1002),
-            "E1003" => Some(Self::E1003),
-            "E1010" => Some(Self::E1010),
-            "E1011" => Some(Self::E1011),
-            "E1012" => Some(Self::E1012),
-            "E1030" => Some(Self::E1030),
-            "E1031" => Some(Self::E1031),
-            "E1032" => Some(Self::E1032),
-            "E2001" => Some(Self::E2001),
-            "E2007" => Some(Self::E2007),
-            "E9999" => Some(Self::E9999),
-            "ICE9001" => Some(Self::ICE9001),
-            _ => None,
+            "E0001" => Ok(Self::E0001),
+            "E1001" => Ok(Self::E1001),
+            "E1002" => Ok(Self::E1002),
+            "E1003" => Ok(Self::E1003),
+            "E1010" => Ok(Self::E1010),
+            "E1011" => Ok(Self::E1011),
+            "E1012" => Ok(Self::E1012),
+            "E1030" => Ok(Self::E1030),
+            "E1031" => Ok(Self::E1031),
+            "E1032" => Ok(Self::E1032),
+            "E2001" => Ok(Self::E2001),
+            "E2007" => Ok(Self::E2007),
+            "E9999" => Ok(Self::E9999),
+            "ICE9001" => Ok(Self::ICE9001),
+            _ => Err(()),
         }
     }
 }
@@ -87,26 +92,26 @@ pub struct Frame {
 #[derive(Debug, Clone)]
 pub struct RRException {
     pub module: &'static str,
-    pub message: String,
+    pub message: Box<str>,
     pub code: RRCode,
     pub stage: Stage,
     pub span: Option<Span>,
-    pub stacktrace: Vec<Frame>,
-    pub notes: Vec<String>,
-    pub related: Vec<RRException>,
+    pub stacktrace: Box<Vec<Frame>>,
+    pub notes: Box<Vec<String>>,
+    pub related: Box<Vec<RRException>>,
 }
 
 impl RRException {
     pub fn new(module: &'static str, code: RRCode, stage: Stage, msg: impl Into<String>) -> Self {
         Self {
             module,
-            message: msg.into(),
+            message: msg.into().into_boxed_str(),
             code,
             stage,
             span: None,
-            stacktrace: Vec::new(),
-            notes: Vec::new(),
-            related: Vec::new(),
+            stacktrace: Box::new(Vec::new()),
+            notes: Box::new(Vec::new()),
+            related: Box::new(Vec::new()),
         }
     }
 
@@ -118,7 +123,7 @@ impl RRException {
         related: Vec<RRException>,
     ) -> Self {
         let mut out = Self::new(module, code, stage, msg);
-        out.related = related;
+        out.related = Box::new(related);
         out
     }
 
@@ -198,11 +203,10 @@ impl RRException {
             return;
         }
 
-        if let Some(src) = source {
-            if let Some(span) = self.span {
+        if let Some(src) = source
+            && let Some(span) = self.span {
                 self.show_snippet(src, span, color);
             }
-        }
 
         if !self.stacktrace.is_empty() {
             println!("{}", style(color, "1;95", "    stacktrace:"));
@@ -227,7 +231,7 @@ impl RRException {
                 }
             }
         }
-        for n in &self.notes {
+        for n in self.notes.iter() {
             if n.to_ascii_lowercase().contains("r ") || n.to_ascii_lowercase().contains("r-") {
                 println!(
                     "{}",
@@ -387,7 +391,7 @@ fn color_enabled_stdout() -> bool {
     let no_color = env::var_os("NO_COLOR").is_some();
     let force_color = env::var_os("RR_FORCE_COLOR").is_some();
     let is_tty = std::io::stdout().is_terminal();
-    (is_tty && !no_color) || (force_color && !no_color)
+    (force_color || is_tty) && !no_color
 }
 
 fn style(color: bool, code: &str, text: &str) -> String {

@@ -3,6 +3,12 @@ use crate::mir::{FnIR, Instr, Terminator, ValueId, ValueKind};
 
 pub struct MirLoopOptimizer;
 
+impl Default for MirLoopOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MirLoopOptimizer {
     pub fn new() -> Self {
         Self
@@ -124,7 +130,7 @@ impl MirLoopOptimizer {
     ) -> Option<ValueId> {
         let val_kind = fn_ir.values[val_id].kind.clone();
         let span = fn_ir.values[val_id].span;
-        let facts = fn_ir.values[val_id].facts.clone();
+        let facts = fn_ir.values[val_id].facts;
 
         match val_kind {
             ValueKind::Binary { op, lhs, rhs } => {

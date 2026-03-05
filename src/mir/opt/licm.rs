@@ -4,6 +4,12 @@ use crate::mir::*;
 
 pub struct MirLicm;
 
+impl Default for MirLicm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MirLicm {
     pub fn new() -> Self {
         Self
@@ -69,12 +75,11 @@ impl MirLicm {
             if !loop_info.body.contains(bb) {
                 continue;
             }
-            if let ValueKind::Call { callee, .. } = &fn_ir.values[*vid].kind {
-                if !effects::call_is_pure(callee) {
+            if let ValueKind::Call { callee, .. } = &fn_ir.values[*vid].kind
+                && !effects::call_is_pure(callee) {
                     loop_has_impure_call = true;
                     break;
                 }
-            }
         }
 
         let loop_ctx = LoopEffectCtx {
@@ -96,11 +101,10 @@ impl MirLicm {
                     | Instr::StoreIndex1D { val: src, .. }
                     | Instr::StoreIndex2D { val: src, .. } => {
                         // Already hoisted?
-                        if let Some(name) = &fn_ir.values[*src].origin_var {
-                            if name.starts_with("licm_") {
+                        if let Some(name) = &fn_ir.values[*src].origin_var
+                            && name.starts_with("licm_") {
                                 continue;
                             }
-                        }
 
                         if self.is_hoistable(
                             fn_ir,
@@ -199,11 +203,10 @@ impl MirLicm {
             let val_id = id;
             if matches!(val.kind, ValueKind::Const(_) | ValueKind::Param { .. }) {
                 invariants.insert(val_id);
-            } else if let Some(&bb) = val_to_bb.get(&val_id) {
-                if !loop_info.body.contains(&bb) {
+            } else if let Some(&bb) = val_to_bb.get(&val_id)
+                && !loop_info.body.contains(&bb) {
                     invariants.insert(val_id);
                 }
-            }
         }
 
         // Fixed-point iteration

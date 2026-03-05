@@ -20,8 +20,8 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
     let canonical_ivs = canonical_loop_ivs(fn_ir);
 
     // Pass 1: Handle StoreIndex1D instructions
-    for bid in 0..fn_ir.blocks.len() {
-        let mut cur_facts = bb_facts[bid].clone();
+    for (bid, facts_at_bid) in bb_facts.iter().enumerate().take(fn_ir.blocks.len()) {
+        let mut cur_facts = facts_at_bid.clone();
         let num_instrs = fn_ir.blocks[bid].instrs.len();
 
         for i in 0..num_instrs {
@@ -65,8 +65,8 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
     // Pass 2: Handle Index1D loads, including nested loads inside expression trees.
     let mut safe_values = FxHashSet::default();
     let mut non_na_values = FxHashSet::default();
-    for bid in 0..fn_ir.blocks.len() {
-        let mut cur_facts = bb_facts[bid].clone();
+    for (bid, facts_at_bid) in bb_facts.iter().enumerate().take(fn_ir.blocks.len()) {
+        let mut cur_facts = facts_at_bid.clone();
         for instr in &fn_ir.blocks[bid].instrs {
             match instr {
                 Instr::Assign { src, .. } | Instr::Eval { val: src, .. } => {
@@ -177,24 +177,20 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
         if let ValueKind::Index1D {
             ref mut is_safe, ..
         } = fn_ir.values[vid].kind
-        {
-            if !*is_safe {
+            && !*is_safe {
                 *is_safe = true;
                 changed = true;
             }
-        }
     }
 
     for vid in non_na_values {
         if let ValueKind::Index1D {
             ref mut is_na_safe, ..
         } = fn_ir.values[vid].kind
-        {
-            if !*is_na_safe {
+            && !*is_na_safe {
                 *is_na_safe = true;
                 changed = true;
             }
-        }
     }
 
     changed
@@ -233,11 +229,10 @@ fn extract_len_limit(fn_ir: &FnIR, limit_val: ValueId) -> Option<(ValueId, i64)>
             lhs,
             rhs,
         } => {
-            if let ValueKind::Len { base } = fn_ir.values[*lhs].kind {
-                if let Some(k) = const_int(fn_ir, *rhs) {
+            if let ValueKind::Len { base } = fn_ir.values[*lhs].kind
+                && let Some(k) = const_int(fn_ir, *rhs) {
                     return Some((base, -k));
                 }
-            }
             None
         }
         ValueKind::Binary {
@@ -245,16 +240,14 @@ fn extract_len_limit(fn_ir: &FnIR, limit_val: ValueId) -> Option<(ValueId, i64)>
             lhs,
             rhs,
         } => {
-            if let ValueKind::Len { base } = fn_ir.values[*lhs].kind {
-                if let Some(k) = const_int(fn_ir, *rhs) {
+            if let ValueKind::Len { base } = fn_ir.values[*lhs].kind
+                && let Some(k) = const_int(fn_ir, *rhs) {
                     return Some((base, k));
                 }
-            }
-            if let ValueKind::Len { base } = fn_ir.values[*rhs].kind {
-                if let Some(k) = const_int(fn_ir, *lhs) {
+            if let ValueKind::Len { base } = fn_ir.values[*rhs].kind
+                && let Some(k) = const_int(fn_ir, *lhs) {
                     return Some((base, k));
                 }
-            }
             None
         }
         _ => None,
@@ -310,11 +303,10 @@ fn iv_non_na_in_block(
         if !rule.body.contains(&bid) {
             continue;
         }
-        if let Some(off) = iv_offset_for_idx(fn_ir, idx, rule.iv) {
-            if off >= 0 {
+        if let Some(off) = iv_offset_for_idx(fn_ir, idx, rule.iv)
+            && off >= 0 {
                 return true;
             }
-        }
     }
     false
 }
@@ -370,6 +362,7 @@ fn iv_in_bounds_for_base(
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_index_safety(
     vid: ValueId,
     bid: BlockId,

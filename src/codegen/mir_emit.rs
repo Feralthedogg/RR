@@ -17,6 +17,12 @@ pub struct MirEmitter {
     backend: RBackend,
 }
 
+impl Default for MirEmitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MirEmitter {
     pub fn new() -> Self {
         Self {
@@ -39,6 +45,12 @@ pub struct RBackend {
     value_bindings: HashMap<usize, (String, u64)>,
     // Per-variable write version used to invalidate stale bindings.
     var_versions: HashMap<String, u64>,
+}
+
+impl Default for RBackend {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RBackend {
@@ -74,7 +86,7 @@ impl RBackend {
         self.var_versions.clear();
 
         self.write(&format!("{} <- function(", fn_ir.name));
-        let param_strs: Vec<String> = fn_ir.params.iter().map(|p| p.clone()).collect();
+        let param_strs: Vec<String> = fn_ir.params.to_vec();
         self.write(&param_strs.join(", "));
         self.write(") ");
         self.newline();
@@ -210,11 +222,10 @@ impl RBackend {
     }
 
     fn resolve_bound_value(&self, val_id: usize) -> Option<String> {
-        if let Some((var, version)) = self.value_bindings.get(&val_id) {
-            if self.current_var_version(var) == *version {
+        if let Some((var, version)) = self.value_bindings.get(&val_id)
+            && self.current_var_version(var) == *version {
                 return Some(var.clone());
             }
-        }
         None
     }
 
@@ -377,11 +388,10 @@ impl RBackend {
     ) -> String {
         let val = &values[val_id];
 
-        if !prefer_expr {
-            if let Some(bound) = self.resolve_bound_value(val_id) {
+        if !prefer_expr
+            && let Some(bound) = self.resolve_bound_value(val_id) {
                 return bound;
             }
-        }
 
         // Strategy:
         // 1. If prefer_expr is false (we are using the value) and it has a name, use the name.
@@ -408,8 +418,8 @@ impl RBackend {
             }
             ValueKind::Param { index } => {
                 if *index < params.len() {
-                    let p = params[*index].clone();
-                    p
+                    
+                    params[*index].clone()
                 } else {
                     format!(".p{}", index)
                 }

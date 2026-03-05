@@ -73,7 +73,7 @@ impl<'a> MirLowerer<'a> {
 
     // Core Helpers
     fn add_pred(&mut self, target: BlockId, pred: BlockId) {
-        self.preds.entry(target).or_insert_with(Vec::new).push(pred);
+        self.preds.entry(target).or_default().push(pred);
     }
 
     // Standardize Value Addition
@@ -133,22 +133,20 @@ impl<'a> MirLowerer<'a> {
                         Some(n),
                     )
                 } else {
-                    if let Some(v) = self.fn_ir.values.get_mut(val) {
-                        if v.origin_var.is_none() {
+                    if let Some(v) = self.fn_ir.values.get_mut(val)
+                        && v.origin_var.is_none() {
                             v.origin_var = Some(n);
                         }
-                    }
                     val
                 };
                 self.defs.entry(block).or_default().insert(var, def_val);
                 return;
             }
 
-            if let Some(v) = self.fn_ir.values.get_mut(val) {
-                if v.origin_var.is_none() {
+            if let Some(v) = self.fn_ir.values.get_mut(val)
+                && v.origin_var.is_none() {
                     v.origin_var = Some(n);
                 }
-            }
         }
 
         self.defs.entry(block).or_default().insert(var, val);
@@ -159,11 +157,10 @@ impl<'a> MirLowerer<'a> {
     }
 
     fn read_var(&mut self, var: hir::LocalId, block: BlockId) -> RR<ValueId> {
-        if let Some(m) = self.defs.get(&block) {
-            if let Some(&v) = m.get(&var) {
+        if let Some(m) = self.defs.get(&block)
+            && let Some(&v) = m.get(&var) {
                 return Ok(v);
             }
-        }
         // Not found in local, look in predecessors
         self.read_var_recursive(var, block)
     }
@@ -193,7 +190,7 @@ impl<'a> MirLowerer<'a> {
             self.incomplete_phis
                 .entry(block)
                 .or_default()
-                .push((var.clone(), phi));
+                .push((var, phi));
             // Define the SSA name for this block without emitting an assignment.
             self.define_var_at(block, var, phi, false);
             return Ok(phi);
@@ -206,7 +203,7 @@ impl<'a> MirLowerer<'a> {
                 .get(&var)
                 .cloned()
                 .unwrap_or_else(|| format!("local#{}", var.0));
-            return Err(crate::error::RRException::new(
+            Err(crate::error::RRException::new(
                 "RR.SemanticError",
                 crate::error::RRCode::E1001,
                 crate::error::Stage::Mir,
@@ -217,15 +214,15 @@ impl<'a> MirLowerer<'a> {
                 "mir::lower_hir::read_var_recursive/2",
                 Some(Span::default()),
             )
-            .note("Declare the variable with let before use."));
+            .note("Declare the variable with let before use."))
         } else if preds.len() == 1 {
             // Optimize: No phi needed, just look in pred
-            self.read_var(var.clone(), preds[0])
+            self.read_var(var, preds[0])
         } else {
             // Multiple predecessors require a phi.
             let phi = self.add_phi_placeholder(block, Span::default());
             // Break cycles with a Phi placeholder, but don't emit an assignment yet.
-            self.define_var_at(block, var.clone(), phi, false);
+            self.define_var_at(block, var, phi, false);
             self.add_phi_operands(block, var, phi)?;
             Ok(phi)
         }
@@ -236,7 +233,7 @@ impl<'a> MirLowerer<'a> {
         let preds = self.preds.get(&block).cloned().unwrap_or_default();
         let mut new_args = Vec::new();
         for pred in preds {
-            let val = self.read_var(var.clone(), pred)?;
+            let val = self.read_var(var, pred)?;
             new_args.push((val, pred));
         }
 
@@ -304,8 +301,7 @@ impl<'a> MirLowerer<'a> {
                 }
                 // Write to the variable (this also emits Instr::Assign in entry block)
                 self.write_var(local_id, param_val);
-            } else {
-            }
+            } 
         }
 
         // 2. Transition from Entry to Body Head
@@ -886,13 +882,13 @@ impl<'a> MirLowerer<'a> {
                             .at(span)
                             .note("Define or import the function before calling it."));
                         }
-                        return Err(crate::error::RRException::new(
+                        Err(crate::error::RRException::new(
                             "RR.SemanticError",
                             crate::error::RRCode::E1001,
                             crate::error::Stage::Mir,
                             "invalid unresolved callee symbol".to_string(),
                         )
-                        .at(span));
+                        .at(span))
                     }
                     _ => {
                         let callee_val = self.lower_expr(callee.as_ref().clone())?;
@@ -902,7 +898,7 @@ impl<'a> MirLowerer<'a> {
                         let mut dyn_names = Vec::with_capacity(arg_names.len() + 1);
                         dyn_names.push(None);
                         dyn_names.extend(arg_names);
-                        return Ok(self.fn_ir.add_value(
+                        Ok(self.fn_ir.add_value(
                             ValueKind::Call {
                                 callee: "rr_call_closure".to_string(),
                                 args: dyn_args,
@@ -911,7 +907,7 @@ impl<'a> MirLowerer<'a> {
                             span,
                             Facts::empty(),
                             None,
-                        ));
+                        ))
                     }
                 }
             }

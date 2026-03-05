@@ -35,12 +35,11 @@ fn algebraic_simplify(fn_ir: &mut FnIR) -> bool {
             simplify_kind(&val.kind, fn_ir)
         };
 
-        if let Some(kind) = new_kind {
-            if fn_ir.values[val_id].kind != kind {
+        if let Some(kind) = new_kind
+            && fn_ir.values[val_id].kind != kind {
                 fn_ir.values[val_id].kind = kind;
                 changed = true;
             }
-        }
     }
 
     changed
@@ -111,18 +110,15 @@ fn simplify_kind(kind: &ValueKind, fn_ir: &FnIR) -> Option<ValueKind> {
         }
         ValueKind::Unary { op, rhs } => {
             let r_kind = &fn_ir.values[*rhs].kind;
-            match op {
-                UnaryOp::Not => {
-                    // !!x -> x
-                    if let ValueKind::Unary {
-                        op: UnaryOp::Not,
-                        rhs: inner_rhs,
-                    } = r_kind
-                    {
-                        return Some(fn_ir.values[*inner_rhs].kind.clone());
-                    }
+            if op == &UnaryOp::Not {
+                // !!x -> x
+                if let ValueKind::Unary {
+                    op: UnaryOp::Not,
+                    rhs: inner_rhs,
+                } = r_kind
+                {
+                    return Some(fn_ir.values[*inner_rhs].kind.clone());
                 }
-                _ => {}
             }
         }
         _ => {}

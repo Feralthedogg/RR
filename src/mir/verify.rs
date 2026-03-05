@@ -214,25 +214,23 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
             }
         }
 
-        if matches!(blk.term, Terminator::Unreachable) {
-            if !blk.instrs.is_empty() || !preds[bid].is_empty() {
+        if matches!(blk.term, Terminator::Unreachable)
+            && (!blk.instrs.is_empty() || !preds[bid].is_empty()) {
                 return Err(VerifyError::BadTerminator(bid));
             }
-        }
     }
 
     // 4. Ensure origin_var points to an assigned variable (reachable-only)
     let used_values = collect_used_values(fn_ir, &reachable);
     for vid in used_values {
         let val = &fn_ir.values[vid];
-        if let Some(name) = &val.origin_var {
-            if !assigned_vars.contains(name) && !is_reserved_binding(name) {
+        if let Some(name) = &val.origin_var
+            && !assigned_vars.contains(name) && !is_reserved_binding(name) {
                 return Err(VerifyError::UndefinedVar {
                     var: name.clone(),
                     value: vid,
                 });
             }
-        }
     }
 
     Ok(())

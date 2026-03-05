@@ -10,7 +10,20 @@ enum Lattice {
     Bottom, // Overdefined
 }
 
+type ExecutableEdge = (BlockId, BlockId);
+type SolveResult = (
+    FxHashMap<ValueId, Lattice>,
+    FxHashSet<BlockId>,
+    FxHashSet<ExecutableEdge>,
+);
+
 pub struct MirSCCP;
+
+impl Default for MirSCCP {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl MirSCCP {
     pub fn new() -> Self {
@@ -22,14 +35,7 @@ impl MirSCCP {
         self.apply_results(fn_ir, &lattice, &executable_blocks)
     }
 
-    fn solve(
-        &self,
-        fn_ir: &FnIR,
-    ) -> (
-        FxHashMap<ValueId, Lattice>,
-        FxHashSet<BlockId>,
-        FxHashSet<(BlockId, BlockId)>,
-    ) {
+    fn solve(&self, fn_ir: &FnIR) -> SolveResult {
         let mut lattice = FxHashMap::default();
         let mut executable_edges = FxHashSet::default(); // FxHashSet<(from, to)>
         let mut executable_blocks = FxHashSet::default();
@@ -68,8 +74,8 @@ impl MirSCCP {
 
                     // Re-evaluate Phis in the 'to' block because a new incoming edge is executable
                     for (id, val) in fn_ir.values.iter().enumerate() {
-                        if val.phi_block == Some(to) {
-                            if let ValueKind::Phi { args } = &val.kind {
+                        if val.phi_block == Some(to)
+                            && let ValueKind::Phi { args } = &val.kind {
                                 // Basic check: does this Phi have an argument from 'from'?
                                 if args.iter().any(|(_, p)| *p == from) {
                                     self.visit_value(
@@ -81,11 +87,10 @@ impl MirSCCP {
                                     );
                                 }
                             }
-                        }
                     }
                 }
-            } else if let Some(val_id) = ssa_worklist.pop_front() {
-                if let Some(user_list) = users.get(&val_id) {
+            } else if let Some(val_id) = ssa_worklist.pop_front()
+                && let Some(user_list) = users.get(&val_id) {
                     for user in user_list {
                         match user {
                             User::Block(bid) => {
@@ -112,7 +117,6 @@ impl MirSCCP {
                         }
                     }
                 }
-            }
         }
 
         (lattice, executable_blocks, executable_edges)
@@ -378,11 +382,10 @@ impl MirSCCP {
             return Lattice::Top;
         }
 
-        if let Some(i) = self.const_index_value(&idx_state) {
-            if let Some(v) = self.try_const_index(base, i, fn_ir, lattice) {
+        if let Some(i) = self.const_index_value(&idx_state)
+            && let Some(v) = self.try_const_index(base, i, fn_ir, lattice) {
                 return Lattice::Constant(v);
             }
-        }
 
         Lattice::Bottom
     }
@@ -787,13 +790,10 @@ impl MirSCCP {
                     then_bb,
                     else_bb,
                 } = &block.term
-                {
-                    if let Some(state) = lattice.get(cond) {
-                        if let Lattice::Constant(Lit::Bool(c)) = state {
+                    && let Some(state) = lattice.get(cond)
+                        && let Lattice::Constant(Lit::Bool(c)) = state {
                             new_term = Some(Terminator::Goto(if *c { *then_bb } else { *else_bb }));
                         }
-                    }
-                }
             }
 
             if let Some(term) = new_term {

@@ -86,37 +86,30 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
         if !reachable_blocks.contains(&bid) {
             continue;
         }
-        if let Terminator::If { cond, .. } = block.term {
-            if reachable_values.contains(&cond)
+        if let Terminator::If { cond, .. } = block.term
+            && reachable_values.contains(&cond)
                 && let Some(lit) = eval_const(fn_ir, cond, &mut memo, &mut FxHashSet::default())
-            {
-                if let Err(e) = validate_const_condition(lit, fn_ir.values[cond].span) {
+                && let Err(e) = validate_const_condition(lit, fn_ir.values[cond].span) {
                     errors.push(e);
                 }
-            }
-        }
 
         for ins in &block.instrs {
             match ins {
                 Instr::StoreIndex1D { idx, span, .. } => {
                     if let Some(lit) = eval_const(fn_ir, *idx, &mut memo, &mut FxHashSet::default())
-                    {
-                        if let Err(e) = validate_index_lit_for_write(lit, *span) {
+                        && let Err(e) = validate_index_lit_for_write(lit, *span) {
                             errors.push(e);
                         }
-                    }
                 }
                 Instr::StoreIndex2D { r, c, span, .. } => {
-                    if let Some(lit) = eval_const(fn_ir, *r, &mut memo, &mut FxHashSet::default()) {
-                        if let Err(e) = validate_index_lit_for_write(lit, *span) {
+                    if let Some(lit) = eval_const(fn_ir, *r, &mut memo, &mut FxHashSet::default())
+                        && let Err(e) = validate_index_lit_for_write(lit, *span) {
                             errors.push(e);
                         }
-                    }
-                    if let Some(lit) = eval_const(fn_ir, *c, &mut memo, &mut FxHashSet::default()) {
-                        if let Err(e) = validate_index_lit_for_write(lit, *span) {
+                    if let Some(lit) = eval_const(fn_ir, *c, &mut memo, &mut FxHashSet::default())
+                        && let Err(e) = validate_index_lit_for_write(lit, *span) {
                             errors.push(e);
                         }
-                    }
                 }
                 _ => {}
             }
@@ -130,9 +123,13 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
             continue;
         }
         match &v.kind {
-            ValueKind::Binary { op, rhs, .. } if matches!(op, BinOp::Div | BinOp::Mod) => {
-                if let Some(lit) = eval_const(fn_ir, *rhs, &mut memo, &mut FxHashSet::default()) {
-                    if is_zero_number(&lit) {
+            ValueKind::Binary {
+                op: BinOp::Div | BinOp::Mod,
+                rhs,
+                ..
+            } => {
+                if let Some(lit) = eval_const(fn_ir, *rhs, &mut memo, &mut FxHashSet::default())
+                    && is_zero_number(&lit) {
                         errors.push(
                             RRException::new(
                                 "RR.RuntimeError",
@@ -145,32 +142,27 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                             .note("Adjust divisor so it cannot become zero."),
                         );
                     }
-                }
             }
             ValueKind::Index1D { idx, .. } => {
-                if let Some(lit) = eval_const(fn_ir, *idx, &mut memo, &mut FxHashSet::default()) {
-                    if let Err(e) = validate_index_lit_for_read(lit, v.span) {
+                if let Some(lit) = eval_const(fn_ir, *idx, &mut memo, &mut FxHashSet::default())
+                    && let Err(e) = validate_index_lit_for_read(lit, v.span) {
                         errors.push(e);
                     }
-                }
             }
             ValueKind::Index2D { r, c, .. } => {
-                if let Some(lit) = eval_const(fn_ir, *r, &mut memo, &mut FxHashSet::default()) {
-                    if let Err(e) = validate_index_lit_for_read(lit, v.span) {
+                if let Some(lit) = eval_const(fn_ir, *r, &mut memo, &mut FxHashSet::default())
+                    && let Err(e) = validate_index_lit_for_read(lit, v.span) {
                         errors.push(e);
                     }
-                }
-                if let Some(lit) = eval_const(fn_ir, *c, &mut memo, &mut FxHashSet::default()) {
-                    if let Err(e) = validate_index_lit_for_read(lit, v.span) {
+                if let Some(lit) = eval_const(fn_ir, *c, &mut memo, &mut FxHashSet::default())
+                    && let Err(e) = validate_index_lit_for_read(lit, v.span) {
                         errors.push(e);
                     }
-                }
             }
             ValueKind::Call { callee, args, .. } if callee == "seq_len" && args.len() == 1 => {
                 if let Some(lit) = eval_const(fn_ir, args[0], &mut memo, &mut FxHashSet::default())
-                {
-                    if let Some(n) = as_integral(&lit) {
-                        if n < 0 {
+                    && let Some(n) = as_integral(&lit)
+                        && n < 0 {
                             errors.push(
                                 RRException::new(
                                     "RR.RuntimeError",
@@ -187,8 +179,6 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                                 .note("Ensure seq_len argument is >= 0."),
                             );
                         }
-                    }
-                }
             }
             _ => {
                 let _ = vid;

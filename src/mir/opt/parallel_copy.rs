@@ -12,14 +12,13 @@ fn param_runtime_var(fn_ir: &FnIR, index: usize) -> Option<&str> {
     // Prefer that runtime binding when present, and only fall back to the
     // public parameter name.
     for v in &fn_ir.values {
-        if let ValueKind::Param { index: i } = v.kind {
-            if i == index {
+        if let ValueKind::Param { index: i } = v.kind
+            && i == index {
                 if let Some(name) = v.origin_var.as_deref() {
                     return Some(name);
                 }
                 break;
             }
-        }
     }
     fn_ir.params.get(index).map(|s| s.as_str())
 }
@@ -104,11 +103,10 @@ pub fn emit_parallel_copy(
 
 fn value_reads_var(fn_ir: &FnIR, src: ValueId, var: &VarId) -> bool {
     let val = &fn_ir.values[src];
-    if let Some(name) = &val.origin_var {
-        if name == var {
+    if let Some(name) = &val.origin_var
+        && name == var {
             return true;
         }
-    }
     match &val.kind {
         ValueKind::Load { var: v } => v == var,
         ValueKind::Param { index } => {

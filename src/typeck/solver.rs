@@ -16,14 +16,6 @@ pub enum TypeMode {
 }
 
 impl TypeMode {
-    pub fn from_str(v: &str) -> Option<Self> {
-        match v.trim().to_ascii_lowercase().as_str() {
-            "strict" => Some(Self::Strict),
-            "gradual" => Some(Self::Gradual),
-            _ => None,
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Strict => "strict",
@@ -40,20 +32,36 @@ pub enum NativeBackend {
 }
 
 impl NativeBackend {
-    pub fn from_str(v: &str) -> Option<Self> {
-        match v.trim().to_ascii_lowercase().as_str() {
-            "off" => Some(Self::Off),
-            "optional" => Some(Self::Optional),
-            "required" => Some(Self::Required),
-            _ => None,
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",
             Self::Optional => "optional",
             Self::Required => "required",
+        }
+    }
+}
+
+impl std::str::FromStr for TypeMode {
+    type Err = ();
+
+    fn from_str(v: &str) -> Result<Self, Self::Err> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "strict" => Ok(Self::Strict),
+            "gradual" => Ok(Self::Gradual),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::str::FromStr for NativeBackend {
+    type Err = ();
+
+    fn from_str(v: &str) -> Result<Self, Self::Err> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "off" => Ok(Self::Off),
+            "optional" => Ok(Self::Optional),
+            "required" => Ok(Self::Required),
+            _ => Err(()),
         }
     }
 }
@@ -232,32 +240,29 @@ fn validate_strict(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
                 }
             }
             for ins in &bb.instrs {
-                match ins {
-                    crate::mir::Instr::StoreIndex1D { idx, .. } => {
-                        let ity = fn_ir.values[*idx].value_ty;
-                        if has_explicit_hints && ity.is_unknown() {
-                            return Err(
-                                RRException::new(
-                                    "RR.TypeError",
-                                    RRCode::E1012,
-                                    Stage::Mir,
-                                    format!(
-                                        "strict mode unresolved index type in function '{}' (value #{})",
-                                        fname, idx
-                                    ),
-                                )
-                                .note("Add an integer index hint or explicit cast before indexing."),
-                            );
-                        }
+                if let crate::mir::Instr::StoreIndex1D { idx, .. } = ins {
+                    let ity = fn_ir.values[*idx].value_ty;
+                    if has_explicit_hints && ity.is_unknown() {
+                        return Err(
+                            RRException::new(
+                                "RR.TypeError",
+                                RRCode::E1012,
+                                Stage::Mir,
+                                format!(
+                                    "strict mode unresolved index type in function '{}' (value #{})",
+                                    fname, idx
+                                ),
+                            )
+                            .note("Add an integer index hint or explicit cast before indexing."),
+                        );
                     }
-                    _ => {}
                 }
             }
         }
 
         for v in &fn_ir.values {
-            if let ValueKind::Call { callee, args, .. } = &v.kind {
-                if let Some(callee_fn) = all_fns.get(callee) {
+            if let ValueKind::Call { callee, args, .. } = &v.kind
+                && let Some(callee_fn) = all_fns.get(callee) {
                     let argc = args.len().min(callee_fn.param_ty_hints.len());
                     for i in 0..argc {
                         let expected_term = callee_fn
@@ -302,7 +307,6 @@ fn validate_strict(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
                         }
                     }
                 }
-            }
         }
     }
     Ok(())
@@ -338,11 +342,10 @@ fn analyze_function(fn_ir: &mut FnIR, fn_ret: &FxHashMap<String, TypeState>) -> 
     }
 
     // Use return hint only when no return value was observed in reachable blocks.
-    if ret_ty == TypeState::unknown() {
-        if let Some(h) = fn_ir.ret_ty_hint {
+    if ret_ty == TypeState::unknown()
+        && let Some(h) = fn_ir.ret_ty_hint {
             ret_ty = h;
         }
-    }
 
     Ok(ret_ty)
 }
@@ -408,11 +411,10 @@ fn analyze_function_terms(fn_ir: &mut FnIR, fn_ret: &FxHashMap<String, TypeTerm>
         }
     }
 
-    if ret_term.is_any() {
-        if let Some(h) = &fn_ir.ret_term_hint {
+    if ret_term.is_any()
+        && let Some(h) = &fn_ir.ret_term_hint {
             ret_term = h.clone();
         }
-    }
 
     ret_term
 }

@@ -25,11 +25,10 @@ pub fn unique_dir(root: &Path, name: &str) -> PathBuf {
 }
 
 pub fn rscript_path() -> Option<String> {
-    if let Ok(path) = std::env::var("RRSCRIPT") {
-        if !path.trim().is_empty() {
+    if let Ok(path) = std::env::var("RRSCRIPT")
+        && !path.trim().is_empty() {
             return Some(path);
         }
-    }
     Some("Rscript".to_string())
 }
 

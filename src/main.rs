@@ -1,28 +1,63 @@
-﻿use RR::compiler::{
+use RR::compiler::{
     CliLog, OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs,
     parallel_config_from_env, type_config_from_env,
 };
 use RR::runtime::runner::Runner;
 use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
+use std::any::Any;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    install_broken_pipe_panic_hook();
+    let result = std::panic::catch_unwind(run_cli);
+    match result {
+        Ok(code) => {
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Err(payload) => {
+            if panic_payload_is_broken_pipe(payload.as_ref()) {
+                std::process::exit(0);
+            }
+            std::panic::resume_unwind(payload);
+        }
+    }
+}
+
+fn run_cli() -> i32 {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         print_usage();
-        return;
+        return 0;
     }
 
-    let code = match args[1].as_str() {
+    match args[1].as_str() {
         "build" => cmd_build(&args[2..]),
         "run" => cmd_run(&args[2..]),
         _ => cmd_legacy(&args[1..]),
-    };
+    }
+}
 
-    if code != 0 {
-        std::process::exit(code);
+fn install_broken_pipe_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if panic_payload_is_broken_pipe(info.payload()) {
+            return;
+        }
+        default_hook(info);
+    }));
+}
+
+fn panic_payload_is_broken_pipe(payload: &(dyn Any + Send)) -> bool {
+    if let Some(msg) = payload.downcast_ref::<&str>() {
+        msg.contains("Broken pipe")
+    } else if let Some(msg) = payload.downcast_ref::<String>() {
+        msg.contains("Broken pipe")
+    } else {
+        false
     }
 }
 
@@ -99,11 +134,7 @@ impl CommonCompileFlag {
     }
 }
 
-fn next_flag_value<'a>(
-    args: &'a [String],
-    i: &mut usize,
-    _ui: &CliLog,
-) -> Result<&'a str, i32> {
+fn next_flag_value<'a>(args: &'a [String], i: &mut usize, _ui: &CliLog) -> Result<&'a str, i32> {
     if *i + 1 >= args.len() {
         return Err(1);
     }
@@ -137,36 +168,36 @@ fn apply_common_compile_flags(
 
     match flag {
         CommonCompileFlag::TypeMode => {
-            type_cfg.mode = match TypeMode::from_str(v) {
-                Some(m) => m,
-                None => {
+            type_cfg.mode = match v.parse::<TypeMode>() {
+                Ok(m) => m,
+                Err(()) => {
                     ui.error("Invalid --type-mode. Use strict|gradual");
                     return Err(1);
                 }
             };
         }
         CommonCompileFlag::NativeBackend => {
-            type_cfg.native_backend = match NativeBackend::from_str(v) {
-                Some(m) => m,
-                None => {
+            type_cfg.native_backend = match v.parse::<NativeBackend>() {
+                Ok(m) => m,
+                Err(()) => {
                     ui.error("Invalid --native-backend. Use off|optional|required");
                     return Err(1);
                 }
             };
         }
         CommonCompileFlag::ParallelMode => {
-            parallel_cfg.mode = match ParallelMode::from_str(v) {
-                Some(m) => m,
-                None => {
+            parallel_cfg.mode = match v.parse::<ParallelMode>() {
+                Ok(m) => m,
+                Err(()) => {
                     ui.error("Invalid --parallel-mode. Use off|optional|required");
                     return Err(1);
                 }
             };
         }
         CommonCompileFlag::ParallelBackend => {
-            parallel_cfg.backend = match ParallelBackend::from_str(v) {
-                Some(m) => m,
-                None => {
+            parallel_cfg.backend = match v.parse::<ParallelBackend>() {
+                Ok(m) => m,
+                Err(()) => {
                     ui.error("Invalid --parallel-backend. Use auto|r|openmp");
                     return Err(1);
                 }
@@ -423,9 +454,14 @@ fn cmd_run(args: &[String]) -> i32 {
         opts.type_cfg,
         opts.parallel_cfg,
     ) {
-        Ok((r_code, source_map)) => {
-            Runner::run(&input_path_str, &input, &r_code, &source_map, None, opts.keep_r)
-        }
+        Ok((r_code, source_map)) => Runner::run(
+            &input_path_str,
+            &input,
+            &r_code,
+            &source_map,
+            None,
+            opts.keep_r,
+        ),
         Err(e) => {
             e.display(Some(&input), Some(&input_path_str));
             1
@@ -506,9 +542,9 @@ fn cmd_build(args: &[String]) -> i32 {
     }
 
     let root_abs = if dir_mode {
-        fs::canonicalize(&target_path).unwrap_or(target_path.clone())
+        fs::canonicalize(&target_path).ok()
     } else {
-        PathBuf::new()
+        None
     };
 
     let mut built = 0usize;
@@ -523,35 +559,48 @@ fn cmd_build(args: &[String]) -> i32 {
             }
         };
 
-        let (r_code, _source_map) =
-            match compile_with_configs(
-                &rr_path_str,
-                &input,
-                opts.opt_level,
-                opts.type_cfg,
-                opts.parallel_cfg,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    e.display(Some(&input), Some(&rr_path_str));
-                    return 1;
-                }
-            };
+        let (r_code, _source_map) = match compile_with_configs(
+            &rr_path_str,
+            &input,
+            opts.opt_level,
+            opts.type_cfg,
+            opts.parallel_cfg,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                e.display(Some(&input), Some(&rr_path_str));
+                return 1;
+            }
+        };
 
         let out_file = if dir_mode {
-            let rel = rr_abs.strip_prefix(&root_abs).unwrap_or(&rr_abs);
+            let rel = rr
+                .strip_prefix(&target_path)
+                .ok()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(Path::to_path_buf)
+                .or_else(|| {
+                    root_abs.as_ref().and_then(|root| {
+                        rr_abs
+                            .strip_prefix(root)
+                            .ok()
+                            .filter(|p| !p.as_os_str().is_empty())
+                            .map(Path::to_path_buf)
+                    })
+                })
+                .or_else(|| rr.file_name().map(PathBuf::from))
+                .unwrap_or_else(|| PathBuf::from("out.rr"));
             out_root.join(rel).with_extension("R")
         } else {
             let stem = rr.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
             out_root.join(format!("{}.R", stem))
         };
 
-        if let Some(parent) = out_file.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
+        if let Some(parent) = out_file.parent()
+            && let Err(e) = fs::create_dir_all(parent) {
                 ui.error(&format!("Failed to create '{}': {}", parent.display(), e));
                 return 1;
             }
-        }
         if let Err(e) = fs::write(&out_file, r_code) {
             ui.error(&format!("Failed to write '{}': {}", out_file.display(), e));
             return 1;
@@ -568,4 +617,3 @@ fn cmd_build(args: &[String]) -> i32 {
     ));
     0
 }
-

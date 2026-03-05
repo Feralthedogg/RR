@@ -99,6 +99,12 @@ struct ProgramOptPlan {
 // Backward compatibility alias for older call sites.
 pub type MirOptimizer = TachyonEngine;
 
+impl Default for TachyonEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TachyonEngine {
     pub fn new() -> Self {
         Self
@@ -549,8 +555,8 @@ impl TachyonEngine {
             selected.insert(p.name.clone());
         }
 
-        if selected.is_empty() {
-            if let Some(fallback) = profiles
+        if selected.is_empty()
+            && let Some(fallback) = profiles
                 .iter()
                 .filter(|p| p.ir_size <= soft_fn_limit.saturating_mul(2))
                 .min_by_key(|p| p.ir_size)
@@ -558,7 +564,6 @@ impl TachyonEngine {
             {
                 selected.insert(fallback.name.clone());
             }
-        }
 
         ProgramOptPlan {
             program_limit,
@@ -1171,15 +1176,11 @@ impl TachyonEngine {
         let mut cur = vid;
         let mut seen = FxHashSet::default();
         while seen.insert(cur) {
-            match &fn_ir.values[cur].kind {
-                ValueKind::Load { var } => {
-                    if let Some(src) = unique_assign_source(fn_ir, var) {
-                        cur = src;
-                        continue;
-                    }
+            if let ValueKind::Load { var } = &fn_ir.values[cur].kind
+                && let Some(src) = unique_assign_source(fn_ir, var) {
+                    cur = src;
+                    continue;
                 }
-                _ => {}
-            }
             break;
         }
         cur
@@ -1247,10 +1248,8 @@ impl TachyonEngine {
                 Terminator::If { cond, .. } => {
                     used.insert(*cond);
                 }
-                Terminator::Return(val) => {
-                    if let Some(id) = val {
-                        used.insert(*id);
-                    }
+                Terminator::Return(Some(id)) => {
+                    used.insert(*id);
                 }
                 _ => {}
             }
@@ -1440,23 +1439,19 @@ impl TachyonEngine {
                 if let ValueKind::Index1D {
                     base, idx, is_safe, ..
                 } = &val.kind
-                {
-                    if !*is_safe {
-                        if self.is_safe_access(fn_ir, *base, *idx, &facts) {
+                    && !*is_safe
+                        && self.is_safe_access(fn_ir, *base, *idx, &facts) {
                             is_proven_safe = true;
                         }
-                    }
-                }
             }
-            if is_proven_safe {
-                if let ValueKind::Index1D {
+            if is_proven_safe
+                && let ValueKind::Index1D {
                     ref mut is_safe, ..
                 } = fn_ir.values[val_idx].kind
                 {
                     *is_safe = true;
                     changed = true;
                 }
-            }
         }
 
         // OPTIMIZATION: StoreIndex1D (Instruction)
@@ -1468,23 +1463,19 @@ impl TachyonEngine {
                     if let Instr::StoreIndex1D {
                         base, idx, is_safe, ..
                     } = instr
-                    {
-                        if !*is_safe {
-                            if self.is_safe_access(fn_ir, *base, *idx, &facts) {
+                        && !*is_safe
+                            && self.is_safe_access(fn_ir, *base, *idx, &facts) {
                                 is_proven_safe = true;
                             }
-                        }
-                    }
                 }
-                if is_proven_safe {
-                    if let Instr::StoreIndex1D {
+                if is_proven_safe
+                    && let Instr::StoreIndex1D {
                         ref mut is_safe, ..
                     } = fn_ir.blocks[blk_idx].instrs[instr_idx]
                     {
                         *is_safe = true;
                         changed = true;
                     }
-                }
             }
         }
 
@@ -1509,11 +1500,10 @@ impl TachyonEngine {
         // Or if idx_id is a Phi whose inputs come from indices(base).
 
         // Case B: induction-variable pattern.
-        if f.has(Facts::ONE_BASED) {
-            if self.is_derived_from_len(fn_ir, idx_id, base_id, facts) {
+        if f.has(Facts::ONE_BASED)
+            && self.is_derived_from_len(fn_ir, idx_id, base_id, facts) {
                 return true;
             }
-        }
 
         false
     }
@@ -1523,7 +1513,7 @@ impl TachyonEngine {
         fn_ir: &FnIR,
         val_id: ValueId,
         base_id: ValueId,
-        facts: &FxHashMap<ValueId, crate::mir::flow::Facts>,
+        _facts: &FxHashMap<ValueId, crate::mir::flow::Facts>,
     ) -> bool {
         let val = &fn_ir.values[val_id];
         match &val.kind {
@@ -1540,7 +1530,7 @@ impl TachyonEngine {
             }
             ValueKind::Phi { args } => args
                 .iter()
-                .any(|(id, _)| self.is_derived_from_len(fn_ir, *id, base_id, facts)),
+                .any(|(id, _)| self.is_derived_from_len(fn_ir, *id, base_id, _facts)),
             _ => false,
         }
     }
