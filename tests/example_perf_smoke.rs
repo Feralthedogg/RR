@@ -94,6 +94,8 @@ fn example_perf_smoke_reports_compile_and_runtime() {
     let mut total_compile_o1_ms = 0u128;
     let mut total_compile_o2_ms = 0u128;
     let mut total_runtime_o2_ms = 0u128;
+    let mut max_runtime_o2_ms = 0u128;
+    let mut max_runtime_o2_label = "";
 
     println!("example perf smoke:");
     for case in PERF_CASES {
@@ -121,6 +123,10 @@ fn example_perf_smoke_reports_compile_and_runtime() {
         total_compile_o1_ms += compile_o1_ms;
         total_compile_o2_ms += compile_o2_ms;
         total_runtime_o2_ms += runtime_o2_ms;
+        if runtime_o2_ms > max_runtime_o2_ms {
+            max_runtime_o2_ms = runtime_o2_ms;
+            max_runtime_o2_label = case.label;
+        }
 
         println!(
             "  {:>28} | compile O1 {:>5} ms | compile O2 {:>5} ms | runtime O2 {:>5} ms",
@@ -146,6 +152,15 @@ fn example_perf_smoke_reports_compile_and_runtime() {
             total_runtime_o2_ms <= limit,
             "example perf runtime budget exceeded: O2 total={}ms > limit={}ms",
             total_runtime_o2_ms,
+            limit
+        );
+    }
+    if let Some(limit) = parse_env_limit_ms("RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS") {
+        assert!(
+            max_runtime_o2_ms <= limit,
+            "example perf per-case runtime budget exceeded: {} O2 runtime={}ms > limit={}ms",
+            max_runtime_o2_label,
+            max_runtime_o2_ms,
             limit
         );
     }

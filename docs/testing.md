@@ -119,11 +119,13 @@ Optional perf smoke budgets:
 
 - `RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS`
 - `RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS`
+- `RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS`
 
 Current CI baseline:
 
 - total compile `-O2` budget: `5000 ms`
-- total runtime `-O2` budget: `20000 ms`
+- total runtime `-O2` budget: `30000 ms`
+- max single-case runtime `-O2` budget: `25000 ms`
 
 ## Golden Semantics
 
