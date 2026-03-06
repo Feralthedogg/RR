@@ -1,0 +1,26 @@
+import "../common/sim_utils.rr";
+
+fn main() {
+    n = 24.0
+    field = rep.int(0.0, n)
+    field[8.0] = 1.0
+    field[9.0] = 0.8
+    field[10.0] = 0.4
+    c = 0.25
+    step = 1.0
+    while (step <= 20.0) {
+        next_field = copy_vec(field)
+        i = 1.0
+        while (i <= n) {
+            left = periodic_left(i, n)
+            next_field[i] = field[i] - c * (field[i] - field[left])
+            i += 1.0
+        }
+        field = next_field
+        step += 1.0
+    }
+    print_metric("advection_mass", vector_sum(field))
+    print_metric("advection_probe", field[12.0])
+}
+
+main();

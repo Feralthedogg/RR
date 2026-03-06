@@ -52,6 +52,9 @@ CLI entrypoints in `src/main.rs` call this pipeline API.
 - Run interprocedural fixed-point type analysis (`src/typeck/solver.rs`).
 - Structural type terms (`src/typeck/term.rs`) and MIR constraints (`src/typeck/constraints.rs`)
   refine nested/container projections (for example `list<box<T>>` index/unbox flows).
+- Propagate interprocedural index demand:
+  when a function result is consumed as a proven index (scalar position or floor-index vector slot),
+  infer producer returns as `int` / `vector<int>` unless that conflicts with explicit return hints.
 - Respect type mode:
   - `strict` (default): fail on proven hint conflicts, call signature mismatches, and unresolved strict-only positions.
   - `gradual`: keep safe runtime path when proofs are unavailable.
@@ -69,20 +72,32 @@ CLI entrypoints in `src/main.rs` call this pipeline API.
   3. Tier C inter-procedural inlining only when heavy tier is enabled.
 - Type-directed pass order for optimized mode:
   1. `type_specialize`
-  2. existing vectorization (`v_opt`)
-  3. `bce`
-  4. cleanup/de-ssa chain
+  2. floor-index parameter canonicalization (`rr_index_vec_floor` hoisted once per function entry for index-table params, but skipped when all callsites already prove `vector<int>` for that slot)
+  3. existing vectorization (`v_opt`)
+  4. `bce`
+  5. cleanup/de-ssa chain
 - Guard removal policy: remove only when MIR type/range proof exists (`value_ty` + `value_term` + range facts);
   otherwise preserve original guard calls.
 - Optional hotness hints (`RR_PROFILE_USE`) can bias selective Tier-B function choice without changing semantics.
 - SCCP/analysis arithmetic is fail-safe: when compile-time arithmetic overflows or is invalid,
   optimization falls back to non-folded runtime evaluation instead of panicking.
+- Optimization stage summary now includes vectorization diagnostics in CLI output:
+  - `Vectorized`, `Reduced`, `Simplified`
+  - `VecSkip` with reject buckets (`no-iv`, `bound`, `cfg`, `indirect`, `store`, `no-pattern`)
+- `RR_VECTORIZE_TRACE=1` enables per-loop matcher traces for compiler debugging.
 
 5. `R Code Emission`
 - Structurize CFG into high-level control shapes (`src/mir/structurizer.rs`).
 - Emit R code from structured blocks (`src/codegen/mir_emit.rs`).
 - Build RR-to-R source map entries.
 - Emit intrinsics as runtime helper calls (`rr_intrinsic_*`) when type-specialized MIR values are present.
+- Vectorized MIR commonly lowers to runtime helpers such as:
+  - `rr_assign_slice`
+  - `rr_assign_index_vec`
+  - `rr_index1_read_vec`
+  - `rr_wrap_index_vec_i`
+  - `rr_idx_cube_vec_i`
+  - `rr_ifelse_strict`
 
 6. `Runtime Injection`
 - Prepend embedded runtime (`src/runtime/mod.rs`).
@@ -123,3 +138,36 @@ The compiler pipeline returns `RR<T>` (`Result<T, RRException>`):
 
 `src/legacy/ir/*` still exists as a legacy/experimental layer.
 Main production pipeline uses HIR -> MIR -> codegen path.
+
+## Incremental Pipeline (Phases 1-3)
+
+Incremental compile path is implemented in `src/compiler/incremental.rs` and integrated through CLI
+flags (`--incremental*`) and `watch`.
+
+### Phase 1: Module + Artifact Cache
+
+- Collect entry/import dependency fingerprints.
+- Build a cache key from:
+  - dependency content hashes
+  - `opt_level`
+  - type/native/parallel config
+  - incremental options
+- Reuse cached final artifact (`.R` + source map) when key matches.
+
+### Phase 2: Function Emit Cache
+
+- Compile/optimize normally.
+- During step 5 (`R Code Emission`), function-level emit cache is consulted.
+- Cache key is based on function IR state and compile configuration.
+- Cache hits skip per-function code emission.
+
+### Phase 3: Session Memory Cache
+
+- `IncrementalSession` keeps hot artifacts in memory.
+- `watch` keeps one session alive across ticks.
+- Fast path checks memory cache before disk cache.
+
+### Strict Incremental Verification
+
+`--strict-incremental-verify` forces a rebuild path and checks rebuilt output against cached output.
+If mismatch is detected, compile fails with an internal diagnostic instead of silently reusing cache.

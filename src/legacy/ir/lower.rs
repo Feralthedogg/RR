@@ -107,7 +107,7 @@ impl Lowerer {
             StmtKind::Break | StmtKind::Next => {
                 bail!(
                     "RR.FeatureError",
-                    RRCode::E9999,
+                    RRCode::E3001,
                     Stage::Lower,
                     "break/next are only supported in MIR pipeline"
                 );
@@ -261,7 +261,7 @@ impl Lowerer {
                 }
             }
             ExprKind::Match { .. } | ExprKind::Try { .. } | ExprKind::ColRef(_) | ExprKind::Unquote(_) => {
-                bail!("RR.FeatureError", RRCode::E9999, Stage::Lower, "v6 Feature (Match/Try/Tidy) not supported in legacy IR");
+                bail!("RR.FeatureError", RRCode::E3001, Stage::Lower, "v6 Feature (Match/Try/Tidy) not supported in legacy IR");
             }
         };
         Ok(IRExpr::new(kind, expr.span))

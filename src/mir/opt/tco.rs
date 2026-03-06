@@ -32,12 +32,13 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
 fn param_runtime_var(fn_ir: &FnIR, index: usize) -> Option<String> {
     for v in &fn_ir.values {
         if let ValueKind::Param { index: i } = v.kind
-            && i == index {
-                if let Some(name) = &v.origin_var {
-                    return Some(name.clone());
-                }
-                break;
+            && i == index
+        {
+            if let Some(name) = &v.origin_var {
+                return Some(name.clone());
             }
+            break;
+        }
     }
     fn_ir.params.get(index).cloned()
 }

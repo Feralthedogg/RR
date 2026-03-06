@@ -21,9 +21,10 @@ fn compile_rr(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) {
 
 fn rscript_path() -> Option<String> {
     if let Ok(path) = std::env::var("RRSCRIPT")
-        && !path.trim().is_empty() {
-            return Some(path);
-        }
+        && !path.trim().is_empty()
+    {
+        return Some(path);
+    }
     Some("Rscript".to_string())
 }
 

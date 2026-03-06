@@ -1,0 +1,7 @@
+fn helper(flag) {
+   {
+  if (flag) { return 1; }
+  returt(helper(flag))
+}
+
+);

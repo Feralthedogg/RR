@@ -5,6 +5,14 @@ pub fn infer_builtin(callee: &str, arg_tys: &[TypeState]) -> Option<TypeState> {
     match callee {
         "length" | "seq_len" => Some(TypeState::scalar(PrimTy::Int, true)),
         "seq_along" => Some(TypeState::vector(PrimTy::Int, true)),
+        "rr_i0" | "rr_i1" | "rr_index1_read_idx" => Some(TypeState::scalar(PrimTy::Int, false)),
+        "rr_index_vec_floor" => {
+            if arg_tys.iter().any(|t| t.shape == ShapeTy::Vector) {
+                Some(TypeState::vector(PrimTy::Int, false))
+            } else {
+                Some(TypeState::scalar(PrimTy::Int, false))
+            }
+        }
         "c" => {
             let mut out = TypeState::vector(PrimTy::Any, false);
             for t in arg_tys {
@@ -43,6 +51,17 @@ pub fn infer_builtin_term(callee: &str, arg_terms: &[TypeTerm]) -> Option<TypeTe
     match callee {
         "length" | "seq_len" => Some(TypeTerm::Int),
         "seq_along" => Some(TypeTerm::Vector(Box::new(TypeTerm::Int))),
+        "rr_i0" | "rr_i1" | "rr_index1_read_idx" => Some(TypeTerm::Int),
+        "rr_index_vec_floor" => {
+            if arg_terms
+                .iter()
+                .any(|t| matches!(t, TypeTerm::Vector(_) | TypeTerm::Matrix(_)))
+            {
+                Some(TypeTerm::Vector(Box::new(TypeTerm::Int)))
+            } else {
+                Some(TypeTerm::Int)
+            }
+        }
         "c" => {
             let mut elem = TypeTerm::Any;
             for t in arg_terms {

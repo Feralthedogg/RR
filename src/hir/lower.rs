@@ -249,9 +249,10 @@ impl Lowerer {
                 return;
             }
             if let Some(lid) = lowerer.lookup(name)
-                && seen.insert(name.to_string()) {
-                    captures.push((name.to_string(), lid));
-                }
+                && seen.insert(name.to_string())
+            {
+                captures.push((name.to_string(), lid));
+            }
         }
 
         fn collect_pat_binders(p: &ast::Pattern, out: &mut FxHashSet<String>) {
@@ -384,10 +385,12 @@ impl Lowerer {
                     visit_expr(lowerer, scopes, seen, captures, value);
                     match &target.kind {
                         ast::LValueKind::Name(n) => {
-                            if !in_scopes(scopes, n) && lowerer.lookup(n).is_none()
-                                && let Some(scope) = scopes.last_mut() {
-                                    scope.insert(n.clone());
-                                }
+                            if !in_scopes(scopes, n)
+                                && lowerer.lookup(n).is_none()
+                                && let Some(scope) = scopes.last_mut()
+                            {
+                                scope.insert(n.clone());
+                            }
                         }
                         ast::LValueKind::Index { base, idx } => {
                             visit_expr(lowerer, scopes, seen, captures, base);
@@ -921,7 +924,7 @@ impl Lowerer {
             }),
             _ => Err(RRException::new(
                 "Feature.NotImpl",
-                RRCode::E9999,
+                RRCode::E3001,
                 Stage::Lower,
                 "Stmt kind not supported".to_string(),
             )),

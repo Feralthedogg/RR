@@ -215,22 +215,27 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
         }
 
         if matches!(blk.term, Terminator::Unreachable)
-            && (!blk.instrs.is_empty() || !preds[bid].is_empty()) {
-                return Err(VerifyError::BadTerminator(bid));
-            }
+            && (!blk.instrs.is_empty() || !preds[bid].is_empty())
+        {
+            return Err(VerifyError::BadTerminator(bid));
+        }
     }
 
-    // 4. Ensure origin_var points to an assigned variable (reachable-only)
+    // 4. Ensure reachable explicit loads point to an assigned variable.
+    // `origin_var` is metadata and can legitimately survive after SSA rewrites
+    // even when the original local assignment has been eliminated.
     let used_values = collect_used_values(fn_ir, &reachable);
     for vid in used_values {
         let val = &fn_ir.values[vid];
-        if let Some(name) = &val.origin_var
-            && !assigned_vars.contains(name) && !is_reserved_binding(name) {
-                return Err(VerifyError::UndefinedVar {
-                    var: name.clone(),
-                    value: vid,
-                });
-            }
+        if let ValueKind::Load { var } = &val.kind
+            && !assigned_vars.contains(var)
+            && !is_reserved_binding(var)
+        {
+            return Err(VerifyError::UndefinedVar {
+                var: var.clone(),
+                value: vid,
+            });
+        }
     }
 
     Ok(())

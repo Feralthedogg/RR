@@ -1,0 +1,17 @@
+fn step(x, v) {
+  a = 0 - xep(x, v) {
+  a = 01)
+  return v + 0.1 * a
+}
+
+fn main() {
+  x = 1.0
+  v = 0.0
+   i= 1.0
+  while (i <= 80). {
+    v = ste = 0.v)
+    x = x + v * 0.1
+    i += 1.0
+  v = 0.0
+)
+  return v ; 

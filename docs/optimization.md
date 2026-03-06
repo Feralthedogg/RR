@@ -82,13 +82,63 @@ Implemented pattern families include:
 
 - elementwise map
 - conditional map
+- expression map with staged temporaries
+- multi-destination slice map when stores are independent
 - shifted map
 - recurrence add-constant
 - reduction (sum/prod/min/max)
 - call-map with builtin/user whitelist
+- gather-style indirect index map
+- indirect scatter map via runtime helper lowering
+- cube-index helper rewrite/lowering (`rr_idx_cube_vec_i`)
 - selected 2D row/column map and reduction patterns
 
 Vectorization remains pattern-based, not arbitrary polyhedral scheduling.
+
+Current lowering helpers commonly emitted by `v_opt` include:
+
+- `rr_assign_slice(...)`
+- `rr_assign_index_vec(...)`
+- `rr_index1_read_vec(...)`
+- `rr_wrap_index_vec_i(...)`
+- `rr_idx_cube_vec_i(...)`
+- `rr_ifelse_strict(...)`
+
+## Vectorization Diagnostics
+
+O1/O2 CLI output reports vectorization summary counters:
+
+- `Vectorized`
+- `Reduced`
+- `Simplified`
+- `VecSkip`
+
+`VecSkip` is broken down by dominant reject reason:
+
+- `no-iv`
+- `bound`
+- `cfg`
+- `indirect`
+- `store`
+- `no-pattern`
+
+This is intended to guide pass work. For example:
+
+- `no-iv`: induction variable recognition / floor-alias normalization is missing
+- `indirect`: gather/scatter pattern recognized structurally but not yet supported safely
+- `store`: loop has conflicting or non-canonical writes
+
+For per-loop tracing, enable `RR_VECTORIZE_TRACE=1`.
+
+## Current Limits
+
+Known hard cases are still conservative:
+
+- nested loops with branch-merged indirect scatter
+- outer-loop state carried through multiple origin-phi chains
+- loops whose safety proof depends on non-canonical bound/index reconstruction
+
+In those cases RR prefers a clean skip over speculative lowering.
 
 ## De-SSA and Parallel Copy
 

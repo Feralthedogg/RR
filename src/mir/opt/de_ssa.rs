@@ -23,7 +23,12 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
     let mut split_map: HashMap<(BlockId, BlockId), BlockId> = HashMap::new();
 
     let mut edges_to_split: Vec<(BlockId, BlockId)> = Vec::new();
-    for (bid, phis) in phi_blocks.iter() {
+    let mut phi_block_ids: Vec<BlockId> = phi_blocks.keys().copied().collect();
+    phi_block_ids.sort_unstable();
+    for bid in phi_block_ids {
+        let Some(phis) = phi_blocks.get(&bid) else {
+            continue;
+        };
         for &phi in phis {
             if let ValueKind::Phi { args } = &fn_ir.values[phi].kind {
                 for (_, pred) in args {
@@ -31,12 +36,14 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
                         continue;
                     }
                     if succs.get(pred).map(|s| s.len()).unwrap_or(0) > 1 {
-                        edges_to_split.push((*pred, *bid));
+                        edges_to_split.push((*pred, bid));
                     }
                 }
             }
         }
     }
+    edges_to_split.sort_unstable();
+    edges_to_split.dedup();
 
     for (pred, bid) in edges_to_split {
         let key = (pred, bid);
@@ -58,7 +65,12 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
     let mut moves_by_block: HashMap<BlockId, Vec<Move>> = HashMap::new();
     let mut phi_infos: Vec<(ValueId, VarId)> = Vec::new();
 
-    for (bid, phis) in phi_blocks.iter() {
+    let mut phi_block_ids: Vec<BlockId> = phi_blocks.keys().copied().collect();
+    phi_block_ids.sort_unstable();
+    for bid in phi_block_ids {
+        let Some(phis) = phi_blocks.get(&bid) else {
+            continue;
+        };
         for &phi in phis {
             let dest = ensure_phi_var(fn_ir, phi);
             phi_infos.push((phi, dest.clone()));
@@ -70,12 +82,13 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
                         continue;
                     }
                     let resolved_src =
-                        resolve_phi_source_for_pred(fn_ir, *src, *bid, *pred, &mut HashSet::new());
+                        resolve_phi_source_for_pred(fn_ir, *src, bid, *pred, &mut HashSet::new());
                     if let Some(block_map) = last_assign_map.get(pred)
                         && let Some(existing) = block_map.get(&dest)
-                            && *existing == resolved_src {
-                                continue;
-                            }
+                        && *existing == resolved_src
+                    {
+                        continue;
+                    }
                     moves_by_block.entry(*pred).or_default().push(Move {
                         dst: dest.clone(),
                         src: resolved_src,
@@ -85,7 +98,12 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
         }
     }
 
-    for (bid, moves) in moves_by_block {
+    let mut move_block_ids: Vec<BlockId> = moves_by_block.keys().copied().collect();
+    move_block_ids.sort_unstable();
+    for bid in move_block_ids {
+        let Some(moves) = moves_by_block.remove(&bid) else {
+            continue;
+        };
         if moves.is_empty() {
             continue;
         }
@@ -151,9 +169,10 @@ fn collect_phi_blocks(fn_ir: &FnIR) -> HashMap<BlockId, Vec<ValueId>> {
     let mut map: HashMap<BlockId, Vec<ValueId>> = HashMap::new();
     for (vid, val) in fn_ir.values.iter().enumerate() {
         if let ValueKind::Phi { .. } = val.kind
-            && let Some(bid) = val.phi_block {
-                map.entry(bid).or_default().push(vid);
-            }
+            && let Some(bid) = val.phi_block
+        {
+            map.entry(bid).or_default().push(vid);
+        }
     }
     map
 }

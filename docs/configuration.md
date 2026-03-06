@@ -10,6 +10,11 @@ This page lists environment variables recognized by RR codebase.
   - Disable ANSI colors.
 - `RR_VERBOSE_LOG`
   - Force detailed compile progress traces in CLI logger.
+- `RR_SLOW_STEP_MS` (default `3000`)
+  - When a compile stage runs longer than this threshold (ms), print an automatic slow-stage progress line.
+  - During Tachyon optimization, this also enables tier progress traces (`always`/`heavy`/`de-ssa`) once the slow threshold is reached.
+- `RR_SLOW_STEP_REPEAT_MS` (default `6000`)
+  - Repeat interval (ms) for slow-stage progress lines after the first threshold is reached.
 
 ## Language Strictness
 
@@ -26,6 +31,9 @@ This page lists environment variables recognized by RR codebase.
   - Controls intrinsic backend strategy.
 - `RR_NATIVE_LIB`
   - Optional shared library path used by native intrinsic dispatch.
+- `RR_NATIVE_AUTOBUILD` (default `1`)
+  - If `RR_NATIVE_LIB` is unset, runtime tries to auto-discover `rr_native` library near the generated script and, if missing, attempts `R CMD SHLIB native/rr_native.c` into `target/native`.
+  - Set `0` to disable auto-build and force fallback/required-fail behavior.
 
 ## Parallel Backend
 
@@ -54,7 +62,13 @@ This page lists environment variables recognized by RR codebase.
   - Function-level full-optimization IR-size threshold.
 - `RR_HEAVY_PASS_FN_IR` (default `650`)
   - Function IR-size threshold above which heavy structural passes are budgeted.
-- `RR_SELECTIVE_OPT_BUDGET` (default `false`)
+- `RR_ALWAYS_BCE_FN_IR` (default `RR_HEAVY_PASS_FN_IR`)
+  - Upper IR-size limit for the bounded always-tier BCE sweep.
+  - Increase this to allow guard elimination on larger functions (may increase compile time significantly).
+- `RR_BCE_VISIT_LIMIT` (default `200000`)
+  - Maximum recursive node visits per function in BCE nested-index safety traversal.
+  - Lower this value to bound compile time on very large functions at the cost of fewer guard eliminations.
+- `RR_SELECTIVE_OPT_BUDGET` (default `true`)
   - Enable selective optimization under budget pressure (optimize scored subset of functions instead of all-or-nothing fallback).
 - `RR_ADAPTIVE_IR_BUDGET` (default `false`)
   - Enable code-analysis-driven dynamic IR budget estimation.
@@ -63,6 +77,10 @@ This page lists environment variables recognized by RR codebase.
   - Format: one entry per line, `function=count` (also accepts `function:count` or `function count`).
 - `RR_INLINE_MAX_ROUNDS` (default `3`)
   - Max inter-procedural inline rounds.
+- `RR_VECTORIZE_TRACE` (default `false`)
+  - Emit per-loop vectorization trace logs from `v_opt`.
+  - Intended for compiler development and regression debugging, not normal end-user use.
+  - Shows loop headers, IV origin, skip reasons, and matcher/materialization reject details.
 
 ## Inlining Policy
 

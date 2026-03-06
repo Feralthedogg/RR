@@ -1,0 +1,15 @@
+fn inc(x) {
+  return x + 1L;
+}
+
+fn main() {
+  let x = seq_len(8L);
+  let y = seq_len(8L);
+  for (i in 1L..length(x)) {
+    y[i] = inc(x[i]);
+  }
+  print(sum(y));
+}
+
+main();
+

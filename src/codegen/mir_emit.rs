@@ -2,10 +2,11 @@ use crate::error::RR;
 use crate::mir::def::{
     BinOp, FnIR, Instr, IntrinsicOp, Lit, Terminator, UnaryOp, Value, ValueKind,
 };
+use crate::mir::flow::Facts;
 use crate::mir::structurizer::{StructuredBlock, Structurizer};
 use crate::typeck::{PrimTy, ShapeTy};
 use crate::utils::Span;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct MapEntry {
@@ -31,9 +32,26 @@ impl MirEmitter {
     }
 
     pub fn emit(&mut self, fn_ir: &FnIR) -> RR<(String, Vec<MapEntry>)> {
-        let code = self.backend.emit_function(fn_ir)?;
-        Ok((code, self.backend.source_map.clone()))
+        self.backend.emit_function(fn_ir)
     }
+}
+
+#[derive(Debug)]
+struct ValueBindingUndo {
+    val_id: usize,
+    prev: Option<(String, u64)>,
+}
+
+#[derive(Debug)]
+struct VarVersionUndo {
+    var: String,
+    prev: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BranchSnapshot {
+    value_binding_log_len: usize,
+    var_version_log_len: usize,
 }
 
 pub struct RBackend {
@@ -45,6 +63,9 @@ pub struct RBackend {
     value_bindings: HashMap<usize, (String, u64)>,
     // Per-variable write version used to invalidate stale bindings.
     var_versions: HashMap<String, u64>,
+    value_binding_log: Vec<ValueBindingUndo>,
+    var_version_log: Vec<VarVersionUndo>,
+    branch_snapshot_depth: usize,
 }
 
 impl Default for RBackend {
@@ -62,10 +83,16 @@ impl RBackend {
             source_map: Vec::new(),
             value_bindings: HashMap::new(),
             var_versions: HashMap::new(),
+            value_binding_log: Vec::new(),
+            var_version_log: Vec::new(),
+            branch_snapshot_depth: 0,
         }
     }
 
-    pub fn emit_function(&mut self, fn_ir: &FnIR) -> Result<String, crate::error::RRException> {
+    pub fn emit_function(
+        &mut self,
+        fn_ir: &FnIR,
+    ) -> Result<(String, Vec<MapEntry>), crate::error::RRException> {
         if fn_ir
             .values
             .iter()
@@ -84,10 +111,18 @@ impl RBackend {
         self.source_map.clear();
         self.value_bindings.clear();
         self.var_versions.clear();
+        self.value_binding_log.clear();
+        self.var_version_log.clear();
+        self.branch_snapshot_depth = 0;
 
-        self.write(&format!("{} <- function(", fn_ir.name));
-        let param_strs: Vec<String> = fn_ir.params.to_vec();
-        self.write(&param_strs.join(", "));
+        self.write(fn_ir.name.as_str());
+        self.write(" <- function(");
+        for (idx, param) in fn_ir.params.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write(param);
+        }
         self.write(") ");
         self.newline();
         self.write_indent();
@@ -112,7 +147,10 @@ impl RBackend {
         self.write_indent();
         self.write("}\n");
 
-        Ok(self.output.clone())
+        Ok((
+            std::mem::take(&mut self.output),
+            std::mem::take(&mut self.source_map),
+        ))
     }
 
     fn record_span(&mut self, span: Span) {
@@ -134,16 +172,29 @@ impl RBackend {
             Instr::Assign { dst, src, span } => {
                 let label = format!("assign {}", dst);
                 self.emit_mark(*span, Some(label.as_str()));
+                let mut cse_temps: Vec<String> = Vec::new();
                 let v = if let Some(bound) = self.resolve_bound_value(*src) {
                     bound
                 } else {
-                    self.resolve_val(*src, values, params, true) // Prefer expression for RHS
+                    // Probe the RHS first; if assignment is a no-op (`dst <- dst`),
+                    // skip CSE temp emission to avoid dead temporaries.
+                    let preview = self.resolve_val(*src, values, params, true);
+                    if preview == *dst {
+                        preview
+                    } else {
+                        cse_temps = self.emit_common_subexpr_temps(*src, values, params);
+                        self.resolve_val(*src, values, params, true) // Prefer expression for RHS
+                    }
                 };
                 if v != *dst {
                     self.record_span(*span);
                     self.write_stmt(&format!("{} <- {}", dst, v));
                     self.note_var_write(dst);
                     self.bind_value_to_var(*src, dst);
+                }
+                for t in cse_temps {
+                    // Keep hoisted temps local to this assignment to avoid stale bindings.
+                    self.note_var_write(&t);
                 }
             }
             Instr::Eval { val, span } => {
@@ -171,7 +222,8 @@ impl RBackend {
                     self.write_stmt(&format!("{} <- {}", base_val, src_val));
                     self.bump_base_version_if_named(*base, values);
                 } else {
-                    if *is_safe && *is_na_safe {
+                    let idx_elidable = Self::can_elide_index_wrapper(*idx, values);
+                    if (*is_safe && *is_na_safe) || idx_elidable {
                         self.write_stmt(&format!("{}[{}] <- {}", base_val, idx_val, src_val));
                     } else {
                         let idx_expr = format!("rr_index1_write({}, \"index\")", idx_val);
@@ -194,8 +246,16 @@ impl RBackend {
                 let r_val = self.resolve_val(*r, values, params, false);
                 let c_val = self.resolve_val(*c, values, params, false);
                 let src_val = self.resolve_val(*val, values, params, false);
-                let r_idx = format!("rr_index1_write({}, \"row\")", r_val);
-                let c_idx = format!("rr_index1_write({}, \"col\")", c_val);
+                let r_idx = if Self::can_elide_index_wrapper(*r, values) {
+                    r_val
+                } else {
+                    format!("rr_index1_write({}, \"row\")", r_val)
+                };
+                let c_idx = if Self::can_elide_index_wrapper(*c, values) {
+                    c_val
+                } else {
+                    format!("rr_index1_write({}, \"col\")", c_val)
+                };
                 self.write_stmt(&format!(
                     "{}[{}, {}] <- {}",
                     base_val, r_idx, c_idx, src_val
@@ -212,20 +272,23 @@ impl RBackend {
 
     fn note_var_write(&mut self, var: &str) {
         let next = self.current_var_version(var) + 1;
+        self.log_var_version_change(var);
         self.var_versions.insert(var.to_string(), next);
     }
 
     fn bind_value_to_var(&mut self, val_id: usize, var: &str) {
         let version = self.current_var_version(var);
+        self.log_value_binding_change(val_id);
         self.value_bindings
             .insert(val_id, (var.to_string(), version));
     }
 
     fn resolve_bound_value(&self, val_id: usize) -> Option<String> {
         if let Some((var, version)) = self.value_bindings.get(&val_id)
-            && self.current_var_version(var) == *version {
-                return Some(var.clone());
-            }
+            && self.current_var_version(var) == *version
+        {
+            return Some(var.clone());
+        }
         None
     }
 
@@ -233,6 +296,197 @@ impl RBackend {
         if let Some(var) = values[base].origin_var.as_ref() {
             self.note_var_write(var);
         }
+    }
+
+    fn begin_branch_snapshot(&mut self) -> BranchSnapshot {
+        self.branch_snapshot_depth += 1;
+        BranchSnapshot {
+            value_binding_log_len: self.value_binding_log.len(),
+            var_version_log_len: self.var_version_log.len(),
+        }
+    }
+
+    fn rollback_branch_snapshot(&mut self, snapshot: BranchSnapshot) {
+        while self.value_binding_log.len() > snapshot.value_binding_log_len {
+            let Some(undo) = self.value_binding_log.pop() else {
+                break;
+            };
+            if let Some(prev) = undo.prev {
+                self.value_bindings.insert(undo.val_id, prev);
+            } else {
+                self.value_bindings.remove(&undo.val_id);
+            }
+        }
+        while self.var_version_log.len() > snapshot.var_version_log_len {
+            let Some(undo) = self.var_version_log.pop() else {
+                break;
+            };
+            if let Some(prev) = undo.prev {
+                self.var_versions.insert(undo.var, prev);
+            } else {
+                self.var_versions.remove(&undo.var);
+            }
+        }
+    }
+
+    fn end_branch_snapshot(&mut self) {
+        if self.branch_snapshot_depth > 0 {
+            self.branch_snapshot_depth -= 1;
+        }
+    }
+
+    fn log_value_binding_change(&mut self, val_id: usize) {
+        if self.branch_snapshot_depth == 0 {
+            return;
+        }
+        self.value_binding_log.push(ValueBindingUndo {
+            val_id,
+            prev: self.value_bindings.get(&val_id).cloned(),
+        });
+    }
+
+    fn log_var_version_change(&mut self, var: &str) {
+        if self.branch_snapshot_depth == 0 {
+            return;
+        }
+        self.var_version_log.push(VarVersionUndo {
+            var: var.to_string(),
+            prev: self.var_versions.get(var).copied(),
+        });
+    }
+
+    fn emit_common_subexpr_temps(
+        &mut self,
+        root: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> Vec<String> {
+        let mut counts: HashMap<usize, usize> = HashMap::new();
+        Self::collect_expr_use_counts(root, values, &mut counts, &mut HashSet::new());
+        if !counts.values().any(|c| *c > 1) {
+            return Vec::new();
+        }
+
+        let mut emitted_ids: HashSet<usize> = HashSet::new();
+        let mut temps = Vec::new();
+        self.emit_hoisted_subexprs_dfs(
+            root,
+            root,
+            values,
+            params,
+            &counts,
+            &mut emitted_ids,
+            &mut HashSet::new(),
+            &mut temps,
+        );
+        temps
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_hoisted_subexprs_dfs(
+        &mut self,
+        vid: usize,
+        root: usize,
+        values: &[Value],
+        params: &[String],
+        counts: &HashMap<usize, usize>,
+        emitted_ids: &mut HashSet<usize>,
+        path: &mut HashSet<usize>,
+        temps: &mut Vec<String>,
+    ) {
+        if !path.insert(vid) {
+            return;
+        }
+        for child in Self::expr_children(vid, values) {
+            self.emit_hoisted_subexprs_dfs(
+                child,
+                root,
+                values,
+                params,
+                counts,
+                emitted_ids,
+                path,
+                temps,
+            );
+        }
+        path.remove(&vid);
+
+        if vid == root {
+            return;
+        }
+        let uses = counts.get(&vid).copied().unwrap_or(0);
+        if !Self::should_hoist_common_subexpr(vid, uses, values) {
+            return;
+        }
+        if !emitted_ids.insert(vid) {
+            return;
+        }
+        if self.resolve_bound_value(vid).is_some() {
+            return;
+        }
+
+        let temp = format!(".__rr_cse_{}", vid);
+        let expr = self.resolve_val(vid, values, params, true);
+        self.write_stmt(&format!("{} <- {}", temp, expr));
+        self.note_var_write(&temp);
+        self.bind_value_to_var(vid, &temp);
+        temps.push(temp);
+    }
+
+    fn collect_expr_use_counts(
+        root: usize,
+        values: &[Value],
+        counts: &mut HashMap<usize, usize>,
+        path: &mut HashSet<usize>,
+    ) {
+        *counts.entry(root).or_insert(0) += 1;
+        if !path.insert(root) {
+            return;
+        }
+        for child in Self::expr_children(root, values) {
+            Self::collect_expr_use_counts(child, values, counts, path);
+        }
+        path.remove(&root);
+    }
+
+    fn expr_children(vid: usize, values: &[Value]) -> Vec<usize> {
+        match &values[vid].kind {
+            ValueKind::Binary { lhs, rhs, .. } => vec![*lhs, *rhs],
+            ValueKind::Unary { rhs, .. } => vec![*rhs],
+            ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args.clone(),
+            ValueKind::Len { base } | ValueKind::Indices { base } => vec![*base],
+            ValueKind::Range { start, end } => vec![*start, *end],
+            ValueKind::Index1D { base, idx, .. } => vec![*base, *idx],
+            ValueKind::Index2D { base, r, c } => vec![*base, *r, *c],
+            ValueKind::Phi { args } => args.iter().map(|(v, _)| *v).collect(),
+            ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => Vec::new(),
+        }
+    }
+
+    fn should_hoist_common_subexpr(vid: usize, uses: usize, values: &[Value]) -> bool {
+        if uses <= 1 || values[vid].origin_var.is_some() {
+            return false;
+        }
+        matches!(
+            values[vid].kind,
+            ValueKind::Call { .. }
+                | ValueKind::Intrinsic { .. }
+                | ValueKind::Index1D { .. }
+                | ValueKind::Index2D { .. }
+                | ValueKind::Range { .. }
+                | ValueKind::Len { .. }
+                | ValueKind::Indices { .. }
+        ) || match &values[vid].kind {
+            ValueKind::Binary { lhs, rhs, .. } => {
+                !Self::is_const_like_leaf(*lhs, values) || !Self::is_const_like_leaf(*rhs, values)
+            }
+            ValueKind::Unary { rhs, .. } => !Self::is_const_like_leaf(*rhs, values),
+            _ => false,
+        }
+    }
+
+    fn is_const_like_leaf(vid: usize, values: &[Value]) -> bool {
+        matches!(values[vid].kind, ValueKind::Const(_))
     }
 
     fn emit_term(
@@ -298,8 +552,7 @@ impl RBackend {
                 // emitting `then` must not invalidate value bindings for `else`.
                 // Otherwise, edge copies like `x <- x` on else-path can be mis-rendered
                 // as re-expanded expressions (e.g. `x <- x + dx`).
-                let before_bindings = self.value_bindings.clone();
-                let before_versions = self.var_versions.clone();
+                let snapshot = self.begin_branch_snapshot();
 
                 let cond_span = fn_ir.values[*cond].span;
                 self.emit_mark(cond_span, Some("if"));
@@ -311,8 +564,7 @@ impl RBackend {
                 self.indent -= 1;
                 if let Some(else_body) = else_body {
                     // Reset to pre-if state before emitting else branch.
-                    self.value_bindings = before_bindings.clone();
-                    self.var_versions = before_versions.clone();
+                    self.rollback_branch_snapshot(snapshot);
                     self.write_stmt("} else {");
                     self.indent += 1;
                     self.emit_structured(else_body, fn_ir)?;
@@ -323,8 +575,9 @@ impl RBackend {
                 }
 
                 // Join point: drop branch-local expression bindings conservatively.
+                self.rollback_branch_snapshot(snapshot);
+                self.end_branch_snapshot();
                 self.value_bindings.clear();
-                self.var_versions = before_versions;
             }
             StructuredBlock::Loop {
                 header,
@@ -388,10 +641,9 @@ impl RBackend {
     ) -> String {
         let val = &values[val_id];
 
-        if !prefer_expr
-            && let Some(bound) = self.resolve_bound_value(val_id) {
-                return bound;
-            }
+        if !prefer_expr && let Some(bound) = self.resolve_bound_value(val_id) {
+            return bound;
+        }
 
         // Strategy:
         // 1. If prefer_expr is false (we are using the value) and it has a name, use the name.
@@ -414,96 +666,22 @@ impl RBackend {
         match &val.kind {
             ValueKind::Const(lit) => self.emit_lit(lit),
             ValueKind::Phi { .. } => {
-                panic!("Phi should have been eliminated before codegen");
+                // Keep codegen non-panicking on unexpected IR; emit an explicit ICE trap.
+                "rr_fail(\"RR.InternalError\", \"ICE9001\", \"phi reached codegen\", \"codegen\")"
+                    .to_string()
             }
-            ValueKind::Param { index } => {
-                if *index < params.len() {
-                    
-                    params[*index].clone()
-                } else {
-                    format!(".p{}", index)
-                }
-            }
+            ValueKind::Param { index } => self.resolve_param(*index, params),
             ValueKind::Binary { op, lhs, rhs } => {
-                let l = self.resolve_val(*lhs, values, params, false);
-                let r = self.resolve_val(*rhs, values, params, false);
-                if matches!(op, BinOp::Add)
-                    && (matches!(values[*lhs].kind, ValueKind::Const(Lit::Str(_)))
-                        || matches!(values[*rhs].kind, ValueKind::Const(Lit::Str(_))))
-                {
-                    return format!("paste0({}, {})", l, r);
-                }
-                let ty = val.value_ty;
-                if ty.shape == ShapeTy::Vector && ty.prim == PrimTy::Double {
-                    match op {
-                        BinOp::Add => return format!("rr_parallel_vec_add_f64({}, {})", l, r),
-                        BinOp::Sub => return format!("rr_parallel_vec_sub_f64({}, {})", l, r),
-                        BinOp::Mul => return format!("rr_parallel_vec_mul_f64({}, {})", l, r),
-                        BinOp::Div => return format!("rr_parallel_vec_div_f64({}, {})", l, r),
-                        _ => {}
-                    }
-                }
-                let op_str = match op {
-                    BinOp::Add => "+",
-                    BinOp::Sub => "-",
-                    BinOp::Mul => "*",
-                    BinOp::Div => "/",
-                    BinOp::Mod => "%%",
-                    BinOp::MatMul => "%*%",
-                    BinOp::Eq => "==",
-                    BinOp::Ne => "!=",
-                    BinOp::Lt => "<",
-                    BinOp::Le => "<=",
-                    BinOp::Gt => ">",
-                    BinOp::Ge => ">=",
-                    BinOp::And => "&",
-                    BinOp::Or => "|",
-                };
-                format!("({} {} {})", l, op_str, r)
+                self.resolve_binary_expr(val, *op, *lhs, *rhs, values, params)
             }
-            ValueKind::Unary { op, rhs } => {
-                let r = self.resolve_val(*rhs, values, params, false);
-                let op_str = match op {
-                    UnaryOp::Neg => "-",
-                    UnaryOp::Not => "!",
-                };
-                format!("({}({}))", op_str, r)
-            }
+            ValueKind::Unary { op, rhs } => self.resolve_unary_expr(*op, *rhs, values, params),
             ValueKind::Call {
                 callee,
                 args,
                 names,
-            } => {
-                let mut arg_strs: Vec<String> = Vec::with_capacity(args.len());
-                for (i, a) in args.iter().enumerate() {
-                    let v = self.resolve_val(*a, values, params, false);
-                    if let Some(Some(name)) = names.get(i) {
-                        arg_strs.push(format!("{} = {}", name, v));
-                    } else {
-                        arg_strs.push(v);
-                    }
-                }
-                format!("{}({})", callee, arg_strs.join(", "))
-            }
+            } => self.resolve_call_expr(callee, args, names, values, params),
             ValueKind::Intrinsic { op, args } => {
-                let mut arg_strs: Vec<String> = Vec::with_capacity(args.len());
-                for a in args {
-                    arg_strs.push(self.resolve_val(*a, values, params, false));
-                }
-                let helper = match op {
-                    IntrinsicOp::VecAddF64 => "rr_intrinsic_vec_add_f64",
-                    IntrinsicOp::VecSubF64 => "rr_intrinsic_vec_sub_f64",
-                    IntrinsicOp::VecMulF64 => "rr_intrinsic_vec_mul_f64",
-                    IntrinsicOp::VecDivF64 => "rr_intrinsic_vec_div_f64",
-                    IntrinsicOp::VecAbsF64 => "rr_intrinsic_vec_abs_f64",
-                    IntrinsicOp::VecLogF64 => "rr_intrinsic_vec_log_f64",
-                    IntrinsicOp::VecSqrtF64 => "rr_intrinsic_vec_sqrt_f64",
-                    IntrinsicOp::VecPmaxF64 => "rr_intrinsic_vec_pmax_f64",
-                    IntrinsicOp::VecPminF64 => "rr_intrinsic_vec_pmin_f64",
-                    IntrinsicOp::VecSumF64 => "rr_intrinsic_vec_sum_f64",
-                    IntrinsicOp::VecMeanF64 => "rr_intrinsic_vec_mean_f64",
-                };
-                format!("{}({})", helper, arg_strs.join(", "))
+                self.resolve_intrinsic_expr(*op, args, values, params)
             }
             ValueKind::Len { base } => {
                 format!("length({})", self.resolve_val(*base, values, params, false))
@@ -526,25 +704,207 @@ impl RBackend {
                 idx,
                 is_safe,
                 is_na_safe,
-            } => {
-                let b = self.resolve_val(*base, values, params, false);
-                let i = self.resolve_val(*idx, values, params, false);
-                if *is_safe && *is_na_safe {
-                    format!("{}[{}]", b, i)
-                } else {
-                    format!("rr_index1_read({}, {}, \"index\")", b, i)
-                }
-            }
+            } => self.resolve_index1d_expr(*base, *idx, *is_safe, *is_na_safe, values, params),
             ValueKind::Index2D { base, r, c } => {
-                let b = self.resolve_val(*base, values, params, false);
-                let rr = self.resolve_val(*r, values, params, false);
-                let cc = self.resolve_val(*c, values, params, false);
-                format!(
-                    "{}[rr_index1_write({}, \"row\"), rr_index1_write({}, \"col\")]",
-                    b, rr, cc
-                )
+                self.resolve_index2d_expr(*base, *r, *c, values, params)
             }
             ValueKind::Load { var } => var.clone(),
+        }
+    }
+
+    fn resolve_param(&self, index: usize, params: &[String]) -> String {
+        if index < params.len() {
+            params[index].clone()
+        } else {
+            format!(".p{}", index)
+        }
+    }
+
+    fn resolve_binary_expr(
+        &self,
+        val: &Value,
+        op: BinOp,
+        lhs: usize,
+        rhs: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        let l = self.resolve_val(lhs, values, params, false);
+        let r = self.resolve_val(rhs, values, params, false);
+        if matches!(op, BinOp::Add)
+            && (matches!(values[lhs].kind, ValueKind::Const(Lit::Str(_)))
+                || matches!(values[rhs].kind, ValueKind::Const(Lit::Str(_))))
+        {
+            return format!("paste0({}, {})", l, r);
+        }
+        let ty = val.value_ty;
+        if ty.shape == ShapeTy::Vector && ty.prim == PrimTy::Double {
+            match op {
+                BinOp::Add => return format!("rr_parallel_vec_add_f64({}, {})", l, r),
+                BinOp::Sub => return format!("rr_parallel_vec_sub_f64({}, {})", l, r),
+                BinOp::Mul => return format!("rr_parallel_vec_mul_f64({}, {})", l, r),
+                BinOp::Div => return format!("rr_parallel_vec_div_f64({}, {})", l, r),
+                _ => {}
+            }
+        }
+        format!("({} {} {})", l, Self::binary_op_str(op), r)
+    }
+
+    fn resolve_unary_expr(
+        &self,
+        op: UnaryOp,
+        rhs: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        let r = self.resolve_val(rhs, values, params, false);
+        format!("({}({}))", Self::unary_op_str(op), r)
+    }
+
+    fn resolve_call_expr(
+        &self,
+        callee: &str,
+        args: &[usize],
+        names: &[Option<String>],
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        if let Some((base, idx)) = Self::floor_index_read_components(callee, args, names, values) {
+            let b = self.resolve_val(base, values, params, false);
+            let i = self.resolve_val(idx, values, params, false);
+            return format!("rr_index1_read_idx({}, {}, \"index\")", b, i);
+        }
+        if Self::can_elide_identity_floor_call(callee, args, names, values) {
+            return self.resolve_val(args[0], values, params, false);
+        }
+        let arg_strs = self.resolve_named_args(args, names, values, params);
+        format!("{}({})", callee, arg_strs.join(", "))
+    }
+
+    fn resolve_intrinsic_expr(
+        &self,
+        op: IntrinsicOp,
+        args: &[usize],
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        let arg_strs = self.resolve_plain_args(args, values, params);
+        format!("{}({})", Self::intrinsic_helper(op), arg_strs.join(", "))
+    }
+
+    fn resolve_index1d_expr(
+        &self,
+        base: usize,
+        idx: usize,
+        is_safe: bool,
+        is_na_safe: bool,
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        let b = self.resolve_val(base, values, params, false);
+        let i = self.resolve_val(idx, values, params, false);
+        if (is_safe && is_na_safe) || Self::can_elide_index_wrapper(idx, values) {
+            format!("{}[{}]", b, i)
+        } else {
+            format!("rr_index1_read({}, {}, \"index\")", b, i)
+        }
+    }
+
+    fn resolve_index2d_expr(
+        &self,
+        base: usize,
+        r: usize,
+        c: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        let b = self.resolve_val(base, values, params, false);
+        let rr = self.resolve_val(r, values, params, false);
+        let cc = self.resolve_val(c, values, params, false);
+        let r_idx = if Self::can_elide_index_wrapper(r, values) {
+            rr
+        } else {
+            format!("rr_index1_write({}, \"row\")", rr)
+        };
+        let c_idx = if Self::can_elide_index_wrapper(c, values) {
+            cc
+        } else {
+            format!("rr_index1_write({}, \"col\")", cc)
+        };
+        format!("{}[{}, {}]", b, r_idx, c_idx)
+    }
+
+    fn resolve_named_args(
+        &self,
+        args: &[usize],
+        names: &[Option<String>],
+        values: &[Value],
+        params: &[String],
+    ) -> Vec<String> {
+        let mut arg_strs: Vec<String> = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            let value = self.resolve_val(*a, values, params, false);
+            if let Some(Some(name)) = names.get(i) {
+                arg_strs.push(format!("{} = {}", name, value));
+            } else {
+                arg_strs.push(value);
+            }
+        }
+        arg_strs
+    }
+
+    fn resolve_plain_args(
+        &self,
+        args: &[usize],
+        values: &[Value],
+        params: &[String],
+    ) -> Vec<String> {
+        let mut arg_strs: Vec<String> = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_strs.push(self.resolve_val(*arg, values, params, false));
+        }
+        arg_strs
+    }
+
+    fn intrinsic_helper(op: IntrinsicOp) -> &'static str {
+        match op {
+            IntrinsicOp::VecAddF64 => "rr_intrinsic_vec_add_f64",
+            IntrinsicOp::VecSubF64 => "rr_intrinsic_vec_sub_f64",
+            IntrinsicOp::VecMulF64 => "rr_intrinsic_vec_mul_f64",
+            IntrinsicOp::VecDivF64 => "rr_intrinsic_vec_div_f64",
+            IntrinsicOp::VecAbsF64 => "rr_intrinsic_vec_abs_f64",
+            IntrinsicOp::VecLogF64 => "rr_intrinsic_vec_log_f64",
+            IntrinsicOp::VecSqrtF64 => "rr_intrinsic_vec_sqrt_f64",
+            IntrinsicOp::VecPmaxF64 => "rr_intrinsic_vec_pmax_f64",
+            IntrinsicOp::VecPminF64 => "rr_intrinsic_vec_pmin_f64",
+            IntrinsicOp::VecSumF64 => "rr_intrinsic_vec_sum_f64",
+            IntrinsicOp::VecMeanF64 => "rr_intrinsic_vec_mean_f64",
+        }
+    }
+
+    fn binary_op_str(op: BinOp) -> &'static str {
+        match op {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Mod => "%%",
+            BinOp::MatMul => "%*%",
+            BinOp::Eq => "==",
+            BinOp::Ne => "!=",
+            BinOp::Lt => "<",
+            BinOp::Le => "<=",
+            BinOp::Gt => ">",
+            BinOp::Ge => ">=",
+            BinOp::And => "&",
+            BinOp::Or => "|",
+        }
+    }
+
+    fn unary_op_str(op: UnaryOp) -> &'static str {
+        match op {
+            UnaryOp::Neg => "-",
+            UnaryOp::Not => "!",
         }
     }
 
@@ -554,6 +914,102 @@ impl RBackend {
             c
         } else {
             format!("rr_truthy1({}, \"condition\")", c)
+        }
+    }
+
+    fn can_elide_identity_floor_call(
+        callee: &str,
+        args: &[usize],
+        names: &[Option<String>],
+        values: &[Value],
+    ) -> bool {
+        if !matches!(callee, "floor" | "ceiling" | "trunc") {
+            return false;
+        }
+        if args.len() != 1 || names.len() > 1 {
+            return false;
+        }
+        if names
+            .first()
+            .and_then(std::option::Option::as_ref)
+            .is_some()
+        {
+            return false;
+        }
+        values
+            .get(args[0])
+            .map(|v| v.value_ty.is_int_scalar_non_na() || v.facts.has(Facts::INT_SCALAR))
+            .unwrap_or(false)
+    }
+
+    fn floor_index_read_components(
+        callee: &str,
+        args: &[usize],
+        names: &[Option<String>],
+        values: &[Value],
+    ) -> Option<(usize, usize)> {
+        if !matches!(callee, "floor" | "ceiling" | "trunc") {
+            return None;
+        }
+        if args.len() != 1 || names.len() > 1 {
+            return None;
+        }
+        if names
+            .first()
+            .and_then(std::option::Option::as_ref)
+            .is_some()
+        {
+            return None;
+        }
+        let inner = *args.first()?;
+        match &values.get(inner)?.kind {
+            ValueKind::Index1D { base, idx, .. } => Some((*base, *idx)),
+            ValueKind::Call {
+                callee: inner_callee,
+                args: inner_args,
+                names: inner_names,
+            } if matches!(
+                inner_callee.as_str(),
+                "rr_index1_read" | "rr_index1_read_strict" | "rr_index1_read_floor"
+            ) && (inner_args.len() == 2 || inner_args.len() == 3)
+                && inner_names.iter().take(2).all(std::option::Option::is_none) =>
+            {
+                Some((inner_args[0], inner_args[1]))
+            }
+            _ => None,
+        }
+    }
+
+    fn can_elide_index_wrapper(idx: usize, values: &[Value]) -> bool {
+        let Some(v) = values.get(idx) else {
+            return false;
+        };
+        if v.facts
+            .has(Facts::ONE_BASED | Facts::INT_SCALAR | Facts::NON_NA)
+        {
+            return true;
+        }
+        match &v.kind {
+            ValueKind::Const(Lit::Int(n)) => *n >= 1,
+            ValueKind::Const(Lit::Float(f))
+                if f.is_finite()
+                    && (*f - f.trunc()).abs() < f64::EPSILON
+                    && *f >= 1.0
+                    && *f <= i64::MAX as f64 =>
+            {
+                true
+            }
+            ValueKind::Call {
+                callee,
+                args,
+                names,
+            } if callee == "rr_index1_read_idx"
+                && (args.len() == 2 || args.len() == 3)
+                && names.iter().take(2).all(std::option::Option::is_none) =>
+            {
+                true
+            }
+            _ => false,
         }
     }
 

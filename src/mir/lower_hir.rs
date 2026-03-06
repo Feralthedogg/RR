@@ -1,4 +1,4 @@
-use crate::error::RR;
+use crate::error::{InternalCompilerError, RR, Stage};
 use crate::hir::def as hir;
 use crate::mir::flow::Facts;
 use crate::mir::*;
@@ -134,9 +134,10 @@ impl<'a> MirLowerer<'a> {
                     )
                 } else {
                     if let Some(v) = self.fn_ir.values.get_mut(val)
-                        && v.origin_var.is_none() {
-                            v.origin_var = Some(n);
-                        }
+                        && v.origin_var.is_none()
+                    {
+                        v.origin_var = Some(n);
+                    }
                     val
                 };
                 self.defs.entry(block).or_default().insert(var, def_val);
@@ -144,9 +145,10 @@ impl<'a> MirLowerer<'a> {
             }
 
             if let Some(v) = self.fn_ir.values.get_mut(val)
-                && v.origin_var.is_none() {
-                    v.origin_var = Some(n);
-                }
+                && v.origin_var.is_none()
+            {
+                v.origin_var = Some(n);
+            }
         }
 
         self.defs.entry(block).or_default().insert(var, val);
@@ -158,9 +160,10 @@ impl<'a> MirLowerer<'a> {
 
     fn read_var(&mut self, var: hir::LocalId, block: BlockId) -> RR<ValueId> {
         if let Some(m) = self.defs.get(&block)
-            && let Some(&v) = m.get(&var) {
-                return Ok(v);
-            }
+            && let Some(&v) = m.get(&var)
+        {
+            return Ok(v);
+        }
         // Not found in local, look in predecessors
         self.read_var_recursive(var, block)
     }
@@ -242,10 +245,18 @@ impl<'a> MirLowerer<'a> {
             if let ValueKind::Phi { ref mut args } = val.kind {
                 *args = new_args;
             } else {
-                panic!("Value {:?} is not a Phi", phi_val);
+                return Err(InternalCompilerError::new(
+                    Stage::Mir,
+                    format!("Value {} is not a Phi during SSA sealing", phi_val),
+                )
+                .into_exception());
             }
         } else {
-            panic!("Value {:?} not found", phi_val);
+            return Err(InternalCompilerError::new(
+                Stage::Mir,
+                format!("Value {} not found during SSA sealing", phi_val),
+            )
+            .into_exception());
         }
 
         // Trivial Phi elimination could be done here (if all args same)
@@ -301,7 +312,7 @@ impl<'a> MirLowerer<'a> {
                 }
                 // Write to the variable (this also emits Instr::Assign in entry block)
                 self.write_var(local_id, param_val);
-            } 
+            }
         }
 
         // 2. Transition from Entry to Body Head

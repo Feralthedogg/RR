@@ -34,3 +34,10 @@ path = "fuzz_targets/type_solver.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "incremental_compile"
+path = "fuzz_targets/incremental.rs"
+test = false
+doc = false
+bench = false

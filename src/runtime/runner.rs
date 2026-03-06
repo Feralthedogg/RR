@@ -6,6 +6,7 @@ use std::io::IsTerminal;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
 use regex::Regex;
 
@@ -93,106 +94,7 @@ impl Runner {
         // Stderr Mapping
         let stderr = String::from_utf8_lossy(&output.stderr);
         if !stderr.is_empty() {
-            let rr_re = Regex::new(r"RR:(\d+):(\d+):").unwrap();
-            let r_loc_re = Regex::new(r"([^:\s]+):(\d+):(\d+):").unwrap();
-            let rrdiag_re = Regex::new(r"^RRDIAG\|(.+)$").unwrap();
-            let rr_code_re = Regex::new(r"error\[(ICE\d+|E\d+)\]").unwrap();
-            let mut active_module_color = palette_for_module("RR.RuntimeError");
-            let mut active_code_color = active_module_color;
-
-            let stderr_lines: Vec<&str> = stderr.lines().collect();
-            for line in stderr_lines {
-                let mut processed = false;
-                if let Some(module) = extract_rr_module(line) {
-                    active_module_color = palette_for_module(module);
-                    active_code_color = active_module_color;
-                }
-                if let Some(cap) = rr_code_re.captures(line) {
-                    active_code_color = palette_for_rr_code(&cap[1], active_module_color);
-                }
-
-                // 0) RRDIAG|kind=..|code=..|line=..|col=..|msg=..
-                if rrdiag_re.captures(line).is_some() {
-                    // Runtime already emits a formatted multi-line message.
-                    // Skip machine-readable diagnostic line in user output.
-                    processed = true;
-                }
-
-                if processed {
-                    continue;
-                }
-
-                // 1) RR runtime error: RR:line:col:
-                if let Some(cap) = rr_re.captures(line) {
-                    let rr_line: u32 = cap[1].parse().unwrap_or(0);
-                    let rr_col: u32 = cap[2].parse().unwrap_or(0);
-                    eprintln!(
-                        "{}",
-                        style(
-                            color,
-                            active_module_color,
-                            &format!("{}:{}:{}: {}", source_path, rr_line, rr_col, line),
-                        )
-                    );
-                    processed = true;
-                }
-
-                if processed {
-                    continue;
-                }
-
-                // 2) R parse/syntax error: file:line:col:
-                if let Some(cap) = r_loc_re.captures(line) {
-                    let file = &cap[1];
-                    let r_line: u32 = cap[2].parse().unwrap_or(0);
-
-                    if file.ends_with(".gen.R") || file.ends_with(".R") {
-                        // Find closest RR span
-                        if let Some(entry) = Self::find_mapping(r_line, source_map) {
-                            eprintln!(
-                                "{}",
-                                style(
-                                    color,
-                                    active_module_color,
-                                    &format!(
-                                        "{}:{}:{}: (R {}): {}",
-                                        source_path,
-                                        entry.rr_span.start_line,
-                                        entry.rr_span.start_col,
-                                        r_line,
-                                        line
-                                    ),
-                                )
-                            );
-                            processed = true;
-                        }
-                    }
-                }
-
-                if !processed {
-                    let code = if line.starts_with("warning[")
-                        || line.starts_with("Warning:")
-                        || line.starts_with("Warning message:")
-                        || line.contains(" warning[")
-                    {
-                        "1;38;5;208"
-                    } else if line.starts_with("In:")
-                        || line.starts_with("Hint:")
-                        || line.starts_with("note (R):")
-                    {
-                        "1;93"
-                    } else if line.starts_with("stacktrace:") || line.contains("(rr)") {
-                        "2"
-                    } else if line.contains("error[") {
-                        active_code_color
-                    } else if line.starts_with("** (") {
-                        active_module_color
-                    } else {
-                        "0"
-                    };
-                    eprintln!("{}", style(color, code, line));
-                }
-            }
+            Self::emit_mapped_stderr(source_path, &stderr, source_map, color);
         }
 
         if !keep_r {
@@ -206,6 +108,112 @@ impl Runner {
         map.iter()
             .filter(|e| e.r_line <= r_line)
             .max_by_key(|e| e.r_line)
+    }
+
+    fn emit_mapped_stderr(source_path: &str, stderr: &str, source_map: &[MapEntry], color: bool) {
+        let mut active_module_color = palette_for_module("RR.RuntimeError");
+        let mut active_code_color = active_module_color;
+
+        for line in stderr.lines() {
+            if let Some(module) = extract_rr_module(line) {
+                active_module_color = palette_for_module(module);
+                active_code_color = active_module_color;
+            }
+            if let Some(cap) = rr_code_regex().captures(line) {
+                active_code_color = palette_for_rr_code(&cap[1], active_module_color);
+            }
+            if rrdiag_regex().captures(line).is_some() {
+                // Runtime already emits formatted multi-line user diagnostics.
+                continue;
+            }
+
+            if let Some(cap) = rr_runtime_loc_regex().captures(line) {
+                let rr_line: u32 = cap[1].parse().unwrap_or(0);
+                let rr_col: u32 = cap[2].parse().unwrap_or(0);
+                eprintln!(
+                    "{}",
+                    style(
+                        color,
+                        active_module_color,
+                        &format!("{}:{}:{}: {}", source_path, rr_line, rr_col, line),
+                    )
+                );
+                continue;
+            }
+
+            if let Some(cap) = r_loc_regex().captures(line) {
+                let file = &cap[1];
+                let r_line: u32 = cap[2].parse().unwrap_or(0);
+                if (file.ends_with(".gen.R") || file.ends_with(".R"))
+                    && let Some(entry) = Self::find_mapping(r_line, source_map)
+                {
+                    eprintln!(
+                        "{}",
+                        style(
+                            color,
+                            active_module_color,
+                            &format!(
+                                "{}:{}:{}: (R {}): {}",
+                                source_path,
+                                entry.rr_span.start_line,
+                                entry.rr_span.start_col,
+                                r_line,
+                                line
+                            ),
+                        )
+                    );
+                    continue;
+                }
+            }
+
+            let code = fallback_stderr_style(line, active_module_color, active_code_color);
+            eprintln!("{}", style(color, code, line));
+        }
+    }
+}
+
+fn rr_runtime_loc_regex() -> &'static Regex {
+    static RR_RE: OnceLock<Regex> = OnceLock::new();
+    RR_RE.get_or_init(|| Regex::new(r"RR:(\d+):(\d+):").expect("valid RR runtime location regex"))
+}
+
+fn r_loc_regex() -> &'static Regex {
+    static R_LOC_RE: OnceLock<Regex> = OnceLock::new();
+    R_LOC_RE.get_or_init(|| Regex::new(r"([^:\s]+):(\d+):(\d+):").expect("valid R location regex"))
+}
+
+fn rrdiag_regex() -> &'static Regex {
+    static RRDIAG_RE: OnceLock<Regex> = OnceLock::new();
+    RRDIAG_RE.get_or_init(|| Regex::new(r"^RRDIAG\|(.+)$").expect("valid RRDIAG regex"))
+}
+
+fn rr_code_regex() -> &'static Regex {
+    static RR_CODE_RE: OnceLock<Regex> = OnceLock::new();
+    RR_CODE_RE.get_or_init(|| Regex::new(r"error\[(ICE\d+|E\d+)\]").expect("valid RR code regex"))
+}
+
+fn fallback_stderr_style<'a>(
+    line: &str,
+    active_module_color: &'a str,
+    active_code_color: &'a str,
+) -> &'a str {
+    if line.starts_with("warning[")
+        || line.starts_with("Warning:")
+        || line.starts_with("Warning message:")
+        || line.contains(" warning[")
+    {
+        "1;38;5;208"
+    } else if line.starts_with("In:") || line.starts_with("Hint:") || line.starts_with("note (R):")
+    {
+        "1;93"
+    } else if line.starts_with("stacktrace:") || line.contains("(rr)") {
+        "2"
+    } else if line.contains("error[") {
+        active_code_color
+    } else if line.starts_with("** (") {
+        active_module_color
+    } else {
+        "0"
     }
 }
 
@@ -266,6 +274,8 @@ fn palette_for_rr_code(code: &str, fallback: &'static str) -> &'static str {
         "1;33"
     } else if code.starts_with("E2") {
         "1;31"
+    } else if code.starts_with("E3") {
+        "1;38;5;208"
     } else {
         fallback
     }

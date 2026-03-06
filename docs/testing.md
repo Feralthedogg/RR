@@ -1,92 +1,150 @@
 # Testing and Quality Gates
 
-RR includes unit/integration/golden/perf/fuzz coverage.
+RR uses unit tests, integration tests, golden tests, performance gates, and fuzzing.
 
-## Run All Tests
+## Prerequisites
+
+Most Rust-only tests need only `cargo`.
+Tests that execute generated R require `Rscript` in `PATH`.
+
+## Common Commands
+
+Run all tests:
 
 ```bash
 cargo test -q
 ```
 
+Run one integration suite:
+
+```bash
+cargo test -q --test vectorization_extended
+```
+
+Run lints:
+
+```bash
+cargo clippy --all-targets -- -D warnings
+```
+
 ## Test Families
 
-Representative integration suites under `tests/`:
+### Frontend and Syntax
 
-- syntax and parser recovery:
-  - `syntax_errors.rs`
-  - `parse_multi_errors.rs`
-  - `semicolon_required.rs`
-- semantic/runtime static validation:
-  - `semantic_errors.rs`
-  - `runtime_static_errors.rs`
-  - `multi_errors.rs`
-  - `commercial_negative_corpus.rs`
-- language support:
-  - `support_expansion.rs`
-  - `lambda_closure.rs`
-  - `mir_lowering_loop_match.rs`
-- optimization correctness:
-  - `vectorization_extended.rs`
-  - `benchmark_vectorization.rs`
-  - `bce_shifted_index.rs`
-  - `sccp_overflow_regression.rs`
-  - `opt_level_equivalence.rs`
-  - `r_output_optimization_audit.rs`
-  - `rr_logic_equivalence_matrix.rs`
-  - `parallel_codegen.rs`
-  - `parallel_cli_flags.rs`
-  - `parallel_optional_fallback_semantics.rs`
-- CLI behavior:
-  - `cli_commands.rs`
-- stress and determinism:
-  - `commercial_determinism.rs`
-  - `commercial_stress_differential.rs`
-- performance gate:
-  - `perf_regression_gate.rs`
+- `syntax_errors.rs`
+- `parse_multi_errors.rs`
+- `semicolon_required.rs`
+
+These cover parsing, error recovery, and syntax diagnostics.
+
+### Semantic and Runtime Static Validation
+
+- `semantic_errors.rs`
+- `runtime_static_errors.rs`
+- `multi_errors.rs`
+- `commercial_negative_corpus.rs`
+
+These focus on compile-time rejection and aggregated diagnostics.
+
+### Language and Lowering
+
+- `support_expansion.rs`
+- `lambda_closure.rs`
+- `mir_lowering_loop_match.rs`
+
+These verify that accepted language forms lower correctly into MIR/codegen.
+
+### Optimization Correctness
+
+- `vectorization_extended.rs`
+- `vectorization_phi_ifelse.rs`
+- `benchmark_vectorization.rs`
+- `bce_shifted_index.rs`
+- `sccp_overflow_regression.rs`
+- `opt_level_equivalence.rs`
+- `r_output_optimization_audit.rs`
+- `rr_logic_equivalence_matrix.rs`
+
+These guard optimizer semantics, emitted R shape, and no-panic behavior under aggressive optimization.
+
+### CLI and Execution Behavior
+
+- `cli_commands.rs`
+- `parallel_cli_flags.rs`
+- `parallel_optional_fallback_semantics.rs`
+
+These cover command wiring, mode flags, and backend fallback behavior.
+
+### Stress and Determinism
+
+- `commercial_determinism.rs`
+- `commercial_stress_differential.rs`
+
+These exercise larger workloads and determinism-sensitive paths.
+
+### Performance Gate
+
+- `perf_regression_gate.rs`
+
+This enforces compile-time budget expectations for optimized builds.
+
+### Example Catalog and Bench Workloads
+
+- `example/data_science/*.rr`
+- `example/physics/*.rr`
+- `tests/example_simulations.rs`
+- `example/benchmarks/*.rr`
+- `tests/benchmark_examples_smoke.rs`
+
+The simulation catalog is compiled across optimization levels and executed at `-O2`.
+The benchmark catalog is intended for repeatable compile-time and runtime comparisons.
+
+Benchmark runner:
+
+```bash
+scripts/bench_examples.sh
+```
 
 ## Golden Semantics
 
-`tests/golden.rs` compares RR-compiled output against R execution for `.rr` cases in `tests/golden/`.
+`tests/golden.rs` compares RR-compiled output against reference R behavior for cases in `tests/golden/`.
 
 Requirements:
 
-- `Rscript` available in PATH
+- `Rscript` available in `PATH`
 
-If unavailable, golden tests skip automatically.
+If `Rscript` is unavailable, golden tests skip automatically.
 
-## RR Logic Equivalence Matrix
+Promoted example-derived golden cases include:
 
-`tests/rr_logic_equivalence_matrix.rs` validates semantic equivalence on multiple
-hand-written RR programs by comparing against reference R scripts.
+- `bootstrap_mean`
+- `logistic_ensemble`
+- `markov_weather_chain`
+- `monte_carlo_pi`
+- `sir_epidemic`
 
-Matrix axes:
+## RR vs R Differential Matrix
+
+`tests/rr_logic_equivalence_matrix.rs` compares hand-written RR programs against reference R scripts across:
 
 - optimization level: `-O0`, `-O1`, `-O2`
 - type mode: `strict`, `gradual`
 - native backend mode: `off`, `optional`
 
-Comparison criteria:
+Compared outputs:
 
 - process exit code
 - normalized stdout
 - normalized stderr
 
-`tests/r_output_optimization_audit.rs` adds stricter output-contract checks for:
+## Performance Knobs
 
-- typed condition guard elision (`rr_truthy1` wrapper removal when proven)
-- intrinsic helper emission (`rr_intrinsic_vec_*`) and native backend marker injection
-- optional native backend fallback behavior under missing shared library
-- O0 vs O2 index-guard wrapper count reduction (`rr_index1_read/write`)
-- nested generic type-hint program equivalence against reference R
+`tests/perf_regression_gate.rs` uses:
 
-SCCP overflow hardening regression coverage:
+- `RR_PERF_GATE_MS` (default `12000`)
+- `RR_PERF_O2_O1_RATIO` (default `12`)
 
-- `tests/sccp_overflow_regression.rs`:
-  - compiler-level no-panic checks for integer overflow expressions under `-O2`
-  - verifies overflowing folds are left as runtime expressions when not provably safe
-- `src/mir/opt/sccp.rs` unit tests:
-  - `test_div_overflow_is_not_folded`
-  - `test_range_len_overflow_is_not_folded`
+Adjust these only when you intentionally re-baseline compile-time expectations.
 
 ## Fuzzing
 
@@ -95,6 +153,7 @@ Targets:
 - `fuzz/fuzz_targets/parser.rs`
 - `fuzz/fuzz_targets/pipeline.rs`
 - `fuzz/fuzz_targets/type_solver.rs`
+- `fuzz/fuzz_targets/incremental.rs` (`incremental_compile`)
 
 Dictionary:
 
@@ -107,18 +166,32 @@ cargo install cargo-fuzz --locked
 cargo +nightly fuzz run parser fuzz/corpus/parser -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run pipeline fuzz/corpus/pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run type_solver fuzz/corpus/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
+cargo +nightly fuzz run incremental_compile fuzz/corpus/incremental_compile -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 ```
 
-Crash artifact replay (pipeline target):
+Smoke runner:
+
+```bash
+scripts/fuzz_smoke.sh
+```
+
+By default this uses `fuzz/corpus_smoke/*` so that smoke runs stay bounded.
+Set `FUZZ_CORPUS_ROOT=fuzz/corpus` when you want to run against the full corpus set.
+
+Replay a pipeline crash artifact:
 
 ```bash
 cargo +nightly fuzz run pipeline fuzz/artifacts/pipeline/crash-<hash> -- -runs=1 -rss_limit_mb=2048
 cargo +nightly fuzz tmin pipeline fuzz/artifacts/pipeline/crash-<hash>
 ```
 
-## CI
+## CI Expectations
 
-GitHub Actions workflow `/.github/workflows/ci.yml` runs:
+The CI workflow is expected to run:
 
-- full test job with R installed
-- parser/pipeline/type_solver fuzz smoke job
+- Rust test suite
+- R-backed integration coverage
+- linting
+- fuzz smoke coverage for key targets
+
+For compiler changes, targeted regression tests are preferred over broad snapshot updates.

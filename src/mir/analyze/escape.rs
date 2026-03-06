@@ -34,9 +34,10 @@ impl EscapeAnalysis {
 
             // C. Function Parameters (Incoming values escape by definition/conservative)
             if let Some(var_name) = &val.origin_var
-                && fn_ir.params.contains(var_name) {
-                    worklist.push_back(val.id);
-                }
+                && fn_ir.params.contains(var_name)
+            {
+                worklist.push_back(val.id);
+            }
         }
 
         // 3. Build Dependency Graph (Adjacency List)

@@ -68,9 +68,10 @@ impl<'a> Structurizer<'a> {
 
         while let Some(bid) = cur {
             if let Some(stop_bid) = stop
-                && bid == stop_bid {
-                    break;
-                }
+                && bid == stop_bid
+            {
+                break;
+            }
 
             if let Some(ctx) = &loop_ctx {
                 if bid == ctx.header {
@@ -362,10 +363,11 @@ fn compute_postdom_depth(
                     continue;
                 }
                 if let Some(d_set) = postdoms.get(&d)
-                    && d_set.contains(&c) {
-                        dominated_by_other = true;
-                        break;
-                    }
+                    && d_set.contains(&c)
+                {
+                    dominated_by_other = true;
+                    break;
+                }
             }
             if !dominated_by_other {
                 chosen = Some(c);

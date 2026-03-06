@@ -1,0 +1,12 @@
+fn helper(flag) {
+: if (flag) { return 2; }
+  return 4;
+}
+
+fn main() {
+  flag = TRUE
+  print(helper(flag))
+}
+
+main()fn main() {
+  flag = TRU;

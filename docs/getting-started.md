@@ -1,9 +1,11 @@
 # Getting Started
 
+This page walks through the shortest path to a working RR compile and run.
+
 ## Prerequisites
 
-- Rust toolchain (`cargo`)
-- `Rscript` in `PATH` for runtime execution (`rr run`)
+- Rust toolchain with `cargo`
+- `Rscript` in `PATH` if you want to execute generated programs
 
 ## Build RR
 
@@ -11,7 +13,11 @@
 cargo build
 ```
 
-Run the binary through Cargo:
+You can invoke RR either way:
+
+```bash
+target/debug/RR --help
+```
 
 ```bash
 cargo run -- --help
@@ -31,46 +37,33 @@ main <- function() {
 print(main())
 ```
 
-Run it:
+Run it from the current directory:
 
 ```bash
 cargo run -- run . -O1
 ```
 
-## Compile to R only
+`run .` resolves the current directory to `main.rr`.
+
+## Compile to R
+
+Compile one file into a standalone `.R` script:
+
+```bash
+cargo run -- main.rr -o main.R -O2
+```
+
+Compile without embedding the RR runtime prelude:
 
 ```bash
 cargo run -- main.rr -o main.R --no-runtime -O2
 ```
 
-This writes a self-contained `.R` script with RR runtime helpers injected at the top.
+Use `--no-runtime` when you want pure emission for inspection or testing, not direct execution.
 
-## Syntax Notes
+## Build a Directory
 
-- RR accepts both `=` and `<-` for assignment.
-- `fn(...) { ... }` and `function(...) { ... }` are both valid lambda forms.
-- `fn name(...) = expr` short function form is supported.
-- Dotted names like `solve.cg` are valid identifiers.
-- Parameter defaults are accepted: `function(a = 0.0, b = 0L) { ... }`.
-- Type hints are accepted:
-  - params/return: `fn add(a: float, b: int) -> float = a + b`
-  - declarations: `x: int = 10L`
-  - generic containers: `vector<float>`, `matrix<float>`, `option<int>`, `list<box<float>>`
-- `if/while/for` support single-statement bodies (no braces required).
-- `if` / `while` conditions may be written with or without parentheses:
-  - `if (x < 1) y <- 1 else y <- 2`
-  - `if x < 1 { y <- 1 } else { y <- 2 }`
-- `for` supports both styles:
-  - `for (i in 1..n) s <- s + i`
-  - `for i in 1..n { s += i }`
-- Compound assignments are supported for native style:
-  - `x += 1`, `x -= 1`, `x *= 2`, `x /= 2`, `x %= 2`
-- Semicolons are optional across lines, but still required between statements on the same line.
-- Recommended user-facing style is R-like: `name <- function(...) { ... }`.
-- Undeclared assignment is allowed by default; set `RR_STRICT_LET=1` to make it an error.
-- To surface implicit declaration warnings, set `RR_WARN_IMPLICIT_DECL=1`.
-
-## Build a directory
+Compile all `.rr` files under a directory:
 
 ```bash
 cargo run -- build . --out-dir build -O2
@@ -78,6 +71,47 @@ cargo run -- build . --out-dir build -O2
 
 Behavior:
 
-- Recursively finds `.rr` files.
-- Skips `build/`, `target/`, `.git/` while scanning.
-- Writes mirrored output paths under `build/` with `.R` extension.
+- recursively scans for `.rr` files
+- skips `build/`, `target/`, and `.git/`
+- writes mirrored output paths under the output directory
+
+## Watch Mode
+
+Recompile on changes:
+
+```bash
+cargo run -- watch . -O2
+```
+
+Useful flags:
+
+- `--once`: run a single watch tick and exit
+- `--poll-ms <N>`: control polling interval
+- `--incremental=all`: enable all incremental compile phases
+
+## Syntax Snapshot
+
+RR accepts both R-style and native-style surface forms.
+
+- assignment:
+  - `x <- 1`
+  - `x = 1`
+- functions:
+  - `name <- function(a, b) { a + b }`
+  - `fn add(a, b) = a + b`
+- loops:
+  - `for (i in 1..n) s <- s + i`
+  - `for i in 1..n { s += i }`
+- type hints:
+  - `fn add(a: float, b: int) -> float = a + b`
+  - `x: int = 10L`
+  - `vector<float>`, `matrix<float>`, `option<int>`
+
+Recommended user-facing style is the R-like form unless you have a project reason to prefer the native style.
+
+## Next Reading
+
+- [CLI Reference](cli.md)
+- [Configuration](configuration.md)
+- [Language Reference](language.md)
+- [Compiler Pipeline](compiler-pipeline.md)

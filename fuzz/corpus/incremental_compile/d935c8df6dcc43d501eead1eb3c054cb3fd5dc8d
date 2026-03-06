@@ -1,0 +1,8 @@
+fn main() {
+  x = 1
+ = 1
+  y = 2
+  pri&&nt(x + y)
+}
+
+main(n();

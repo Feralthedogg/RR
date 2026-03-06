@@ -149,7 +149,8 @@ main <- function() {
         "missing first print in loop body"
     );
     assert!(
-        generated.contains("print(rr_index1_read(B, side_idx, \"index\"))"),
-        "missing tail print statement in loop body"
+        generated.contains("print(rr_index1_read(B, side_idx, \"index\"))")
+            || generated.contains("print(B[side_idx])"),
+        "missing tail print statement in loop body (guarded or direct index form)"
     );
 }

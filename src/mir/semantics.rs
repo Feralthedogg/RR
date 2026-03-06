@@ -4,14 +4,21 @@ use crate::utils::Span;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 pub fn validate_program(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
+    let mut fn_names: Vec<String> = all_fns.keys().cloned().collect();
+    fn_names.sort();
+
     let mut user_arities: FxHashMap<String, usize> = FxHashMap::default();
     let mut errors = Vec::new();
-    for (name, fn_ir) in all_fns {
-        user_arities.insert(name.clone(), fn_ir.params.len());
+    for name in &fn_names {
+        if let Some(fn_ir) = all_fns.get(name) {
+            user_arities.insert(name.clone(), fn_ir.params.len());
+        }
     }
 
-    for fn_ir in all_fns.values() {
-        errors.extend(validate_function(fn_ir, &user_arities));
+    for name in fn_names {
+        if let Some(fn_ir) = all_fns.get(&name) {
+            errors.extend(validate_function(fn_ir, &user_arities));
+        }
     }
     finish_validation(
         "RR.SemanticError",
@@ -23,9 +30,14 @@ pub fn validate_program(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
 }
 
 pub fn validate_runtime_safety(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
+    let mut fn_names: Vec<String> = all_fns.keys().cloned().collect();
+    fn_names.sort();
+
     let mut errors = Vec::new();
-    for fn_ir in all_fns.values() {
-        errors.extend(validate_function_runtime(fn_ir));
+    for name in fn_names {
+        if let Some(fn_ir) = all_fns.get(&name) {
+            errors.extend(validate_function_runtime(fn_ir));
+        }
     }
     finish_validation(
         "RR.RuntimeError",
@@ -38,8 +50,13 @@ pub fn validate_runtime_safety(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
 
 fn validate_function(fn_ir: &FnIR, user_arities: &FxHashMap<String, usize>) -> Vec<RRException> {
     let mut errors = Vec::new();
+    let reachable_blocks = collect_reachable_blocks(fn_ir);
+    let reachable_values = collect_reachable_values(fn_ir, &reachable_blocks);
     let mut assigned_vars: FxHashSet<String> = fn_ir.params.iter().cloned().collect();
-    for block in &fn_ir.blocks {
+    for (bid, block) in fn_ir.blocks.iter().enumerate() {
+        if !reachable_blocks.contains(&bid) {
+            continue;
+        }
         for ins in &block.instrs {
             if let Instr::Assign { dst, .. } = ins {
                 assigned_vars.insert(dst.clone());
@@ -47,7 +64,10 @@ fn validate_function(fn_ir: &FnIR, user_arities: &FxHashMap<String, usize>) -> V
         }
     }
 
-    for v in &fn_ir.values {
+    for (vid, v) in fn_ir.values.iter().enumerate() {
+        if !reachable_values.contains(&vid) {
+            continue;
+        }
         match &v.kind {
             ValueKind::Load { var } => {
                 if !assigned_vars.contains(var) && !is_runtime_reserved_symbol(var) {
@@ -88,28 +108,32 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
         }
         if let Terminator::If { cond, .. } = block.term
             && reachable_values.contains(&cond)
-                && let Some(lit) = eval_const(fn_ir, cond, &mut memo, &mut FxHashSet::default())
-                && let Err(e) = validate_const_condition(lit, fn_ir.values[cond].span) {
-                    errors.push(e);
-                }
+            && let Some(lit) = eval_const(fn_ir, cond, &mut memo, &mut FxHashSet::default())
+            && let Err(e) = validate_const_condition(lit, fn_ir.values[cond].span)
+        {
+            errors.push(e);
+        }
 
         for ins in &block.instrs {
             match ins {
                 Instr::StoreIndex1D { idx, span, .. } => {
                     if let Some(lit) = eval_const(fn_ir, *idx, &mut memo, &mut FxHashSet::default())
-                        && let Err(e) = validate_index_lit_for_write(lit, *span) {
-                            errors.push(e);
-                        }
+                        && let Err(e) = validate_index_lit_for_write(lit, *span)
+                    {
+                        errors.push(e);
+                    }
                 }
                 Instr::StoreIndex2D { r, c, span, .. } => {
                     if let Some(lit) = eval_const(fn_ir, *r, &mut memo, &mut FxHashSet::default())
-                        && let Err(e) = validate_index_lit_for_write(lit, *span) {
-                            errors.push(e);
-                        }
+                        && let Err(e) = validate_index_lit_for_write(lit, *span)
+                    {
+                        errors.push(e);
+                    }
                     if let Some(lit) = eval_const(fn_ir, *c, &mut memo, &mut FxHashSet::default())
-                        && let Err(e) = validate_index_lit_for_write(lit, *span) {
-                            errors.push(e);
-                        }
+                        && let Err(e) = validate_index_lit_for_write(lit, *span)
+                    {
+                        errors.push(e);
+                    }
                 }
                 _ => {}
             }
@@ -129,56 +153,57 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                 ..
             } => {
                 if let Some(lit) = eval_const(fn_ir, *rhs, &mut memo, &mut FxHashSet::default())
-                    && is_zero_number(&lit) {
-                        errors.push(
-                            RRException::new(
-                                "RR.RuntimeError",
-                                RRCode::E2001,
-                                Stage::Mir,
-                                "division by zero is guaranteed at compile-time".to_string(),
-                            )
-                            .at(v.span)
-                            .push_frame("mir::semantics::validate_function_runtime/1", Some(v.span))
-                            .note("Adjust divisor so it cannot become zero."),
-                        );
-                    }
+                    && is_zero_number(&lit)
+                {
+                    errors.push(
+                        RRException::new(
+                            "RR.RuntimeError",
+                            RRCode::E2001,
+                            Stage::Mir,
+                            "division by zero is guaranteed at compile-time".to_string(),
+                        )
+                        .at(v.span)
+                        .push_frame("mir::semantics::validate_function_runtime/1", Some(v.span))
+                        .note("Adjust divisor so it cannot become zero."),
+                    );
+                }
             }
             ValueKind::Index1D { idx, .. } => {
                 if let Some(lit) = eval_const(fn_ir, *idx, &mut memo, &mut FxHashSet::default())
-                    && let Err(e) = validate_index_lit_for_read(lit, v.span) {
-                        errors.push(e);
-                    }
+                    && let Err(e) = validate_index_lit_for_read(lit, v.span)
+                {
+                    errors.push(e);
+                }
             }
             ValueKind::Index2D { r, c, .. } => {
                 if let Some(lit) = eval_const(fn_ir, *r, &mut memo, &mut FxHashSet::default())
-                    && let Err(e) = validate_index_lit_for_read(lit, v.span) {
-                        errors.push(e);
-                    }
+                    && let Err(e) = validate_index_lit_for_read(lit, v.span)
+                {
+                    errors.push(e);
+                }
                 if let Some(lit) = eval_const(fn_ir, *c, &mut memo, &mut FxHashSet::default())
-                    && let Err(e) = validate_index_lit_for_read(lit, v.span) {
-                        errors.push(e);
-                    }
+                    && let Err(e) = validate_index_lit_for_read(lit, v.span)
+                {
+                    errors.push(e);
+                }
             }
             ValueKind::Call { callee, args, .. } if callee == "seq_len" && args.len() == 1 => {
                 if let Some(lit) = eval_const(fn_ir, args[0], &mut memo, &mut FxHashSet::default())
                     && let Some(n) = as_integral(&lit)
-                        && n < 0 {
-                            errors.push(
-                                RRException::new(
-                                    "RR.RuntimeError",
-                                    RRCode::E2007,
-                                    Stage::Mir,
-                                    "seq_len() with negative length is guaranteed to fail"
-                                        .to_string(),
-                                )
-                                .at(v.span)
-                                .push_frame(
-                                    "mir::semantics::validate_function_runtime/1",
-                                    Some(v.span),
-                                )
-                                .note("Ensure seq_len argument is >= 0."),
-                            );
-                        }
+                    && n < 0
+                {
+                    errors.push(
+                        RRException::new(
+                            "RR.RuntimeError",
+                            RRCode::E2007,
+                            Stage::Mir,
+                            "seq_len() with negative length is guaranteed to fail".to_string(),
+                        )
+                        .at(v.span)
+                        .push_frame("mir::semantics::validate_function_runtime/1", Some(v.span))
+                        .note("Ensure seq_len argument is >= 0."),
+                    );
+                }
             }
             _ => {
                 let _ = vid;

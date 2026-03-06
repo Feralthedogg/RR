@@ -1,6 +1,7 @@
 use RR::compiler::{
-    CliLog, OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs,
-    parallel_config_from_env, type_config_from_env,
+    CliLog, IncrementalOptions, IncrementalSession, OptLevel, ParallelBackend, ParallelConfig,
+    ParallelMode, compile_with_configs, compile_with_configs_incremental, parallel_config_from_env,
+    type_config_from_env,
 };
 use RR::runtime::runner::Runner;
 use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
@@ -8,6 +9,8 @@ use std::any::Any;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 fn main() {
     install_broken_pipe_panic_hook();
@@ -37,6 +40,7 @@ fn run_cli() -> i32 {
     match args[1].as_str() {
         "build" => cmd_build(&args[2..]),
         "run" => cmd_run(&args[2..]),
+        "watch" => cmd_watch(&args[2..]),
         _ => cmd_legacy(&args[1..]),
     }
 }
@@ -66,6 +70,7 @@ fn print_usage() {
     eprintln!("  rr <input.rr> [options]");
     eprintln!("  rr run [main.rr|dir|.] [options]");
     eprintln!("  rr build [dir|file.rr] [options]");
+    eprintln!("  rr watch [main.rr|dir|.] [options]");
     eprintln!("Options:");
     eprintln!("  -o <file> / --out-dir <dir>   Output file (legacy) or build output dir");
     eprintln!("  -O0, -O1, -O2                 Optimization level (default O1)");
@@ -76,6 +81,13 @@ fn print_usage() {
     eprintln!("  --parallel-backend <auto|r|openmp>        Parallel backend selection");
     eprintln!("  --parallel-threads <N>                    Parallel worker threads (0=auto)");
     eprintln!("  --parallel-min-trip <N>                   Minimum trip-count for parallel path");
+    eprintln!("  --incremental[=off|1|1,2|1,2,3|all]      Enable incremental compile phases");
+    eprintln!("  --incremental-phases <...>                Same as above (separate arg form)");
+    eprintln!(
+        "  --strict-incremental-verify               Extra validation gate for incremental mode"
+    );
+    eprintln!("  --poll-ms <N>                             Watch polling interval in milliseconds");
+    eprintln!("  --once                                    Run a single watch tick and exit");
     eprintln!("  --keep-r                      Keep generated .gen.R when running");
     eprintln!("  --no-runtime                  Compile only (legacy mode)");
 }
@@ -230,13 +242,14 @@ enum CommandMode {
     Legacy,
     Run,
     Build,
+    Watch,
 }
 
 impl CommandMode {
     fn default_target(self) -> &'static str {
         match self {
             Self::Legacy => "",
-            Self::Run | Self::Build => ".",
+            Self::Run | Self::Build | Self::Watch => ".",
         }
     }
 
@@ -252,6 +265,7 @@ impl CommandMode {
             Self::Legacy => arg == "-o",
             Self::Build => arg == "--out-dir" || arg == "-o",
             Self::Run => false,
+            Self::Watch => arg == "-o",
         }
     }
 
@@ -277,6 +291,9 @@ struct CommonOpts {
     opt_level: OptLevel,
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
+    incremental: IncrementalOptions,
+    watch_poll_ms: u64,
+    watch_once: bool,
 }
 
 impl CommonOpts {
@@ -289,8 +306,51 @@ impl CommonOpts {
             opt_level: OptLevel::O1,
             type_cfg: type_config_from_env(),
             parallel_cfg: parallel_config_from_env(),
+            incremental: IncrementalOptions::default(),
+            watch_poll_ms: 500,
+            watch_once: false,
         }
     }
+}
+
+fn parse_incremental_phases(raw: &str) -> Option<IncrementalOptions> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty() || matches!(normalized.as_str(), "off" | "0" | "false" | "none") {
+        return Some(IncrementalOptions::default());
+    }
+    if matches!(normalized.as_str(), "all" | "3") {
+        return Some(IncrementalOptions::all_phases());
+    }
+    if matches!(normalized.as_str(), "1" | "phase1") {
+        return Some(IncrementalOptions::phase1_only());
+    }
+
+    let mut options = IncrementalOptions {
+        enabled: true,
+        phase1: false,
+        phase2: false,
+        phase3: false,
+        strict_verify: false,
+    };
+    for token in normalized.split(',') {
+        if !parse_incremental_phase_token(token.trim(), &mut options) {
+            return None;
+        }
+    }
+    if !options.phase1 && !options.phase2 && !options.phase3 {
+        return None;
+    }
+    Some(options)
+}
+
+fn parse_incremental_phase_token(token: &str, options: &mut IncrementalOptions) -> bool {
+    match token {
+        "1" | "phase1" => options.phase1 = true,
+        "2" | "phase2" => options.phase2 = true,
+        "3" | "phase3" => options.phase3 = true,
+        _ => return false,
+    }
+    true
 }
 
 fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result<CommonOpts, i32> {
@@ -324,6 +384,55 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
                         opts.keep_r = true;
                     } else if mode.allow_no_runtime() && arg == "--no-runtime" {
                         opts.no_runtime = true;
+                    } else if arg == "--incremental" {
+                        opts.incremental = IncrementalOptions::phase1_only();
+                    } else if let Some(raw) = arg.strip_prefix("--incremental=") {
+                        let Some(parsed) = parse_incremental_phases(raw) else {
+                            ui.error(
+                                "Invalid --incremental value. Use off|1|1,2|1,2,3|all|phase1,phase2,phase3",
+                            );
+                            return Err(1);
+                        };
+                        opts.incremental = parsed;
+                    } else if arg == "--incremental-phases" {
+                        if i + 1 >= args.len() {
+                            ui.error(
+                                "Missing value after --incremental-phases (e.g. 1,2,3 or off)",
+                            );
+                            return Err(1);
+                        }
+                        i += 1;
+                        let Some(parsed) = parse_incremental_phases(&args[i]) else {
+                            ui.error("Invalid --incremental-phases value. Use off|1|1,2|1,2,3|all");
+                            return Err(1);
+                        };
+                        opts.incremental = parsed;
+                    } else if arg == "--strict-incremental-verify" {
+                        opts.incremental.enabled = true;
+                        if !opts.incremental.phase1
+                            && !opts.incremental.phase2
+                            && !opts.incremental.phase3
+                        {
+                            opts.incremental.phase1 = true;
+                        }
+                        opts.incremental.strict_verify = true;
+                    } else if matches!(mode, CommandMode::Watch) && arg == "--once" {
+                        opts.watch_once = true;
+                    } else if matches!(mode, CommandMode::Watch) && arg == "--poll-ms" {
+                        if i + 1 >= args.len() {
+                            ui.error("Missing value after --poll-ms");
+                            return Err(1);
+                        }
+                        i += 1;
+                        let Ok(ms) = args[i].trim().parse::<u64>() else {
+                            ui.error("Invalid --poll-ms. Use a positive integer.");
+                            return Err(1);
+                        };
+                        if ms == 0 {
+                            ui.error("--poll-ms must be >= 1");
+                            return Err(1);
+                        }
+                        opts.watch_poll_ms = ms;
                     } else if mode.allow_legacy_mir() && arg == "--mir" {
                         if matches!(opts.opt_level, OptLevel::O0) {
                             opts.opt_level = OptLevel::O1;
@@ -372,13 +481,26 @@ fn cmd_legacy(args: &[String]) -> i32 {
         }
     };
 
-    let result = compile_with_configs(
-        &input_path,
-        &input,
-        opts.opt_level,
-        opts.type_cfg,
-        opts.parallel_cfg,
-    );
+    let result = if opts.incremental.enabled {
+        compile_with_configs_incremental(
+            &input_path,
+            &input,
+            opts.opt_level,
+            opts.type_cfg,
+            opts.parallel_cfg,
+            opts.incremental,
+            None,
+        )
+        .map(|v| (v.r_code, v.source_map))
+    } else {
+        compile_with_configs(
+            &input_path,
+            &input,
+            opts.opt_level,
+            opts.type_cfg,
+            opts.parallel_cfg,
+        )
+    };
     match result {
         Ok((r_code, source_map)) => {
             if let Some(out_path) = opts.output_path {
@@ -447,13 +569,28 @@ fn cmd_run(args: &[String]) -> i32 {
         }
     };
 
-    match compile_with_configs(
-        &input_path_str,
-        &input,
-        opts.opt_level,
-        opts.type_cfg,
-        opts.parallel_cfg,
-    ) {
+    let result = if opts.incremental.enabled {
+        compile_with_configs_incremental(
+            &input_path_str,
+            &input,
+            opts.opt_level,
+            opts.type_cfg,
+            opts.parallel_cfg,
+            opts.incremental,
+            None,
+        )
+        .map(|v| (v.r_code, v.source_map))
+    } else {
+        compile_with_configs(
+            &input_path_str,
+            &input,
+            opts.opt_level,
+            opts.type_cfg,
+            opts.parallel_cfg,
+        )
+    };
+
+    match result {
         Ok((r_code, source_map)) => Runner::run(
             &input_path_str,
             &input,
@@ -559,13 +696,28 @@ fn cmd_build(args: &[String]) -> i32 {
             }
         };
 
-        let (r_code, _source_map) = match compile_with_configs(
-            &rr_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-        ) {
+        let build_out = if opts.incremental.enabled {
+            compile_with_configs_incremental(
+                &rr_path_str,
+                &input,
+                opts.opt_level,
+                opts.type_cfg,
+                opts.parallel_cfg,
+                opts.incremental,
+                None,
+            )
+            .map(|v| (v.r_code, v.source_map))
+        } else {
+            compile_with_configs(
+                &rr_path_str,
+                &input,
+                opts.opt_level,
+                opts.type_cfg,
+                opts.parallel_cfg,
+            )
+        };
+
+        let (r_code, _source_map) = match build_out {
             Ok(v) => v,
             Err(e) => {
                 e.display(Some(&input), Some(&rr_path_str));
@@ -597,10 +749,11 @@ fn cmd_build(args: &[String]) -> i32 {
         };
 
         if let Some(parent) = out_file.parent()
-            && let Err(e) = fs::create_dir_all(parent) {
-                ui.error(&format!("Failed to create '{}': {}", parent.display(), e));
-                return 1;
-            }
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            ui.error(&format!("Failed to create '{}': {}", parent.display(), e));
+            return 1;
+        }
         if let Err(e) = fs::write(&out_file, r_code) {
             ui.error(&format!("Failed to write '{}': {}", out_file.display(), e));
             return 1;
@@ -616,4 +769,103 @@ fn cmd_build(args: &[String]) -> i32 {
         out_root.display()
     ));
     0
+}
+
+fn cmd_watch(args: &[String]) -> i32 {
+    let ui = CliLog::new();
+    let mut opts = match parse_command_opts(args, CommandMode::Watch, &ui) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+
+    if !opts.incremental.enabled {
+        opts.incremental = IncrementalOptions::all_phases();
+    } else {
+        opts.incremental.phase3 = true;
+    }
+
+    let input_path = match resolve_run_input(&opts.target) {
+        Ok(p) => p,
+        Err(msg) => {
+            ui.error(&msg);
+            return 1;
+        }
+    };
+    let input_path_str = input_path.to_string_lossy().to_string();
+    let out_file = if let Some(out) = opts.output_path.clone() {
+        PathBuf::from(out)
+    } else {
+        let stem = input_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("main");
+        input_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(".rr-watch")
+            .join(format!("{}.R", stem))
+    };
+    if let Some(parent) = out_file.parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        ui.error(&format!("Failed to create '{}': {}", parent.display(), e));
+        return 1;
+    }
+
+    ui.success(&format!(
+        "Watching {} (poll={}ms)",
+        input_path.display(),
+        opts.watch_poll_ms
+    ));
+
+    let mut session = IncrementalSession::default();
+    loop {
+        let input = match fs::read_to_string(&input_path) {
+            Ok(s) => s,
+            Err(e) => {
+                ui.error(&format!("Failed to read '{}': {}", input_path.display(), e));
+                return 1;
+            }
+        };
+
+        match compile_with_configs_incremental(
+            &input_path_str,
+            &input,
+            opts.opt_level,
+            opts.type_cfg,
+            opts.parallel_cfg,
+            opts.incremental,
+            Some(&mut session),
+        ) {
+            Ok(out) => {
+                if let Err(e) = fs::write(&out_file, out.r_code.as_bytes()) {
+                    ui.error(&format!("Failed to write '{}': {}", out_file.display(), e));
+                    return 1;
+                }
+                if out.stats.phase3_memory_hit || out.stats.phase1_artifact_hit {
+                    ui.success(&format!(
+                        "cache hit (phase1_hit={}, phase3_hit={}) -> {}",
+                        out.stats.phase1_artifact_hit,
+                        out.stats.phase3_memory_hit,
+                        out_file.display()
+                    ));
+                } else {
+                    ui.success(&format!(
+                        "rebuilt (phase2 hits={}, misses={}) -> {}",
+                        out.stats.phase2_emit_hits,
+                        out.stats.phase2_emit_misses,
+                        out_file.display()
+                    ));
+                }
+            }
+            Err(e) => {
+                e.display(Some(&input), Some(&input_path_str));
+            }
+        }
+
+        if opts.watch_once {
+            return 0;
+        }
+        thread::sleep(Duration::from_millis(opts.watch_poll_ms));
+    }
 }

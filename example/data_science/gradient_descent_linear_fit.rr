@@ -1,0 +1,42 @@
+import "../common/sim_utils.rr";
+
+fn main() {
+    xs = c(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)
+    ys = c(5.2, 8.1, 11.3, 14.0, 17.1, 20.2, 23.1, 26.3)
+    m = 0.0
+    b = 0.0
+    rate = 0.01
+    iter = 1.0
+    while (iter <= 80.0) {
+        grad_m = 0.0
+        grad_b = 0.0
+        i = 1.0
+        while (i <= length(xs)) {
+            pred = m * xs[i] + b
+            err = pred - ys[i]
+            grad_m += err * xs[i]
+            grad_b += err
+            i += 1.0
+        }
+        grad_m = (2.0 / length(xs)) * grad_m
+        grad_b = (2.0 / length(xs)) * grad_b
+        m = m - rate * grad_m
+        b = b - rate * grad_b
+        iter += 1.0
+    }
+
+    loss = 0.0
+    i = 1.0
+    while (i <= length(xs)) {
+        err = m * xs[i] + b - ys[i]
+        loss += err * err
+        i += 1.0
+    }
+    loss = loss / length(xs)
+
+    print_metric("gd_slope", m)
+    print_metric("gd_intercept", b)
+    print_metric("gd_loss", loss)
+}
+
+main();

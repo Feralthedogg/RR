@@ -1,0 +1,10 @@
+fn step(x, v) {
+  return v + 0.1 * a
+}
+
+fn main() {
+  x = 1.0
+  v = 0.0
+  i = 1.0
+  while (i <= 8.0) {
+    v = st  w);

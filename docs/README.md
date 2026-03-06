@@ -1,24 +1,55 @@
 # RR Documentation
 
 This directory documents RR as implemented in this repository.
-It is organized by usage first, then internals.
+The docs are organized for three audiences:
 
-## Index
+- users who want to compile or run RR programs
+- contributors who need to understand the pipeline and runtime
+- reviewers who need a map from behavior to source code
 
-- [`docs/getting-started.md`](getting-started.md)
-- [`docs/cli.md`](cli.md)
-- [`docs/language.md`](language.md)
-- [`docs/ir-model.md`](ir-model.md)
-- [`docs/compiler-pipeline.md`](compiler-pipeline.md)
-- [`docs/optimization.md`](optimization.md)
-- [`docs/runtime-and-errors.md`](runtime-and-errors.md)
-- [`docs/configuration.md`](configuration.md)
-- [`docs/testing.md`](testing.md)
-- [`docs/compatibility.md`](compatibility.md)
+## Start Here
+
+If you are using RR:
+
+- [Getting Started](getting-started.md): build RR, compile a file, run a project
+- [CLI Reference](cli.md): command forms, options, watch/build behavior
+- [Configuration](configuration.md): environment variables and optimizer/runtime knobs
+- [Language Reference](language.md): syntax and supported forms
+
+If you are working on the compiler:
+
+- [Compiler Pipeline](compiler-pipeline.md): end-to-end compile phases
+- [IR Model](ir-model.md): HIR/MIR structure and purpose
+- [Tachyon Engine](optimization.md): optimization passes and vectorization coverage
+- [Runtime and Errors](runtime-and-errors.md): emitted runtime helpers and diagnostics model
+- [Testing and Quality Gates](testing.md): integration, perf, and fuzz coverage
+
+If you need behavior limits:
+
+- [Compatibility and Limits](compatibility.md)
+
+## Documentation Map
+
+- `getting-started.md`
+  - minimal setup and first successful compile/run flow
+- `cli.md`
+  - command-line surface and execution modes
+- `language.md`
+  - surface syntax and language behavior
+- `compiler-pipeline.md`
+  - pipeline phases, pass order, and validation points
+- `optimization.md`
+  - Tachyon optimizer strategy and current vectorization/runtime helper lowering
+- `runtime-and-errors.md`
+  - runtime helper contract, backend policy, and diagnostics
+- `configuration.md`
+  - environment-driven behavior switches
+- `testing.md`
+  - test families, perf gates, fuzzing
 
 ## VitePress
 
-Docs are served with VitePress from the `docs/` directory.
+Docs are served from the `docs/` directory with VitePress.
 
 ```bash
 cd docs
@@ -35,11 +66,9 @@ pnpm docs:preview
 
 ## Project Snapshot
 
-- Surface language: R-first syntax (`<-`, `function`, dotted identifiers) with legacy aliases (`let`, `fn`)
-- Frontend: lexer + parser + AST (`src/syntax`)
-- Mid-level: HIR lowering + desugaring (`src/hir`)
-- Core IR: MIR SSA-like CFG (`src/mir`)
-- Optimizer: `TachyonEngine` (`src/mir/opt.rs`)
-- Backend: structured MIR-to-R emitter (`src/codegen/mir_emit.rs`)
-- Runtime: embedded R helper library (`src/runtime/mod.rs`)
-- Diagnostics: structured `RRException` with color palettes (`src/error.rs`)
+- frontend: lexer/parser/HIR in `src/syntax` and `src/hir`
+- core IR: SSA-like MIR in `src/mir`
+- optimizer: `TachyonEngine` in `src/mir/opt.rs`
+- backend: MIR-to-R emission in `src/codegen/mir_emit.rs`
+- runtime: embedded R helper library in `src/runtime/mod.rs`
+- diagnostics: structured `RRException` in `src/error.rs`

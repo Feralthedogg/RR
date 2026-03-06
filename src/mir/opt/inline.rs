@@ -53,13 +53,15 @@ impl MirInliner {
         let policy = Self::policy();
         let mut growth = InlineGrowthBudget::new(all_fns, &policy);
         let mut global_changed = false;
-        let fn_names: Vec<String> = all_fns.keys().cloned().collect();
+        let mut fn_names: Vec<String> = all_fns.keys().cloned().collect();
+        fn_names.sort();
 
         for name in fn_names {
             if let Some(hot_set) = hot_callers
-                && !hot_set.contains(&name) {
-                    continue;
-                }
+                && !hot_set.contains(&name)
+            {
+                continue;
+            }
             if let Some(mut fn_ir) = all_fns.remove(&name) {
                 if fn_ir.unsupported_dynamic {
                     all_fns.insert(name, fn_ir);
@@ -308,10 +310,11 @@ impl MirInliner {
             for instr in &blk.instrs {
                 if let Instr::Assign { dst, src, .. } = instr
                     && let Some(idx) = callee.params.iter().position(|p| p == dst)
-                        && let Some(&param_vid) = param_val_ids.get(&idx)
-                            && *src != param_vid {
-                                mutated_params.insert(idx);
-                            }
+                    && let Some(&param_vid) = param_val_ids.get(&idx)
+                    && *src != param_vid
+                {
+                    mutated_params.insert(idx);
+                }
             }
         }
 
@@ -366,9 +369,10 @@ impl MirInliner {
                 caller.values[new_vid].origin_var = Some(new_name);
             }
             if let Some(old_bb) = val.phi_block
-                && let Some(&new_bb) = map.b.get(&old_bb) {
-                    caller.values[new_vid].phi_block = Some(new_bb);
-                }
+                && let Some(&new_bb) = map.b.get(&old_bb)
+            {
+                caller.values[new_vid].phi_block = Some(new_bb);
+            }
 
             map.v.insert(cvid, new_vid);
         }
@@ -421,13 +425,14 @@ impl MirInliner {
             for val in &mut caller.values {
                 if let ValueKind::Phi { args } = &mut val.kind
                     && let Some(phi_bb) = val.phi_block
-                        && old_succs.contains(&phi_bb) {
-                            for (_, pred_bb) in args.iter_mut() {
-                                if *pred_bb == call_block {
-                                    *pred_bb = continuation_bb;
-                                }
-                            }
+                    && old_succs.contains(&phi_bb)
+                {
+                    for (_, pred_bb) in args.iter_mut() {
+                        if *pred_bb == call_block {
+                            *pred_bb = continuation_bb;
                         }
+                    }
+                }
             }
         }
 
@@ -485,14 +490,16 @@ impl MirInliner {
         }
 
         if !mutated_param_inits.is_empty()
-            && let Some(&entry_bid) = map.b.get(&callee.entry) {
-                for instr in &mut caller.blocks[entry_bid].instrs {
-                    if let Instr::Assign { dst, src, .. } = instr
-                        && let Some(&arg_val) = mutated_param_inits.get(dst) {
-                            *src = arg_val;
-                        }
+            && let Some(&entry_bid) = map.b.get(&callee.entry)
+        {
+            for instr in &mut caller.blocks[entry_bid].instrs {
+                if let Instr::Assign { dst, src, .. } = instr
+                    && let Some(&arg_val) = mutated_param_inits.get(dst)
+                {
+                    *src = arg_val;
                 }
             }
+        }
     }
 
     fn resolve_callee_name<'a>(&self, callee: &'a str) -> &'a str {
@@ -512,9 +519,10 @@ impl MirInliner {
         for (bid, bb) in target.blocks.iter().enumerate() {
             for ins in &bb.instrs {
                 if let Instr::Assign { src, .. } | Instr::Eval { val: src, .. } = ins
-                    && matches!(target.values[*src].kind, ValueKind::Call { .. }) {
-                        call_count += 1;
-                    }
+                    && matches!(target.values[*src].kind, ValueKind::Call { .. })
+                {
+                    call_count += 1;
+                }
             }
             match bb.term {
                 Terminator::Goto(t) => {
@@ -742,12 +750,8 @@ impl MirInliner {
                     }
                     ValueKind::Len { base } => {
                         let b = clone_rec(*base, caller, callee, map, args)?;
-                        let new_id = caller.add_value(
-                            ValueKind::Len { base: b },
-                            val.span,
-                            val.facts,
-                            None,
-                        );
+                        let new_id =
+                            caller.add_value(ValueKind::Len { base: b }, val.span, val.facts, None);
                         map.insert(vid, new_id);
                         Some(new_id)
                     }

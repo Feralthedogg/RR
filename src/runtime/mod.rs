@@ -73,10 +73,12 @@ rr_set_parallel_min_trip <- function(n) {
 rr_set_native_lib <- function(path) {
   if (is.null(path) || !nzchar(as.character(path))) {
     .rr_env$native_lib <- ""
+    .rr_env$native_lib_from_env <- FALSE
     .rr_env$native_loaded <- FALSE
     return(invisible(NULL))
   }
-  .rr_env$native_lib <- as.character(path)
+  .rr_env$native_lib <- normalizePath(as.character(path), winslash = "/", mustWork = FALSE)
+  .rr_env$native_lib_from_env <- FALSE
   .rr_env$native_loaded <- FALSE
 }
 
@@ -101,11 +103,133 @@ if (is.na(.rr_env$parallel_threads) || .rr_env$parallel_threads < 0L) {
 if (is.na(.rr_env$parallel_min_trip) || .rr_env$parallel_min_trip < 0L) {
   .rr_env$parallel_min_trip <- 4096L
 }
-.rr_env$native_lib <- Sys.getenv("RR_NATIVE_LIB", "")
+.rr_env$native_autobuild <- tolower(Sys.getenv("RR_NATIVE_AUTOBUILD", "1"))
+.rr_env$native_autobuild <- .rr_env$native_autobuild %in% c("1", "true", "yes", "on")
+
+rr_native_lib_ext <- function() {
+  if (identical(.Platform$OS.type, "windows")) return(".dll")
+  if (identical(tolower(Sys.info()[["sysname"]]), "darwin")) return(".dylib")
+  ".so"
+}
+
+rr_native_script_path <- function() {
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) < 1L) return("")
+  path <- sub("^--file=", "", file_arg[[1L]])
+  if (!nzchar(path)) return("")
+  normalizePath(path, winslash = "/", mustWork = FALSE)
+}
+
+rr_native_candidate_roots <- function() {
+  script_path <- rr_native_script_path()
+  if (!nzchar(script_path)) return(character(0))
+  cur <- dirname(script_path)
+  roots <- character(0)
+  seen <- character(0)
+  while (nzchar(cur) && !(cur %in% seen)) {
+    roots <- c(roots, cur)
+    seen <- c(seen, cur)
+    parent <- dirname(cur)
+    if (!nzchar(parent) || identical(parent, cur)) break
+    cur <- parent
+  }
+  roots
+}
+
+rr_native_find_existing <- function() {
+  ext <- rr_native_lib_ext()
+  roots <- rr_native_candidate_roots()
+  if (length(roots) < 1L) return("")
+  names <- c(paste0("rr_native", ext), paste0("librr_native", ext))
+  for (root in roots) {
+    candidates <- c(
+      file.path(root, "native", names),
+      file.path(root, "target", "native", names),
+      file.path(root, names)
+    )
+    for (candidate in candidates) {
+      if (file.exists(candidate)) {
+        return(normalizePath(candidate, winslash = "/", mustWork = FALSE))
+      }
+    }
+  }
+  ""
+}
+
+rr_native_maybe_build <- function() {
+  if (!isTRUE(.rr_env$native_autobuild)) return("")
+  ext <- rr_native_lib_ext()
+  roots <- rr_native_candidate_roots()
+  if (length(roots) < 1L) return("")
+
+  src <- ""
+  root_hit <- ""
+  for (root in roots) {
+    probe <- file.path(root, "native", "rr_native.c")
+    if (file.exists(probe)) {
+      src <- probe
+      root_hit <- root
+      break
+    }
+  }
+  if (!nzchar(src)) return("")
+
+  out_dir <- file.path(root_hit, "target", "native")
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  out_path <- file.path(out_dir, paste0("rr_native", ext))
+  if (file.exists(out_path)) {
+    return(normalizePath(out_path, winslash = "/", mustWork = FALSE))
+  }
+
+  r_bin <- file.path(
+    R.home("bin"),
+    if (identical(.Platform$OS.type, "windows")) "R.exe" else "R"
+  )
+  if (!file.exists(r_bin)) {
+    r_bin <- Sys.which("R")
+  }
+  if (!nzchar(r_bin)) return("")
+
+  build_out <- tryCatch(
+    suppressWarnings(system2(
+      r_bin,
+      c("CMD", "SHLIB", src, "-o", out_path),
+      stdout = TRUE,
+      stderr = TRUE
+    )),
+    error = function(e) NULL
+  )
+  if (is.null(build_out)) return("")
+  status <- attr(build_out, "status")
+  if (is.null(status)) status <- 0L
+  if (status != 0L || !file.exists(out_path)) return("")
+  normalizePath(out_path, winslash = "/", mustWork = FALSE)
+}
+
+rr_native_resolve_lib <- function() {
+  env_path <- Sys.getenv("RR_NATIVE_LIB", "")
+  if (nzchar(env_path)) {
+    .rr_env$native_lib_from_env <- TRUE
+    return(normalizePath(env_path, winslash = "/", mustWork = FALSE))
+  }
+  .rr_env$native_lib_from_env <- FALSE
+  needs_native <- (!is.null(.rr_env$native_backend) && .rr_env$native_backend != "off") ||
+    (!is.null(.rr_env$parallel_mode) && .rr_env$parallel_mode != "off")
+  if (!needs_native) return("")
+  existing <- rr_native_find_existing()
+  if (nzchar(existing)) return(existing)
+  rr_native_maybe_build()
+}
+
+.rr_env$native_lib <- rr_native_resolve_lib()
 .rr_env$native_loaded <- FALSE
 
 rr_native_try_load <- function() {
   if (isTRUE(.rr_env$native_loaded)) return(TRUE)
+  if (is.null(.rr_env$native_lib) || !nzchar(.rr_env$native_lib)) {
+    .rr_env$native_lib <- rr_native_resolve_lib()
+  }
   if (is.null(.rr_env$native_lib) || !nzchar(.rr_env$native_lib)) return(FALSE)
   ok <- tryCatch({
     dyn.load(.rr_env$native_lib)
@@ -595,6 +719,166 @@ rr_index1_read <- function(base, i, ctx="index") {
   base[i]
 }
 
+rr_index1_read_vec <- function(base, idx, ctx="index") {
+  if (is.integer(idx)) {
+    ii <- idx
+    if (.rr_env$strict_index_read && anyNA(ii)) {
+      rr_value_error(paste0(ctx, " contains NA"), "E2001", ctx)
+    }
+  } else {
+    if (!is.numeric(idx)) rr_type_error(paste0(ctx, " must be numeric"), "E1002", ctx)
+    if (.rr_env$strict_index_read && anyNA(idx)) {
+      rr_value_error(paste0(ctx, " contains NA"), "E2001", ctx)
+    }
+    non_na <- !is.na(idx)
+    if (any(idx[non_na] != floor(idx[non_na]))) {
+      rr_type_error(paste0(ctx, " must be integer"), "E1002", ctx)
+    }
+    ii <- as.integer(idx)
+  }
+  if (any(ii[!is.na(ii)] < 1L)) {
+    rr_bounds_error(
+      paste0(ctx, " must be >= 1"),
+      "E2007",
+      ctx,
+      "R indexing is 1-based at runtime."
+    )
+  }
+  base[ii]
+}
+
+rr_index1_read_idx <- function(base, i, ctx="index") {
+  v <- rr_index1_read(base, i, ctx)
+  if (length(v) != 1L) rr_type_error(paste0(ctx, " must be scalar"), "E1002", ctx)
+  if (is.na(v)) rr_value_error(paste0(ctx, " is NA"), "E2001", ctx)
+  if (is.integer(v)) {
+    if (v < 1L) {
+      rr_bounds_error(
+        paste0(ctx, " must be >= 1"),
+        "E2007",
+        ctx,
+        "R indexing is 1-based at runtime."
+      )
+    }
+    return(v)
+  }
+  if (!is.numeric(v)) rr_type_error(paste0(ctx, " must be numeric"), "E1002", ctx)
+  if (v != floor(v)) rr_type_error(paste0(ctx, " must be integer"), "E1002", ctx)
+  ii <- as.integer(v)
+  if (ii < 1L) {
+    rr_bounds_error(
+      paste0(ctx, " must be >= 1"),
+      "E2007",
+      ctx,
+      "R indexing is 1-based at runtime."
+    )
+  }
+  ii
+}
+
+rr_index_vec_floor <- function(idx, ctx="index") {
+  if (is.integer(idx)) {
+    ii <- idx
+  } else {
+    if (!is.numeric(idx)) rr_type_error(paste0(ctx, " must be numeric"), "E1002", ctx)
+    floored <- floor(idx)
+    ii <- as.integer(floored)
+  }
+  if (.rr_env$strict_index_read && anyNA(ii)) {
+    rr_value_error(paste0(ctx, " contains NA"), "E2001", ctx)
+  }
+  if (any(ii[!is.na(ii)] < 1L)) {
+    rr_bounds_error(
+      paste0(ctx, " must be >= 1"),
+      "E2007",
+      ctx,
+      "R indexing is 1-based at runtime."
+    )
+  }
+  ii
+}
+
+rr_index1_read_vec_floor <- function(base, idx, ctx="index") {
+  ii <- rr_index_vec_floor(idx, ctx)
+  base[ii]
+}
+
+rr_wrap_index_vec <- function(x, y, w, h, ctx="wrap_index") {
+  if (length(w) != 1L || length(h) != 1L) {
+    rr_type_error(paste0(ctx, " w/h must be scalar"), "E1002", ctx)
+  }
+  if (is.na(w) || is.na(h)) {
+    rr_value_error(paste0(ctx, " w/h cannot be NA"), "E2001", ctx)
+  }
+  if (!is.numeric(w) || !is.numeric(h)) {
+    rr_type_error(paste0(ctx, " w/h must be numeric"), "E1002", ctx)
+  }
+  if (w != floor(w) || h != floor(h)) {
+    rr_type_error(paste0(ctx, " w/h must be integer"), "E1002", ctx)
+  }
+  if (w < 1 || h < 1) {
+    rr_bounds_error(
+      paste0(ctx, " w/h must be >= 1"),
+      "E2007",
+      ctx
+    )
+  }
+  xx <- rr_ifelse_strict(x < 1, w, x, paste0(ctx, ".x<1"))
+  xx <- rr_ifelse_strict(xx > w, 1, xx, paste0(ctx, ".x>w"))
+  yy <- rr_ifelse_strict(y < 1, h, y, paste0(ctx, ".y<1"))
+  yy <- rr_ifelse_strict(yy > h, 1, yy, paste0(ctx, ".y>h"))
+  ((yy - 1) * w) + xx
+}
+
+# Integer-index specialization for compiler-emitted wrap-index helpers.
+# This keeps scalar shape checks while using a lighter vector path and
+# returning integer indices for downstream gather fast-paths.
+rr_wrap_index_vec_i <- function(x, y, w, h, ctx="wrap_index") {
+  if (length(w) != 1L || length(h) != 1L) {
+    rr_type_error(paste0(ctx, " w/h must be scalar"), "E1002", ctx)
+  }
+  if (is.na(w) || is.na(h)) {
+    rr_value_error(paste0(ctx, " w/h cannot be NA"), "E2001", ctx)
+  }
+  if (!is.numeric(w) || !is.numeric(h)) {
+    rr_type_error(paste0(ctx, " w/h must be numeric"), "E1002", ctx)
+  }
+  if (w != floor(w) || h != floor(h)) {
+    rr_type_error(paste0(ctx, " w/h must be integer"), "E1002", ctx)
+  }
+  if (w < 1 || h < 1) {
+    rr_bounds_error(
+      paste0(ctx, " w/h must be >= 1"),
+      "E2007",
+      ctx
+    )
+  }
+  xx <- ifelse(x < 1, w, x)
+  xx <- ifelse(xx > w, 1, xx)
+  yy <- ifelse(y < 1, h, y)
+  yy <- ifelse(yy > h, 1, yy)
+  as.integer(((yy - 1) * w) + xx)
+}
+
+rr_idx_cube_vec_i <- function(f, x, y, size, ctx="cube_index") {
+  rr_round_rr <- function(v) {
+    r <- v %% 1
+    out <- v - r
+    ifelse(r >= 0.5, out + 1, out)
+  }
+
+  ff <- rr_round_rr(f)
+  xx <- rr_round_rr(x)
+  yy <- rr_round_rr(y)
+  ss <- rr_round_rr(size)
+
+  ff <- pmin(pmax(ff, 1), 6)
+  xx <- pmin(pmax(xx, 1), ss)
+  yy <- pmin(pmax(yy, 1), ss)
+
+  as.integer((((ff - 1) * ss) * ss) + ((xx - 1) * ss) + yy)
+}
+
 rr_index1_write <- function(i, ctx="index") {
   if (.rr_env$fast_runtime &&
       length(i) == 1L &&
@@ -741,6 +1025,53 @@ rr_shift_assign <- function(dest, src, d_start, d_end, s_start, s_end, ctx="shif
   }
 
   dest[ds:de] <- src[ss:se]
+  dest
+}
+
+rr_assign_slice <- function(dest, start, end, values, ctx="slice_assign") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+
+  s <- to_i1(start, paste0(ctx, " start"))
+  e <- to_i1(end, paste0(ctx, " end"))
+  if (e < s) return(dest)
+  if (s < 1L) rr_bounds_error(paste0(ctx, " start must be >= 1"), "E2007", paste0(ctx, " start"))
+  if (e > length(dest)) {
+    rr_bounds_error(
+      paste0(ctx, " end out of bounds: ", e, " > ", length(dest)),
+      "E2007",
+      ctx
+    )
+  }
+  expected <- e - s + 1L
+  if (length(values) != expected) {
+    rr_value_error(
+      paste0(ctx, " length mismatch (", length(values), " vs ", expected, ")"),
+      "E2001",
+      ctx
+    )
+  }
+  dest[s:e] <- values
+  dest
+}
+
+rr_assign_index_vec <- function(dest, idx, values, ctx="index_assign") {
+  ii <- rr_index_vec_floor(idx, paste0(ctx, " idx"))
+  n <- length(ii)
+  vv <- values
+  if (length(vv) != 1L && length(vv) != n) {
+    rr_value_error(
+      paste0(ctx, " value/index length mismatch (", length(vv), " vs ", n, ")"),
+      "E2001",
+      ctx
+    )
+  }
+  dest[ii] <- vv
   dest
 }
 
@@ -1055,7 +1386,57 @@ if (.rr_env$fast_runtime) {
   rr_i0_read <- function(i, ctx="index") as.integer(i)
   rr_i1 <- function(i, ctx="index") as.integer(i)
   rr_index1_read <- function(base, i, ctx="index") base[as.integer(i)]
+  rr_index1_read_idx <- function(base, i, ctx="index") {
+    v <- base[as.integer(i)]
+    if (is.integer(v)) v else as.integer(floor(v))
+  }
+  rr_index_vec_floor <- function(i, ctx="index") {
+    if (is.integer(i)) i else as.integer(floor(i))
+  }
+  rr_index1_read_vec <- function(base, i, ctx="index") {
+    if (is.integer(i)) base[i] else base[as.integer(i)]
+  }
+  rr_index1_read_vec_floor <- function(base, i, ctx="index") {
+    base[rr_index_vec_floor(i, ctx)]
+  }
+  rr_wrap_index_vec <- function(x, y, w, h, ctx="wrap_index") {
+    xx <- ifelse(x < 1, w, x)
+    xx <- ifelse(xx > w, 1, xx)
+    yy <- ifelse(y < 1, h, y)
+    yy <- ifelse(yy > h, 1, yy)
+    ((yy - 1) * w) + xx
+  }
+  rr_wrap_index_vec_i <- function(x, y, w, h, ctx="wrap_index") {
+    as.integer(rr_wrap_index_vec(x, y, w, h, ctx))
+  }
+  rr_idx_cube_vec_i <- function(f, x, y, size, ctx="cube_index") {
+    rr_round_rr <- function(v) {
+      r <- v %% 1
+      out <- v - r
+      ifelse(r >= 0.5, out + 1, out)
+    }
+    ff <- rr_round_rr(f)
+    xx <- rr_round_rr(x)
+    yy <- rr_round_rr(y)
+    ss <- rr_round_rr(size)
+    ff <- pmin(pmax(ff, 1), 6)
+    xx <- pmin(pmax(xx, 1), ss)
+    yy <- pmin(pmax(yy, 1), ss)
+    as.integer((((ff - 1) * ss) * ss) + ((xx - 1) * ss) + yy)
+  }
   rr_index1_write <- function(i, ctx="index") as.integer(i)
+  rr_assign_slice <- function(dest, start, end, values, ctx="slice_assign") {
+    s <- as.integer(start)
+    e <- as.integer(end)
+    if (e < s) return(dest)
+    dest[s:e] <- values
+    dest
+  }
+  rr_assign_index_vec <- function(dest, idx, values, ctx="index_assign") {
+    ii <- if (is.integer(idx)) idx else as.integer(idx)
+    dest[ii] <- values
+    dest
+  }
 }
 
 # -----------------------------------

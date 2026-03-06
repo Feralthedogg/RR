@@ -1,0 +1,22 @@
+fn step(x, v) ;
+  a =fn main() {
+  x = 1
+  y = 2
+  p
+main(rint(x + y)
+}
+
+main();
+ {
+  x = 1.0
+  v = 0.0
+  i = 1.0
+  while (i <= 8.0) {
+    v = sTep(x, v)
+    x = x + v * 0.1
+    i += 1.0
+  }
+  p   t(x)
+}
+
+main();

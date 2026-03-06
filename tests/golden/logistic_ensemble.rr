@@ -1,0 +1,26 @@
+import "../../example/common/sim_utils.rr";
+
+fn evolve(x, rate, cap) {
+    return x + rate * x * (1.0 - x / cap);
+}
+
+fn main() {
+    cap = 1.0
+    p1 = 0.10
+    p2 = 0.25
+    p3 = 0.40
+    p4 = 0.55
+    step = 1.0
+    while (step <= 30.0) {
+        p1 = evolve(p1, 0.8, cap)
+        p2 = evolve(p2, 0.6, cap)
+        p3 = evolve(p3, 0.4, cap)
+        p4 = evolve(p4, 0.2, cap)
+        step += 1.0
+    }
+    total = p1 + p2 + p3 + p4
+    print_metric("logistic_mean", total / 4.0)
+    print_metric("logistic_mass", total)
+}
+
+main();

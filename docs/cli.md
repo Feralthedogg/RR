@@ -1,49 +1,128 @@
 # CLI Reference
 
-## Commands
+RR supports direct compile, run, build, and watch workflows.
 
-RR supports three entry styles:
+## Invocation Forms
 
 ```bash
 RR <input.rr> [options]
 RR run [main.rr|dir|.] [options]
 RR build [dir|file.rr] [options]
+RR watch [main.rr|dir|.] [options]
 ```
 
-`cargo run -- ...` can be used in place of direct `RR ...`.
+During development, `cargo run -- ...` is equivalent to invoking `RR ...`.
 
-## Options
+## Command Behavior
 
-- `-O0`, `-O1`, `-O2`
-- `-o0`, `-o1`, `-o2` (accepted aliases)
-- `-o <file>`:
-  - legacy mode: output file path
-  - `build` mode: alias for `--out-dir`
-- `--out-dir <dir>`: build output directory
-- `--keep-r`: keep generated `.gen.R` when using `run`
-- `--no-runtime`: compile only (legacy mode)
+### Direct Compile
 
-## `run` Resolution Rules
+```bash
+RR input.rr -o out.R -O2
+```
 
-Input can be:
+- compiles one `.rr` file
+- writes one `.R` file
+- accepts `--no-runtime` for emission-only output
+
+### `run`
+
+```bash
+RR run .
+```
+
+Input may be:
 
 - `.`
 - a directory
 - a `.rr` file
 
-If directory or `.`, RR looks for `main.rr` in that directory.
+If input is `.` or a directory, RR resolves `main.rr` in that directory.
 
-## `build` Resolution Rules
+### `build`
 
-Input can be:
+```bash
+RR build . --out-dir build -O2
+```
 
-- directory: recursively compile all `.rr` files
-- single `.rr` file: compile one file into output directory
+Input may be:
+
+- a directory: recursively compile all `.rr` files
+- a single `.rr` file: compile one file into the output directory
+
+### `watch`
+
+```bash
+RR watch . -O2
+```
+
+- resolves targets like `run`
+- polls for changes
+- keeps an in-memory incremental session across ticks
+
+## Common Options
+
+- `-O0`, `-O1`, `-O2`
+- `-o0`, `-o1`, `-o2`
+  - accepted optimization aliases
+- `-o <file>`
+  - direct compile: output file
+  - `build`: alias for `--out-dir`
+- `--out-dir <dir>`
+  - output directory for `build`
+- `--no-runtime`
+  - compile without embedding the runtime prelude
+- `--keep-r`
+  - keep generated `.gen.R` after `run`
+- `--type-mode strict|gradual`
+- `--native-backend off|optional|required`
+- `--parallel-mode off|optional|required`
+- `--parallel-backend auto|r|openmp`
+- `--parallel-threads <N>`
+- `--parallel-min-trip <N>`
+
+## Incremental and Watch Options
+
+- `--incremental[=off|1|1,2|1,2,3|all]`
+- `--incremental-phases <off|1|1,2|1,2,3|all>`
+- `--strict-incremental-verify`
+- `--poll-ms <N>`
+  - watch polling interval in milliseconds
+- `--once`
+  - run one watch tick and exit
+
+Incremental phases are described in [Compiler Pipeline](compiler-pipeline.md).
+
+## Examples
+
+Compile one file:
+
+```bash
+RR path/to/input.rr -o out.R -O2
+```
+
+Run a directory project:
+
+```bash
+RR run path/to/project -O2
+```
+
+Build all `.rr` files under a tree:
+
+```bash
+RR build path/to/project --out-dir build -O2
+```
+
+Watch a project once with full incremental phases:
+
+```bash
+RR watch . --incremental=all --once -O2
+```
 
 ## Exit Behavior
 
 - `0`: success
-- non-zero: parse/semantic/runtime/compiler failure
+- non-zero: parse, semantic, compiler, or runtime failure
 
-Errors are formatted via RR diagnostics (colored when terminal supports ANSI or `RR_FORCE_COLOR` is set).
-Compiler execution is delegated to `src/compiler/pipeline.rs`; CLI handles the final exit code.
+RR returns structured diagnostics from the compiler core and lets the CLI choose the final process exit code.
+Colored output is enabled on supported terminals unless disabled by `NO_COLOR`.

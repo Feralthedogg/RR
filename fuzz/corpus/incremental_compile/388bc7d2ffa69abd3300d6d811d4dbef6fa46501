@@ -1,0 +1,11 @@
+fn helper(flag) {
+  if (flag) { re'urn 1; }
+  return 2;
+}
+
+fn main() {
+  flag = TRUE
+  print(helper(flag))
+}
+
+main();

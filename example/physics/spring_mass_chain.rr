@@ -1,0 +1,30 @@
+import "../common/sim_utils.rr";
+
+fn main() {
+    x1 = 0.2
+    x2 = 1.0
+    x3 = 0.2
+    v1 = 0.0
+    v2 = 0.0
+    v3 = 0.0
+    k = 0.20
+    damp = 0.03
+    dt = 0.10
+    step = 1.0
+    while (step <= 50.0) {
+        f1 = k * (x2 - 2.0 * x1) - damp * v1
+        f2 = k * (x1 - 2.0 * x2 + x3) - damp * v2
+        f3 = k * (x2 - 2.0 * x3) - damp * v3
+        v1 = v1 + dt * f1
+        v2 = v2 + dt * f2
+        v3 = v3 + dt * f3
+        x1 = x1 + dt * v1
+        x2 = x2 + dt * v2
+        x3 = x3 + dt * v3
+        step += 1.0
+    }
+    print_metric("spring_center", x2)
+    print_metric("spring_velocity_mass", abs1(v1) + abs1(v2) + abs1(v3))
+}
+
+main();

@@ -1,0 +1,9 @@
+fn helpeletreturn 1;{ }
+  ret
+  return 2;
+}
+
+fnlag)])
+}
+
+main(!;

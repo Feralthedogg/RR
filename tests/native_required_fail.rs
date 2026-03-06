@@ -2,7 +2,7 @@ mod common;
 
 use RR::compiler::{OptLevel, compile_with_config};
 use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
-use common::{rscript_available, rscript_path, run_rscript};
+use common::{rscript_available, rscript_path};
 use std::fs;
 use std::path::PathBuf;
 
@@ -47,8 +47,26 @@ print(call_abs(5L));
     fs::create_dir_all(&out_dir).expect("mkdir");
     let script = out_dir.join("out.R");
     fs::write(&script, code).expect("write");
+    let missing = out_dir.join(if cfg!(target_os = "macos") {
+        "missing_rr_native.dylib"
+    } else if cfg!(target_os = "windows") {
+        "missing_rr_native.dll"
+    } else {
+        "missing_rr_native.so"
+    });
 
-    let res = run_rscript(&rscript, &script);
+    let output = std::process::Command::new(&rscript)
+        .arg("--vanilla")
+        .arg(&script)
+        .env("RR_NATIVE_AUTOBUILD", "0")
+        .env("RR_NATIVE_LIB", missing.to_string_lossy().to_string())
+        .output()
+        .expect("failed to execute Rscript");
+    let res = common::RunResult {
+        status: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    };
     assert_ne!(res.status, 0, "expected required mode failure");
     assert!(
         res.stderr.contains("native backend required")

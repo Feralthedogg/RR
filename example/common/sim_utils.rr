@@ -1,0 +1,108 @@
+fn floor1(x) {
+    return x - (x % 1.0)
+}
+
+fn abs1(x) {
+    if (x < 0.0) { return 0.0 - x }
+    return x
+}
+
+fn max1(a, b) {
+    if (a > b) { return a }
+    return b
+}
+
+fn min1(a, b) {
+    if (a < b) { return a }
+    return b
+}
+
+fn clamp1(x, lo, hi) {
+    y = x
+    if (y < lo) { y = lo }
+    if (y > hi) { y = hi }
+    return y
+}
+
+fn sqrt1(x) {
+    if (x <= 0.0) { return 0.0 }
+    g = x * 0.5 + 0.5
+    i = 0.0
+    while (i < 8.0) {
+        g = 0.5 * (g + x / g)
+        i += 1.0
+    }
+    return g
+}
+
+fn periodic_left(i, n) {
+    if (i <= 1.0) { return n }
+    return i - 1.0
+}
+
+fn periodic_right(i, n) {
+    if (i >= n) { return 1.0 }
+    return i + 1.0
+}
+
+fn copy_vec(xs) {
+    n = length(xs)
+    out = rep.int(0.0, n)
+    i = 1.0
+    while (i <= n) {
+        out[i] = xs[i]
+        i += 1.0
+    }
+    return out
+}
+
+fn vector_sum(xs) {
+    s = 0.0
+    i = 1.0
+    n = length(xs)
+    while (i <= n) {
+        s += xs[i]
+        i += 1.0
+    }
+    return s
+}
+
+fn vector_mean(xs) {
+    return vector_sum(xs) / length(xs)
+}
+
+fn vector_abs_sum(xs) {
+    s = 0.0
+    i = 1.0
+    n = length(xs)
+    while (i <= n) {
+        s += abs1(xs[i])
+        i += 1.0
+    }
+    return s
+}
+
+fn lcg_uniform(n, seed) {
+    out = rep.int(0.0, n)
+    s = seed
+    i = 1.0
+    while (i <= n) {
+        s = (s * 1103515245.0 + 12345.0) % 2147483648.0
+        out[i] = s / 2147483648.0
+        i += 1.0
+    }
+    return out
+}
+
+fn unit_index(u, n) {
+    idx = 1.0 + floor1(u * n)
+    if (idx < 1.0) { idx = 1.0 }
+    if (idx > n) { idx = n }
+    return idx
+}
+
+fn print_metric(name, value) {
+    print(name)
+    print(value)
+    return value
+}

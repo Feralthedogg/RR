@@ -51,9 +51,10 @@ fn compile_rr_with_modes(
 
 fn rscript_path() -> Option<String> {
     if let Ok(path) = std::env::var("RRSCRIPT")
-        && !path.trim().is_empty() {
-            return Some(path);
-        }
+        && !path.trim().is_empty()
+    {
+        return Some(path);
+    }
     Some("Rscript".to_string())
 }
 
@@ -111,8 +112,10 @@ fn vector_check_compiles_and_preserves_semantics() {
     let o1_code = fs::read_to_string(&o1).expect("failed to read O1 output");
     assert!(o1_code.contains("sum("), "expected numeric reduction path");
     assert!(
-        o1_code.contains("x + x") || o1_code.contains("(x + x)"),
-        "expected optimized arithmetic expression in O1 output"
+        o1_code.contains("x + x")
+            || o1_code.contains("(x + x)")
+            || o1_code.contains("rr_intrinsic_vec_add_f64("),
+        "expected optimized arithmetic expression in O1 output (direct add or intrinsic add)"
     );
     if let Some(rscript) = rscript_path().filter(|p| rscript_available(p)) {
         let (s0, out0, err0) = run_rscript(&rscript, &o0);

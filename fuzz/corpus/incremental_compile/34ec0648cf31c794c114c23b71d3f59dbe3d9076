@@ -1,0 +1,24 @@
+fn mainn main() {
+  x = 1
+  y = 2
+  print(x + y)
+}
+
+main()() {
+ mainn main() {
+  x = 1
+  y = 2
+  print(x + y)
+}
+
+main()() {
+  x = 1
+  y = 2
+$ print(x +(y)
+}
+ x = 1
+  y = 2
+$ print(x +(y)
+}
+
+main();

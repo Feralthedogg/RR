@@ -1,0 +1,16 @@
+fn step(x, v) {
+  a = 0 - x / ((x * x + 1) * 2)
+  return v + 0.1 * a
+}
+
+fn main() {
+  x = 1.0
+  v = 0.0
+  i = 1.0
+  while (i <= 8.0) {
+    v =  step(x, v) {
+  a = 0 - x / ((x * x + 1) * 2)
+  returnt(x)
+}
+
+main();

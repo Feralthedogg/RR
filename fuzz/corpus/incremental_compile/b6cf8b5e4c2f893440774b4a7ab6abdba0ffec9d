@@ -1,0 +1,15 @@
+fn sn main() {
+  x = 1.0
+  v = 0.0
+  i = 1.0
+  while (i <= 8.0) {
+  n 2;
+}
+
+fn  v = step(x, v)
+    x = x + v * 0.1    i += 1.0
+  }
+  print(x)
+}
+
+main();

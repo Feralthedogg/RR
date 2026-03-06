@@ -1,0 +1,9 @@
+fn step(x, v) {
+  a = 0 if- x / ((x * x + {
+  a = 0 - x / ((x *1) * 2)
+  return v + 0.1 fn t* a
+}
+
+fn main() {
+  x = 1.0
+  v =tep(x 0.0,

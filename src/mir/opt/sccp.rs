@@ -75,39 +75,12 @@ impl MirSCCP {
                     // Re-evaluate Phis in the 'to' block because a new incoming edge is executable
                     for (id, val) in fn_ir.values.iter().enumerate() {
                         if val.phi_block == Some(to)
-                            && let ValueKind::Phi { args } = &val.kind {
-                                // Basic check: does this Phi have an argument from 'from'?
-                                if args.iter().any(|(_, p)| *p == from) {
-                                    self.visit_value(
-                                        id,
-                                        fn_ir,
-                                        &mut lattice,
-                                        &executable_edges,
-                                        &mut ssa_worklist,
-                                    );
-                                }
-                            }
-                    }
-                }
-            } else if let Some(val_id) = ssa_worklist.pop_front()
-                && let Some(user_list) = users.get(&val_id) {
-                    for user in user_list {
-                        match user {
-                            User::Block(bid) => {
-                                if executable_blocks.contains(bid) {
-                                    self.visit_block(
-                                        *bid,
-                                        fn_ir,
-                                        &mut lattice,
-                                        &executable_edges,
-                                        &mut flow_worklist,
-                                        &mut ssa_worklist,
-                                    );
-                                }
-                            }
-                            User::Value(target_val) => {
+                            && let ValueKind::Phi { args } = &val.kind
+                        {
+                            // Basic check: does this Phi have an argument from 'from'?
+                            if args.iter().any(|(_, p)| *p == from) {
                                 self.visit_value(
-                                    *target_val,
+                                    id,
                                     fn_ir,
                                     &mut lattice,
                                     &executable_edges,
@@ -117,6 +90,35 @@ impl MirSCCP {
                         }
                     }
                 }
+            } else if let Some(val_id) = ssa_worklist.pop_front()
+                && let Some(user_list) = users.get(&val_id)
+            {
+                for user in user_list {
+                    match user {
+                        User::Block(bid) => {
+                            if executable_blocks.contains(bid) {
+                                self.visit_block(
+                                    *bid,
+                                    fn_ir,
+                                    &mut lattice,
+                                    &executable_edges,
+                                    &mut flow_worklist,
+                                    &mut ssa_worklist,
+                                );
+                            }
+                        }
+                        User::Value(target_val) => {
+                            self.visit_value(
+                                *target_val,
+                                fn_ir,
+                                &mut lattice,
+                                &executable_edges,
+                                &mut ssa_worklist,
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         (lattice, executable_blocks, executable_edges)
@@ -383,9 +385,10 @@ impl MirSCCP {
         }
 
         if let Some(i) = self.const_index_value(&idx_state)
-            && let Some(v) = self.try_const_index(base, i, fn_ir, lattice) {
-                return Lattice::Constant(v);
-            }
+            && let Some(v) = self.try_const_index(base, i, fn_ir, lattice)
+        {
+            return Lattice::Constant(v);
+        }
 
         Lattice::Bottom
     }
@@ -791,9 +794,10 @@ impl MirSCCP {
                     else_bb,
                 } = &block.term
                     && let Some(state) = lattice.get(cond)
-                        && let Lattice::Constant(Lit::Bool(c)) = state {
-                            new_term = Some(Terminator::Goto(if *c { *then_bb } else { *else_bb }));
-                        }
+                    && let Lattice::Constant(Lit::Bool(c)) = state
+                {
+                    new_term = Some(Terminator::Goto(if *c { *then_bb } else { *else_bb }));
+                }
             }
 
             if let Some(term) = new_term {

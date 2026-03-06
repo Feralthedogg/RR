@@ -1,0 +1,7 @@
+foption<int>  x = 0
+ = 1
+ function y = 2
+  print(x + y)
+}
+
+main(n();

@@ -1,0 +1,21 @@
+import "../../example/common/sim_utils.rr";
+
+fn main() {
+    n = 256.0
+    xs = lcg_uniform(n, 12345.0)
+    ys = lcg_uniform(n, 67890.0)
+    inside = 0.0
+    i = 1.0
+    while (i <= n) {
+        dx = xs[i] - 0.5
+        dy = ys[i] - 0.5
+        if (dx * dx + dy * dy <= 0.25) {
+            inside += 1.0
+        }
+        i += 1.0
+    }
+    estimate = 4.0 * inside / n
+    print_metric("monte_carlo_pi", estimate)
+}
+
+main();

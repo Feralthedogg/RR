@@ -36,10 +36,11 @@ fn algebraic_simplify(fn_ir: &mut FnIR) -> bool {
         };
 
         if let Some(kind) = new_kind
-            && fn_ir.values[val_id].kind != kind {
-                fn_ir.values[val_id].kind = kind;
-                changed = true;
-            }
+            && fn_ir.values[val_id].kind != kind
+        {
+            fn_ir.values[val_id].kind = kind;
+            changed = true;
+        }
     }
 
     changed

@@ -1,5 +1,7 @@
 use crate::mir::*;
 use crate::syntax::ast::BinOp;
+use crate::typeck::{LenSym, PrimTy, TypeState, TypeTerm};
+use crate::{error::InternalCompilerError, error::Stage};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::env;
@@ -25,10 +27,58 @@ pub mod v_opt;
 
 pub struct TachyonEngine;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClampBound {
+    ConstOne,
+    ConstSix,
+    Var(String),
+}
+
+#[derive(Debug, Clone)]
+struct CubeIndexReturnVars {
+    face_var: String,
+    x_var: String,
+    y_var: String,
+    size_var: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TachyonProgressTier {
+    Always,
+    Heavy,
+    DeSsa,
+}
+
+impl TachyonProgressTier {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Always => "always",
+            Self::Heavy => "heavy",
+            Self::DeSsa => "de-ssa",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TachyonProgress {
+    pub tier: TachyonProgressTier,
+    pub completed: usize,
+    pub total: usize,
+    pub function: String,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TachyonPulseStats {
     pub vectorized: usize,
     pub reduced: usize,
+    pub vector_loops_seen: usize,
+    pub vector_skipped: usize,
+    pub vector_skip_no_iv: usize,
+    pub vector_skip_non_canonical_bound: usize,
+    pub vector_skip_unsupported_cfg_shape: usize,
+    pub vector_skip_indirect_index_access: usize,
+    pub vector_skip_store_effects: usize,
+    pub vector_skip_no_supported_pattern: usize,
     pub simplified_loops: usize,
     pub tco_hits: usize,
     pub sccp_hits: usize,
@@ -56,6 +106,14 @@ impl TachyonPulseStats {
     fn accumulate(&mut self, other: Self) {
         self.vectorized += other.vectorized;
         self.reduced += other.reduced;
+        self.vector_loops_seen += other.vector_loops_seen;
+        self.vector_skipped += other.vector_skipped;
+        self.vector_skip_no_iv += other.vector_skip_no_iv;
+        self.vector_skip_non_canonical_bound += other.vector_skip_non_canonical_bound;
+        self.vector_skip_unsupported_cfg_shape += other.vector_skip_unsupported_cfg_shape;
+        self.vector_skip_indirect_index_access += other.vector_skip_indirect_index_access;
+        self.vector_skip_store_effects += other.vector_skip_store_effects;
+        self.vector_skip_no_supported_pattern += other.vector_skip_no_supported_pattern;
         self.simplified_loops += other.simplified_loops;
         self.tco_hits += other.tco_hits;
         self.sccp_hits += other.sccp_hits;
@@ -112,10 +170,15 @@ impl TachyonEngine {
 
     fn verify_or_panic(fn_ir: &FnIR, stage: &str) {
         if let Err(e) = crate::mir::verify::verify_ir(fn_ir) {
-            panic!(
-                "MIR Verification Failed at {}: {}\nFunction: {}",
-                stage, e, fn_ir.name
-            );
+            InternalCompilerError::new(
+                Stage::Opt,
+                format!(
+                    "MIR verification failed at {} for function '{}': {}",
+                    stage, fn_ir.name, e
+                ),
+            )
+            .into_exception()
+            .display(None, None);
         }
     }
 
@@ -181,11 +244,16 @@ impl TachyonEngine {
     }
 
     fn selective_budget_enabled() -> bool {
-        Self::env_bool("RR_SELECTIVE_OPT_BUDGET", false) || Self::adaptive_ir_budget_enabled()
+        Self::env_bool("RR_SELECTIVE_OPT_BUDGET", true) || Self::adaptive_ir_budget_enabled()
     }
 
     fn heavy_pass_fn_ir() -> usize {
         Self::env_usize("RR_HEAVY_PASS_FN_IR", 650)
+    }
+
+    fn always_bce_fn_ir() -> usize {
+        let default_limit = Self::heavy_pass_fn_ir().max(64);
+        Self::env_usize("RR_ALWAYS_BCE_FN_IR", default_limit)
     }
 
     fn max_fn_opt_ms() -> u128 {
@@ -213,6 +281,618 @@ impl TachyonEngine {
                 Some(p.to_string())
             }
         })
+    }
+
+    fn wrap_trace_enabled() -> bool {
+        Self::env_bool("RR_WRAP_TRACE", false)
+    }
+
+    fn debug_wrap_candidates(all_fns: &FxHashMap<String, FnIR>) {
+        if !Self::wrap_trace_enabled() {
+            return;
+        }
+        let names = Self::sorted_fn_names(all_fns);
+        for name in names {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if fn_ir.params.len() != 4 {
+                continue;
+            }
+            let mut if_terms = 0usize;
+            let mut store_count = 0usize;
+            let mut eval_count = 0usize;
+            let mut phi_count = 0usize;
+            let mut call_names: FxHashSet<String> = FxHashSet::default();
+            for bb in &fn_ir.blocks {
+                if matches!(bb.term, Terminator::If { .. }) {
+                    if_terms += 1;
+                }
+                for ins in &bb.instrs {
+                    match ins {
+                        Instr::Eval { .. } => eval_count += 1,
+                        Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. } => store_count += 1,
+                        Instr::Assign { .. } => {}
+                    }
+                }
+            }
+            for v in &fn_ir.values {
+                match &v.kind {
+                    ValueKind::Phi { .. } => phi_count += 1,
+                    ValueKind::Call { callee, .. } => {
+                        call_names.insert(callee.clone());
+                    }
+                    _ => {}
+                }
+            }
+            eprintln!(
+                "   [wrap-cand] {} params=4 blocks={} if={} stores={} eval={} phi={} calls={:?}",
+                fn_ir.name,
+                fn_ir.blocks.len(),
+                if_terms,
+                store_count,
+                eval_count,
+                phi_count,
+                call_names
+            );
+        }
+    }
+
+    fn is_floor_like_single_positional_call(
+        callee: &str,
+        args: &[ValueId],
+        names: &[Option<String>],
+    ) -> bool {
+        if !matches!(callee, "floor" | "ceiling" | "trunc") {
+            return false;
+        }
+        if args.len() != 1 || names.len() > 1 {
+            return false;
+        }
+        names
+            .first()
+            .and_then(std::option::Option::as_ref)
+            .is_none()
+    }
+
+    fn param_slot_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
+        fn resolve_var_alias_slot(
+            fn_ir: &FnIR,
+            var: &str,
+            seen_vals: &mut FxHashSet<ValueId>,
+            seen_vars: &mut FxHashSet<String>,
+        ) -> Option<usize> {
+            if !seen_vars.insert(var.to_string()) {
+                return None;
+            }
+            let mut found = false;
+            let mut slot: Option<usize> = None;
+            for bb in &fn_ir.blocks {
+                for ins in &bb.instrs {
+                    let Instr::Assign { dst, src, .. } = ins else {
+                        continue;
+                    };
+                    if dst != var {
+                        continue;
+                    }
+                    found = true;
+                    let src_slot = resolve_value_slot(fn_ir, *src, seen_vals, seen_vars)?;
+                    match slot {
+                        None => slot = Some(src_slot),
+                        Some(prev) if prev == src_slot => {}
+                        Some(_) => return None,
+                    }
+                }
+            }
+            if !found {
+                return None;
+            }
+            slot
+        }
+
+        fn resolve_value_slot(
+            fn_ir: &FnIR,
+            vid: ValueId,
+            seen_vals: &mut FxHashSet<ValueId>,
+            seen_vars: &mut FxHashSet<String>,
+        ) -> Option<usize> {
+            if !seen_vals.insert(vid) {
+                return None;
+            }
+            match &fn_ir.values.get(vid)?.kind {
+                ValueKind::Param { index } => Some(*index),
+                ValueKind::Load { var } => fn_ir
+                    .params
+                    .iter()
+                    .position(|p| p == var)
+                    .or_else(|| resolve_var_alias_slot(fn_ir, var, seen_vals, seen_vars)),
+                ValueKind::Phi { args } => {
+                    let mut out: Option<usize> = None;
+                    let mut saw = false;
+                    for (a, _) in args {
+                        if *a == vid {
+                            continue;
+                        }
+                        let slot = resolve_value_slot(fn_ir, *a, seen_vals, seen_vars)?;
+                        saw = true;
+                        match out {
+                            None => out = Some(slot),
+                            Some(prev) if prev == slot => {}
+                            Some(_) => return None,
+                        }
+                    }
+                    if saw { out } else { None }
+                }
+                _ => None,
+            }
+        }
+
+        resolve_value_slot(
+            fn_ir,
+            vid,
+            &mut FxHashSet::default(),
+            &mut FxHashSet::default(),
+        )
+    }
+
+    fn int_vector_ty_for_param_slot(slot: usize) -> TypeState {
+        TypeState::vector(PrimTy::Int, false).with_len(Some(LenSym((slot as u32) + 1)))
+    }
+
+    fn collect_floor_index_param_slots(fn_ir: &FnIR) -> FxHashSet<usize> {
+        let mut slots = FxHashSet::default();
+        for v in &fn_ir.values {
+            let ValueKind::Call {
+                callee,
+                args,
+                names,
+            } = &v.kind
+            else {
+                continue;
+            };
+            if callee == "rr_index1_read_idx" && !args.is_empty() {
+                if let Some(slot) = Self::param_slot_for_value(fn_ir, args[0]) {
+                    slots.insert(slot);
+                }
+                continue;
+            }
+            if !Self::is_floor_like_single_positional_call(callee, args, names) {
+                continue;
+            }
+            let Some(inner) = args.first().copied() else {
+                continue;
+            };
+            match &fn_ir.values[inner].kind {
+                ValueKind::Index1D { base, .. } => {
+                    if let Some(slot) = Self::param_slot_for_value(fn_ir, *base) {
+                        slots.insert(slot);
+                    }
+                }
+                ValueKind::Call {
+                    callee: inner_callee,
+                    args: inner_args,
+                    names: inner_names,
+                } if matches!(
+                    inner_callee.as_str(),
+                    "rr_index1_read" | "rr_index1_read_strict" | "rr_index1_read_floor"
+                ) && (inner_args.len() == 2 || inner_args.len() == 3)
+                    && inner_names.iter().take(2).all(std::option::Option::is_none) =>
+                {
+                    if let Some(slot) = Self::param_slot_for_value(fn_ir, inner_args[0]) {
+                        slots.insert(slot);
+                    }
+                }
+                _ => {}
+            }
+        }
+        slots
+    }
+
+    fn value_base_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+        fn rec(fn_ir: &FnIR, vid: ValueId, seen: &mut FxHashSet<ValueId>) -> Option<String> {
+            if !seen.insert(vid) {
+                return None;
+            }
+            match &fn_ir.values.get(vid)?.kind {
+                ValueKind::Load { var } => Some(var.clone()),
+                ValueKind::Param { index } => fn_ir.params.get(*index).cloned(),
+                ValueKind::Phi { args } => {
+                    let mut out: Option<String> = None;
+                    let mut saw = false;
+                    for (a, _) in args {
+                        if *a == vid {
+                            continue;
+                        }
+                        let name = rec(fn_ir, *a, seen)?;
+                        saw = true;
+                        match &out {
+                            None => out = Some(name),
+                            Some(prev) if prev == &name => {}
+                            Some(_) => return None,
+                        }
+                    }
+                    if saw { out } else { None }
+                }
+                _ => None,
+            }
+        }
+        rec(fn_ir, vid, &mut FxHashSet::default())
+    }
+
+    fn collect_floor_index_base_vars(fn_ir: &FnIR) -> FxHashSet<String> {
+        let mut vars = FxHashSet::default();
+        for v in &fn_ir.values {
+            let ValueKind::Call {
+                callee,
+                args,
+                names,
+            } = &v.kind
+            else {
+                continue;
+            };
+            if callee == "rr_index1_read_idx" && !args.is_empty() {
+                if let Some(var) = Self::value_base_var_name(fn_ir, args[0]) {
+                    vars.insert(var);
+                }
+                continue;
+            }
+            if !Self::is_floor_like_single_positional_call(callee, args, names) {
+                continue;
+            }
+            let Some(inner) = args.first().copied() else {
+                continue;
+            };
+            match &fn_ir.values[inner].kind {
+                ValueKind::Index1D { base, .. } => {
+                    if let Some(var) = Self::value_base_var_name(fn_ir, *base) {
+                        vars.insert(var);
+                    }
+                }
+                ValueKind::Call {
+                    callee: inner_callee,
+                    args: inner_args,
+                    names: inner_names,
+                } if matches!(
+                    inner_callee.as_str(),
+                    "rr_index1_read" | "rr_index1_read_strict" | "rr_index1_read_floor"
+                ) && (inner_args.len() == 2 || inner_args.len() == 3)
+                    && inner_names.iter().take(2).all(std::option::Option::is_none) =>
+                {
+                    if let Some(var) = Self::value_base_var_name(fn_ir, inner_args[0]) {
+                        vars.insert(var);
+                    }
+                }
+                _ => {}
+            }
+        }
+        vars
+    }
+
+    fn value_is_proven_int_index_vector(
+        fn_ir: &FnIR,
+        vid: ValueId,
+        proven_param_slots: &FxHashSet<usize>,
+    ) -> bool {
+        let val = &fn_ir.values[vid];
+        if val.value_ty.is_numeric_vector() && val.value_ty.prim == PrimTy::Int {
+            return true;
+        }
+        if matches!(&val.value_term, TypeTerm::Vector(inner) if **inner == TypeTerm::Int) {
+            return true;
+        }
+        if let Some(slot) = Self::param_slot_for_value(fn_ir, vid) {
+            return proven_param_slots.contains(&slot);
+        }
+        false
+    }
+
+    fn collect_proven_floor_index_param_slots(
+        all_fns: &FxHashMap<String, FnIR>,
+    ) -> FxHashMap<String, FxHashSet<usize>> {
+        let mut floor_slots_by_fn: FxHashMap<String, FxHashSet<usize>> = FxHashMap::default();
+        let ordered_names = Self::sorted_fn_names(all_fns);
+        for name in &ordered_names {
+            let Some(fn_ir) = all_fns.get(name) else {
+                continue;
+            };
+            let slots = Self::collect_floor_index_param_slots(fn_ir);
+            if !slots.is_empty() {
+                floor_slots_by_fn.insert(name.clone(), slots);
+            }
+        }
+        if floor_slots_by_fn.is_empty() {
+            return FxHashMap::default();
+        }
+
+        let mut proven_by_fn: FxHashMap<String, FxHashSet<usize>> = FxHashMap::default();
+        let mut changed = true;
+        let mut guard = 0usize;
+        while changed && guard < 16 {
+            guard += 1;
+            changed = false;
+            for callee_name in &ordered_names {
+                let Some(floor_slots) = floor_slots_by_fn.get(callee_name) else {
+                    continue;
+                };
+                let mut sorted_slots: Vec<usize> = floor_slots.iter().copied().collect();
+                sorted_slots.sort_unstable();
+                for slot in sorted_slots {
+                    if proven_by_fn
+                        .get(callee_name)
+                        .is_some_and(|slots| slots.contains(&slot))
+                    {
+                        continue;
+                    }
+                    let mut saw_call = false;
+                    let mut all_calls_proven = true;
+                    for caller_name in &ordered_names {
+                        let Some(caller_ir) = all_fns.get(caller_name) else {
+                            continue;
+                        };
+                        let empty_slots = FxHashSet::default();
+                        let caller_slots = proven_by_fn.get(caller_name).unwrap_or(&empty_slots);
+                        for val in &caller_ir.values {
+                            let ValueKind::Call { callee, args, .. } = &val.kind else {
+                                continue;
+                            };
+                            if callee != callee_name {
+                                continue;
+                            }
+                            saw_call = true;
+                            let Some(arg) = args.get(slot).copied() else {
+                                all_calls_proven = false;
+                                break;
+                            };
+                            if !Self::value_is_proven_int_index_vector(caller_ir, arg, caller_slots)
+                            {
+                                all_calls_proven = false;
+                                break;
+                            }
+                        }
+                        if !all_calls_proven {
+                            break;
+                        }
+                    }
+                    if saw_call && all_calls_proven {
+                        let inserted = proven_by_fn
+                            .entry(callee_name.clone())
+                            .or_default()
+                            .insert(slot);
+                        if inserted {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        proven_by_fn
+    }
+
+    fn has_var_index_vector_canonicalization(fn_ir: &FnIR, var_name: &str) -> bool {
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                if dst != var_name {
+                    continue;
+                }
+                let ValueKind::Call { callee, args, .. } = &fn_ir.values[*src].kind else {
+                    continue;
+                };
+                if callee != "rr_index_vec_floor" || args.is_empty() {
+                    continue;
+                }
+                if let Some(base_name) = Self::value_base_var_name(fn_ir, args[0])
+                    && base_name == var_name
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn mark_floor_index_param_metadata(fn_ir: &mut FnIR, slots: &FxHashSet<usize>) -> bool {
+        let mut changed = false;
+        for vid in 0..fn_ir.values.len() {
+            let kind = fn_ir.values[vid].kind.clone();
+            match kind {
+                ValueKind::Param { index } if slots.contains(&index) => {
+                    let int_vec = Self::int_vector_ty_for_param_slot(index);
+                    if fn_ir.values[vid].value_ty != int_vec {
+                        fn_ir.values[vid].value_ty = int_vec;
+                        changed = true;
+                    }
+                    if !fn_ir.values[vid]
+                        .facts
+                        .has(Facts::IS_VECTOR | Facts::INT_SCALAR)
+                    {
+                        fn_ir.values[vid]
+                            .facts
+                            .add(Facts::IS_VECTOR | Facts::INT_SCALAR);
+                        changed = true;
+                    }
+                }
+                ValueKind::Load { var } => {
+                    let Some(slot) = fn_ir.params.iter().position(|p| p == &var) else {
+                        continue;
+                    };
+                    if !slots.contains(&slot) {
+                        continue;
+                    }
+                    let int_vec = Self::int_vector_ty_for_param_slot(slot);
+                    if fn_ir.values[vid].value_ty != int_vec {
+                        fn_ir.values[vid].value_ty = int_vec;
+                        changed = true;
+                    }
+                    if !fn_ir.values[vid]
+                        .facts
+                        .has(Facts::IS_VECTOR | Facts::INT_SCALAR)
+                    {
+                        fn_ir.values[vid]
+                            .facts
+                            .add(Facts::IS_VECTOR | Facts::INT_SCALAR);
+                        changed = true;
+                    }
+                }
+                ValueKind::Index1D { base, .. } => {
+                    let Some(slot) = Self::param_slot_for_value(fn_ir, base) else {
+                        continue;
+                    };
+                    if !slots.contains(&slot) {
+                        continue;
+                    }
+                    let int_scalar = TypeState::scalar(PrimTy::Int, false);
+                    if fn_ir.values[vid].value_ty != int_scalar {
+                        fn_ir.values[vid].value_ty = int_scalar;
+                        changed = true;
+                    }
+                    if !fn_ir.values[vid].facts.has(Facts::INT_SCALAR) {
+                        fn_ir.values[vid].facts.add(Facts::INT_SCALAR);
+                        changed = true;
+                    }
+                }
+                ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } if Self::is_floor_like_single_positional_call(&callee, &args, &names) => {
+                    let Some(inner) = args.first().copied() else {
+                        continue;
+                    };
+                    let slot = match &fn_ir.values[inner].kind {
+                        ValueKind::Index1D { base, .. } => Self::param_slot_for_value(fn_ir, *base),
+                        ValueKind::Call {
+                            callee: inner_callee,
+                            args: inner_args,
+                            names: inner_names,
+                        } if matches!(
+                            inner_callee.as_str(),
+                            "rr_index1_read" | "rr_index1_read_strict" | "rr_index1_read_floor"
+                        ) && (inner_args.len() == 2 || inner_args.len() == 3)
+                            && inner_names.iter().take(2).all(std::option::Option::is_none) =>
+                        {
+                            Self::param_slot_for_value(fn_ir, inner_args[0])
+                        }
+                        _ => None,
+                    };
+                    let Some(slot) = slot else {
+                        continue;
+                    };
+                    if !slots.contains(&slot) {
+                        continue;
+                    }
+                    let int_scalar = TypeState::scalar(PrimTy::Int, false);
+                    if fn_ir.values[vid].value_ty != int_scalar {
+                        fn_ir.values[vid].value_ty = int_scalar;
+                        changed = true;
+                    }
+                    if !fn_ir.values[vid].facts.has(Facts::INT_SCALAR) {
+                        fn_ir.values[vid].facts.add(Facts::INT_SCALAR);
+                        changed = true;
+                    }
+                }
+                ValueKind::Call { callee, args, .. } if callee == "rr_index1_read_idx" => {
+                    if args.is_empty() {
+                        continue;
+                    }
+                    let Some(slot) = Self::param_slot_for_value(fn_ir, args[0]) else {
+                        continue;
+                    };
+                    if !slots.contains(&slot) {
+                        continue;
+                    }
+                    let int_scalar = TypeState::scalar(PrimTy::Int, false);
+                    if fn_ir.values[vid].value_ty != int_scalar {
+                        fn_ir.values[vid].value_ty = int_scalar;
+                        changed = true;
+                    }
+                    if !fn_ir.values[vid].facts.has(Facts::INT_SCALAR) {
+                        fn_ir.values[vid].facts.add(Facts::INT_SCALAR);
+                        changed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    fn canonicalize_floor_index_params(
+        fn_ir: &mut FnIR,
+        proven_param_slots: Option<&FxHashSet<usize>>,
+    ) -> bool {
+        let slots = Self::collect_floor_index_param_slots(fn_ir);
+        let base_vars = Self::collect_floor_index_base_vars(fn_ir);
+        if slots.is_empty() && base_vars.is_empty() {
+            return false;
+        }
+
+        let target_bb = if fn_ir.entry < fn_ir.blocks.len() {
+            fn_ir.entry
+        } else if fn_ir.body_head < fn_ir.blocks.len() {
+            fn_ir.body_head
+        } else {
+            return false;
+        };
+
+        let mut sorted_vars: Vec<String> = base_vars.into_iter().collect();
+        sorted_vars.sort();
+
+        let mut prefix: Vec<Instr> = Vec::new();
+        let mut changed = false;
+        for var_name in sorted_vars {
+            let skip_canonicalize = fn_ir
+                .params
+                .iter()
+                .position(|p| p == &var_name)
+                .is_some_and(|slot| proven_param_slots.is_some_and(|slots| slots.contains(&slot)));
+            if skip_canonicalize {
+                continue;
+            }
+            if Self::has_var_index_vector_canonicalization(fn_ir, &var_name) {
+                continue;
+            }
+            let load = fn_ir.add_value(
+                ValueKind::Load {
+                    var: var_name.clone(),
+                },
+                crate::utils::Span::dummy(),
+                Facts::empty(),
+                Some(var_name.clone()),
+            );
+            let mut facts = Facts::empty();
+            facts.add(Facts::IS_VECTOR | Facts::INT_SCALAR | Facts::ONE_BASED);
+            let floor_vec = fn_ir.add_value(
+                ValueKind::Call {
+                    callee: "rr_index_vec_floor".to_string(),
+                    args: vec![load],
+                    names: vec![None],
+                },
+                crate::utils::Span::dummy(),
+                facts,
+                None,
+            );
+            fn_ir.values[load].value_ty = TypeState::vector(PrimTy::Int, false);
+            fn_ir.values[floor_vec].value_ty = TypeState::vector(PrimTy::Int, false);
+            prefix.push(Instr::Assign {
+                dst: var_name,
+                src: floor_vec,
+                span: crate::utils::Span::dummy(),
+            });
+            changed = true;
+        }
+
+        if !prefix.is_empty() {
+            let bb = &mut fn_ir.blocks[target_bb];
+            let mut merged = prefix;
+            merged.extend(std::mem::take(&mut bb.instrs));
+            bb.instrs = merged;
+        }
+
+        changed | Self::mark_floor_index_param_metadata(fn_ir, &slots)
     }
 
     fn load_hot_profile_counts() -> FxHashMap<String, usize> {
@@ -410,7 +1090,11 @@ impl TachyonEngine {
         let mut mem_like = 0usize;
         let mut arith_like = 0usize;
 
-        for fn_ir in all_fns.values() {
+        let ordered_names = Self::sorted_fn_names(all_fns);
+        for name in &ordered_names {
+            let Some(fn_ir) = all_fns.get(name) else {
+                continue;
+            };
             for blk in &fn_ir.blocks {
                 if matches!(blk.term, Terminator::If { .. }) {
                     branch_terms += 1;
@@ -493,8 +1177,12 @@ impl TachyonEngine {
 
         let mut selected = FxHashSet::default();
         let needs_budget = total_ir > program_limit || max_fn_ir > fn_limit;
+        let ordered_names = Self::sorted_fn_names(all_fns);
         if !needs_budget {
-            for (name, fn_ir) in all_fns {
+            for name in &ordered_names {
+                let Some(fn_ir) = all_fns.get(name) else {
+                    continue;
+                };
                 if !fn_ir.unsupported_dynamic {
                     selected.insert(name.clone());
                 }
@@ -512,7 +1200,10 @@ impl TachyonEngine {
         let mut profiles = Vec::new();
         let soft_fn_limit = fn_limit.min(Self::heavy_pass_fn_ir().max(64));
         let max_profile_count = profile_counts.values().copied().max().unwrap_or(0);
-        for (name, fn_ir) in all_fns {
+        for name in &ordered_names {
+            let Some(fn_ir) = all_fns.get(name) else {
+                continue;
+            };
             if fn_ir.unsupported_dynamic {
                 continue;
             }
@@ -561,9 +1252,9 @@ impl TachyonEngine {
                 .filter(|p| p.ir_size <= soft_fn_limit.saturating_mul(2))
                 .min_by_key(|p| p.ir_size)
                 .or_else(|| profiles.iter().min_by_key(|p| p.ir_size))
-            {
-                selected.insert(fallback.name.clone());
-            }
+        {
+            selected.insert(fallback.name.clone());
+        }
 
         ProgramOptPlan {
             program_limit,
@@ -580,10 +1271,20 @@ impl TachyonEngine {
         Self::build_opt_plan_with_profile(all_fns, &profile_counts)
     }
 
+    fn sorted_fn_names(all_fns: &FxHashMap<String, FnIR>) -> Vec<String> {
+        let mut names: Vec<String> = all_fns.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
     // Required lowering-to-codegen stabilization passes.
     // This must run even in O0, because codegen cannot emit Phi.
     pub fn stabilize_for_codegen(&self, all_fns: &mut FxHashMap<String, FnIR>) {
-        for (_, fn_ir) in all_fns.iter_mut() {
+        let ordered_names = Self::sorted_fn_names(all_fns);
+        for name in &ordered_names {
+            let Some(fn_ir) = all_fns.get_mut(name) else {
+                continue;
+            };
             if !Self::verify_or_reject(fn_ir, "PrepareForCodegen/Start") {
                 continue;
             }
@@ -604,13 +1305,22 @@ impl TachyonEngine {
         }
     }
 
-    fn run_always_tier_with_stats(&self, fn_ir: &mut FnIR) -> TachyonPulseStats {
+    fn run_always_tier_with_stats(
+        &self,
+        fn_ir: &mut FnIR,
+        proven_param_slots: Option<&FxHashSet<usize>>,
+    ) -> TachyonPulseStats {
         let mut stats = TachyonPulseStats::default();
         if fn_ir.unsupported_dynamic {
             return stats;
         }
         if !Self::verify_or_reject(fn_ir, "AlwaysTier/Start") {
             return stats;
+        }
+        let canonicalized_index_params =
+            Self::canonicalize_floor_index_params(fn_ir, proven_param_slots);
+        if canonicalized_index_params {
+            Self::maybe_verify(fn_ir, "After AlwaysTier/ParamIndexCanonicalize");
         }
 
         stats.always_tier_functions = 1;
@@ -619,7 +1329,9 @@ impl TachyonEngine {
         let max_iters = Self::always_tier_max_iters();
         let mut seen = FxHashSet::default();
         seen.insert(Self::fn_ir_fingerprint(fn_ir));
-        let run_light_sccp = Self::fn_ir_size(fn_ir) <= Self::heavy_pass_fn_ir().saturating_mul(2);
+        let fn_ir_size = Self::fn_ir_size(fn_ir);
+        let run_light_sccp = fn_ir_size <= Self::heavy_pass_fn_ir().saturating_mul(2);
+        let loop_opt = loop_opt::MirLoopOptimizer::new();
 
         while changed && iter < max_iters {
             iter += 1;
@@ -649,6 +1361,19 @@ impl TachyonEngine {
                 Self::maybe_verify(fn_ir, "After AlwaysTier/Intrinsics");
             }
 
+            let type_spec_changed = type_specialize::optimize(fn_ir);
+            if type_spec_changed {
+                changed = true;
+            }
+            Self::maybe_verify(fn_ir, "After AlwaysTier/TypeSpecialize");
+
+            let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
+            if loop_changed_count > 0 {
+                stats.simplified_loops += loop_changed_count;
+                changed = true;
+            }
+            Self::maybe_verify(fn_ir, "After AlwaysTier/LoopOpt");
+
             let dce_changed = self.dce(fn_ir);
             if dce_changed {
                 stats.dce_hits += 1;
@@ -665,6 +1390,16 @@ impl TachyonEngine {
             }
         }
 
+        // Apply one bounded BCE sweep after convergence so skipped heavy-tier functions
+        // can still get guard elimination opportunities without large compile-time spikes.
+        if fn_ir_size <= Self::always_bce_fn_ir() {
+            let bce_changed = bce::optimize(fn_ir);
+            if bce_changed {
+                stats.bce_hits += 1;
+            }
+            Self::maybe_verify(fn_ir, "After AlwaysTier/BCE");
+        }
+
         let _ = Self::verify_or_reject(fn_ir, "AlwaysTier/End");
         stats
     }
@@ -676,6 +1411,39 @@ impl TachyonEngine {
     pub fn run_program_with_stats(
         &self,
         all_fns: &mut FxHashMap<String, FnIR>,
+    ) -> TachyonPulseStats {
+        self.run_program_with_stats_inner(all_fns, None)
+    }
+
+    pub fn run_program_with_stats_progress(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        on_progress: &mut dyn FnMut(TachyonProgress),
+    ) -> TachyonPulseStats {
+        self.run_program_with_stats_inner(all_fns, Some(on_progress))
+    }
+
+    fn emit_progress(
+        progress: &mut Option<&mut dyn FnMut(TachyonProgress)>,
+        tier: TachyonProgressTier,
+        completed: usize,
+        total: usize,
+        function: &str,
+    ) {
+        if let Some(cb) = progress.as_deref_mut() {
+            cb(TachyonProgress {
+                tier,
+                completed,
+                total,
+                function: function.to_string(),
+            });
+        }
+    }
+
+    fn run_program_with_stats_inner(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        mut progress: Option<&mut dyn FnMut(TachyonProgress)>,
     ) -> TachyonPulseStats {
         /*
         // 1. Clean
@@ -713,11 +1481,55 @@ impl TachyonEngine {
         stats.full_opt_ir_limit = plan.program_limit;
         stats.full_opt_fn_limit = plan.fn_limit;
         stats.selective_budget_mode = plan.selective_mode && selective_enabled;
+        let ordered_names = Self::sorted_fn_names(all_fns);
+        let ordered_total = ordered_names.len();
+        let proven_floor_param_slots = Self::collect_proven_floor_index_param_slots(all_fns);
 
         // Tier A (always): lightweight canonicalization for every safe function.
-        for (_, fn_ir) in all_fns.iter_mut() {
-            let s = self.run_always_tier_with_stats(fn_ir);
+        for (idx, name) in ordered_names.iter().enumerate() {
+            let Some(fn_ir) = all_fns.get_mut(name) else {
+                continue;
+            };
+            let s = self.run_always_tier_with_stats(fn_ir, proven_floor_param_slots.get(name));
             stats.accumulate(s);
+            Self::emit_progress(
+                &mut progress,
+                TachyonProgressTier::Always,
+                idx + 1,
+                ordered_total,
+                name,
+            );
+        }
+        Self::debug_wrap_candidates(all_fns);
+
+        let wrap_index_helpers = if run_heavy_tier {
+            Self::collect_wrap_index_helpers(all_fns)
+        } else {
+            FxHashSet::default()
+        };
+        if !wrap_index_helpers.is_empty() {
+            let rewrites = Self::rewrite_wrap_index_helper_calls(all_fns, &wrap_index_helpers);
+            if Self::wrap_trace_enabled() && rewrites > 0 {
+                eprintln!(
+                    "   [wrap] rewrote {} call site(s) using helper(s): {:?}",
+                    rewrites, wrap_index_helpers
+                );
+            }
+        }
+
+        let cube_index_helpers = if run_heavy_tier {
+            Self::collect_cube_index_helpers(all_fns)
+        } else {
+            FxHashSet::default()
+        };
+        if !cube_index_helpers.is_empty() {
+            let rewrites = Self::rewrite_cube_index_helper_calls(all_fns, &cube_index_helpers);
+            if Self::wrap_trace_enabled() && rewrites > 0 {
+                eprintln!(
+                    "   [cube] rewrote {} call site(s) using helper(s): {:?}",
+                    rewrites, cube_index_helpers
+                );
+            }
         }
 
         let heavy_targets_exist =
@@ -729,10 +1541,20 @@ impl TachyonEngine {
         };
 
         // Tier B (selective-heavy): optimize full pass pipeline only for selected functions.
-        for (name, fn_ir) in all_fns.iter_mut() {
+        for (idx, name) in ordered_names.iter().enumerate() {
+            let Some(fn_ir) = all_fns.get_mut(name) else {
+                continue;
+            };
             if fn_ir.unsupported_dynamic {
                 stats.skipped_functions += 1;
                 let _ = Self::verify_or_reject(fn_ir, "SkipOpt/UnsupportedDynamic");
+                Self::emit_progress(
+                    &mut progress,
+                    TachyonProgressTier::Heavy,
+                    idx + 1,
+                    ordered_total,
+                    name,
+                );
                 continue;
             }
             let selected = !plan.selective_mode || plan.selected_functions.contains(name);
@@ -744,11 +1566,29 @@ impl TachyonEngine {
                     "SkipOpt/Budget"
                 };
                 let _ = Self::verify_or_reject(fn_ir, reason);
+                Self::emit_progress(
+                    &mut progress,
+                    TachyonProgressTier::Heavy,
+                    idx + 1,
+                    ordered_total,
+                    name,
+                );
                 continue;
             }
             stats.optimized_functions += 1;
-            let s = self.run_function_with_stats(fn_ir, &callmap_user_whitelist);
+            let s = self.run_function_with_stats_with_proven(
+                fn_ir,
+                &callmap_user_whitelist,
+                proven_floor_param_slots.get(name),
+            );
             stats.accumulate(s);
+            Self::emit_progress(
+                &mut progress,
+                TachyonProgressTier::Heavy,
+                idx + 1,
+                ordered_total,
+                name,
+            );
         }
 
         // Tier C (full-program): bounded inter-procedural inlining.
@@ -766,14 +1606,21 @@ impl TachyonEngine {
                 iter += 1;
                 // Inlining needs access to the whole map
                 let local_changed = inliner.optimize_with_hot_filter(all_fns, hot_filter);
-                for (_, fn_ir) in all_fns.iter() {
+                let ordered_names = Self::sorted_fn_names(all_fns);
+                for name in &ordered_names {
+                    let Some(fn_ir) = all_fns.get(name) else {
+                        continue;
+                    };
                     Self::maybe_verify(fn_ir, "After Inlining");
                 }
                 if local_changed {
                     stats.inline_rounds += 1;
                     changed = true;
                     // Re-optimize each function if inlining happened
-                    for (_, fn_ir) in all_fns.iter_mut() {
+                    for name in &ordered_names {
+                        let Some(fn_ir) = all_fns.get_mut(name) else {
+                            continue;
+                        };
                         if fn_ir.unsupported_dynamic {
                             Self::maybe_verify(
                                 fn_ir,
@@ -800,7 +1647,12 @@ impl TachyonEngine {
         }
 
         // 3. De-SSA (Phi elimination via parallel copy) before codegen.
-        for (_, fn_ir) in all_fns.iter_mut() {
+        let ordered_names = Self::sorted_fn_names(all_fns);
+        let de_ssa_total = ordered_names.len();
+        for (idx, name) in ordered_names.iter().enumerate() {
+            let Some(fn_ir) = all_fns.get_mut(name) else {
+                continue;
+            };
             let de_ssa_changed = de_ssa::run(fn_ir);
             if de_ssa_changed {
                 stats.de_ssa_hits += 1;
@@ -817,6 +1669,13 @@ impl TachyonEngine {
                 }
             }
             let _ = Self::verify_or_reject(fn_ir, "After De-SSA");
+            Self::emit_progress(
+                &mut progress,
+                TachyonProgressTier::DeSsa,
+                idx + 1,
+                de_ssa_total,
+                name,
+            );
         }
         stats
     }
@@ -830,6 +1689,24 @@ impl TachyonEngine {
         &self,
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
+    ) -> TachyonPulseStats {
+        self.run_function_with_proven_index_slots(fn_ir, callmap_user_whitelist, None)
+    }
+
+    fn run_function_with_stats_with_proven(
+        &self,
+        fn_ir: &mut FnIR,
+        callmap_user_whitelist: &FxHashSet<String>,
+        proven_param_slots: Option<&FxHashSet<usize>>,
+    ) -> TachyonPulseStats {
+        self.run_function_with_proven_index_slots(fn_ir, callmap_user_whitelist, proven_param_slots)
+    }
+
+    fn run_function_with_proven_index_slots(
+        &self,
+        fn_ir: &mut FnIR,
+        callmap_user_whitelist: &FxHashSet<String>,
+        proven_param_slots: Option<&FxHashSet<usize>>,
     ) -> TachyonPulseStats {
         let mut stats = TachyonPulseStats::default();
         let mut changed = true;
@@ -852,6 +1729,11 @@ impl TachyonEngine {
         // Initial Verify
         if !Self::verify_or_reject(fn_ir, "Start") {
             return stats;
+        }
+        let canonicalized_index_params =
+            Self::canonicalize_floor_index_params(fn_ir, proven_param_slots);
+        if canonicalized_index_params {
+            Self::maybe_verify(fn_ir, "After ParamIndexCanonicalize");
         }
         seen_hashes.insert(Self::fn_ir_fingerprint(fn_ir));
 
@@ -877,6 +1759,14 @@ impl TachyonEngine {
                     v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
                 stats.vectorized += v_stats.vectorized;
                 stats.reduced += v_stats.reduced;
+                stats.vector_loops_seen += v_stats.loops_seen;
+                stats.vector_skipped += v_stats.skipped;
+                stats.vector_skip_no_iv += v_stats.skip_no_iv;
+                stats.vector_skip_non_canonical_bound += v_stats.skip_non_canonical_bound;
+                stats.vector_skip_unsupported_cfg_shape += v_stats.skip_unsupported_cfg_shape;
+                stats.vector_skip_indirect_index_access += v_stats.skip_indirect_index_access;
+                stats.vector_skip_store_effects += v_stats.skip_store_effects;
+                stats.vector_skip_no_supported_pattern += v_stats.skip_no_supported_pattern;
                 let v_changed = v_stats.changed();
                 Self::maybe_verify(fn_ir, "After Vectorization");
                 pass_changed |= v_changed;
@@ -1050,7 +1940,11 @@ impl TachyonEngine {
         let mut changed = true;
         while changed {
             changed = false;
-            for (name, fn_ir) in all_fns {
+            let ordered_names = Self::sorted_fn_names(all_fns);
+            for name in &ordered_names {
+                let Some(fn_ir) = all_fns.get(name) else {
+                    continue;
+                };
                 if whitelist.contains(name) {
                     continue;
                 }
@@ -1061,6 +1955,858 @@ impl TachyonEngine {
             }
         }
         whitelist
+    }
+
+    fn collect_wrap_index_helpers(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        let ordered = Self::sorted_fn_names(all_fns);
+        for name in ordered {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_wrap_index_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    fn rewrite_wrap_index_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            for v in &mut fn_ir.values {
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &mut v.kind
+                else {
+                    continue;
+                };
+                if !helpers.contains(callee.as_str()) || args.len() != 4 {
+                    continue;
+                }
+                *callee = "rr_wrap_index_vec_i".to_string();
+                *names = vec![None, None, None, None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    fn is_wrap_index_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [wrap-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.unsupported_dynamic || fn_ir.params.len() != 4 {
+            return false;
+        }
+
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let mut rules: Vec<(String, bool, usize)> = Vec::new();
+        for bb in &fn_ir.blocks {
+            let Terminator::If {
+                cond,
+                then_bb,
+                else_bb,
+            } = bb.term
+            else {
+                continue;
+            };
+            let Some((var, is_lt, bound_param)) =
+                Self::parse_wrap_if_rule(fn_ir, cond, then_bb, else_bb)
+            else {
+                fail!("if rule parse failed");
+            };
+            rules.push((var, is_lt, bound_param));
+        }
+
+        if rules.len() != 4 {
+            fail!("if rule count != 4");
+        }
+
+        let mut by_var: FxHashMap<String, Vec<(bool, usize)>> = FxHashMap::default();
+        for (var, is_lt, bound) in rules {
+            by_var.entry(var).or_default().push((is_lt, bound));
+        }
+        if by_var.len() != 2 {
+            fail!("rule vars != 2");
+        }
+
+        let mut x_var: Option<String> = None;
+        let mut y_var: Option<String> = None;
+        for (var, rs) in &by_var {
+            if rs.len() != 2 {
+                fail!("rules per var != 2");
+            }
+            let mut saw_lt = None;
+            let mut saw_gt = None;
+            for (is_lt, bound) in rs {
+                if *is_lt {
+                    saw_lt = Some(*bound);
+                } else {
+                    saw_gt = Some(*bound);
+                }
+            }
+            let Some(lt_bound) = saw_lt else {
+                fail!("missing lt bound");
+            };
+            let Some(gt_bound) = saw_gt else {
+                fail!("missing gt bound");
+            };
+            if lt_bound != gt_bound {
+                fail!("lt/gt bound mismatch");
+            }
+            match lt_bound {
+                2 => x_var = Some(var.clone()),
+                3 => y_var = Some(var.clone()),
+                _ => fail!("bound param not 2/3"),
+            }
+        }
+
+        let Some(x_var) = x_var else {
+            fail!("missing x var");
+        };
+        let Some(y_var) = y_var else {
+            fail!("missing y var");
+        };
+
+        if !Self::assignments_match_wrap_sources(fn_ir, &x_var, 0, 2)
+            || !Self::assignments_match_wrap_sources(fn_ir, &y_var, 1, 3)
+        {
+            fail!("assignment source mismatch");
+        }
+
+        if !Self::return_matches_wrap_expr(fn_ir, &x_var, &y_var) {
+            fail!("return expression mismatch");
+        }
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [wrap-detect] {}: matched", fn_ir.name);
+        }
+        true
+    }
+
+    fn parse_wrap_if_rule(
+        fn_ir: &FnIR,
+        cond: ValueId,
+        then_bb: BlockId,
+        else_bb: BlockId,
+    ) -> Option<(String, bool, usize)> {
+        let then_assign = Self::single_assign_block(fn_ir, then_bb);
+        if Self::wrap_trace_enabled() && then_assign.is_none() {
+            eprintln!(
+                "   [wrap-rule] {}: then_bb {} is not single-assign",
+                fn_ir.name, then_bb
+            );
+        }
+        let (then_assign_var, then_assign_src) = then_assign?;
+        let else_assign = Self::single_assign_block(fn_ir, else_bb);
+        if else_assign.is_some() {
+            if Self::wrap_trace_enabled() {
+                eprintln!(
+                    "   [wrap-rule] {}: else_bb {} has assign",
+                    fn_ir.name, else_bb
+                );
+            }
+            return None;
+        }
+
+        let (cond_var, op_is_lt, cond_bound_param, cond_bound_is_one) =
+            match Self::parse_wrap_cond(fn_ir, cond) {
+                Some(v) => v,
+                None => {
+                    if Self::wrap_trace_enabled() {
+                        eprintln!(
+                            "   [wrap-rule] {}: cond {} parse failed kind={:?}",
+                            fn_ir.name, cond, fn_ir.values[cond].kind
+                        );
+                    }
+                    return None;
+                }
+            };
+        if then_assign_var != cond_var {
+            if Self::wrap_trace_enabled() {
+                eprintln!(
+                    "   [wrap-rule] {}: then dst {} != cond var {}",
+                    fn_ir.name, then_assign_var, cond_var
+                );
+            }
+            return None;
+        }
+
+        let assign_src_param = Self::value_param_index(fn_ir, then_assign_src);
+        let assign_src_is_one = Self::value_is_const_one(fn_ir, then_assign_src);
+        if op_is_lt && cond_bound_is_one {
+            let Some(p) = assign_src_param else {
+                if Self::wrap_trace_enabled() {
+                    eprintln!(
+                        "   [wrap-rule] {}: lt rule src is not param (src={} kind={:?} origin={:?})",
+                        fn_ir.name,
+                        then_assign_src,
+                        fn_ir.values[then_assign_src].kind,
+                        fn_ir.values[then_assign_src].origin_var
+                    );
+                }
+                return None;
+            };
+            if p >= 2 {
+                return Some((cond_var, true, p));
+            }
+            if Self::wrap_trace_enabled() {
+                eprintln!(
+                    "   [wrap-rule] {}: lt rule bound param {} < 2",
+                    fn_ir.name, p
+                );
+            }
+            return None;
+        }
+        if !op_is_lt && assign_src_is_one {
+            let Some(p) = cond_bound_param else {
+                if Self::wrap_trace_enabled() {
+                    eprintln!(
+                        "   [wrap-rule] {}: gt rule bound is not param (cond={})",
+                        fn_ir.name, cond
+                    );
+                }
+                return None;
+            };
+            if p >= 2 {
+                return Some((cond_var, false, p));
+            }
+            if Self::wrap_trace_enabled() {
+                eprintln!(
+                    "   [wrap-rule] {}: gt rule bound param {} < 2",
+                    fn_ir.name, p
+                );
+            }
+            return None;
+        }
+        if Self::wrap_trace_enabled() {
+            eprintln!(
+                "   [wrap-rule] {}: no matching lt/gt rewrite case (op_is_lt={}, bound_is_one={}, src_param={:?}, src_one={}, cond_param={:?})",
+                fn_ir.name,
+                op_is_lt,
+                cond_bound_is_one,
+                assign_src_param,
+                assign_src_is_one,
+                cond_bound_param
+            );
+        }
+        None
+    }
+
+    fn single_assign_block(fn_ir: &FnIR, bid: BlockId) -> Option<(String, ValueId)> {
+        let mut out: Option<(String, ValueId)> = None;
+        for ins in &fn_ir.blocks[bid].instrs {
+            let Instr::Assign { dst, src, .. } = ins else {
+                return None;
+            };
+            if out.is_some() {
+                return None;
+            }
+            out = Some((dst.clone(), *src));
+        }
+        out
+    }
+
+    fn parse_wrap_cond(fn_ir: &FnIR, cond: ValueId) -> Option<(String, bool, Option<usize>, bool)> {
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            return None;
+        };
+        let lhs_var = Self::value_non_param_var_name(fn_ir, *lhs);
+        let rhs_var = Self::value_non_param_var_name(fn_ir, *rhs);
+        let lhs_is_one = Self::value_is_const_one(fn_ir, *lhs);
+        let rhs_is_one = Self::value_is_const_one(fn_ir, *rhs);
+        let lhs_param = Self::value_param_index(fn_ir, *lhs);
+        let rhs_param = Self::value_param_index(fn_ir, *rhs);
+
+        let out = match op {
+            BinOp::Lt | BinOp::Gt => {
+                if let Some(var) = lhs_var {
+                    let is_lt = matches!(op, BinOp::Lt);
+                    Some((var, is_lt, rhs_param, rhs_is_one))
+                } else if let Some(var) = rhs_var {
+                    let is_lt = matches!(op, BinOp::Gt);
+                    Some((var, is_lt, lhs_param, lhs_is_one))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if out.is_none() && Self::wrap_trace_enabled() {
+            eprintln!(
+                "   [wrap-cond] {} cond={} op={:?} lhs={} kind={:?} origin={:?} rhs={} kind={:?} origin={:?}",
+                fn_ir.name,
+                cond,
+                op,
+                lhs,
+                fn_ir.values[*lhs].kind,
+                fn_ir.values[*lhs].origin_var,
+                rhs,
+                fn_ir.values[*rhs].kind,
+                fn_ir.values[*rhs].origin_var
+            );
+        }
+        out
+    }
+
+    fn assignments_match_wrap_sources(
+        fn_ir: &FnIR,
+        var: &str,
+        seed_param: usize,
+        bound_param: usize,
+    ) -> bool {
+        let mut saw_seed = false;
+        let mut saw_bound = false;
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                if dst != var {
+                    continue;
+                }
+                if let Some(p) = Self::value_param_index(fn_ir, *src) {
+                    if p == seed_param {
+                        saw_seed = true;
+                        continue;
+                    }
+                    if p == bound_param {
+                        saw_bound = true;
+                        continue;
+                    }
+                    return false;
+                }
+                if Self::value_is_const_one(fn_ir, *src) {
+                    continue;
+                }
+                return false;
+            }
+        }
+        saw_seed && saw_bound
+    }
+
+    fn return_matches_wrap_expr(fn_ir: &FnIR, x_var: &str, y_var: &str) -> bool {
+        let mut return_vals = Vec::new();
+        for bb in &fn_ir.blocks {
+            if let Terminator::Return(Some(v)) = bb.term {
+                return_vals.push(v);
+            }
+        }
+        if return_vals.len() != 1 {
+            return false;
+        }
+        let ret = Self::resolve_load_alias_value(fn_ir, return_vals[0]);
+        Self::is_wrap_return_expr(fn_ir, ret, x_var, y_var)
+    }
+
+    fn is_wrap_return_expr(fn_ir: &FnIR, ret: ValueId, x_var: &str, y_var: &str) -> bool {
+        let ValueKind::Binary {
+            op: BinOp::Add,
+            lhs,
+            rhs,
+        } = &fn_ir.values[ret].kind
+        else {
+            return false;
+        };
+        Self::is_wrap_return_form(fn_ir, *lhs, *rhs, x_var, y_var)
+            || Self::is_wrap_return_form(fn_ir, *rhs, *lhs, x_var, y_var)
+    }
+
+    fn is_wrap_return_form(
+        fn_ir: &FnIR,
+        mul_side: ValueId,
+        x_side: ValueId,
+        x_var: &str,
+        y_var: &str,
+    ) -> bool {
+        if Self::value_var_name(fn_ir, x_side).as_deref() != Some(x_var) {
+            return false;
+        }
+        let ValueKind::Binary {
+            op: BinOp::Mul,
+            lhs,
+            rhs,
+        } = &fn_ir.values[Self::resolve_load_alias_value(fn_ir, mul_side)].kind
+        else {
+            return false;
+        };
+
+        let lhs_is_y = Self::is_y_minus_one(fn_ir, *lhs, y_var);
+        let rhs_is_y = Self::is_y_minus_one(fn_ir, *rhs, y_var);
+        let lhs_is_w = Self::value_param_index(fn_ir, *lhs) == Some(2);
+        let rhs_is_w = Self::value_param_index(fn_ir, *rhs) == Some(2);
+
+        (lhs_is_y && rhs_is_w) || (rhs_is_y && lhs_is_w)
+    }
+
+    fn is_y_minus_one(fn_ir: &FnIR, vid: ValueId, y_var: &str) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return false;
+        };
+        Self::value_var_name(fn_ir, *lhs).as_deref() == Some(y_var)
+            && Self::value_is_const_one(fn_ir, *rhs)
+    }
+
+    fn value_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        if let ValueKind::Load { var } = &fn_ir.values[v].kind {
+            return Some(var.clone());
+        }
+        fn_ir.values[v].origin_var.clone()
+    }
+
+    fn value_non_param_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+        let var = Self::value_var_name(fn_ir, vid)?;
+        if Self::param_index_for_var(fn_ir, &var).is_some() {
+            None
+        } else {
+            Some(var)
+        }
+    }
+
+    fn param_index_for_var(fn_ir: &FnIR, var: &str) -> Option<usize> {
+        if let Some(idx) = fn_ir.params.iter().position(|p| p == var) {
+            return Some(idx);
+        }
+        if let Some(stripped) = var.strip_prefix(".arg_") {
+            return fn_ir.params.iter().position(|p| p == stripped);
+        }
+        if let Some(stripped) = var.strip_prefix("arg_") {
+            return fn_ir.params.iter().position(|p| p == stripped);
+        }
+        None
+    }
+
+    fn value_param_index(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        match fn_ir.values[v].kind {
+            ValueKind::Param { index } => Some(index),
+            _ => {
+                let var = fn_ir.values[v].origin_var.as_deref()?;
+                Self::param_index_for_var(fn_ir, var)
+            }
+        }
+    }
+
+    fn value_is_const_one(fn_ir: &FnIR, vid: ValueId) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        match fn_ir.values[v].kind {
+            ValueKind::Const(Lit::Int(n)) => n == 1,
+            ValueKind::Const(Lit::Float(f)) => (f - 1.0).abs() < f64::EPSILON,
+            _ => false,
+        }
+    }
+
+    fn value_is_const_six(fn_ir: &FnIR, vid: ValueId) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        match fn_ir.values[v].kind {
+            ValueKind::Const(Lit::Int(n)) => n == 6,
+            ValueKind::Const(Lit::Float(f)) => (f - 6.0).abs() < f64::EPSILON,
+            _ => false,
+        }
+    }
+
+    fn collect_cube_index_helpers(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        let ordered = Self::sorted_fn_names(all_fns);
+        for name in ordered {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_cube_index_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    fn rewrite_cube_index_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            for v in &mut fn_ir.values {
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &mut v.kind
+                else {
+                    continue;
+                };
+                if !helpers.contains(callee.as_str()) || args.len() != 4 {
+                    continue;
+                }
+                *callee = "rr_idx_cube_vec_i".to_string();
+                *names = vec![None, None, None, None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    fn is_cube_index_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [cube-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+
+        if fn_ir.unsupported_dynamic || fn_ir.params.len() != 4 {
+            return false;
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let Some(vars) = Self::cube_index_return_vars(fn_ir) else {
+            fail!("return expression mismatch");
+        };
+        if !Self::assignments_match_cube_seed_source(fn_ir, &vars.face_var, 0)
+            || !Self::assignments_match_cube_seed_source(fn_ir, &vars.x_var, 1)
+            || !Self::assignments_match_cube_seed_source(fn_ir, &vars.y_var, 2)
+            || !Self::assignments_match_cube_seed_source(fn_ir, &vars.size_var, 3)
+        {
+            fail!("seed assignment mismatch");
+        }
+
+        let mut rules: Vec<(String, bool, ClampBound)> = Vec::new();
+        for bb in &fn_ir.blocks {
+            let Terminator::If {
+                cond,
+                then_bb,
+                else_bb,
+            } = bb.term
+            else {
+                continue;
+            };
+            let Some(rule) = Self::parse_cube_if_rule(fn_ir, cond, then_bb, else_bb) else {
+                fail!("if rule parse failed");
+            };
+            rules.push(rule);
+        }
+        if rules.len() != 6 {
+            fail!("if rule count != 6");
+        }
+
+        let expected = [
+            (
+                vars.face_var.clone(),
+                vec![(true, ClampBound::ConstOne), (false, ClampBound::ConstSix)],
+            ),
+            (
+                vars.x_var.clone(),
+                vec![
+                    (true, ClampBound::ConstOne),
+                    (false, ClampBound::Var(vars.size_var.clone())),
+                ],
+            ),
+            (
+                vars.y_var.clone(),
+                vec![
+                    (true, ClampBound::ConstOne),
+                    (false, ClampBound::Var(vars.size_var.clone())),
+                ],
+            ),
+        ];
+        for (var, wanted) in expected {
+            let seen: Vec<(bool, ClampBound)> = rules
+                .iter()
+                .filter(|(rule_var, _, _)| rule_var == &var)
+                .map(|(_, is_lt, bound)| (*is_lt, bound.clone()))
+                .collect();
+            if seen.len() != wanted.len() {
+                fail!("rule multiplicity mismatch");
+            }
+            for need in wanted {
+                if !seen.contains(&need) {
+                    fail!("missing clamp rule");
+                }
+            }
+        }
+
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [cube-detect] {}: matched", fn_ir.name);
+        }
+        true
+    }
+
+    fn cube_index_return_vars(fn_ir: &FnIR) -> Option<CubeIndexReturnVars> {
+        let mut returns = Vec::new();
+        for bb in &fn_ir.blocks {
+            if let Terminator::Return(Some(v)) = bb.term {
+                returns.push(v);
+            }
+        }
+        if returns.len() != 1 {
+            return None;
+        }
+        let ret = Self::resolve_load_alias_value(fn_ir, returns[0]);
+        let mut terms = Vec::new();
+        Self::flatten_assoc_binop(fn_ir, ret, BinOp::Add, &mut terms);
+        if terms.len() != 3 {
+            return None;
+        }
+
+        let mut face_var: Option<String> = None;
+        let mut x_var: Option<String> = None;
+        let mut y_var: Option<String> = None;
+        let mut size_var: Option<String> = None;
+
+        for term in terms {
+            if let Some(var) = Self::value_var_name(fn_ir, term) {
+                if y_var.is_some() {
+                    return None;
+                }
+                y_var = Some(var);
+                continue;
+            }
+
+            let mut factors = Vec::new();
+            Self::flatten_assoc_binop(fn_ir, term, BinOp::Mul, &mut factors);
+            let sub_vars: Vec<String> = factors
+                .iter()
+                .filter_map(|f| Self::parse_var_minus_one(fn_ir, *f))
+                .collect();
+            let plain_vars: Vec<String> = factors
+                .iter()
+                .filter_map(|f| Self::value_var_name(fn_ir, *f))
+                .collect();
+
+            match (sub_vars.as_slice(), plain_vars.as_slice()) {
+                ([sub], [size]) => {
+                    if x_var.is_some() {
+                        return None;
+                    }
+                    x_var = Some(sub.clone());
+                    match &size_var {
+                        None => size_var = Some(size.clone()),
+                        Some(prev) if prev == size => {}
+                        Some(_) => return None,
+                    }
+                }
+                ([sub], [size_a, size_b]) if size_a == size_b => {
+                    if face_var.is_some() {
+                        return None;
+                    }
+                    face_var = Some(sub.clone());
+                    match &size_var {
+                        None => size_var = Some(size_a.clone()),
+                        Some(prev) if prev == size_a => {}
+                        Some(_) => return None,
+                    }
+                }
+                _ => return None,
+            }
+        }
+
+        Some(CubeIndexReturnVars {
+            face_var: face_var?,
+            x_var: x_var?,
+            y_var: y_var?,
+            size_var: size_var?,
+        })
+    }
+
+    fn flatten_assoc_binop(fn_ir: &FnIR, vid: ValueId, op: BinOp, out: &mut Vec<ValueId>) {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        match &fn_ir.values[v].kind {
+            ValueKind::Binary { op: bop, lhs, rhs } if *bop == op => {
+                Self::flatten_assoc_binop(fn_ir, *lhs, op, out);
+                Self::flatten_assoc_binop(fn_ir, *rhs, op, out);
+            }
+            _ => out.push(v),
+        }
+    }
+
+    fn parse_var_minus_one(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return None;
+        };
+        if !Self::value_is_const_one(fn_ir, *rhs) {
+            return None;
+        }
+        Self::value_var_name(fn_ir, *lhs)
+    }
+
+    fn block_assignments(fn_ir: &FnIR, bid: BlockId) -> Option<Vec<(String, ValueId)>> {
+        let mut out = Vec::new();
+        for ins in &fn_ir.blocks[bid].instrs {
+            let Instr::Assign { dst, src, .. } = ins else {
+                return None;
+            };
+            out.push((dst.clone(), *src));
+        }
+        Some(out)
+    }
+
+    fn parse_cube_bound(fn_ir: &FnIR, vid: ValueId) -> Option<ClampBound> {
+        if Self::value_is_const_one(fn_ir, vid) {
+            return Some(ClampBound::ConstOne);
+        }
+        if Self::value_is_const_six(fn_ir, vid) {
+            return Some(ClampBound::ConstSix);
+        }
+        Self::value_var_name(fn_ir, vid).map(ClampBound::Var)
+    }
+
+    fn parse_cube_cond(fn_ir: &FnIR, cond: ValueId) -> Option<(String, bool, ClampBound)> {
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            return None;
+        };
+        match op {
+            BinOp::Lt | BinOp::Gt => {
+                if let Some(var) = Self::value_non_param_var_name(fn_ir, *lhs) {
+                    Some((
+                        var,
+                        matches!(op, BinOp::Lt),
+                        Self::parse_cube_bound(fn_ir, *rhs)?,
+                    ))
+                } else if let Some(var) = Self::value_non_param_var_name(fn_ir, *rhs) {
+                    Some((
+                        var,
+                        matches!(op, BinOp::Gt),
+                        Self::parse_cube_bound(fn_ir, *lhs)?,
+                    ))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn cube_bound_matches_value(fn_ir: &FnIR, bound: &ClampBound, vid: ValueId) -> bool {
+        match bound {
+            ClampBound::ConstOne => Self::value_is_const_one(fn_ir, vid),
+            ClampBound::ConstSix => Self::value_is_const_six(fn_ir, vid),
+            ClampBound::Var(var) => {
+                Self::value_var_name(fn_ir, vid).as_deref() == Some(var.as_str())
+            }
+        }
+    }
+
+    fn is_benign_cube_aux_assignment(
+        fn_ir: &FnIR,
+        dst: &str,
+        src: ValueId,
+        cond_var: &str,
+        bound: &ClampBound,
+    ) -> bool {
+        match bound {
+            ClampBound::Var(bound_var) if dst == bound_var => {
+                let src_var = Self::value_var_name(fn_ir, src);
+                src_var.as_deref() == Some(cond_var)
+                    || src_var.as_deref() == Some(bound_var.as_str())
+            }
+            _ => false,
+        }
+    }
+
+    fn parse_cube_if_rule(
+        fn_ir: &FnIR,
+        cond: ValueId,
+        then_bb: BlockId,
+        else_bb: BlockId,
+    ) -> Option<(String, bool, ClampBound)> {
+        let then_assigns = Self::block_assignments(fn_ir, then_bb)?;
+        if then_assigns.is_empty() {
+            return None;
+        }
+        let else_assigns = Self::block_assignments(fn_ir, else_bb)?;
+        if !else_assigns.is_empty() {
+            return None;
+        }
+        let (cond_var, is_lt, bound) = Self::parse_cube_cond(fn_ir, cond)?;
+        let mut saw_primary = false;
+        for (dst, src) in then_assigns {
+            if dst == cond_var && Self::cube_bound_matches_value(fn_ir, &bound, src) {
+                saw_primary = true;
+                continue;
+            }
+            if !Self::is_benign_cube_aux_assignment(fn_ir, &dst, src, &cond_var, &bound) {
+                return None;
+            }
+        }
+        if !saw_primary {
+            return None;
+        }
+        Some((cond_var, is_lt, bound))
+    }
+
+    fn assignments_match_cube_seed_source(fn_ir: &FnIR, var: &str, param_idx: usize) -> bool {
+        let mut saw_seed = false;
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                if dst != var {
+                    continue;
+                }
+                if Self::value_param_index(fn_ir, *src) == Some(param_idx)
+                    || Self::is_round_call_of_param(fn_ir, *src, param_idx)
+                {
+                    saw_seed = true;
+                }
+            }
+        }
+        saw_seed
+    }
+
+    fn is_round_call_of_param(fn_ir: &FnIR, vid: ValueId, param_idx: usize) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Call { callee, args, .. } = &fn_ir.values[v].kind else {
+            return false;
+        };
+        callee == "round"
+            && args.len() == 1
+            && Self::value_param_index(fn_ir, args[0]) == Some(param_idx)
     }
 
     fn is_callmap_vector_safe_user_fn(
@@ -1177,10 +2923,11 @@ impl TachyonEngine {
         let mut seen = FxHashSet::default();
         while seen.insert(cur) {
             if let ValueKind::Load { var } = &fn_ir.values[cur].kind
-                && let Some(src) = unique_assign_source(fn_ir, var) {
-                    cur = src;
-                    continue;
-                }
+                && let Some(src) = unique_assign_source(fn_ir, var)
+            {
+                cur = src;
+                continue;
+            }
             break;
         }
         cur
@@ -1440,18 +3187,19 @@ impl TachyonEngine {
                     base, idx, is_safe, ..
                 } = &val.kind
                     && !*is_safe
-                        && self.is_safe_access(fn_ir, *base, *idx, &facts) {
-                            is_proven_safe = true;
-                        }
+                    && self.is_safe_access(fn_ir, *base, *idx, &facts)
+                {
+                    is_proven_safe = true;
+                }
             }
             if is_proven_safe
                 && let ValueKind::Index1D {
                     ref mut is_safe, ..
                 } = fn_ir.values[val_idx].kind
-                {
-                    *is_safe = true;
-                    changed = true;
-                }
+            {
+                *is_safe = true;
+                changed = true;
+            }
         }
 
         // OPTIMIZATION: StoreIndex1D (Instruction)
@@ -1464,18 +3212,19 @@ impl TachyonEngine {
                         base, idx, is_safe, ..
                     } = instr
                         && !*is_safe
-                            && self.is_safe_access(fn_ir, *base, *idx, &facts) {
-                                is_proven_safe = true;
-                            }
+                        && self.is_safe_access(fn_ir, *base, *idx, &facts)
+                    {
+                        is_proven_safe = true;
+                    }
                 }
                 if is_proven_safe
                     && let Instr::StoreIndex1D {
                         ref mut is_safe, ..
                     } = fn_ir.blocks[blk_idx].instrs[instr_idx]
-                    {
-                        *is_safe = true;
-                        changed = true;
-                    }
+                {
+                    *is_safe = true;
+                    changed = true;
+                }
             }
         }
 
@@ -1500,10 +3249,9 @@ impl TachyonEngine {
         // Or if idx_id is a Phi whose inputs come from indices(base).
 
         // Case B: induction-variable pattern.
-        if f.has(Facts::ONE_BASED)
-            && self.is_derived_from_len(fn_ir, idx_id, base_id, facts) {
-                return true;
-            }
+        if f.has(Facts::ONE_BASED) && self.is_derived_from_len(fn_ir, idx_id, base_id, facts) {
+            return true;
+        }
 
         false
     }
@@ -1598,6 +3346,19 @@ mod tests {
         fn_ir
     }
 
+    fn program_snapshot(all_fns: &FxHashMap<String, FnIR>) -> Vec<(String, String)> {
+        let mut names: Vec<String> = all_fns.keys().cloned().collect();
+        names.sort();
+        names
+            .into_iter()
+            .filter_map(|name| {
+                all_fns
+                    .get(&name)
+                    .map(|fn_ir| (name, format!("{:?}", fn_ir)))
+            })
+            .collect()
+    }
+
     #[test]
     fn opt_plan_selects_all_under_budget() {
         let mut all = FxHashMap::default();
@@ -1641,8 +3402,66 @@ mod tests {
     #[test]
     fn always_tier_runs_light_cleanup() {
         let mut f = fn_with_unreachable_block("cleanup");
-        let stats = TachyonEngine::new().run_always_tier_with_stats(&mut f);
+        let stats = TachyonEngine::new().run_always_tier_with_stats(&mut f, None);
         assert_eq!(stats.always_tier_functions, 1);
         assert!(crate::mir::verify::verify_ir(&f).is_ok());
+    }
+
+    #[test]
+    fn run_program_is_stable_across_insertion_order() {
+        let mut all_a = FxHashMap::default();
+        all_a.insert("alpha".to_string(), dummy_fn("alpha", 450));
+        all_a.insert("beta".to_string(), dummy_fn("beta", 460));
+        all_a.insert("gamma".to_string(), dummy_fn("gamma", 470));
+
+        let mut all_b = FxHashMap::default();
+        all_b.insert("gamma".to_string(), dummy_fn("gamma", 470));
+        all_b.insert("beta".to_string(), dummy_fn("beta", 460));
+        all_b.insert("alpha".to_string(), dummy_fn("alpha", 450));
+
+        let engine = TachyonEngine::new();
+        let _ = engine.run_program_with_stats(&mut all_a);
+        let _ = engine.run_program_with_stats(&mut all_b);
+
+        assert_eq!(program_snapshot(&all_a), program_snapshot(&all_b));
+    }
+
+    #[test]
+    fn run_program_emits_progress_events_in_deterministic_order() {
+        let mut all = FxHashMap::default();
+        all.insert("gamma".to_string(), dummy_fn("gamma", 470));
+        all.insert("beta".to_string(), dummy_fn("beta", 460));
+        all.insert("alpha".to_string(), dummy_fn("alpha", 450));
+
+        let engine = TachyonEngine::new();
+        let mut events = Vec::new();
+        {
+            let mut cb = |event: TachyonProgress| events.push(event);
+            let _ = engine.run_program_with_stats_progress(&mut all, &mut cb);
+        }
+
+        for tier in [
+            TachyonProgressTier::Always,
+            TachyonProgressTier::Heavy,
+            TachyonProgressTier::DeSsa,
+        ] {
+            let tier_events: Vec<&TachyonProgress> =
+                events.iter().filter(|e| e.tier == tier).collect();
+            assert_eq!(tier_events.len(), 3);
+            assert_eq!(
+                tier_events
+                    .iter()
+                    .map(|e| e.function.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["alpha", "beta", "gamma"]
+            );
+            assert!(
+                tier_events
+                    .windows(2)
+                    .all(|w| w[0].completed < w[1].completed)
+            );
+            let last = tier_events.last().expect("non-empty tier events");
+            assert_eq!(last.completed, last.total);
+        }
     }
 }

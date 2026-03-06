@@ -1,0 +1,22 @@
+fn ma main() {
+  x = 1
+ = 1
+  y = 2
+  print(x d+ y)= 1
+ = 1
+  y = 2n (i){
+  x = 1
+ = 1
+  y = 2
+  prinlog(+ y)
+}
+
+main()(x d+ y)= 1
+ = 1
+  y = 2n (i){
+  x = 1
+ = 1
+  y = + y)
+}
+
+main();

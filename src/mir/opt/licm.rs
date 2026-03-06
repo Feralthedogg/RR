@@ -76,10 +76,11 @@ impl MirLicm {
                 continue;
             }
             if let ValueKind::Call { callee, .. } = &fn_ir.values[*vid].kind
-                && !effects::call_is_pure(callee) {
-                    loop_has_impure_call = true;
-                    break;
-                }
+                && !effects::call_is_pure(callee)
+            {
+                loop_has_impure_call = true;
+                break;
+            }
         }
 
         let loop_ctx = LoopEffectCtx {
@@ -102,9 +103,10 @@ impl MirLicm {
                     | Instr::StoreIndex2D { val: src, .. } => {
                         // Already hoisted?
                         if let Some(name) = &fn_ir.values[*src].origin_var
-                            && name.starts_with("licm_") {
-                                continue;
-                            }
+                            && name.starts_with("licm_")
+                        {
+                            continue;
+                        }
 
                         if self.is_hoistable(
                             fn_ir,
@@ -204,9 +206,10 @@ impl MirLicm {
             if matches!(val.kind, ValueKind::Const(_) | ValueKind::Param { .. }) {
                 invariants.insert(val_id);
             } else if let Some(&bb) = val_to_bb.get(&val_id)
-                && !loop_info.body.contains(&bb) {
-                    invariants.insert(val_id);
-                }
+                && !loop_info.body.contains(&bb)
+            {
+                invariants.insert(val_id);
+            }
         }
 
         // Fixed-point iteration

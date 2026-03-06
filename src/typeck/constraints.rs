@@ -37,7 +37,9 @@ impl ConstraintSet {
         while changed && guard < 64 {
             guard += 1;
             changed = false;
-            for c in self.constraints.clone() {
+            let constraint_count = self.constraints.len();
+            for idx in 0..constraint_count {
+                let c = self.constraints[idx].clone();
                 if self.apply(c) {
                     changed = true;
                 }

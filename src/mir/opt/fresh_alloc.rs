@@ -44,7 +44,9 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
 
         let len_source = if let Some(x) = lp.is_seq_along {
             Some(LenSource::Along(x))
-        } else { lp.is_seq_len.map(LenSource::Len) };
+        } else {
+            lp.is_seq_len.map(LenSource::Len)
+        };
 
         let len_source = match len_source {
             Some(s) => s,
@@ -129,17 +131,18 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
 
     for (i, val) in fn_ir.values.iter().enumerate() {
         if val.escape == EscapeStatus::Local
-            && let ValueKind::Call { callee, .. } = &val.kind {
-                if callee.starts_with("Sym_") {
-                    continue;
-                }
-                if !FRESH_BUILTINS.iter().any(|name| name == callee) {
-                    continue;
-                }
-                if !callee.ends_with("_fresh") {
-                    candidates.push(i);
-                }
+            && let ValueKind::Call { callee, .. } = &val.kind
+        {
+            if callee.starts_with("Sym_") {
+                continue;
             }
+            if !FRESH_BUILTINS.iter().any(|name| name == callee) {
+                continue;
+            }
+            if !callee.ends_with("_fresh") {
+                candidates.push(i);
+            }
+        }
     }
 
     for vid in candidates {

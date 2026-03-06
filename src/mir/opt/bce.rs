@@ -4,6 +4,7 @@ use crate::mir::analyze::range::{analyze_ranges, ensure_value_range, transfer_in
 use crate::mir::opt::loop_analysis::LoopAnalyzer;
 use crate::mir::*;
 use rustc_hash::FxHashSet;
+use std::env;
 
 #[derive(Clone)]
 struct CanonicalIvRule {
@@ -13,11 +14,21 @@ struct CanonicalIvRule {
     limit: Option<(ValueId, i64)>,
 }
 
+#[derive(Clone)]
+struct OneBasedIvRule {
+    body: FxHashSet<BlockId>,
+    iv: ValueId,
+}
+
 pub fn optimize(fn_ir: &mut FnIR) -> bool {
     let mut changed = false;
     let bb_facts = analyze_ranges(fn_ir);
     let na_states = na::compute_na_states(fn_ir);
     let canonical_ivs = canonical_loop_ivs(fn_ir);
+    let one_based_ivs = one_based_loop_ivs(fn_ir);
+    let mut node_visits = 0usize;
+    let visit_limit = bce_visit_limit();
+    let mut one_based_indices = FxHashSet::default();
 
     // Pass 1: Handle StoreIndex1D instructions
     for (bid, facts_at_bid) in bb_facts.iter().enumerate().take(fn_ir.blocks.len()) {
@@ -32,7 +43,12 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                     let iv_proven = iv_exact_in_block(bid, *idx, &canonical_ivs, fn_ir);
                     let idx_intv = cur_facts.get(*idx);
                     let in_bounds = interval_proves_in_bounds(fn_ir, &idx_intv, *base) || iv_proven;
-                    let non_na = matches!(na_states[*idx], NaState::Never) || iv_proven;
+                    if iv_non_na_in_block(bid, *idx, &canonical_ivs, &one_based_ivs, fn_ir) {
+                        one_based_indices.insert(*idx);
+                    }
+                    // If bounds are proven in 1-based domain, index cannot be NA.
+                    let non_na =
+                        in_bounds || matches!(na_states[*idx], NaState::Never) || iv_proven;
                     (in_bounds, non_na)
                 } else {
                     (false, false)
@@ -77,10 +93,14 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         &mut cur_facts,
                         fn_ir,
                         &canonical_ivs,
+                        &one_based_ivs,
                         &na_states,
                         &mut safe_values,
                         &mut non_na_values,
+                        &mut one_based_indices,
                         &mut seen,
+                        &mut node_visits,
+                        visit_limit,
                     );
                 }
                 Instr::StoreIndex1D { base, idx, val, .. } => {
@@ -91,10 +111,14 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         &mut cur_facts,
                         fn_ir,
                         &canonical_ivs,
+                        &one_based_ivs,
                         &na_states,
                         &mut safe_values,
                         &mut non_na_values,
+                        &mut one_based_indices,
                         &mut seen,
+                        &mut node_visits,
+                        visit_limit,
                     );
                     collect_index_safety(
                         *idx,
@@ -102,10 +126,14 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         &mut cur_facts,
                         fn_ir,
                         &canonical_ivs,
+                        &one_based_ivs,
                         &na_states,
                         &mut safe_values,
                         &mut non_na_values,
+                        &mut one_based_indices,
                         &mut seen,
+                        &mut node_visits,
+                        visit_limit,
                     );
                     collect_index_safety(
                         *val,
@@ -113,10 +141,14 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         &mut cur_facts,
                         fn_ir,
                         &canonical_ivs,
+                        &one_based_ivs,
                         &na_states,
                         &mut safe_values,
                         &mut non_na_values,
+                        &mut one_based_indices,
                         &mut seen,
+                        &mut node_visits,
+                        visit_limit,
                     );
                 }
                 Instr::StoreIndex2D {
@@ -129,10 +161,14 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         &mut cur_facts,
                         fn_ir,
                         &canonical_ivs,
+                        &one_based_ivs,
                         &na_states,
                         &mut safe_values,
                         &mut non_na_values,
+                        &mut one_based_indices,
                         &mut seen,
+                        &mut node_visits,
+                        visit_limit,
                     );
                     collect_index_safety(
                         *r,
@@ -140,10 +176,14 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         &mut cur_facts,
                         fn_ir,
                         &canonical_ivs,
+                        &one_based_ivs,
                         &na_states,
                         &mut safe_values,
                         &mut non_na_values,
+                        &mut one_based_indices,
                         &mut seen,
+                        &mut node_visits,
+                        visit_limit,
                     );
                     collect_index_safety(
                         *c,
@@ -151,10 +191,14 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         &mut cur_facts,
                         fn_ir,
                         &canonical_ivs,
+                        &one_based_ivs,
                         &na_states,
                         &mut safe_values,
                         &mut non_na_values,
+                        &mut one_based_indices,
                         &mut seen,
+                        &mut node_visits,
+                        visit_limit,
                     );
                     collect_index_safety(
                         *val,
@@ -162,10 +206,14 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         &mut cur_facts,
                         fn_ir,
                         &canonical_ivs,
+                        &one_based_ivs,
                         &na_states,
                         &mut safe_values,
                         &mut non_na_values,
+                        &mut one_based_indices,
                         &mut seen,
+                        &mut node_visits,
+                        visit_limit,
                     );
                 }
             }
@@ -173,27 +221,48 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
         }
     }
 
+    for vid in one_based_indices {
+        if let Some(v) = fn_ir.values.get_mut(vid) {
+            let old = v.facts.flags;
+            v.facts
+                .add(Facts::ONE_BASED | Facts::INT_SCALAR | Facts::NON_NA);
+            if v.facts.flags != old {
+                changed = true;
+            }
+        }
+    }
+
     for vid in safe_values {
         if let ValueKind::Index1D {
             ref mut is_safe, ..
         } = fn_ir.values[vid].kind
-            && !*is_safe {
-                *is_safe = true;
-                changed = true;
-            }
+            && !*is_safe
+        {
+            *is_safe = true;
+            changed = true;
+        }
     }
 
     for vid in non_na_values {
         if let ValueKind::Index1D {
             ref mut is_na_safe, ..
         } = fn_ir.values[vid].kind
-            && !*is_na_safe {
-                *is_na_safe = true;
-                changed = true;
-            }
+            && !*is_na_safe
+        {
+            *is_na_safe = true;
+            changed = true;
+        }
     }
 
     changed
+}
+
+fn bce_visit_limit() -> usize {
+    env::var("RR_BCE_VISIT_LIMIT")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(200_000)
+        .max(10_000)
 }
 
 fn canonical_loop_ivs(fn_ir: &FnIR) -> Vec<CanonicalIvRule> {
@@ -203,10 +272,7 @@ fn canonical_loop_ivs(fn_ir: &FnIR) -> Vec<CanonicalIvRule> {
             Some(iv) => iv,
             None => continue,
         };
-        let init_is_one = matches!(
-            fn_ir.values[iv.init_val].kind,
-            ValueKind::Const(Lit::Int(1))
-        );
+        let init_is_one = const_int(fn_ir, iv.init_val) == Some(1);
         let canonical =
             init_is_one && iv.step == 1 && iv.step_op == BinOp::Add && lp.is_seq_len.is_some();
         if canonical {
@@ -221,48 +287,140 @@ fn canonical_loop_ivs(fn_ir: &FnIR) -> Vec<CanonicalIvRule> {
     out
 }
 
+fn one_based_loop_ivs(fn_ir: &FnIR) -> Vec<OneBasedIvRule> {
+    let mut out = Vec::new();
+    for lp in LoopAnalyzer::new(fn_ir).find_loops() {
+        let iv = match lp.iv {
+            Some(iv) => iv,
+            None => continue,
+        };
+        let init_is_one = const_int(fn_ir, iv.init_val) == Some(1);
+        let one_based = init_is_one && iv.step == 1 && iv.step_op == BinOp::Add;
+        if one_based {
+            out.push(OneBasedIvRule {
+                body: lp.body,
+                iv: iv.phi_val,
+            });
+        }
+    }
+    out
+}
+
 fn extract_len_limit(fn_ir: &FnIR, limit_val: ValueId) -> Option<(ValueId, i64)> {
-    match &fn_ir.values[limit_val].kind {
+    let mut seen_vals = FxHashSet::default();
+    let mut seen_vars = FxHashSet::default();
+    extract_len_limit_rec(fn_ir, limit_val, &mut seen_vals, &mut seen_vars)
+}
+
+fn extract_len_limit_rec(
+    fn_ir: &FnIR,
+    vid: ValueId,
+    seen_vals: &mut FxHashSet<ValueId>,
+    seen_vars: &mut FxHashSet<String>,
+) -> Option<(ValueId, i64)> {
+    if !seen_vals.insert(vid) {
+        return None;
+    }
+    let out = match &fn_ir.values[vid].kind {
         ValueKind::Len { base } => Some((*base, 0)),
         ValueKind::Binary {
             op: BinOp::Sub,
             lhs,
             rhs,
         } => {
-            if let ValueKind::Len { base } = fn_ir.values[*lhs].kind
-                && let Some(k) = const_int(fn_ir, *rhs) {
-                    return Some((base, -k));
-                }
-            None
+            let k = const_int(fn_ir, *rhs)?;
+            let (base, off) = extract_len_limit_rec(fn_ir, *lhs, seen_vals, seen_vars)?;
+            let off = off.checked_sub(k)?;
+            Some((base, off))
         }
         ValueKind::Binary {
             op: BinOp::Add,
             lhs,
             rhs,
         } => {
-            if let ValueKind::Len { base } = fn_ir.values[*lhs].kind
-                && let Some(k) = const_int(fn_ir, *rhs) {
-                    return Some((base, k));
-                }
-            if let ValueKind::Len { base } = fn_ir.values[*rhs].kind
-                && let Some(k) = const_int(fn_ir, *lhs) {
-                    return Some((base, k));
-                }
+            if let Some(k) = const_int(fn_ir, *rhs)
+                && let Some((base, off)) = extract_len_limit_rec(fn_ir, *lhs, seen_vals, seen_vars)
+            {
+                let off = off.checked_add(k)?;
+                return Some((base, off));
+            }
+            if let Some(k) = const_int(fn_ir, *lhs)
+                && let Some((base, off)) = extract_len_limit_rec(fn_ir, *rhs, seen_vals, seen_vars)
+            {
+                let off = off.checked_add(k)?;
+                return Some((base, off));
+            }
             None
         }
+        ValueKind::Load { var } => extract_len_limit_from_var(fn_ir, var, seen_vals, seen_vars),
+        ValueKind::Phi { args } if !args.is_empty() => {
+            let mut unique = None;
+            for (arg, _) in args {
+                let candidate = extract_len_limit_rec(fn_ir, *arg, seen_vals, seen_vars)?;
+                match unique {
+                    None => unique = Some(candidate),
+                    Some(prev) if prev == candidate => {}
+                    Some(_) => return None,
+                }
+            }
+            unique
+        }
         _ => None,
+    };
+    seen_vals.remove(&vid);
+    out
+}
+
+fn extract_len_limit_from_var(
+    fn_ir: &FnIR,
+    var: &str,
+    seen_vals: &mut FxHashSet<ValueId>,
+    seen_vars: &mut FxHashSet<String>,
+) -> Option<(ValueId, i64)> {
+    if !seen_vars.insert(var.to_string()) {
+        return None;
     }
+    let mut unique = None;
+    for bb in &fn_ir.blocks {
+        for ins in &bb.instrs {
+            let Instr::Assign { dst, src, .. } = ins else {
+                continue;
+            };
+            if dst != var {
+                continue;
+            }
+            let candidate = extract_len_limit_rec(fn_ir, *src, seen_vals, seen_vars)?;
+            match unique {
+                None => unique = Some(candidate),
+                Some(prev) if prev == candidate => {}
+                Some(_) => {
+                    seen_vars.remove(var);
+                    return None;
+                }
+            }
+        }
+    }
+    seen_vars.remove(var);
+    unique
 }
 
 fn const_int(fn_ir: &FnIR, vid: ValueId) -> Option<i64> {
     match &fn_ir.values[vid].kind {
         ValueKind::Const(Lit::Int(n)) => Some(*n),
+        ValueKind::Const(Lit::Float(f))
+            if f.is_finite()
+                && (*f - f.trunc()).abs() < f64::EPSILON
+                && *f >= i64::MIN as f64
+                && *f <= i64::MAX as f64 =>
+        {
+            Some(*f as i64)
+        }
         _ => None,
     }
 }
 
 fn iv_offset_for_idx(fn_ir: &FnIR, idx: ValueId, iv: ValueId) -> Option<i64> {
-    if idx == iv {
+    if is_iv_equivalent(fn_ir, idx, iv) {
         return Some(0);
     }
     match &fn_ir.values[idx].kind {
@@ -271,10 +429,10 @@ fn iv_offset_for_idx(fn_ir: &FnIR, idx: ValueId, iv: ValueId) -> Option<i64> {
             lhs,
             rhs,
         } => {
-            if *lhs == iv {
+            if is_iv_equivalent(fn_ir, *lhs, iv) {
                 return const_int(fn_ir, *rhs);
             }
-            if *rhs == iv {
+            if is_iv_equivalent(fn_ir, *rhs, iv) {
                 return const_int(fn_ir, *lhs);
             }
             None
@@ -284,7 +442,7 @@ fn iv_offset_for_idx(fn_ir: &FnIR, idx: ValueId, iv: ValueId) -> Option<i64> {
             lhs,
             rhs,
         } => {
-            if *lhs == iv {
+            if is_iv_equivalent(fn_ir, *lhs, iv) {
                 return const_int(fn_ir, *rhs).map(|k| -k);
             }
             None
@@ -293,10 +451,109 @@ fn iv_offset_for_idx(fn_ir: &FnIR, idx: ValueId, iv: ValueId) -> Option<i64> {
     }
 }
 
+fn is_iv_equivalent(fn_ir: &FnIR, candidate: ValueId, iv: ValueId) -> bool {
+    let mut seen = vec![false; fn_ir.values.len()];
+    let mut seen_vars = FxHashSet::default();
+    is_iv_equivalent_rec(fn_ir, candidate, iv, &mut seen, &mut seen_vars)
+}
+
+fn is_iv_equivalent_rec(
+    fn_ir: &FnIR,
+    candidate: ValueId,
+    iv: ValueId,
+    seen: &mut [bool],
+    seen_vars: &mut FxHashSet<String>,
+) -> bool {
+    if candidate >= fn_ir.values.len() {
+        return false;
+    }
+    if candidate == iv {
+        return true;
+    }
+    if seen[candidate] {
+        return false;
+    }
+    seen[candidate] = true;
+    match &fn_ir.values[candidate].kind {
+        ValueKind::Load { var } => {
+            if fn_ir.values[iv].origin_var.as_deref() == Some(var.as_str()) {
+                return true;
+            }
+            load_var_is_iv_equivalent(fn_ir, var, iv, seen, seen_vars)
+        }
+        ValueKind::Phi { args } if args.is_empty() => {
+            match (
+                fn_ir.values[candidate].origin_var.as_deref(),
+                fn_ir.values[iv].origin_var.as_deref(),
+            ) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            }
+        }
+        ValueKind::Phi { args } => args
+            .iter()
+            .all(|(v, _)| is_iv_equivalent_rec(fn_ir, *v, iv, seen, seen_vars)),
+        ValueKind::Call {
+            callee,
+            args,
+            names,
+        } => {
+            let floor_like = matches!(callee.as_str(), "floor" | "ceiling" | "trunc");
+            let single_positional = args.len() == 1
+                && names.len() <= 1
+                && names
+                    .first()
+                    .and_then(std::option::Option::as_ref)
+                    .is_none();
+            floor_like
+                && single_positional
+                && is_iv_equivalent_rec(fn_ir, args[0], iv, seen, seen_vars)
+        }
+        _ => false,
+    }
+}
+
+fn load_var_is_iv_equivalent(
+    fn_ir: &FnIR,
+    var: &str,
+    iv: ValueId,
+    seen_vals: &mut [bool],
+    seen_vars: &mut FxHashSet<String>,
+) -> bool {
+    if !seen_vars.insert(var.to_string()) {
+        return false;
+    }
+
+    let mut found = false;
+    let mut all_match = true;
+    for bb in &fn_ir.blocks {
+        for ins in &bb.instrs {
+            let Instr::Assign { dst, src, .. } = ins else {
+                continue;
+            };
+            if dst != var {
+                continue;
+            }
+            found = true;
+            if !is_iv_equivalent_rec(fn_ir, *src, iv, seen_vals, seen_vars) {
+                all_match = false;
+                break;
+            }
+        }
+        if !all_match {
+            break;
+        }
+    }
+
+    seen_vars.remove(var);
+    found && all_match
+}
+
 fn iv_non_na_in_block(
     bid: BlockId,
     idx: ValueId,
     canonical_ivs: &[CanonicalIvRule],
+    one_based_ivs: &[OneBasedIvRule],
     fn_ir: &FnIR,
 ) -> bool {
     for rule in canonical_ivs {
@@ -304,9 +561,20 @@ fn iv_non_na_in_block(
             continue;
         }
         if let Some(off) = iv_offset_for_idx(fn_ir, idx, rule.iv)
-            && off >= 0 {
-                return true;
-            }
+            && off >= 0
+        {
+            return true;
+        }
+    }
+    for rule in one_based_ivs {
+        if !rule.body.contains(&bid) {
+            continue;
+        }
+        if let Some(off) = iv_offset_for_idx(fn_ir, idx, rule.iv)
+            && off >= 0
+        {
+            return true;
+        }
     }
     false
 }
@@ -369,11 +637,20 @@ fn collect_index_safety(
     facts: &mut crate::mir::analyze::range::RangeFacts,
     fn_ir: &FnIR,
     canonical_ivs: &[CanonicalIvRule],
+    one_based_ivs: &[OneBasedIvRule],
     na_states: &[NaState],
     safe_values: &mut FxHashSet<ValueId>,
     non_na_values: &mut FxHashSet<ValueId>,
+    one_based_values: &mut FxHashSet<ValueId>,
     seen: &mut FxHashSet<ValueId>,
+    node_visits: &mut usize,
+    visit_limit: usize,
 ) {
+    if *node_visits >= visit_limit {
+        return;
+    }
+    *node_visits += 1;
+
     if !seen.insert(vid) {
         return;
     }
@@ -388,13 +665,15 @@ fn collect_index_safety(
             ensure_value_range(*idx, &fn_ir.values, facts);
             let iv_proven = iv_in_bounds_for_base(bid, *idx, *base, canonical_ivs, fn_ir);
             let idx_intv = facts.get(*idx);
+            if iv_non_na_in_block(bid, *idx, canonical_ivs, one_based_ivs, fn_ir) {
+                one_based_values.insert(*idx);
+            }
             if !*is_safe && (interval_proves_in_bounds(fn_ir, &idx_intv, *base) || iv_proven) {
                 safe_values.insert(vid);
             }
-            if !*is_na_safe
-                && (matches!(na_states[*idx], NaState::Never)
-                    || iv_non_na_in_block(bid, *idx, canonical_ivs, fn_ir))
-            {
+            let na_proven = matches!(na_states[*idx], NaState::Never)
+                || iv_non_na_in_block(bid, *idx, canonical_ivs, one_based_ivs, fn_ir);
+            if !*is_na_safe && (na_proven || interval_proves_in_bounds(fn_ir, &idx_intv, *base)) {
                 non_na_values.insert(vid);
             }
 
@@ -404,10 +683,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
             collect_index_safety(
                 *idx,
@@ -415,10 +698,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
         }
         ValueKind::Binary { lhs, rhs, .. } => {
@@ -428,10 +715,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
             collect_index_safety(
                 *rhs,
@@ -439,10 +730,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
         }
         ValueKind::Unary { rhs, .. } => {
@@ -452,10 +747,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
         }
         ValueKind::Call { args, .. } => {
@@ -466,10 +765,14 @@ fn collect_index_safety(
                     facts,
                     fn_ir,
                     canonical_ivs,
+                    one_based_ivs,
                     na_states,
                     safe_values,
                     non_na_values,
+                    one_based_values,
                     seen,
+                    node_visits,
+                    visit_limit,
                 );
             }
         }
@@ -481,10 +784,14 @@ fn collect_index_safety(
                     facts,
                     fn_ir,
                     canonical_ivs,
+                    one_based_ivs,
                     na_states,
                     safe_values,
                     non_na_values,
+                    one_based_values,
                     seen,
+                    node_visits,
+                    visit_limit,
                 );
             }
         }
@@ -496,10 +803,14 @@ fn collect_index_safety(
                     facts,
                     fn_ir,
                     canonical_ivs,
+                    one_based_ivs,
                     na_states,
                     safe_values,
                     non_na_values,
+                    one_based_values,
                     seen,
+                    node_visits,
+                    visit_limit,
                 );
             }
         }
@@ -510,10 +821,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
         }
         ValueKind::Range { start, end } => {
@@ -523,10 +838,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
             collect_index_safety(
                 *end,
@@ -534,10 +853,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
         }
         ValueKind::Index2D { base, r, c } => {
@@ -547,10 +870,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
             collect_index_safety(
                 *r,
@@ -558,10 +885,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
             collect_index_safety(
                 *c,
@@ -569,10 +900,14 @@ fn collect_index_safety(
                 facts,
                 fn_ir,
                 canonical_ivs,
+                one_based_ivs,
                 na_states,
                 safe_values,
                 non_na_values,
+                one_based_values,
                 seen,
+                node_visits,
+                visit_limit,
             );
         }
         ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => {}
@@ -595,6 +930,11 @@ fn interval_proves_in_bounds(fn_ir: &FnIR, intv: &RangeInterval, base: ValueId) 
 
 fn same_base_for_len(fn_ir: &FnIR, len_base: ValueId, index_base: ValueId) -> bool {
     if len_base == index_base {
+        return true;
+    }
+    let len_ty = fn_ir.values[len_base].value_ty;
+    let idx_ty = fn_ir.values[index_base].value_ty;
+    if len_ty.len_sym.is_some() && len_ty.len_sym == idx_ty.len_sym {
         return true;
     }
     let a = value_base_name(fn_ir, len_base);

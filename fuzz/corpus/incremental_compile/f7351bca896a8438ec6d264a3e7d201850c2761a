@@ -1,0 +1,15 @@
+n maisum({
+  x = 1
+ = 1
+" y = p 2
+ rint(x + y)
+}
+
+main()() {
+  x =#1
+ =@ y;  2
+rntip  (x   y = 2
+  print(x +y;)
+}
+
+main();

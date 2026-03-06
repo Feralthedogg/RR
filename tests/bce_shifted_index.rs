@@ -42,9 +42,22 @@ fn shifted(x) {
         code.contains("rr_shift_assign("),
         "expected shifted loop vectorized via rr_shift_assign(...)"
     );
-    let has_rr_index_read_call = code.lines().any(|line| {
-        line.contains("rr_index1_read(") && !line.contains("rr_index1_read <- function")
-    });
+    let mut in_shifted = false;
+    let mut has_rr_index_read_call = false;
+    for line in code.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("shifted <- function") {
+            in_shifted = true;
+            continue;
+        }
+        if in_shifted && trimmed == "}" {
+            break;
+        }
+        if in_shifted && line.contains("rr_index1_read(") {
+            has_rr_index_read_call = true;
+            break;
+        }
+    }
     assert!(
         !has_rr_index_read_call,
         "expected no rr_index1_read call sites in shifted vectorized code"

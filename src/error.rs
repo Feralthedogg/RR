@@ -20,7 +20,8 @@ pub enum RRCode {
     E1032,   // Non-deterministic Parallel Reduction Rejected
     E2001,   // Bound Check Failure
     E2007,   // Index out of bounds (logical)
-    E9999,   // Internal Error
+    E3001,   // Unsupported Feature
+    E9999,   // Internal Error (legacy)
     ICE9001, // Internal Compiler Error
 }
 
@@ -39,11 +40,11 @@ impl RRCode {
             Self::E1032 => "E1032",
             Self::E2001 => "E2001",
             Self::E2007 => "E2007",
+            Self::E3001 => "E3001",
             Self::E9999 => "E9999",
             Self::ICE9001 => "ICE9001",
         }
     }
-
 }
 
 impl std::str::FromStr for RRCode {
@@ -63,6 +64,7 @@ impl std::str::FromStr for RRCode {
             "E1032" => Ok(Self::E1032),
             "E2001" => Ok(Self::E2001),
             "E2007" => Ok(Self::E2007),
+            "E3001" => Ok(Self::E3001),
             "E9999" => Ok(Self::E9999),
             "ICE9001" => Ok(Self::ICE9001),
             _ => Err(()),
@@ -99,6 +101,52 @@ pub struct RRException {
     pub stacktrace: Box<Vec<Frame>>,
     pub notes: Box<Vec<String>>,
     pub related: Box<Vec<RRException>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InternalCompilerError {
+    pub stage: Stage,
+    pub message: String,
+    pub span: Option<Span>,
+    pub notes: Vec<String>,
+}
+
+impl InternalCompilerError {
+    pub fn new(stage: Stage, msg: impl Into<String>) -> Self {
+        Self {
+            stage,
+            message: msg.into(),
+            span: None,
+            notes: Vec::new(),
+        }
+    }
+
+    pub fn at(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    pub fn note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
+        self
+    }
+
+    pub fn into_exception(self) -> RRException {
+        self.into()
+    }
+}
+
+impl From<InternalCompilerError> for RRException {
+    fn from(err: InternalCompilerError) -> Self {
+        let mut out = RRException::new("RR.InternalError", RRCode::ICE9001, err.stage, err.message);
+        if let Some(span) = err.span {
+            out = out.at(span);
+        }
+        for note in err.notes {
+            out = out.note(note);
+        }
+        out
+    }
 }
 
 impl RRException {
@@ -143,6 +191,10 @@ impl RRException {
     pub fn note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
+    }
+
+    pub fn internal(stage: Stage, msg: impl Into<String>) -> Self {
+        InternalCompilerError::new(stage, msg).into_exception()
     }
 
     pub fn display(&self, source: Option<&str>, file: Option<&str>) {
@@ -204,9 +256,10 @@ impl RRException {
         }
 
         if let Some(src) = source
-            && let Some(span) = self.span {
-                self.show_snippet(src, span, color);
-            }
+            && let Some(span) = self.span
+        {
+            self.show_snippet(src, span, color);
+        }
 
         if !self.stacktrace.is_empty() {
             println!("{}", style(color, "1;95", "    stacktrace:"));
@@ -382,6 +435,8 @@ fn palette_for_rr_code<'a>(code: &'a str, fallback: &'a str) -> &'a str {
         "1;33"
     } else if code.starts_with("E2") {
         "1;31"
+    } else if code.starts_with("E3") {
+        "1;38;5;208"
     } else {
         fallback
     }

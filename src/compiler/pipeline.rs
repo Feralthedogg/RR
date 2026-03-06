@@ -1,10 +1,13 @@
-﻿use crate::syntax::parse::Parser;
+use crate::codegen::mir_emit::MapEntry;
+use crate::syntax::parse::Parser;
 use crate::typeck::{NativeBackend, TypeConfig, TypeMode};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +113,51 @@ impl Default for ParallelConfig {
 pub struct CliLog {
     color: bool,
     detailed: bool,
+    slow_step_ms: usize,
+    slow_step_repeat_ms: usize,
+}
+
+struct CliStep {
+    started: Instant,
+    stop_tx: Option<mpsc::Sender<()>>,
+    watcher: Option<thread::JoinHandle<()>>,
+}
+
+impl CliStep {
+    fn new(started: Instant) -> Self {
+        Self {
+            started,
+            stop_tx: None,
+            watcher: None,
+        }
+    }
+
+    fn with_watcher(
+        started: Instant,
+        stop_tx: mpsc::Sender<()>,
+        watcher: thread::JoinHandle<()>,
+    ) -> Self {
+        Self {
+            started,
+            stop_tx: Some(stop_tx),
+            watcher: Some(watcher),
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
+}
+
+impl Drop for CliStep {
+    fn drop(&mut self) {
+        if let Some(tx) = self.stop_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.watcher.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 pub fn type_config_from_env() -> TypeConfig {
@@ -164,9 +212,15 @@ impl CliLog {
         let no_color = env::var_os("NO_COLOR").is_some();
         let force_color = env::var_os("RR_FORCE_COLOR").is_some();
         let force_verbose = env::var_os("RR_VERBOSE_LOG").is_some();
+        let slow_step_ms = parse_nonnegative_usize_env("RR_SLOW_STEP_MS").unwrap_or(3000);
+        let slow_step_repeat_ms = parse_nonnegative_usize_env("RR_SLOW_STEP_REPEAT_MS")
+            .unwrap_or(6000)
+            .max(200);
         Self {
             color: (force_color || is_tty) && !no_color,
             detailed: is_tty || force_verbose,
+            slow_step_ms,
+            slow_step_repeat_ms,
         }
     }
 
@@ -219,7 +273,42 @@ impl CliLog {
         );
     }
 
-    fn step_start(&self, idx: usize, total: usize, title: &str, detail: &str) -> Instant {
+    fn slow_step_hint(title: &str) -> &'static str {
+        match title {
+            "Source Analysis" => "module import graph and parse recovery are in progress.",
+            "Canonicalization" => {
+                "desugaring and HIR normalization may be processing large bodies."
+            }
+            "SSA Graph Synthesis" => {
+                "lowering + phi placement is still running on large control-flow graphs."
+            }
+            "Tachyon Optimization" => {
+                "pass fixed-point search is active; final pass/budget stats print when this step completes."
+            }
+            "R Code Emission" => "function emission and source-map stitching are still running.",
+            "Runtime Injection" => {
+                "runtime prelude merge and final output assembly are in progress."
+            }
+            _ => "",
+        }
+    }
+
+    fn slow_step_verbose_hint(title: &str) -> &'static str {
+        match title {
+            "Tachyon Optimization" => {
+                "enable RR_VERBOSE_LOG=1 and RR_VECTORIZE_TRACE=1 for pass-level trace details."
+            }
+            "SSA Graph Synthesis" => {
+                "large CFG lowering can dominate here; keep RR_VERBOSE_LOG=1 to see module/function progress."
+            }
+            "R Code Emission" => {
+                "this can spike on very large generated functions; cache-aware emission stats print at completion."
+            }
+            _ => "set RR_VERBOSE_LOG=1 for additional progress details.",
+        }
+    }
+
+    fn step_start(&self, idx: usize, total: usize, title: &str, detail: &str) -> CliStep {
         let tag = format!("[{}/{}]", idx, total);
         println!(
             "{} {} {} {}",
@@ -228,7 +317,69 @@ impl CliLog {
             self.red_bold(&format!("{:<20}", title)),
             self.yellow_bold(detail)
         );
-        Instant::now()
+        let started = Instant::now();
+        if !self.detailed || self.slow_step_ms == 0 {
+            return CliStep::new(started);
+        }
+
+        let slow_after = Duration::from_millis(self.slow_step_ms as u64);
+        let repeat_after = Duration::from_millis(self.slow_step_repeat_ms as u64);
+        let slow_prefix = format!(
+            "   {} {}",
+            self.yellow_bold("[slow]"),
+            self.yellow_bold(title)
+        );
+        let slow_detail = format!(
+            "   {} {}",
+            self.dim("*"),
+            self.dim(&format!("detail: {}", detail))
+        );
+        let hint = Self::slow_step_hint(title).to_string();
+        let verbose_hint = Self::slow_step_verbose_hint(title).to_string();
+        let slow_hint = if hint.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "   {} {}",
+                self.dim("*"),
+                self.dim(&format!("hint: {}", hint))
+            ))
+        };
+        let slow_extra_prefix = format!("   {} {}", self.dim("*"), self.dim("extra:"));
+
+        let (tx, rx) = mpsc::channel::<()>();
+        let watcher = thread::spawn(move || {
+            let mut next_wait = slow_after;
+            let mut printed_context = false;
+            let mut timeout_count = 0usize;
+            loop {
+                match rx.recv_timeout(next_wait) {
+                    Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        timeout_count += 1;
+                        println!(
+                            "{} still running ({})",
+                            slow_prefix,
+                            format_duration(started.elapsed())
+                        );
+                        if !printed_context {
+                            println!("{}", slow_detail);
+                            if let Some(h) = &slow_hint {
+                                println!("{}", h);
+                            }
+                            printed_context = true;
+                        } else {
+                            println!(
+                                "{} {} (repeat #{})",
+                                slow_extra_prefix, verbose_hint, timeout_count
+                            );
+                        }
+                        next_wait = repeat_after;
+                    }
+                }
+            }
+        });
+        CliStep::with_watcher(started, tx, watcher)
     }
 
     fn step_line_ok(&self, detail: &str) {
@@ -304,18 +455,54 @@ fn normalize_module_path(path: &Path) -> PathBuf {
     }
 }
 
-struct SourceAnalysisOutput {
+pub(crate) trait EmitFunctionCache {
+    fn load(&mut self, key: &str) -> crate::error::RR<Option<(String, Vec<MapEntry>)>>;
+    fn store(&mut self, key: &str, code: &str, map: &[MapEntry]) -> crate::error::RR<()>;
+}
+
+fn stable_hash_bytes(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET_BASIS;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn fn_emit_cache_key(
+    fn_ir: &crate::mir::def::FnIR,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+) -> String {
+    let payload = format!(
+        "rr-fn-emit-v1|{}|{}|{}|{}|{}|{}|{}|{:?}",
+        fn_ir.name,
+        opt_level.label(),
+        type_cfg.mode.as_str(),
+        type_cfg.native_backend.as_str(),
+        parallel_cfg.mode.as_str(),
+        parallel_cfg.backend.as_str(),
+        parallel_cfg.threads,
+        fn_ir
+    );
+    format!("{:016x}", stable_hash_bytes(payload.as_bytes()))
+}
+
+pub(crate) struct SourceAnalysisOutput {
     desugared_hir: crate::hir::def::HirProgram,
     global_symbols: FxHashMap<crate::hir::def::SymbolId, String>,
 }
 
-struct MirSynthesisOutput {
+pub(crate) struct MirSynthesisOutput {
     all_fns: FxHashMap<String, crate::mir::def::FnIR>,
     emit_order: Vec<String>,
     top_level_calls: Vec<String>,
 }
 
-fn run_source_analysis_and_canonicalization(
+pub(crate) fn run_source_analysis_and_canonicalization(
     ui: &CliLog,
     entry_path: &str,
     entry_input: &str,
@@ -449,6 +636,30 @@ fn emit_r_functions(
     all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
     emit_order: &[String],
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    let (out, map, _, _) = emit_r_functions_cached(
+        ui,
+        total_steps,
+        all_fns,
+        emit_order,
+        OptLevel::O0,
+        TypeConfig::default(),
+        ParallelConfig::default(),
+        None,
+    )?;
+    Ok((out, map))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_r_functions_cached(
+    ui: &CliLog,
+    total_steps: usize,
+    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+    emit_order: &[String],
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    mut cache: Option<&mut dyn EmitFunctionCache>,
+) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
     let step_emit = ui.step_start(
         5,
         total_steps,
@@ -457,14 +668,42 @@ fn emit_r_functions(
     );
     let mut final_output = String::new();
     let mut final_source_map = Vec::new();
+    let mut cache_hits = 0usize;
+    let mut cache_misses = 0usize;
 
     for fn_name in emit_order {
-        if let Some(fn_ir) = all_fns.get(fn_name) {
+        let Some(fn_ir) = all_fns.get(fn_name) else {
+            return Err(crate::error::InternalCompilerError::new(
+                crate::error::Stage::Codegen,
+                format!(
+                    "emit order references missing function '{}': MIR synthesis invariant violated",
+                    fn_name
+                ),
+            )
+            .into_exception());
+        };
+
+        let key = fn_emit_cache_key(fn_ir, opt_level, type_cfg, parallel_cfg);
+        let maybe_hit = if let Some(ref mut c) = cache {
+            c.load(&key)?
+        } else {
+            None
+        };
+
+        let (code, map) = if let Some((code, map)) = maybe_hit {
+            cache_hits += 1;
+            (code, map)
+        } else {
             let (code, map) = crate::codegen::mir_emit::MirEmitter::new().emit(fn_ir)?;
-            final_output.push_str(&code);
-            final_output.push('\n');
-            final_source_map.extend(map);
-        }
+            if let Some(ref mut c) = cache {
+                c.store(&key, &code, &map)?;
+            }
+            cache_misses += 1;
+            (code, map)
+        };
+        final_output.push_str(&code);
+        final_output.push('\n');
+        final_source_map.extend(map);
     }
     ui.step_line_ok(&format!(
         "Emitted {} functions ({} debug maps) in {}",
@@ -473,10 +712,10 @@ fn emit_r_functions(
         format_duration(step_emit.elapsed())
     ));
 
-    Ok((final_output, final_source_map))
+    Ok((final_output, final_source_map, cache_hits, cache_misses))
 }
 
-fn run_mir_synthesis(
+pub(crate) fn run_mir_synthesis(
     ui: &CliLog,
     total_steps: usize,
     desugared_hir: crate::hir::def::HirProgram,
@@ -497,9 +736,10 @@ fn run_mir_synthesis(
     for module in &desugared_hir.modules {
         for item in &module.items {
             if let crate::hir::def::HirItem::Fn(f) = item
-                && let Some(name) = global_symbols.get(&f.name).cloned() {
-                    known_fn_arities.insert(name, f.params.len());
-                }
+                && let Some(name) = global_symbols.get(&f.name).cloned()
+            {
+                known_fn_arities.insert(name, f.params.len());
+            }
         }
     }
 
@@ -515,11 +755,7 @@ fn run_mir_synthesis(
                         .iter()
                         .map(|p| global_symbols[&p.name].clone())
                         .collect();
-                    let var_names = f
-                        .local_names
-                        .clone()
-                        .into_iter()
-                        .collect();
+                    let var_names = f.local_names.clone().into_iter().collect();
 
                     let lowerer = crate::mir::lower_hir::MirLowerer::new(
                         fn_name.clone(),
@@ -587,7 +823,7 @@ fn run_mir_synthesis(
     })
 }
 
-fn run_tachyon_phase(
+pub(crate) fn run_tachyon_phase(
     ui: &CliLog,
     total_steps: usize,
     optimize: bool,
@@ -608,25 +844,65 @@ fn run_tachyon_phase(
             "execute safe stabilization passes"
         },
     );
+    let mut fallback_msgs = Vec::new();
     for fn_ir in all_fns.values() {
         if fn_ir.unsupported_dynamic {
-            if fn_ir.fallback_reasons.is_empty() {
-                ui.warn(&format!(
+            let msg = if fn_ir.fallback_reasons.is_empty() {
+                format!(
                     "Hybrid fallback enabled for {} (dynamic feature)",
                     fn_ir.name
-                ));
+                )
             } else {
-                ui.warn(&format!(
+                format!(
                     "Hybrid fallback enabled for {}: {}",
                     fn_ir.name,
                     fn_ir.fallback_reasons.join(", ")
-                ));
-            }
+                )
+            };
+            fallback_msgs.push(msg);
         }
+    }
+    fallback_msgs.sort();
+    for msg in fallback_msgs {
+        ui.warn(&msg);
     }
     let mut pulse_stats = crate::mir::opt::TachyonPulseStats::default();
     if optimize {
-        pulse_stats = tachyon.run_program_with_stats(all_fns);
+        if ui.detailed && ui.slow_step_ms > 0 {
+            let slow_after = Duration::from_millis(ui.slow_step_ms as u64);
+            let repeat_after = Duration::from_millis(ui.slow_step_repeat_ms as u64);
+            let mut last_report = Duration::ZERO;
+            let mut last_marker: Option<(crate::mir::opt::TachyonProgressTier, usize)> = None;
+            let mut progress_cb = |event: crate::mir::opt::TachyonProgress| {
+                let elapsed = step_opt.elapsed();
+                if elapsed < slow_after {
+                    return;
+                }
+                if elapsed.saturating_sub(last_report) < repeat_after {
+                    return;
+                }
+                let marker = (event.tier, event.completed);
+                if last_marker == Some(marker) {
+                    return;
+                }
+                last_marker = Some(marker);
+                last_report = elapsed;
+                ui.trace(
+                    "progress",
+                    &format!(
+                        "tier={} {}/{} fn={} elapsed={}",
+                        event.tier.label(),
+                        event.completed,
+                        event.total,
+                        event.function,
+                        format_duration(elapsed)
+                    ),
+                );
+            };
+            pulse_stats = tachyon.run_program_with_stats_progress(all_fns, &mut progress_cb);
+        } else {
+            pulse_stats = tachyon.run_program_with_stats(all_fns);
+        }
     } else {
         tachyon.stabilize_for_codegen(all_fns);
     }
@@ -637,6 +913,19 @@ fn run_tachyon_phase(
             "Vectorized: {} | Reduced: {} | Simplified: {} loops",
             pulse_stats.vectorized, pulse_stats.reduced, pulse_stats.simplified_loops
         ));
+        if pulse_stats.vector_loops_seen > 0 && pulse_stats.vector_skipped > 0 {
+            ui.step_line_ok(&format!(
+                "VecSkip: {}/{} (no-iv {} | bound {} | cfg {} | indirect {} | store {} | no-pattern {})",
+                pulse_stats.vector_skipped,
+                pulse_stats.vector_loops_seen,
+                pulse_stats.vector_skip_no_iv,
+                pulse_stats.vector_skip_non_canonical_bound,
+                pulse_stats.vector_skip_unsupported_cfg_shape,
+                pulse_stats.vector_skip_indirect_index_access,
+                pulse_stats.vector_skip_store_effects,
+                pulse_stats.vector_skip_no_supported_pattern
+            ));
+        }
         ui.step_line_ok(&format!(
             "Passes: SCCP {} | GVN {} | LICM {} | BCE {} | TCO {} | DCE {}",
             pulse_stats.sccp_hits,
@@ -684,7 +973,7 @@ fn run_tachyon_phase(
     Ok(())
 }
 
-fn inject_runtime_prelude(
+pub(crate) fn inject_runtime_prelude(
     entry_path: &str,
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
@@ -773,6 +1062,25 @@ pub fn compile_with_configs(
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    let (code, map, _, _) = compile_with_configs_using_emit_cache(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_cfg,
+        None,
+    )?;
+    Ok((code, map))
+}
+
+pub(crate) fn compile_with_configs_using_emit_cache(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    cache: Option<&mut dyn EmitFunctionCache>,
+) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
     let ui = CliLog::new();
     let compile_started = Instant::now();
     let optimize = opt_level.is_optimized();
@@ -792,18 +1100,21 @@ pub fn compile_with_configs(
         mut all_fns,
         emit_order,
         top_level_calls,
-    } = run_mir_synthesis(
-        &ui,
-        TOTAL_STEPS,
-        desugared_hir,
-        &global_symbols,
-        type_cfg,
-    )?;
+    } = run_mir_synthesis(&ui, TOTAL_STEPS, desugared_hir, &global_symbols, type_cfg)?;
 
     run_tachyon_phase(&ui, TOTAL_STEPS, optimize, &mut all_fns)?;
 
-    let (final_output, final_source_map) =
-        emit_r_functions(&ui, TOTAL_STEPS, &all_fns, &emit_order)?;
+    let (final_output, final_source_map, emit_cache_hits, emit_cache_misses) =
+        emit_r_functions_cached(
+            &ui,
+            TOTAL_STEPS,
+            &all_fns,
+            &emit_order,
+            opt_level,
+            type_cfg,
+            parallel_cfg,
+            cache,
+        )?;
 
     let step_runtime = ui.step_start(
         6,
@@ -826,6 +1137,10 @@ pub fn compile_with_configs(
     );
     ui.pulse_success(compile_started.elapsed());
 
-    Ok((with_runtime, final_source_map))
+    Ok((
+        with_runtime,
+        final_source_map,
+        emit_cache_hits,
+        emit_cache_misses,
+    ))
 }
-

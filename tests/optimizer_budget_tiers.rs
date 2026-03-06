@@ -29,14 +29,14 @@ fn extract_metric(log: &str, key: &str) -> Option<usize> {
 }
 
 #[test]
-fn over_budget_runs_always_tier_even_when_selective_disabled() {
+fn over_budget_skips_heavy_tier_when_selective_is_explicitly_disabled() {
     let source = build_large_ir_program();
     let (ok, stdout, stderr) = run_compile_case(
         "optimizer_budget_tiers",
         &source,
         "large_budget_case.rr",
         "-O2",
-        &[],
+        &[("RR_SELECTIVE_OPT_BUDGET", "0")],
     );
     assert!(
         ok,
@@ -80,6 +80,35 @@ fn selective_budget_enables_heavy_tier_for_subset() {
     assert!(
         optimized > 0,
         "selective heavy tier should optimize at least one function:\n{}",
+        log
+    );
+}
+
+#[test]
+fn over_budget_runs_selective_heavy_tier_by_default() {
+    let source = build_large_ir_program();
+    let (ok, stdout, stderr) = run_compile_case(
+        "optimizer_budget_tiers",
+        &source,
+        "large_budget_case_default_selective.rr",
+        "-O2",
+        &[],
+    );
+    assert!(
+        ok,
+        "compile failed\nstdout:\n{}\nstderr:\n{}",
+        stdout, stderr
+    );
+    let log = format!("{}\n{}", stdout, stderr);
+    assert!(
+        log.contains(" | selective"),
+        "default selective marker missing:\n{}",
+        log
+    );
+    let optimized = extract_metric(&log, "OptimizedFns").unwrap_or(0);
+    assert!(
+        optimized > 0,
+        "default selective heavy tier should optimize at least one function:\n{}",
         log
     );
 }
