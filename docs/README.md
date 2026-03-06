@@ -1,6 +1,8 @@
 # RR Documentation
 
 This directory documents RR as implemented in this repository.
+Current compiler line: `RR Tachyon v4.0.0`.
+
 The docs are organized for three audiences:
 
 - users who want to compile or run RR programs

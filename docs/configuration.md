@@ -1,6 +1,7 @@
 # Configuration
 
 This page lists environment variables recognized by RR codebase.
+Current compiler line: `RR Tachyon v4.0.0`.
 
 ## CLI and Output
 

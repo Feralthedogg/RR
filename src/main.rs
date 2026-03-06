@@ -38,6 +38,14 @@ fn run_cli() -> i32 {
     }
 
     match args[1].as_str() {
+        "--version" | "-V" | "version" => {
+            print_version();
+            0
+        }
+        "--help" | "-h" | "help" => {
+            print_usage();
+            0
+        }
         "build" => cmd_build(&args[2..]),
         "run" => cmd_run(&args[2..]),
         "watch" => cmd_watch(&args[2..]),
@@ -67,6 +75,8 @@ fn panic_payload_is_broken_pipe(payload: &(dyn Any + Send)) -> bool {
 
 fn print_usage() {
     eprintln!("Usage:");
+    eprintln!("  rr --version");
+    eprintln!("  rr version");
     eprintln!("  rr <input.rr> [options]");
     eprintln!("  rr run [main.rr|dir|.] [options]");
     eprintln!("  rr build [dir|file.rr] [options]");
@@ -90,6 +100,10 @@ fn print_usage() {
     eprintln!("  --once                                    Run a single watch tick and exit");
     eprintln!("  --keep-r                      Keep generated .gen.R when running");
     eprintln!("  --no-runtime                  Compile only (legacy mode)");
+}
+
+fn print_version() {
+    println!("RR Tachyon v{}", env!("CARGO_PKG_VERSION"));
 }
 
 fn apply_opt_flag(arg: &str, level: &mut OptLevel) -> bool {

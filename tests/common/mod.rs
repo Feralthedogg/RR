@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RunResult {
     pub status: i32,
     pub stdout: String,

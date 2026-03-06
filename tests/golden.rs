@@ -42,20 +42,25 @@ fn golden_r_semantics() {
             .unwrap_or("case");
 
         let ref_r = golden_dir.join(format!("{}.R", stem));
-        let ref_path = if ref_r.exists() {
-            ref_r
-        } else {
-            rr_path.clone()
-        };
-
-        let ref_run = run_rscript(&rscript, &ref_path);
+        let explicit_ref_run = ref_r.exists().then(|| run_rscript(&rscript, &ref_r));
 
         let mut opt_runs: Vec<(String, RunResult)> = Vec::new();
         for (flag, tag) in levels {
             let compiled_path = out_dir.join(format!("{}_compiled_{}.R", stem, tag));
             compile_rr(&rr_bin, &rr_path, &compiled_path, flag);
             let compiled_run = run_rscript(&rscript, &compiled_path);
+            opt_runs.push((flag.to_string(), compiled_run));
+        }
 
+        let ref_run = explicit_ref_run.unwrap_or_else(|| {
+            opt_runs
+                .iter()
+                .find(|(flag, _)| flag == "-O0")
+                .map(|(_, run)| run.clone())
+                .expect("missing O0 golden baseline")
+        });
+
+        for (flag, compiled_run) in &opt_runs {
             assert_eq!(
                 ref_run.status,
                 compiled_run.status,
@@ -77,7 +82,6 @@ fn golden_r_semantics() {
                 rr_path.display(),
                 flag
             );
-            opt_runs.push((flag.to_string(), compiled_run));
         }
 
         if let Some((base_flag, base_run)) = opt_runs.first() {

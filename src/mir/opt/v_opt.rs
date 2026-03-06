@@ -614,6 +614,11 @@ fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                         && lbase == rbase
                         && loop_matches_vec(lp, fn_ir, lbase)
                     {
+                        let allowed_dests: Vec<VarId> =
+                            resolve_base_var(fn_ir, *base).into_iter().collect();
+                        if loop_has_non_iv_loop_carried_state_except(fn_ir, lp, &allowed_dests) {
+                            continue;
+                        }
                         return Some(VectorPlan::Map {
                             dest: *base,
                             src: lbase,
@@ -626,6 +631,11 @@ fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                     if let Some(x_base) = lhs_idx
                         && loop_matches_vec(lp, fn_ir, x_base)
                     {
+                        let allowed_dests: Vec<VarId> =
+                            resolve_base_var(fn_ir, *base).into_iter().collect();
+                        if loop_has_non_iv_loop_carried_state_except(fn_ir, lp, &allowed_dests) {
+                            continue;
+                        }
                         return Some(VectorPlan::Map {
                             dest: *base,
                             src: x_base,
@@ -638,6 +648,11 @@ fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                     if let Some(x_base) = rhs_idx
                         && loop_matches_vec(lp, fn_ir, x_base)
                     {
+                        let allowed_dests: Vec<VarId> =
+                            resolve_base_var(fn_ir, *base).into_iter().collect();
+                        if loop_has_non_iv_loop_carried_state_except(fn_ir, lp, &allowed_dests) {
+                            continue;
+                        }
                         return Some(VectorPlan::Map {
                             dest: *base,
                             src: *lhs,
@@ -755,6 +770,17 @@ fn match_conditional_map(
                     }
                 }
             };
+            let allowed_dests: Vec<VarId> =
+                resolve_base_var(fn_ir, dest_base).into_iter().collect();
+            if loop_has_non_iv_loop_carried_state_except(fn_ir, lp, &allowed_dests) {
+                if trace_enabled {
+                    eprintln!(
+                        "   [vec-cond-map] {} skip: loop carries non-destination state",
+                        fn_ir.name
+                    );
+                }
+                continue;
+            }
             if !is_const_one(fn_ir, iv.init_val) {
                 if trace_enabled {
                     eprintln!(
@@ -907,7 +933,6 @@ fn match_shifted_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                 // Potential loop-carried dependence (recurrence-like); keep scalar semantics.
                 continue;
             }
-
             return Some(VectorPlan::ShiftedMap {
                 dest: d,
                 src: s,
@@ -1123,7 +1148,6 @@ fn match_expr_map(
     if found.is_empty() {
         return None;
     }
-
     let entries: Vec<ExprMapEntry> = found
         .into_iter()
         .map(|(dest, expr)| ExprMapEntry {
@@ -1225,7 +1249,6 @@ fn match_scatter_expr_map(
     if expr_reads_base_non_iv(fn_ir, expr, dest, iv_phi) {
         return None;
     }
-
     Some(VectorPlan::ScatterExprMap {
         dest,
         idx,
@@ -3692,6 +3715,158 @@ fn loop_has_store_effect(fn_ir: &FnIR, lp: &LoopInfo) -> bool {
         }
     }
     false
+}
+
+fn loop_has_non_iv_loop_carried_state_except(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    allowed_vars: &[VarId],
+) -> bool {
+    let Some(iv) = lp.iv.as_ref() else {
+        return false;
+    };
+    let iv_phi = iv.phi_val;
+    for value in &fn_ir.values {
+        let ValueKind::Phi { args } = &value.kind else {
+            continue;
+        };
+        let Some(phi_bb) = value.phi_block else {
+            continue;
+        };
+        if !lp.body.contains(&phi_bb) {
+            continue;
+        }
+        let has_loop_pred = args.iter().any(|(_, pred)| lp.body.contains(pred));
+        let has_outer_pred = args.iter().any(|(_, pred)| !lp.body.contains(pred));
+        if !has_loop_pred || !has_outer_pred {
+            continue;
+        }
+        if is_iv_equivalent(fn_ir, value.id, iv_phi)
+            || is_origin_var_iv_alias_in_loop(fn_ir, lp, value.id, iv_phi)
+        {
+            continue;
+        }
+        let Some(origin_var) = value.origin_var.as_deref() else {
+            continue;
+        };
+        if allowed_vars
+            .iter()
+            .any(|allowed| origin_var == allowed.as_str())
+        {
+            continue;
+        }
+        if !var_observed_outside_loop(fn_ir, lp, origin_var) {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+fn var_observed_outside_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> bool {
+    let mut reachable_post_loop = FxHashSet::default();
+    let mut stack: Vec<BlockId> = lp.exits.clone();
+    while let Some(bid) = stack.pop() {
+        if lp.body.contains(&bid) || !reachable_post_loop.insert(bid) {
+            continue;
+        }
+        for succ in block_successors(fn_ir, bid).into_iter().flatten() {
+            if !lp.body.contains(&succ) {
+                stack.push(succ);
+            }
+        }
+    }
+
+    for bid in reachable_post_loop {
+        let block = &fn_ir.blocks[bid];
+        for instr in &block.instrs {
+            let observed = match instr {
+                Instr::Assign { src, .. } => {
+                    value_depends_on_origin_var(fn_ir, *src, var, &mut FxHashSet::default())
+                }
+                Instr::Eval { val, .. } => {
+                    value_depends_on_origin_var(fn_ir, *val, var, &mut FxHashSet::default())
+                }
+                Instr::StoreIndex1D { base, idx, val, .. } => {
+                    value_depends_on_origin_var(fn_ir, *base, var, &mut FxHashSet::default())
+                        || value_depends_on_origin_var(fn_ir, *idx, var, &mut FxHashSet::default())
+                        || value_depends_on_origin_var(fn_ir, *val, var, &mut FxHashSet::default())
+                }
+                Instr::StoreIndex2D {
+                    base, r, c, val, ..
+                } => {
+                    value_depends_on_origin_var(fn_ir, *base, var, &mut FxHashSet::default())
+                        || value_depends_on_origin_var(fn_ir, *r, var, &mut FxHashSet::default())
+                        || value_depends_on_origin_var(fn_ir, *c, var, &mut FxHashSet::default())
+                        || value_depends_on_origin_var(fn_ir, *val, var, &mut FxHashSet::default())
+                }
+            };
+            if observed {
+                return true;
+            }
+        }
+        let observed = match &block.term {
+            Terminator::If { cond, .. } => {
+                value_depends_on_origin_var(fn_ir, *cond, var, &mut FxHashSet::default())
+            }
+            Terminator::Return(Some(val)) => {
+                value_depends_on_origin_var(fn_ir, *val, var, &mut FxHashSet::default())
+            }
+            Terminator::Goto(_) | Terminator::Return(None) | Terminator::Unreachable => false,
+        };
+        if observed {
+            return true;
+        }
+    }
+    false
+}
+
+fn value_depends_on_origin_var(
+    fn_ir: &FnIR,
+    root: ValueId,
+    var: &str,
+    visited: &mut FxHashSet<ValueId>,
+) -> bool {
+    if !visited.insert(root) {
+        return false;
+    }
+    let value = &fn_ir.values[root];
+    if value.origin_var.as_deref() == Some(var) {
+        return true;
+    }
+    match &value.kind {
+        ValueKind::Load { var: load_var } => load_var == var,
+        ValueKind::Phi { args } => args
+            .iter()
+            .any(|(src, _)| value_depends_on_origin_var(fn_ir, *src, var, visited)),
+        ValueKind::Len { base }
+        | ValueKind::Indices { base }
+        | ValueKind::Unary { rhs: base, .. } => {
+            value_depends_on_origin_var(fn_ir, *base, var, visited)
+        }
+        ValueKind::Range { start, end }
+        | ValueKind::Binary {
+            lhs: start,
+            rhs: end,
+            ..
+        } => {
+            value_depends_on_origin_var(fn_ir, *start, var, visited)
+                || value_depends_on_origin_var(fn_ir, *end, var, visited)
+        }
+        ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args
+            .iter()
+            .any(|arg| value_depends_on_origin_var(fn_ir, *arg, var, visited)),
+        ValueKind::Index1D { base, idx, .. } => {
+            value_depends_on_origin_var(fn_ir, *base, var, visited)
+                || value_depends_on_origin_var(fn_ir, *idx, var, visited)
+        }
+        ValueKind::Index2D { base, r, c } => {
+            value_depends_on_origin_var(fn_ir, *base, var, visited)
+                || value_depends_on_origin_var(fn_ir, *r, var, visited)
+                || value_depends_on_origin_var(fn_ir, *c, var, visited)
+        }
+        ValueKind::Const(_) | ValueKind::Param { .. } => false,
+    }
 }
 
 fn loop_vectorize_skip_reason(fn_ir: &FnIR, lp: &LoopInfo) -> VectorizeSkipReason {

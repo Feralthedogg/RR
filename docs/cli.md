@@ -5,6 +5,8 @@ RR supports direct compile, run, build, and watch workflows.
 ## Invocation Forms
 
 ```bash
+RR --version
+RR version
 RR <input.rr> [options]
 RR run [main.rr|dir|.] [options]
 RR build [dir|file.rr] [options]
@@ -13,7 +15,19 @@ RR watch [main.rr|dir|.] [options]
 
 During development, `cargo run -- ...` is equivalent to invoking `RR ...`.
 
+Current compiler line: `RR Tachyon v4.0.0`.
+
 ## Command Behavior
+
+### `version`
+
+```bash
+RR --version
+RR version
+```
+
+- prints the compiler banner version and exits
+- intended for scripts, CI, and local environment checks
 
 ### Direct Compile
 

@@ -4,7 +4,7 @@ layout: home
 hero:
   name: RR
   text: An Optimizing Compiler for R-Oriented Code
-  tagline: R-first syntax, MIR-based optimization, and self-contained R output documented from the implementation.
+  tagline: RR Tachyon v4.0.0. R-first syntax, MIR-based optimization, and self-contained R output documented from the implementation.
   actions:
     - theme: brand
       text: Getting Started

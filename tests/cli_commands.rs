@@ -96,3 +96,43 @@ main();
         stdout
     );
 }
+
+#[test]
+fn version_flag_prints_crate_version() {
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let output = Command::new(&rr_bin)
+        .arg("--version")
+        .output()
+        .expect("failed to run rr --version");
+
+    assert!(
+        output.status.success(),
+        "rr --version failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(),
+        format!("RR Tachyon v{}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn version_command_prints_crate_version() {
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let output = Command::new(&rr_bin)
+        .arg("version")
+        .output()
+        .expect("failed to run rr version");
+
+    assert!(
+        output.status.success(),
+        "rr version failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(),
+        format!("RR Tachyon v{}", env!("CARGO_PKG_VERSION"))
+    );
+}

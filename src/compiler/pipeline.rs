@@ -264,7 +264,7 @@ impl CliLog {
         println!(
             "{} {}",
             self.yellow_bold("[+]"),
-            self.red_bold("RR Tachyon v3.0")
+            self.red_bold(&format!("RR Tachyon v{}", env!("CARGO_PKG_VERSION")))
         );
         println!(
             " {} {}",

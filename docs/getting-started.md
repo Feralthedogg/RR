@@ -13,6 +13,12 @@ This page walks through the shortest path to a working RR compile and run.
 cargo build
 ```
 
+Confirm the installed compiler line:
+
+```bash
+target/debug/RR --version
+```
+
 You can invoke RR either way:
 
 ```bash
@@ -21,6 +27,12 @@ target/debug/RR --help
 
 ```bash
 cargo run -- --help
+```
+
+Current expected output:
+
+```text
+RR Tachyon v4.0.0
 ```
 
 ## First Program

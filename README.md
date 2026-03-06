@@ -3,6 +3,7 @@
 RR is an optimizing compiler for an R-oriented source language.
 It compiles `.rr` programs into self-contained `.R` output, using an SSA-like MIR pipeline,
 the `Tachyon` optimizer, and an embedded runtime for checks and helper operations.
+Current compiler line: `RR Tachyon v4.0.0`.
 
 ## What RR Does
 
@@ -34,6 +35,12 @@ Or through Cargo:
 
 ```bash
 cargo run -- --help
+```
+
+Print the compiler version:
+
+```bash
+target/debug/RR --version
 ```
 
 ### Compile a file to R
@@ -83,6 +90,8 @@ print(main())
 ## CLI At a Glance
 
 - `RR <input.rr> [options]`
+- `RR --version`
+- `RR version`
 - `RR run [main.rr|dir|.] [options]`
 - `RR build [dir|file.rr] [options]`
 - `RR watch [main.rr|dir|.] [options]`
