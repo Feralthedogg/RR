@@ -10,6 +10,10 @@ Workloads are chosen to cover:
 - iterative orbital integration
 - reaction-diffusion style state evolution
 
+All benchmark programs are expected to both compile and execute.
+Benchmarks that need pseudo-random input should size their generated draw buffers
+from the same loop bounds they consume, rather than hard-coding shorter buffers.
+
 Suggested runner:
 
 ```bash

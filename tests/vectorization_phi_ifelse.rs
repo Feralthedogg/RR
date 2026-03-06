@@ -70,7 +70,9 @@ fn tesseract_emits_phi_ifelse_vectorized_kernels() {
             && code.contains(".tachyon_exprmap0_0 <- rr_ifelse_strict(")
             && code.contains(".tachyon_exprmap1_0 <- rr_ifelse_strict(")
             && code.contains("A <- rr_assign_slice(A, i, SIZE, .tachyon_exprmap0_0)")
-            && code.contains("B <- rr_assign_slice(B, i, SIZE, .tachyon_exprmap1_0)"),
+            && code.contains("B <- rr_assign_slice(B, i, SIZE, .tachyon_exprmap1_0)")
+            && code.contains("lapA")
+            && !code.contains("(NULL - .__rr_cse_279)"),
         "expected Sym_103 morphogenesis update loop to stage vector RHS values before rr_assign_slice updates"
     );
     let sym89 = Regex::new(

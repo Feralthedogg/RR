@@ -93,17 +93,37 @@ This enforces compile-time budget expectations for optimized builds.
 - `example/data_science/*.rr`
 - `example/physics/*.rr`
 - `tests/example_simulations.rs`
+- `tests/tesseract_runtime_smoke.rs`
 - `example/benchmarks/*.rr`
 - `tests/benchmark_examples_smoke.rs`
+- `tests/example_perf_smoke.rs` (`ignored`)
 
 The simulation catalog is compiled across optimization levels and executed at `-O2`.
 The benchmark catalog is intended for repeatable compile-time and runtime comparisons.
+`tesseract.rr` is covered as a dedicated runtime smoke because it exercises the
+largest vectorization and runtime-injection path in the example set.
 
 Benchmark runner:
 
 ```bash
 scripts/bench_examples.sh
 ```
+
+Explicit perf smoke runner:
+
+```bash
+cargo test -q --test example_perf_smoke -- --ignored --nocapture
+```
+
+Optional perf smoke budgets:
+
+- `RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS`
+- `RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS`
+
+Current CI baseline:
+
+- total compile `-O2` budget: `5000 ms`
+- total runtime `-O2` budget: `20000 ms`
 
 ## Golden Semantics
 
@@ -191,7 +211,12 @@ The CI workflow is expected to run:
 
 - Rust test suite
 - R-backed integration coverage
+- dedicated example perf smoke with timing output
 - linting
 - fuzz smoke coverage for key targets
+
+The example-heavy runtime suites run in a dedicated CI job so failures in
+`example_simulations`, `benchmark_examples_smoke`, or `tesseract_runtime_smoke`
+do not get buried inside the core Rust test log.
 
 For compiler changes, targeted regression tests are preferred over broad snapshot updates.

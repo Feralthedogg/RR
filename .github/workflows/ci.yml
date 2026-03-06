@@ -29,7 +29,7 @@ jobs:
         run: cargo fmt --check || true
 
   test:
-    name: Test + Perf Gate
+    name: Core Tests + Perf Gate
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -50,8 +50,49 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends r-base-core
 
-      - name: Run Tests
-        run: cargo test -q
+      - name: Run Core Tests
+        run: >
+          cargo test -q -- --skip simulation_examples_compile_across_opt_levels
+          --skip simulation_examples_run_at_o2
+          --skip simulation_reference_examples_match_between_o0_and_o2
+          --skip benchmark_examples_compile_at_o2
+          --skip benchmark_examples_run_at_o2
+          --skip tesseract_compiles_across_opt_levels
+          --skip tesseract_runs_at_o2
+
+  examples:
+    name: Example Smoke + Perf
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS: "5000"
+      RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS: "20000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rscript
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core
+
+      - name: Simulation Example Smoke
+        run: cargo test -q --test example_simulations
+
+      - name: Benchmark Example Smoke
+        run: cargo test -q --test benchmark_examples_smoke
+
+      - name: Tesseract Smoke
+        run: cargo test -q --test tesseract_runtime_smoke
+
+      - name: Example Perf Smoke
+        run: cargo test -q --test example_perf_smoke -- --ignored --nocapture
 
   fuzz-smoke:
     name: Fuzz Smoke

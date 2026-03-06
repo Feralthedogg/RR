@@ -2,8 +2,9 @@ import "../common/sim_utils.rr";
 
 fn main() {
     n = 128.0
+    resamples = 96.0
     samples = rep.int(0.0, n)
-    draws = lcg_uniform(8192.0, 4242.0)
+    draws = lcg_uniform(n * resamples, 4242.0)
     i = 1.0
     while (i <= n) {
         samples[i] = i * 0.2 + (i % 7.0) * 0.05
@@ -11,7 +12,7 @@ fn main() {
     }
     resample = 1.0
     acc = 0.0
-    while (resample <= 96.0) {
+    while (resample <= resamples) {
         inner = 1.0
         s = 0.0
         while (inner <= n) {
@@ -22,7 +23,7 @@ fn main() {
         acc += s / n
         resample += 1.0
     }
-    print_metric("bootstrap_bench_mean", acc / 96.0)
+    print_metric("bootstrap_bench_mean", acc / resamples)
     print_metric("bootstrap_bench_acc", acc)
 }
 

@@ -5812,6 +5812,45 @@ fn materialize_passthrough_origin_phi_state(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn materialize_vector_index_base(
+    fn_ir: &mut FnIR,
+    base: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+) -> Option<ValueId> {
+    let base = canonical_value(fn_ir, base);
+    if let ValueKind::Phi { args } = fn_ir.values[base].kind.clone()
+        && fn_ir.values[base].origin_var.is_none()
+    {
+        let outside_args: Vec<ValueId> = args
+            .iter()
+            .filter_map(|(arg, bid)| if lp.body.contains(bid) { None } else { Some(*arg) })
+            .collect();
+        if outside_args.len() == 1 {
+            return materialize_vector_expr_impl(
+                fn_ir,
+                outside_args[0],
+                iv_phi,
+                idx_vec,
+                lp,
+                memo,
+                interner,
+                visiting,
+                allow_any_base,
+                require_safe_index,
+            );
+        }
+    }
+    Some(resolve_materialized_value(fn_ir, base))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn materialize_vector_expr(
     fn_ir: &mut FnIR,
     root: ValueId,
@@ -5820,6 +5859,33 @@ fn materialize_vector_expr(
     lp: &LoopInfo,
     memo: &mut FxHashMap<ValueId, ValueId>,
     interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+) -> Option<ValueId> {
+    materialize_vector_expr_impl(
+        fn_ir,
+        root,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        &mut FxHashSet::default(),
+        allow_any_base,
+        require_safe_index,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_expr_impl(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
     allow_any_base: bool,
     require_safe_index: bool,
 ) -> Option<ValueId> {
@@ -6074,7 +6140,18 @@ fn materialize_vector_expr(
                     return None;
                 }
                 if is_iv_equivalent(fn_ir, idx, iv_phi) {
-                    let base_ref = resolve_materialized_value(fn_ir, base);
+                    let base_ref = materialize_vector_index_base(
+                        fn_ir,
+                        base,
+                        iv_phi,
+                        idx_vec,
+                        lp,
+                        memo,
+                        interner,
+                        visiting,
+                        allow_any_base,
+                        require_safe_index,
+                    )?;
                     if is_safe && is_na_safe {
                         base_ref
                     } else {
@@ -6137,7 +6214,18 @@ fn materialize_vector_expr(
                             facts,
                         );
                     }
-                    let base_ref = resolve_materialized_value(fn_ir, base);
+                    let base_ref = materialize_vector_index_base(
+                        fn_ir,
+                        base,
+                        iv_phi,
+                        idx_vec,
+                        lp,
+                        memo,
+                        interner,
+                        visiting,
+                        allow_any_base,
+                        require_safe_index,
+                    )?;
                     if is_safe && is_na_safe {
                         intern_materialized_value(
                             fn_ir,
@@ -6291,7 +6379,7 @@ fn materialize_vector_expr(
         lp,
         memo,
         interner,
-        &mut FxHashSet::default(),
+        visiting,
         allow_any_base,
         require_safe_index,
     )

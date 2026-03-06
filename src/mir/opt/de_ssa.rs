@@ -132,24 +132,32 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
 
     // Eliminate any remaining Phi.
     // Prefer preserving variable semantics when the Phi already has a bound var name.
-    for val in &mut fn_ir.values {
-        if let ValueKind::Phi { .. } = val.kind {
-            if let Some(var) = val.origin_var.clone() {
-                val.kind = ValueKind::Load { var };
-                val.phi_block = None;
-                changed = true;
-                continue;
-            }
+    for phi in 0..fn_ir.values.len() {
+        if !matches!(fn_ir.values[phi].kind, ValueKind::Phi { .. }) {
+            continue;
+        }
+        if let Some(var) = fn_ir.values[phi].origin_var.clone() {
+            fn_ir.values[phi].kind = ValueKind::Load { var };
+            fn_ir.values[phi].phi_block = None;
+            changed = true;
+            continue;
+        }
+        if let Some(var) = phi_shared_origin_var(fn_ir, phi) {
+            fn_ir.values[phi].kind = ValueKind::Load { var: var.clone() };
+            fn_ir.values[phi].origin_var = Some(var);
+            fn_ir.values[phi].phi_block = None;
+            changed = true;
+            continue;
+        }
 
-            let unreachable_phi = match val.phi_block {
-                Some(bid) => !reachable.contains(&bid),
-                None => true,
-            };
-            if unreachable_phi {
-                val.kind = ValueKind::Const(Lit::Null);
-                val.phi_block = None;
-                changed = true;
-            }
+        let unreachable_phi = match fn_ir.values[phi].phi_block {
+            Some(bid) => !reachable.contains(&bid),
+            None => true,
+        };
+        if unreachable_phi {
+            fn_ir.values[phi].kind = ValueKind::Const(Lit::Null);
+            fn_ir.values[phi].phi_block = None;
+            changed = true;
         }
     }
 
@@ -175,6 +183,56 @@ fn collect_phi_blocks(fn_ir: &FnIR) -> HashMap<BlockId, Vec<ValueId>> {
         }
     }
     map
+}
+
+fn phi_shared_origin_var(fn_ir: &FnIR, phi: ValueId) -> Option<String> {
+    let ValueKind::Phi { args } = &fn_ir.values[phi].kind else {
+        return None;
+    };
+    let mut shared: Option<String> = None;
+    for (arg, _) in args {
+        let arg = phi_alias_canonical_value(fn_ir, *arg);
+        let current = match &fn_ir.values[arg].kind {
+            ValueKind::Load { var } => Some(var.clone()),
+            _ => fn_ir.values[arg].origin_var.clone(),
+        }?;
+        match &shared {
+            None => shared = Some(current),
+            Some(prev) if *prev == current => {}
+            Some(_) => return None,
+        }
+    }
+    shared
+}
+
+fn phi_alias_canonical_value(fn_ir: &FnIR, mut vid: ValueId) -> ValueId {
+    let mut seen = HashSet::new();
+    while seen.insert(vid) {
+        if let ValueKind::Load { var } = &fn_ir.values[vid].kind {
+            let mut next = None;
+            for block in &fn_ir.blocks {
+                for instr in &block.instrs {
+                    let Instr::Assign { dst, src, .. } = instr else {
+                        continue;
+                    };
+                    if dst == var {
+                        let src = *src;
+                        match next {
+                            None => next = Some(src),
+                            Some(prev) if prev == src => {}
+                            Some(_) => return vid,
+                        }
+                    }
+                }
+            }
+            if let Some(next_vid) = next {
+                vid = next_vid;
+                continue;
+            }
+        }
+        break;
+    }
+    vid
 }
 
 fn build_succ_map(fn_ir: &FnIR) -> HashMap<BlockId, Vec<BlockId>> {
