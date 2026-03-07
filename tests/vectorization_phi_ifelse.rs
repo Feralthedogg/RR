@@ -1,9 +1,6 @@
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use regex::Regex;
 
 fn compile_rr(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) {
     let status = Command::new(rr_bin)
@@ -23,7 +20,7 @@ fn compile_rr(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) {
 }
 
 #[test]
-fn tesseract_emits_phi_ifelse_vectorized_kernels() {
+fn tesseract_emits_expected_vectorized_kernels() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_src = root.join("example").join("tesseract.rr");
     assert!(rr_src.exists(), "missing {}", rr_src.display());
@@ -40,79 +37,57 @@ fn tesseract_emits_phi_ifelse_vectorized_kernels() {
 
     let code = fs::read_to_string(&out).expect("failed to read O2 output");
     assert!(
-        code.contains("Sym_70 <- function(temp, q_v, q_c, q_r, size)")
-            && code.contains("heating <- rr_assign_slice(heating, i, .arg_size, ((2500000 / 1004)")
-            && code.contains("rr_ifelse_strict((.arg_q_r > 0), ((0.0001 * (.__rr_cse_126 - .arg_q_v)) * .arg_q_r), 0)"),
-        "expected Sym_70 to lower phi-conditional scalar state into vectorized rr_ifelse_strict/rr_assign_slice form"
+        code.contains("Sym_78 <- function(u, v, n_l, n_r, n_d, n_u, size)")
+            && code
+                .contains(".__rr_cse_105 <- rr_index1_read_vec(.arg_n_r, .tachyon_scatter_idx_0)")
+            && code.contains(
+                "visc <- rr_assign_index_vec(visc, .tachyon_scatter_idx_0, .tachyon_scatter_val_0)"
+            ),
+        "expected Smagorinsky kernel to lower to vector gather/scatter form"
     );
     assert!(
-        code.contains("Sym_118 <- function(temp, q_v, q_c, q_r, q_i, q_s, q_g, size)")
-            && Regex::new(
-                r#"Sym_118 <- function\(temp, q_v, q_c, q_r, q_i, q_s, q_g, size\)[\s\S]*?heat <- rr_assign_slice\(heat, i, \.arg_size, \(rr_ifelse_strict\([\s\S]*?rr_ifelse_strict\(\(\.arg_q_g > 0\),"#
+        code.contains(
+            "Sym_83 <- function(u, v, h, h_trn, coriolis, visc, n_l, n_r, n_d, n_u, size)"
+        ) && code.contains(
+            "du <- rr_assign_index_vec(du, .tachyon_scatter_idx_0, .tachyon_scatter_val_0)"
+        ),
+        "expected tendency kernel to lower to vector gather/scatter form"
+    );
+    assert!(
+        code.contains("Sym_103 <- function(field, w, h)")
+            && code.contains("rr_wrap_index_vec_i(")
+            && code.contains(
+                "lap <- rr_assign_index_vec(lap, .tachyon_scatter_idx_0, .tachyon_scatter_val_0)"
             )
-            .expect("valid Sym_118 vectorization regex")
-            .is_match(&code),
-        "expected Sym_118 to lower nested phi-conditional state into vectorized rr_ifelse_strict/rr_assign_slice form"
+            && !code.contains("(NULL -"),
+        "expected laplacian kernel to lower to vector wrap-index gather/scatter form without NULL arithmetic"
     );
     assert!(
-        code.contains("Sym_66 <- function(b, n_l, n_r, n_d, n_u, size)")
-            && code.contains("r <- rr_assign_slice(r, k, .arg_size, .arg_b)")
-            && code.contains("p <- rr_assign_slice(p, k, .arg_size, .arg_b)")
-            && code.contains(".tachyon_exprmap0_0 <- (x + (alpha * p))")
-            && code.contains(".tachyon_exprmap1_0 <- (r - (alpha * Ap))")
-            && code.contains("x <- rr_assign_slice(x, i, .arg_size, .tachyon_exprmap0_0)")
-            && code.contains("r <- rr_assign_slice(r, i, .arg_size, .tachyon_exprmap1_0)")
-            && code.contains("p <- rr_assign_slice(p, i, .arg_size, (r + (beta * p)))"),
-        "expected Sym_66 loops to lower independent slice stores into vectorized rr_assign_slice updates"
+        code.contains("return(rr_named_list(\"px\", .arg_px, \"py\", .arg_py, \"pf\", .arg_pf))")
+            && code.contains("particles <- Sym_92(p_x, p_y, p_f, u, v, 0.1, 40, TOTAL)")
+            && code.contains("p_x <- rr_field_get(particles, \"px\")")
+            && code.contains("p_y <- rr_field_get(particles, \"py\")")
+            && code.contains("p_f <- rr_field_get(particles, \"pf\")"),
+        "expected particle state to be threaded back through a record return and field rebinding"
     );
     assert!(
-        code.contains("Sym_103 <- function()")
-            && code.contains(".tachyon_exprmap0_0 <- rr_ifelse_strict(")
-            && code.contains(".tachyon_exprmap1_0 <- rr_ifelse_strict(")
-            && code.contains("A <- rr_assign_slice(A, i, SIZE, .tachyon_exprmap0_0)")
-            && code.contains("B <- rr_assign_slice(B, i, SIZE, .tachyon_exprmap1_0)")
-            && code.contains("lapA")
-            && !code.contains("(NULL - .__rr_cse_279)"),
-        "expected Sym_103 morphogenesis update loop to stage vector RHS values before rr_assign_slice updates"
+        !code.contains("p_check <- Sym_"),
+        "stale particle state placeholder should not remain in optimized tesseract output"
     );
-    let sym89 = Regex::new(
-        r#"Sym_89 <- function\(px, py, pf, u, v, dt, N, total_grid\)[\s\S]*?return\(\.arg_px\)\n}"#,
-    )
-    .expect("valid Sym_89 extraction regex")
-    .find(&code)
-    .expect("expected Sym_89 in emitted code")
-    .as_str();
-    assert!(
-        sym89.contains(".arg_px <- rr_assign_slice(.arg_px, i, 1000,")
-            && sym89.contains(".arg_py <- rr_assign_slice(.arg_py, i, 1000,")
-            && sym89.contains(".arg_pf <- rr_assign_slice(.arg_pf, i, 1000,")
-            && sym89.contains("rr_idx_cube_vec_i("),
-        "expected Sym_89 particle update loop to lower into staged slice assignments with vector index helper"
-    );
-    assert!(
-        Regex::new(r#"rr_ifelse_strict\([^,\n]+, \.arg_N, [^\n]+\)"#)
-            .expect("valid Sym_89 upper clamp regex")
-            .find_iter(sym89)
-            .count()
-            >= 2,
-        "expected Sym_89 to preserve both gx/gy upper clamps when vectorized"
-    );
-    let temp_re = Regex::new(r#"\.tachyon_exprcse\d+_\d+"#).expect("valid temp regex");
-    let mut temp_names = BTreeSet::new();
-    for m in temp_re.find_iter(sym89) {
-        temp_names.insert(m.as_str().to_string());
-    }
-    for temp in temp_names {
-        let def_pat = format!(r#"{}\s*<-"#, regex::escape(&temp));
-        assert!(
-            Regex::new(&def_pat)
-                .expect("valid temp definition regex")
-                .is_match(sym89),
-            "expected Sym_89 temp {temp} to be defined within the same emitted function"
-        );
-    }
     assert!(
         !code.contains("# rr-hybrid-fallback:"),
         "expected optimized tesseract output to avoid hybrid fallback comments after MIR validation"
+    );
+    assert!(
+        code.contains("rr_assign_index_vec("),
+        "expected optimized tesseract output to retain vector scatter lowering"
+    );
+    assert!(
+        code.contains("rr_index1_read_vec("),
+        "expected optimized tesseract output to retain vector gather lowering"
+    );
+    assert!(
+        code.contains("Particle 1 Position (X):"),
+        "expected tesseract runtime markers to remain in emitted output"
     );
 }

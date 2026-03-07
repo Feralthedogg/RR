@@ -2,7 +2,7 @@
 
 Current compiler line: `RR Tachyon v4.0.0`.
 
-Use this checklist after meaningful compiler changes to verify that the code still matches [CONTRIBUTING.md](../CONTRIBUTING.md).
+Use this checklist after meaningful compiler changes to verify that the code still matches [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 
 ## Fast Audit
 
