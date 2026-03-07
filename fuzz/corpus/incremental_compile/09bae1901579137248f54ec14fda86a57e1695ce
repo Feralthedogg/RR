@@ -1,0 +1,10 @@
+fn helper(flag$ {
+   {
+  i$ (flag) { :eturn 1; }
+  return :;
+}
+
+fn main() {
+  flag = Tflag) { return 1; }
+  retur }
+;

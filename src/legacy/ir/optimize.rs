@@ -82,9 +82,10 @@ impl Optimizer {
             let x_name = match &x_expr.kind { IRExprKind::Name(n) => n, _ => return None };
 
             if let Some(vec_expr) = self.try_vectorize_expr(value, x_name, iter_var, x_expr) {
+                let y_name = self.extract_name(y_expr)?;
                  return Some(IRStmt {
                     kind: IRStmtKind::Assign {
-                        target: IRLValue::Name(self.extract_name(y_expr).unwrap()),
+                        target: IRLValue::Name(y_name),
                         value: vec_expr,
                     },
                     span: for_span,

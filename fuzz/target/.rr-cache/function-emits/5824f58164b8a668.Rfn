@@ -1,0 +1,12 @@
+Sym_1 <- function(flag) 
+{
+  # Block 0
+
+  .arg_flag <- flag
+  rr_mark(1, 11); # rr:1:11 if
+  if (rr_truthy1(.arg_flag, "condition")) {
+    return(1L)
+  } else {
+    return(2L)
+  }
+}

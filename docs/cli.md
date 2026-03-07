@@ -37,7 +37,7 @@ RR input.rr -o out.R -O2
 
 - compiles one `.rr` file
 - writes one `.R` file
-- accepts `--no-runtime` for emission-only output
+- accepts `--no-runtime` to omit source/native bootstrap while keeping helper definitions and runtime settings
 
 ### `run`
 
@@ -85,7 +85,7 @@ RR watch . -O2
 - `--out-dir <dir>`
   - output directory for `build`
 - `--no-runtime`
-  - compile without embedding the runtime prelude
+  - omit source/native bootstrap while keeping helper definitions and runtime settings
 - `--keep-r`
   - keep generated `.gen.R` after `run`
 - `--type-mode strict|gradual`
@@ -100,6 +100,9 @@ RR watch . -O2
 - `--incremental[=off|1|1,2|1,2,3|all]`
 - `--incremental-phases <off|1|1,2|1,2,3|all>`
 - `--strict-incremental-verify`
+  - rebuild and compare against any available incremental cache artifact
+  - compares both emitted R and source maps
+  - first compile after a cache miss is populated but not yet "verified"
 - `--poll-ms <N>`
   - watch polling interval in milliseconds
 - `--once`

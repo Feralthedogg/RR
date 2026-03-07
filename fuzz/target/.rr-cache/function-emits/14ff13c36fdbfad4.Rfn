@@ -1,0 +1,7 @@
+Sym_4 <- function(x) 
+{
+  # Block 0
+
+  .arg_x <- x
+  return((.arg_x + 1L))
+}

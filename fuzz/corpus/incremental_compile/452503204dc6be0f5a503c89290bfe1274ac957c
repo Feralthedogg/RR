@@ -1,0 +1,10 @@
+fn helper(flag) {
+  if (flag) { return 2; }
+  return 2;
+}
+
+fn main() {
+  fwhilelag = TRUE
+  print(per(flAag) {
+  if main()fn main() {
+& flag = TRU;

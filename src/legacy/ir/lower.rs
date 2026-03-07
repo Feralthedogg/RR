@@ -159,16 +159,19 @@ impl Lowerer {
                 let ir_base = Box::new(self.lower_expr(base)?);
                 let mut ir_idx = Vec::new();
                 for e in idx { ir_idx.push(self.lower_expr(e)?); }
-                
-                if ir_idx.len() == 1 {
-                    Ok(IRLValue::Index1D { base: ir_base, idx: Box::new(ir_idx.into_iter().next().unwrap()) })
-                } else if ir_idx.len() == 2 {
-                    let mut iter = ir_idx.into_iter();
-                    let r = Box::new(iter.next().unwrap());
-                    let c = Box::new(iter.next().unwrap());
-                    Ok(IRLValue::Index2D { base: ir_base, r, c })
-                } else {
-                    bail!(
+
+                let mut iter = ir_idx.into_iter();
+                match (iter.next(), iter.next(), iter.next()) {
+                    (Some(idx), None, None) => Ok(IRLValue::Index1D {
+                        base: ir_base,
+                        idx: Box::new(idx),
+                    }),
+                    (Some(r), Some(c), None) => Ok(IRLValue::Index2D {
+                        base: ir_base,
+                        r: Box::new(r),
+                        c: Box::new(c),
+                    }),
+                    _ => bail!(
                         "RR.SemanticError",
                         RRCode::E1002,
                         Stage::Lower,
@@ -176,7 +179,7 @@ impl Lowerer {
                             "RR v{} only supports 1D and 2D indexing",
                             env!("CARGO_PKG_VERSION")
                         )
-                    );
+                    ),
                 }
             }
         }
@@ -236,24 +239,24 @@ impl Lowerer {
             }
             ExprKind::Index { base, idx } => {
                 let ir_base = Box::new(self.lower_expr(*base)?);
-                let ir_idx_len = idx.len();
                 let mut ir_idx = Vec::new();
                 for e in idx { ir_idx.push(self.lower_expr(e)?); }
 
-                if ir_idx_len == 1 {
-                    let first = ir_idx.into_iter().next().unwrap();
-                    if let IRExprKind::RrRange { a, b } = first.kind {
-                         IRExprKind::Slice1D { base: ir_base, a, b }
-                    } else {
-                         IRExprKind::Index1D { base: ir_base, idx: Box::new(first) }
+                let mut it = ir_idx.into_iter();
+                match (it.next(), it.next(), it.next()) {
+                    (Some(first), None, None) => {
+                        if let IRExprKind::RrRange { a, b } = first.kind {
+                            IRExprKind::Slice1D { base: ir_base, a, b }
+                        } else {
+                            IRExprKind::Index1D { base: ir_base, idx: Box::new(first) }
+                        }
                     }
-                } else if ir_idx_len == 2 {
-                    let mut it = ir_idx.into_iter();
-                    let r = Box::new(it.next().unwrap());
-                    let c = Box::new(it.next().unwrap());
-                    IRExprKind::Index2D { base: ir_base, r, c }
-                } else {
-                    bail!(
+                    (Some(r), Some(c), None) => IRExprKind::Index2D {
+                        base: ir_base,
+                        r: Box::new(r),
+                        c: Box::new(c),
+                    },
+                    _ => bail!(
                         "RR.SemanticError",
                         RRCode::E1002,
                         Stage::Lower,
@@ -261,7 +264,7 @@ impl Lowerer {
                             "RR v{} only supports 1D and 2D indexing",
                             env!("CARGO_PKG_VERSION")
                         )
-                    );
+                    ),
                 }
             }
             ExprKind::Pipe { lhs, rhs_call } => {

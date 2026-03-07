@@ -50,7 +50,6 @@ fn compile_rr(rr_bin: &Path, rr_path: &Path, out_path: &Path, level: &str) {
         .arg(rr_path)
         .arg("-o")
         .arg(out_path)
-        .arg("--no-runtime")
         .arg(level)
         .status()
         .expect("failed to run RR compiler");

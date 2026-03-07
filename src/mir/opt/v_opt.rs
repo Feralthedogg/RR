@@ -69,57 +69,34 @@ pub fn optimize_with_stats_with_whitelist(
                 fn_ir.name, lp.header, lp.latch, lp.exits, iv_origin, body_ids
             );
         }
-        if let Some(plan) = match_reduction(fn_ir, &lp) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.reduced += 1;
-            }
-        } else if let Some(plan) = match_2d_row_reduction_sum(fn_ir, &lp) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.reduced += 1;
-            }
-        } else if let Some(plan) = match_2d_col_reduction_sum(fn_ir, &lp) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.reduced += 1;
-            }
-        } else if let Some(plan) = match_conditional_map(fn_ir, &lp, user_call_whitelist) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_recurrence_add_const(fn_ir, &lp) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_shifted_map(fn_ir, &lp) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_2d_row_map(fn_ir, &lp) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_2d_col_map(fn_ir, &lp) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_call_map(fn_ir, &lp, user_call_whitelist) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_cube_slice_expr_map(fn_ir, &lp, user_call_whitelist) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_expr_map(fn_ir, &lp, user_call_whitelist) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_scatter_expr_map(fn_ir, &lp, user_call_whitelist) {
-            if apply_vectorization(fn_ir, &lp, plan) {
-                stats.vectorized += 1;
-            }
-        } else if let Some(plan) = match_map(fn_ir, &lp)
-            && apply_vectorization(fn_ir, &lp, plan)
+        let mut reduction_candidates = collect_reduction_candidates(fn_ir, &lp);
+        rank_vector_plans(&mut reduction_candidates);
+        let mut vector_candidates = collect_vector_candidates(fn_ir, &lp, user_call_whitelist);
+        rank_vector_plans(&mut vector_candidates);
+
+        if let Some(plan) = reduction_candidates
+            .into_iter()
+            .find(|plan| apply_vectorization(fn_ir, &lp, plan.clone()))
         {
+            if trace_enabled {
+                eprintln!(
+                    "   [vec-choose] {} reduction={}",
+                    fn_ir.name,
+                    vector_plan_label(&plan)
+                );
+            }
+            stats.reduced += 1;
+        } else if let Some(plan) = vector_candidates
+            .into_iter()
+            .find(|plan| apply_vectorization(fn_ir, &lp, plan.clone()))
+        {
+            if trace_enabled {
+                eprintln!(
+                    "   [vec-choose] {} vector={}",
+                    fn_ir.name,
+                    vector_plan_label(&plan)
+                );
+            }
             stats.vectorized += 1;
         }
 
@@ -137,6 +114,107 @@ pub fn optimize_with_stats_with_whitelist(
     }
 
     stats
+}
+
+fn collect_reduction_candidates(fn_ir: &FnIR, lp: &LoopInfo) -> Vec<VectorPlan> {
+    let mut out = Vec::new();
+    if let Some(plan) = match_reduction(fn_ir, lp) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_2d_row_reduction_sum(fn_ir, lp) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_2d_col_reduction_sum(fn_ir, lp) {
+        out.push(plan);
+    }
+    out
+}
+
+fn collect_vector_candidates(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    user_call_whitelist: &FxHashSet<String>,
+) -> Vec<VectorPlan> {
+    let mut out = Vec::new();
+    if let Some(plan) = match_conditional_map(fn_ir, lp, user_call_whitelist) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_recurrence_add_const(fn_ir, lp) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_shifted_map(fn_ir, lp) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_2d_row_map(fn_ir, lp) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_2d_col_map(fn_ir, lp) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_call_map(fn_ir, lp, user_call_whitelist) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_cube_slice_expr_map(fn_ir, lp, user_call_whitelist) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_expr_map(fn_ir, lp, user_call_whitelist) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_scatter_expr_map(fn_ir, lp, user_call_whitelist) {
+        out.push(plan);
+    }
+    if let Some(plan) = match_map(fn_ir, lp) {
+        out.push(plan);
+    }
+    out
+}
+
+fn rank_vector_plans(plans: &mut [VectorPlan]) {
+    plans.sort_by_key(|plan| std::cmp::Reverse(vector_plan_score(plan)));
+}
+
+fn vector_plan_score(plan: &VectorPlan) -> (u8, u8, u8) {
+    match plan {
+        VectorPlan::Reduce2DRowSum { .. } => (120, 0, 0),
+        VectorPlan::Reduce2DColSum { .. } => (119, 0, 0),
+        VectorPlan::Reduce { .. } => (118, 0, 0),
+        VectorPlan::CondMap { .. } => (100, 0, 0),
+        VectorPlan::ShiftedMap { offset, .. } => (
+            98,
+            0,
+            u8::MAX.saturating_sub(offset.unsigned_abs().min(u8::MAX as u64) as u8),
+        ),
+        VectorPlan::CubeSliceExprMap { .. } => (96, 0, 0),
+        VectorPlan::ScatterExprMap { .. } => (94, 0, 0),
+        VectorPlan::MultiExprMap { entries, .. } => {
+            (92, entries.len().min(u8::MAX as usize) as u8, 0)
+        }
+        VectorPlan::ExprMap { whole_dest, .. } => (90, u8::from(*whole_dest), 0),
+        VectorPlan::CallMap { args, .. } => (86, 0, u8::MAX.saturating_sub(args.len() as u8)),
+        VectorPlan::Map2DRow { .. } => (82, 0, 0),
+        VectorPlan::Map2DCol { .. } => (81, 0, 0),
+        VectorPlan::RecurrenceAddConst { .. } => (80, 0, 0),
+        VectorPlan::Map { .. } => (70, 0, 0),
+    }
+}
+
+fn vector_plan_label(plan: &VectorPlan) -> &'static str {
+    match plan {
+        VectorPlan::Reduce { .. } => "reduce",
+        VectorPlan::Reduce2DRowSum { .. } => "reduce2d_row_sum",
+        VectorPlan::Reduce2DColSum { .. } => "reduce2d_col_sum",
+        VectorPlan::Map { .. } => "map",
+        VectorPlan::CondMap { .. } => "cond_map",
+        VectorPlan::RecurrenceAddConst { .. } => "recurrence_add_const",
+        VectorPlan::ShiftedMap { .. } => "shifted_map",
+        VectorPlan::CallMap { .. } => "call_map",
+        VectorPlan::CubeSliceExprMap { .. } => "cube_slice_expr_map",
+        VectorPlan::ExprMap { .. } => "expr_map",
+        VectorPlan::MultiExprMap { .. } => "multi_expr_map",
+        VectorPlan::ScatterExprMap { .. } => "scatter_expr_map",
+        VectorPlan::Map2DRow { .. } => "map2d_row",
+        VectorPlan::Map2DCol { .. } => "map2d_col",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +327,7 @@ fn trace_no_iv_load_assignments(fn_ir: &FnIR, lp: &LoopInfo, vid: ValueId, side:
     );
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum VectorPlan {
     Reduce {
         kind: ReduceKind,
@@ -404,7 +482,9 @@ fn match_reduction(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
             && args.len() == 2
             && args.iter().any(|(_, b)| *b == lp.latch)
         {
-            let (next_val, _) = args.iter().find(|(_, b)| *b == lp.latch).unwrap();
+            let Some((next_val, _)) = args.iter().find(|(_, b)| *b == lp.latch) else {
+                continue;
+            };
             let next_v = &fn_ir.values[*next_val];
 
             match &next_v.kind {
@@ -497,7 +577,9 @@ fn match_2d_row_reduction_sum(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan>
         if args.len() != 2 || !args.iter().any(|(_, b)| *b == lp.latch) {
             continue;
         }
-        let (next_val, _) = args.iter().find(|(_, b)| *b == lp.latch).unwrap();
+        let Some((next_val, _)) = args.iter().find(|(_, b)| *b == lp.latch) else {
+            continue;
+        };
         let ValueKind::Binary {
             op: BinOp::Add,
             lhs,
@@ -549,7 +631,9 @@ fn match_2d_col_reduction_sum(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan>
         if args.len() != 2 || !args.iter().any(|(_, b)| *b == lp.latch) {
             continue;
         }
-        let (next_val, _) = args.iter().find(|(_, b)| *b == lp.latch).unwrap();
+        let Some((next_val, _)) = args.iter().find(|(_, b)| *b == lp.latch) else {
+            continue;
+        };
         let ValueKind::Binary {
             op: BinOp::Add,
             lhs,
@@ -5830,7 +5914,13 @@ fn materialize_vector_index_base(
     {
         let outside_args: Vec<ValueId> = args
             .iter()
-            .filter_map(|(arg, bid)| if lp.body.contains(bid) { None } else { Some(*arg) })
+            .filter_map(|(arg, bid)| {
+                if lp.body.contains(bid) {
+                    None
+                } else {
+                    Some(*arg)
+                }
+            })
             .collect();
         if outside_args.len() == 1 {
             return materialize_vector_expr_impl(
@@ -5848,6 +5938,408 @@ fn materialize_vector_index_base(
         }
     }
     Some(resolve_materialized_value(fn_ir, base))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_binary(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    op: BinOp,
+    lhs: ValueId,
+    rhs: ValueId,
+    span: crate::utils::Span,
+    facts: crate::mir::flow::Facts,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    let lhs_vec = recurse(
+        fn_ir,
+        lhs,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+    )?;
+    let rhs_vec = recurse(
+        fn_ir,
+        rhs,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+    )?;
+    if lhs_vec == lhs && rhs_vec == rhs {
+        return Some(root);
+    }
+    Some(intern_materialized_value(
+        fn_ir,
+        interner,
+        ValueKind::Binary {
+            op,
+            lhs: lhs_vec,
+            rhs: rhs_vec,
+        },
+        span,
+        facts,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_unary(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    op: UnaryOp,
+    rhs: ValueId,
+    span: crate::utils::Span,
+    facts: crate::mir::flow::Facts,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    let rhs_vec = recurse(
+        fn_ir,
+        rhs,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+    )?;
+    if rhs_vec == rhs {
+        return Some(root);
+    }
+    Some(intern_materialized_value(
+        fn_ir,
+        interner,
+        ValueKind::Unary { op, rhs: rhs_vec },
+        span,
+        facts,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_call(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    callee: String,
+    args: Vec<ValueId>,
+    names: Vec<Option<String>>,
+    span: crate::utils::Span,
+    facts: crate::mir::flow::Facts,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    let mut new_args = Vec::with_capacity(args.len());
+    let mut changed = false;
+    for arg in &args {
+        let next_arg = recurse(
+            fn_ir,
+            *arg,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+        )?;
+        changed |= next_arg != *arg;
+        new_args.push(next_arg);
+    }
+
+    let rewrite_runtime_read = is_runtime_vector_read_call(&callee, new_args.len())
+        && args
+            .get(1)
+            .copied()
+            .is_some_and(|idx_arg| expr_has_iv_dependency(fn_ir, idx_arg, iv_phi));
+    if rewrite_runtime_read
+        && let Some(raw_idx) = args.get(1).copied().and_then(|idx_arg| {
+            floor_like_index_source(fn_ir, idx_arg)
+                .filter(|inner| expr_has_iv_dependency(fn_ir, *inner, iv_phi))
+        })
+    {
+        let raw_idx_vec = recurse(
+            fn_ir,
+            raw_idx,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+        )?;
+        if raw_idx_vec != new_args[1] {
+            new_args[1] = raw_idx_vec;
+            changed = true;
+        }
+        if !is_int_index_vector_value(fn_ir, new_args[1]) {
+            let floor_idx_vec = intern_materialized_value(
+                fn_ir,
+                interner,
+                ValueKind::Call {
+                    callee: "rr_index_vec_floor".to_string(),
+                    args: vec![new_args[1]],
+                    names: vec![None],
+                },
+                span,
+                facts,
+            );
+            if floor_idx_vec != new_args[1] {
+                new_args[1] = floor_idx_vec;
+                changed = true;
+            }
+        }
+    }
+
+    if !changed && !rewrite_runtime_read {
+        return Some(root);
+    }
+
+    let (out_callee, out_names) = if rewrite_runtime_read {
+        ("rr_index1_read_vec".to_string(), vec![None; new_args.len()])
+    } else {
+        (callee, names)
+    };
+    Some(intern_materialized_value(
+        fn_ir,
+        interner,
+        ValueKind::Call {
+            callee: out_callee,
+            args: new_args,
+            names: out_names,
+        },
+        span,
+        facts,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_intrinsic(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    op: IntrinsicOp,
+    args: Vec<ValueId>,
+    span: crate::utils::Span,
+    facts: crate::mir::flow::Facts,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    let mut new_args = Vec::with_capacity(args.len());
+    let mut changed = false;
+    for arg in args {
+        let next_arg = recurse(
+            fn_ir,
+            arg,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+        )?;
+        changed |= next_arg != arg;
+        new_args.push(next_arg);
+    }
+    if !changed {
+        return Some(root);
+    }
+    Some(intern_materialized_value(
+        fn_ir,
+        interner,
+        ValueKind::Intrinsic { op, args: new_args },
+        span,
+        facts,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_index1d(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    base: ValueId,
+    idx: ValueId,
+    is_safe: bool,
+    is_na_safe: bool,
+    span: crate::utils::Span,
+    facts: crate::mir::flow::Facts,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    if !allow_any_base && !is_loop_compatible_base(lp, fn_ir, base) {
+        trace_materialize_reject(fn_ir, root, "Index1D base is not loop-compatible");
+        return None;
+    }
+
+    if is_iv_equivalent(fn_ir, idx, iv_phi) {
+        let base_ref = materialize_vector_index_base(
+            fn_ir,
+            base,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+        )?;
+        if is_safe && is_na_safe {
+            return Some(base_ref);
+        }
+
+        let mut direct_idx = idx_vec;
+        if !is_int_index_vector_value(fn_ir, direct_idx) {
+            direct_idx = intern_materialized_value(
+                fn_ir,
+                interner,
+                ValueKind::Call {
+                    callee: "rr_index_vec_floor".to_string(),
+                    args: vec![direct_idx],
+                    names: vec![None],
+                },
+                span,
+                facts,
+            );
+        }
+        return Some(intern_materialized_value(
+            fn_ir,
+            interner,
+            ValueKind::Call {
+                callee: "rr_index1_read_vec".to_string(),
+                args: vec![base_ref, direct_idx],
+                names: vec![None, None],
+            },
+            span,
+            facts,
+        ));
+    }
+
+    if !expr_has_iv_dependency(fn_ir, idx, iv_phi) {
+        trace_materialize_reject(fn_ir, root, "Index1D index is not vectorizable");
+        return None;
+    }
+
+    let floor_src = if is_safe && is_na_safe {
+        None
+    } else {
+        floor_like_index_source(fn_ir, idx)
+            .filter(|inner| expr_has_iv_dependency(fn_ir, *inner, iv_phi))
+    };
+    let idx_src = floor_src.unwrap_or(idx);
+    let mut materialized_idx_vec = recurse(
+        fn_ir,
+        idx_src,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+    )?;
+    if floor_src.is_some() && !is_int_index_vector_value(fn_ir, materialized_idx_vec) {
+        materialized_idx_vec = intern_materialized_value(
+            fn_ir,
+            interner,
+            ValueKind::Call {
+                callee: "rr_index_vec_floor".to_string(),
+                args: vec![materialized_idx_vec],
+                names: vec![None],
+            },
+            span,
+            facts,
+        );
+    }
+
+    let base_ref = materialize_vector_index_base(
+        fn_ir,
+        base,
+        iv_phi,
+        materialized_idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+    )?;
+    if is_safe && is_na_safe {
+        return Some(intern_materialized_value(
+            fn_ir,
+            interner,
+            ValueKind::Index1D {
+                base: base_ref,
+                idx: materialized_idx_vec,
+                is_safe: true,
+                is_na_safe: true,
+            },
+            span,
+            facts,
+        ));
+    }
+
+    Some(intern_materialized_value(
+        fn_ir,
+        interner,
+        ValueKind::Call {
+            callee: "rr_index1_read_vec".to_string(),
+            args: vec![base_ref, materialized_idx_vec],
+            names: vec![None, None],
+        },
+        span,
+        facts,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5947,316 +6439,104 @@ fn materialize_vector_expr_impl(
                 require_safe_index,
                 rec,
             )?,
-            ValueKind::Binary { op, lhs, rhs } => {
-                let l = rec(
-                    fn_ir,
-                    lhs,
-                    iv_phi,
-                    idx_vec,
-                    lp,
-                    memo,
-                    interner,
-                    visiting,
-                    allow_any_base,
-                    require_safe_index,
-                )?;
-                let r = rec(
-                    fn_ir,
-                    rhs,
-                    iv_phi,
-                    idx_vec,
-                    lp,
-                    memo,
-                    interner,
-                    visiting,
-                    allow_any_base,
-                    require_safe_index,
-                )?;
-                if l == lhs && r == rhs {
-                    root
-                } else {
-                    intern_materialized_value(
-                        fn_ir,
-                        interner,
-                        ValueKind::Binary { op, lhs: l, rhs: r },
-                        span,
-                        facts,
-                    )
-                }
-            }
-            ValueKind::Unary { op, rhs } => {
-                let r = rec(
-                    fn_ir,
-                    rhs,
-                    iv_phi,
-                    idx_vec,
-                    lp,
-                    memo,
-                    interner,
-                    visiting,
-                    allow_any_base,
-                    require_safe_index,
-                )?;
-                if r == rhs {
-                    root
-                } else {
-                    intern_materialized_value(
-                        fn_ir,
-                        interner,
-                        ValueKind::Unary { op, rhs: r },
-                        span,
-                        facts,
-                    )
-                }
-            }
+            ValueKind::Binary { op, lhs, rhs } => materialize_vector_binary(
+                fn_ir,
+                root,
+                op,
+                lhs,
+                rhs,
+                span,
+                facts,
+                iv_phi,
+                idx_vec,
+                lp,
+                memo,
+                interner,
+                visiting,
+                allow_any_base,
+                require_safe_index,
+                rec,
+            )?,
+            ValueKind::Unary { op, rhs } => materialize_vector_unary(
+                fn_ir,
+                root,
+                op,
+                rhs,
+                span,
+                facts,
+                iv_phi,
+                idx_vec,
+                lp,
+                memo,
+                interner,
+                visiting,
+                allow_any_base,
+                require_safe_index,
+                rec,
+            )?,
             ValueKind::Call {
                 callee,
                 args,
                 names,
-            } => {
-                let mut new_args = Vec::with_capacity(args.len());
-                let mut changed = false;
-                for a in &args {
-                    let na = rec(
-                        fn_ir,
-                        *a,
-                        iv_phi,
-                        idx_vec,
-                        lp,
-                        memo,
-                        interner,
-                        visiting,
-                        allow_any_base,
-                        require_safe_index,
-                    )?;
-                    changed |= na != *a;
-                    new_args.push(na);
-                }
-                let rewrite_runtime_read = is_runtime_vector_read_call(&callee, new_args.len())
-                    && args
-                        .get(1)
-                        .copied()
-                        .is_some_and(|idx_arg| expr_has_iv_dependency(fn_ir, idx_arg, iv_phi));
-                if rewrite_runtime_read
-                    && let Some(raw_idx) = args.get(1).copied().and_then(|idx_arg| {
-                        floor_like_index_source(fn_ir, idx_arg)
-                            .filter(|inner| expr_has_iv_dependency(fn_ir, *inner, iv_phi))
-                    })
-                {
-                    let raw_idx_vec = rec(
-                        fn_ir,
-                        raw_idx,
-                        iv_phi,
-                        idx_vec,
-                        lp,
-                        memo,
-                        interner,
-                        visiting,
-                        allow_any_base,
-                        require_safe_index,
-                    )?;
-                    if raw_idx_vec != new_args[1] {
-                        new_args[1] = raw_idx_vec;
-                        changed = true;
-                    }
-                    if !is_int_index_vector_value(fn_ir, new_args[1]) {
-                        let floor_idx_vec = intern_materialized_value(
-                            fn_ir,
-                            interner,
-                            ValueKind::Call {
-                                callee: "rr_index_vec_floor".to_string(),
-                                args: vec![new_args[1]],
-                                names: vec![None],
-                            },
-                            span,
-                            facts,
-                        );
-                        if floor_idx_vec != new_args[1] {
-                            new_args[1] = floor_idx_vec;
-                            changed = true;
-                        }
-                    }
-                }
-                if !changed && !rewrite_runtime_read {
-                    root
-                } else {
-                    let (out_callee, out_names) = if rewrite_runtime_read {
-                        ("rr_index1_read_vec".to_string(), vec![None; new_args.len()])
-                    } else {
-                        (callee, names)
-                    };
-                    intern_materialized_value(
-                        fn_ir,
-                        interner,
-                        ValueKind::Call {
-                            callee: out_callee,
-                            args: new_args,
-                            names: out_names,
-                        },
-                        span,
-                        facts,
-                    )
-                }
-            }
-            ValueKind::Intrinsic { op, args } => {
-                let mut new_args = Vec::with_capacity(args.len());
-                let mut changed = false;
-                for a in args {
-                    let na = rec(
-                        fn_ir,
-                        a,
-                        iv_phi,
-                        idx_vec,
-                        lp,
-                        memo,
-                        interner,
-                        visiting,
-                        allow_any_base,
-                        require_safe_index,
-                    )?;
-                    changed |= na != a;
-                    new_args.push(na);
-                }
-                if !changed {
-                    root
-                } else {
-                    intern_materialized_value(
-                        fn_ir,
-                        interner,
-                        ValueKind::Intrinsic { op, args: new_args },
-                        span,
-                        facts,
-                    )
-                }
-            }
+            } => materialize_vector_call(
+                fn_ir,
+                root,
+                callee,
+                args,
+                names,
+                span,
+                facts,
+                iv_phi,
+                idx_vec,
+                lp,
+                memo,
+                interner,
+                visiting,
+                allow_any_base,
+                require_safe_index,
+                rec,
+            )?,
+            ValueKind::Intrinsic { op, args } => materialize_vector_intrinsic(
+                fn_ir,
+                root,
+                op,
+                args,
+                span,
+                facts,
+                iv_phi,
+                idx_vec,
+                lp,
+                memo,
+                interner,
+                visiting,
+                allow_any_base,
+                require_safe_index,
+                rec,
+            )?,
             ValueKind::Index1D {
                 base,
                 idx,
                 is_safe,
                 is_na_safe,
-            } => {
-                if !allow_any_base && !is_loop_compatible_base(lp, fn_ir, base) {
-                    trace_materialize_reject(fn_ir, root, "Index1D base is not loop-compatible");
-                    return None;
-                }
-                if is_iv_equivalent(fn_ir, idx, iv_phi) {
-                    let base_ref = materialize_vector_index_base(
-                        fn_ir,
-                        base,
-                        iv_phi,
-                        idx_vec,
-                        lp,
-                        memo,
-                        interner,
-                        visiting,
-                        allow_any_base,
-                        require_safe_index,
-                    )?;
-                    if is_safe && is_na_safe {
-                        base_ref
-                    } else {
-                        let mut direct_idx = idx_vec;
-                        if !is_int_index_vector_value(fn_ir, direct_idx) {
-                            direct_idx = intern_materialized_value(
-                                fn_ir,
-                                interner,
-                                ValueKind::Call {
-                                    callee: "rr_index_vec_floor".to_string(),
-                                    args: vec![direct_idx],
-                                    names: vec![None],
-                                },
-                                span,
-                                facts,
-                            );
-                        }
-                        intern_materialized_value(
-                            fn_ir,
-                            interner,
-                            ValueKind::Call {
-                                callee: "rr_index1_read_vec".to_string(),
-                                args: vec![base_ref, direct_idx],
-                                names: vec![None, None],
-                            },
-                            span,
-                            facts,
-                        )
-                    }
-                } else if expr_has_iv_dependency(fn_ir, idx, iv_phi) {
-                    let floor_src = if is_safe && is_na_safe {
-                        None
-                    } else {
-                        floor_like_index_source(fn_ir, idx)
-                            .filter(|inner| expr_has_iv_dependency(fn_ir, *inner, iv_phi))
-                    };
-                    let idx_src = floor_src.unwrap_or(idx);
-                    let mut idx_vec = rec(
-                        fn_ir,
-                        idx_src,
-                        iv_phi,
-                        idx_vec,
-                        lp,
-                        memo,
-                        interner,
-                        visiting,
-                        allow_any_base,
-                        require_safe_index,
-                    )?;
-                    if floor_src.is_some() && !is_int_index_vector_value(fn_ir, idx_vec) {
-                        idx_vec = intern_materialized_value(
-                            fn_ir,
-                            interner,
-                            ValueKind::Call {
-                                callee: "rr_index_vec_floor".to_string(),
-                                args: vec![idx_vec],
-                                names: vec![None],
-                            },
-                            span,
-                            facts,
-                        );
-                    }
-                    let base_ref = materialize_vector_index_base(
-                        fn_ir,
-                        base,
-                        iv_phi,
-                        idx_vec,
-                        lp,
-                        memo,
-                        interner,
-                        visiting,
-                        allow_any_base,
-                        require_safe_index,
-                    )?;
-                    if is_safe && is_na_safe {
-                        intern_materialized_value(
-                            fn_ir,
-                            interner,
-                            ValueKind::Index1D {
-                                base: base_ref,
-                                idx: idx_vec,
-                                is_safe: true,
-                                is_na_safe: true,
-                            },
-                            span,
-                            facts,
-                        )
-                    } else {
-                        intern_materialized_value(
-                            fn_ir,
-                            interner,
-                            ValueKind::Call {
-                                callee: "rr_index1_read_vec".to_string(),
-                                args: vec![base_ref, idx_vec],
-                                names: vec![None, None],
-                            },
-                            span,
-                            facts,
-                        )
-                    }
-                } else {
-                    trace_materialize_reject(fn_ir, root, "Index1D index is not vectorizable");
-                    return None;
-                }
-            }
+            } => materialize_vector_index1d(
+                fn_ir,
+                root,
+                base,
+                idx,
+                is_safe,
+                is_na_safe,
+                span,
+                facts,
+                iv_phi,
+                idx_vec,
+                lp,
+                memo,
+                interner,
+                visiting,
+                allow_any_base,
+                require_safe_index,
+                rec,
+            )?,
             ValueKind::Len { base } => {
                 let b = rec(
                     fn_ir,
@@ -7287,9 +7567,12 @@ fn canonical_value(fn_ir: &FnIR, mut vid: ValueId) -> ValueId {
                         unique_non_self.insert(*v);
                     }
                 }
-                if unique_non_self.len() == 1 {
+                if let Some(unique_non_self_vid) = (unique_non_self.len() == 1)
+                    .then(|| unique_non_self.iter().next().copied())
+                    .flatten()
+                {
                     // loop-invariant self-phi: v = phi(seed, v) -> seed
-                    vid = *unique_non_self.iter().next().unwrap();
+                    vid = unique_non_self_vid;
                     continue;
                 }
             }
@@ -7409,4 +7692,63 @@ fn unique_assign_source(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
         }
     }
     src
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VectorPlan, rank_vector_plans, vector_plan_label};
+
+    #[test]
+    fn rank_prefers_specific_vector_plan_over_generic_map() {
+        let mut plans = vec![
+            VectorPlan::Map {
+                dest: 1,
+                src: 2,
+                op: crate::syntax::ast::BinOp::Add,
+                other: 3,
+            },
+            VectorPlan::CondMap {
+                dest: 1,
+                cond: 4,
+                then_val: 5,
+                else_val: 6,
+                iv_phi: 7,
+            },
+        ];
+        rank_vector_plans(&mut plans);
+        assert_eq!(vector_plan_label(&plans[0]), "cond_map");
+    }
+
+    #[test]
+    fn rank_prefers_multi_output_expr_map_over_single_expr_map() {
+        let mut plans = vec![
+            VectorPlan::ExprMap {
+                dest: 1,
+                expr: 2,
+                iv_phi: 3,
+                start: 4,
+                end: 5,
+                whole_dest: true,
+            },
+            VectorPlan::MultiExprMap {
+                entries: vec![
+                    super::ExprMapEntry {
+                        dest: 1,
+                        expr: 2,
+                        whole_dest: true,
+                    },
+                    super::ExprMapEntry {
+                        dest: 6,
+                        expr: 7,
+                        whole_dest: true,
+                    },
+                ],
+                iv_phi: 3,
+                start: 4,
+                end: 5,
+            },
+        ];
+        rank_vector_plans(&mut plans);
+        assert_eq!(vector_plan_label(&plans[0]), "multi_expr_map");
+    }
 }

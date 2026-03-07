@@ -467,13 +467,28 @@ impl MirBuilder {
             let val = if v == &var {
                 start_id
             } else {
-                *preheader_env.get(v).unwrap()
-            }; // Safe unwrap due to check above
+                let Some(pre_val) = preheader_env.get(v) else {
+                    return Err(InternalCompilerError::new(
+                        RRCode::ICE9001,
+                        Stage::Mir,
+                        format!("missing preheader value for phi '{}'", v),
+                    )
+                    .into());
+                };
+                *pre_val
+            };
             self.append_phi_arg(*phi_id, val, preheader_bb)?;
         }
 
         // Condition: var <= end
-        let curr_iv = *self.env.get(&var).unwrap();
+        let Some(curr_iv) = self.env.get(&var).copied() else {
+            return Err(InternalCompilerError::new(
+                RRCode::ICE9001,
+                Stage::Mir,
+                format!("missing induction variable '{}'", var),
+            )
+            .into());
+        };
         let cond = self.curr_fn.add_value(
             ValueKind::Binary {
                 op: BinOp::Le,

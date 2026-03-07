@@ -45,7 +45,6 @@ fn compile_rr_timed(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) -> u1
         .arg(rr_src)
         .arg("-o")
         .arg(out)
-        .arg("--no-runtime")
         .arg(level)
         .output()
         .expect("failed to run RR compiler");
@@ -100,7 +99,11 @@ fn example_perf_smoke_reports_compile_and_runtime() {
     println!("example perf smoke:");
     for case in PERF_CASES {
         let rr_src = root.join(case.path);
-        assert!(rr_src.exists(), "missing perf smoke case {}", rr_src.display());
+        assert!(
+            rr_src.exists(),
+            "missing perf smoke case {}",
+            rr_src.display()
+        );
 
         let out_o1 = out_dir.join(format!("{}_o1.R", case.label));
         let out_o2 = out_dir.join(format!("{}_o2.R", case.label));

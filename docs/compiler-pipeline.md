@@ -169,5 +169,9 @@ flags (`--incremental*`) and `watch`.
 
 ### Strict Incremental Verification
 
-`--strict-incremental-verify` forces a rebuild path and checks rebuilt output against cached output.
+`--strict-incremental-verify` forces a rebuild path and checks rebuilt output against
+every available cached artifact tier (`phase3` memory and `phase1` disk).
+The verification compares both emitted R and the source map.
+If no cached artifact exists yet, the compile is rebuilt and stored, but the strict
+verification result remains unchecked for that invocation.
 If mismatch is detected, compile fails with an internal diagnostic instead of silently reusing cache.

@@ -1,0 +1,34 @@
+max1 <- function(a, b) {
+  if (a > b) return(a)
+  b
+}
+
+print_metric <- function(name, value) {
+  print(name)
+  print(value)
+  value
+}
+
+main <- function() {
+  s <- 999.0
+  i <- 1.0
+  r <- 0.0
+  beta <- 0.30
+  gamma <- 0.08
+  n <- 1000.0
+  peak_i <- i
+  step <- 1.0
+  while (step <= 40.0) {
+    new_inf <- beta * s * i / n
+    new_rec <- gamma * i
+    s <- s - new_inf
+    i <- i + new_inf - new_rec
+    r <- r + new_rec
+    peak_i <- max1(peak_i, i)
+    step <- step + 1.0
+  }
+  print_metric("sir_peak_infected", peak_i)
+  print_metric("sir_final_recovered", r)
+}
+
+print(main())

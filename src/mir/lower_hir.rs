@@ -1155,10 +1155,27 @@ impl<'a> MirLowerer<'a> {
         arms: Vec<hir::HirMatchArm>,
     ) -> RR<ValueId> {
         let span = Span::default();
-        let scrut_val = self.lower_expr(scrut)?;
         if arms.is_empty() {
-            return Ok(self.add_value(ValueKind::Const(Lit::Null), span));
+            return Err(crate::error::RRException::new(
+                "RR.SemanticError",
+                crate::error::RRCode::E3001,
+                crate::error::Stage::Lower,
+                "match expression requires at least one arm",
+            )
+            .at(span)
+            .note("Add at least one match arm, typically ending with `_ => ...`."));
         }
+        if !Self::match_has_final_unguarded_catch_all(&arms) {
+            return Err(crate::error::RRException::new(
+                "RR.SemanticError",
+                crate::error::RRCode::E3001,
+                crate::error::Stage::Lower,
+                "non-exhaustive match requires an unguarded catch-all arm",
+            )
+            .at(span)
+            .note("Add `_ => ...` (or an unguarded binding arm) as the final fallback."));
+        }
+        let scrut_val = self.lower_expr(scrut)?;
 
         let merge_bb = self.fn_ir.add_block();
         let mut arm_results: Vec<(ValueId, BlockId)> = Vec::new();
@@ -1167,13 +1184,12 @@ impl<'a> MirLowerer<'a> {
 
         for (i, arm) in arms.into_iter().enumerate() {
             self.curr_block = test_bb;
-
-            let cond = self.lower_match_pat_cond(scrut_val, &arm.pat, arm.span)?;
             let arm_bb = self.fn_ir.add_block();
-            let fail_bb = self.fn_ir.add_block();
-
-            if let Some(guard_expr) = arm.guard {
+            let is_final_catch_all = i + 1 == arm_len && Self::is_unguarded_catch_all_arm(&arm);
+            let fail_bb = if let Some(guard_expr) = arm.guard {
+                let cond = self.lower_match_pat_cond(scrut_val, &arm.pat, arm.span)?;
                 let guard_bb = self.fn_ir.add_block();
+                let fail_bb = self.fn_ir.add_block();
                 self.terminate(Terminator::If {
                     cond,
                     then_bb: guard_bb,
@@ -1193,7 +1209,14 @@ impl<'a> MirLowerer<'a> {
                 });
                 self.add_pred(arm_bb, guard_bb);
                 self.add_pred(fail_bb, guard_bb);
+                Some(fail_bb)
+            } else if is_final_catch_all {
+                self.terminate(Terminator::Goto(arm_bb));
+                self.add_pred(arm_bb, test_bb);
+                None
             } else {
+                let cond = self.lower_match_pat_cond(scrut_val, &arm.pat, arm.span)?;
+                let fail_bb = self.fn_ir.add_block();
                 self.terminate(Terminator::If {
                     cond,
                     then_bb: arm_bb,
@@ -1201,7 +1224,8 @@ impl<'a> MirLowerer<'a> {
                 });
                 self.add_pred(arm_bb, test_bb);
                 self.add_pred(fail_bb, test_bb);
-            }
+                Some(fail_bb)
+            };
 
             self.curr_block = arm_bb;
             self.seal_block(arm_bb)?;
@@ -1214,24 +1238,16 @@ impl<'a> MirLowerer<'a> {
             }
             arm_results.push((arm_val, arm_end_bb));
 
-            test_bb = fail_bb;
-            self.seal_block(fail_bb)?;
+            if let Some(fail_bb) = fail_bb {
+                test_bb = fail_bb;
+                self.seal_block(fail_bb)?;
 
-            // If this is the last arm, keep flowing to default no-match path.
-            if i + 1 == arm_len {
-                self.curr_block = test_bb;
+                // If this is the last arm, keep flowing to default no-match path.
+                if i + 1 == arm_len {
+                    self.curr_block = test_bb;
+                }
             }
         }
-
-        // No arm matched: evaluate to NULL by default.
-        self.curr_block = test_bb;
-        let default_val = self.add_value(ValueKind::Const(Lit::Null), span);
-        let default_end_bb = self.curr_block;
-        if !self.is_terminated(self.curr_block) {
-            self.add_pred(merge_bb, self.curr_block);
-            self.terminate(Terminator::Goto(merge_bb));
-        }
-        arm_results.push((default_val, default_end_bb));
 
         self.curr_block = merge_bb;
         self.seal_block(merge_bb)?;
@@ -1240,6 +1256,16 @@ impl<'a> MirLowerer<'a> {
             v.phi_block = Some(merge_bb);
         }
         Ok(phi)
+    }
+
+    fn match_has_final_unguarded_catch_all(arms: &[hir::HirMatchArm]) -> bool {
+        arms.last()
+            .map(Self::is_unguarded_catch_all_arm)
+            .unwrap_or(false)
+    }
+
+    fn is_unguarded_catch_all_arm(arm: &hir::HirMatchArm) -> bool {
+        arm.guard.is_none() && matches!(&arm.pat, hir::HirPat::Wild | hir::HirPat::Bind { .. })
     }
 
     fn lower_match_pat_cond(

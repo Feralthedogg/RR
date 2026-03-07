@@ -102,6 +102,8 @@ The simulation catalog is compiled across optimization levels and executed at `-
 The benchmark catalog is intended for repeatable compile-time and runtime comparisons.
 `tesseract.rr` is covered as a dedicated runtime smoke because it exercises the
 largest vectorization and runtime-injection path in the example set.
+The perf smoke compiles the normal runtime-injected artifact; it does not use
+`--no-runtime`. Use `--no-runtime` only when the test is inspecting helper-only emitted R without source/native bootstrap.
 
 Benchmark runner:
 
@@ -144,6 +146,9 @@ Promoted example-derived golden cases include:
 - `markov_weather_chain`
 - `monte_carlo_pi`
 - `sir_epidemic`
+
+Each promoted case must include an explicit `.R` baseline. The test no longer
+falls back to `-O0` RR output when a reference script is missing.
 
 ## RR vs R Differential Matrix
 
@@ -216,6 +221,7 @@ The CI workflow is expected to run:
 - dedicated example perf smoke with timing output
 - linting
 - fuzz smoke coverage for key targets
+- incremental fuzz smoke coverage
 
 The example-heavy runtime suites run in a dedicated CI job so failures in
 `example_simulations`, `benchmark_examples_smoke`, or `tesseract_runtime_smoke`

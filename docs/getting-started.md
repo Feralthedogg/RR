@@ -65,13 +65,13 @@ Compile one file into a standalone `.R` script:
 cargo run -- main.rr -o main.R -O2
 ```
 
-Compile without embedding the RR runtime prelude:
+Compile helper-only output without source/native bootstrap:
 
 ```bash
 cargo run -- main.rr -o main.R --no-runtime -O2
 ```
 
-Use `--no-runtime` when you want pure emission for inspection or testing, not direct execution.
+Use `--no-runtime` when you want helper-only emission for inspection or testing. It keeps helper definitions and runtime settings, but omits source/native bootstrap.
 
 ## Build a Directory
 

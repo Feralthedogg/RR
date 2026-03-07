@@ -1,0 +1,13 @@
+Sym_1 <- function(x, v) 
+{
+  # Block 0
+
+  .arg_x <- x
+  .arg_v <- v
+  # Block 1
+
+  .__rr_cse_4 <- (.arg_x * .arg_x)
+  .__rr_cse_6 <- (.__rr_cse_4 + 1L)
+  a <- (0L - (.arg_x / (.__rr_cse_6 + .__rr_cse_6)))
+  return((.arg_v + (0.1 * a)))
+}

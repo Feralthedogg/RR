@@ -1,0 +1,25 @@
+print_metric <- function(name, value) {
+  print(name)
+  print(value)
+  value
+}
+
+main <- function() {
+  sun <- 0.7
+  cloud <- 0.2
+  rain <- 0.1
+  step <- 1.0
+  while (step <= 24.0) {
+    next_sun <- 0.75 * sun + 0.35 * cloud + 0.20 * rain
+    next_cloud <- 0.20 * sun + 0.40 * cloud + 0.30 * rain
+    next_rain <- 0.05 * sun + 0.25 * cloud + 0.50 * rain
+    sun <- next_sun
+    cloud <- next_cloud
+    rain <- next_rain
+    step <- step + 1.0
+  }
+  print_metric("weather_sun", sun)
+  print_metric("weather_rain", rain)
+}
+
+print(main())

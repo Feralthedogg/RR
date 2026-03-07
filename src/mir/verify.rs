@@ -25,6 +25,9 @@ pub enum VerifyError {
         var: VarId,
         value: ValueId,
     },
+    ReachablePhi {
+        value: ValueId,
+    },
     InvalidIntrinsicArity {
         value: ValueId,
         expected: usize,
@@ -58,6 +61,9 @@ impl fmt::Display for VerifyError {
             ),
             VerifyError::UndefinedVar { var, value } => {
                 write!(f, "Value {} refers to undefined var '{}'", value, var)
+            }
+            VerifyError::ReachablePhi { value } => {
+                write!(f, "Reachable Phi {} survived into codegen-ready MIR", value)
             }
             VerifyError::InvalidIntrinsicArity {
                 value,
@@ -238,6 +244,18 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
         }
     }
 
+    Ok(())
+}
+
+pub fn verify_emittable_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
+    verify_ir(fn_ir)?;
+    let reachable = compute_reachable(fn_ir);
+    let used_values = collect_used_values(fn_ir, &reachable);
+    for vid in used_values {
+        if matches!(fn_ir.values[vid].kind, ValueKind::Phi { .. }) {
+            return Err(VerifyError::ReachablePhi { value: vid });
+        }
+    }
     Ok(())
 }
 
@@ -422,4 +440,29 @@ fn is_reserved_binding(name: &str) -> bool {
         || name.starts_with("Sym_")
         || name.starts_with("__lambda_")
         || name.starts_with("rr_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VerifyError, verify_emittable_ir};
+    use crate::mir::{Facts, FnIR, Terminator, ValueKind};
+    use crate::utils::Span;
+
+    #[test]
+    fn emittable_verify_rejects_reachable_phi() {
+        let mut f = FnIR::new("phi_live".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+        let phi = f.add_value(
+            ValueKind::Phi { args: Vec::new() },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.blocks[entry].term = Terminator::Return(Some(phi));
+
+        let err = verify_emittable_ir(&f).expect_err("reachable phi must be rejected");
+        assert!(matches!(err, VerifyError::ReachablePhi { value } if value == phi));
+    }
 }

@@ -110,6 +110,19 @@ impl Default for ParallelConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompileOutputOptions {
+    pub inject_runtime: bool,
+}
+
+impl Default for CompileOutputOptions {
+    fn default() -> Self {
+        Self {
+            inject_runtime: true,
+        }
+    }
+}
+
 pub struct CliLog {
     color: bool,
     detailed: bool,
@@ -471,6 +484,15 @@ fn stable_hash_bytes(bytes: &[u8]) -> u64 {
     hash
 }
 
+pub(crate) fn fn_emit_cache_salt() -> u64 {
+    stable_hash_bytes(include_str!("pipeline.rs").as_bytes())
+        ^ stable_hash_bytes(include_str!("../codegen/mir_emit.rs").as_bytes())
+}
+
+pub(crate) fn compile_output_cache_salt() -> u64 {
+    fn_emit_cache_salt() ^ stable_hash_bytes(crate::runtime::R_RUNTIME.as_bytes())
+}
+
 fn fn_emit_cache_key(
     fn_ir: &crate::mir::def::FnIR,
     opt_level: OptLevel,
@@ -478,7 +500,7 @@ fn fn_emit_cache_key(
     parallel_cfg: ParallelConfig,
 ) -> String {
     let payload = format!(
-        "rr-fn-emit-v1|{}|{}|{}|{}|{}|{}|{}|{:?}",
+        "rr-fn-emit-v2|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
         fn_ir.name,
         opt_level.label(),
         type_cfg.mode.as_str(),
@@ -486,6 +508,7 @@ fn fn_emit_cache_key(
         parallel_cfg.mode.as_str(),
         parallel_cfg.backend.as_str(),
         parallel_cfg.threads,
+        fn_emit_cache_salt(),
         fn_ir
     );
     format!("{:016x}", stable_hash_bytes(payload.as_bytes()))
@@ -990,40 +1013,88 @@ pub(crate) fn inject_runtime_prelude(
     if !with_runtime.ends_with('\n') {
         with_runtime.push('\n');
     }
-    let source_label = std::path::Path::new(entry_path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(entry_path);
-    with_runtime.push_str(&format!(
-        "rr_set_source(\"{}\");\n",
-        escape_r_string(source_label)
-    ));
-    with_runtime.push_str(&format!(
+    append_runtime_configuration(&mut with_runtime, entry_path, type_cfg, parallel_cfg, true);
+    with_runtime.push_str(&final_output);
+    with_runtime
+}
+
+fn append_runtime_configuration(
+    out: &mut String,
+    entry_path: &str,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    include_source_bootstrap: bool,
+) {
+    if include_source_bootstrap {
+        let source_label = Path::new(entry_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(entry_path);
+        out.push_str(&format!(
+            "rr_set_source(\"{}\");\n",
+            escape_r_string(source_label)
+        ));
+        let native_roots = compile_time_native_roots(entry_path);
+        if !native_roots.is_empty() {
+            out.push_str("rr_set_native_roots(c(");
+            for (idx, root) in native_roots.iter().enumerate() {
+                if idx > 0 {
+                    out.push_str(", ");
+                }
+                out.push('"');
+                out.push_str(&escape_r_string(root));
+                out.push('"');
+            }
+            out.push_str("));\n");
+        }
+    }
+    out.push_str(&format!(
         "rr_set_type_mode(\"{}\");\n",
         type_cfg.mode.as_str()
     ));
-    with_runtime.push_str(&format!(
+    out.push_str(&format!(
         "rr_set_native_backend(\"{}\");\n",
         type_cfg.native_backend.as_str()
     ));
-    with_runtime.push_str(&format!(
+    out.push_str(&format!(
         "rr_set_parallel_mode(\"{}\");\n",
         parallel_cfg.mode.as_str()
     ));
-    with_runtime.push_str(&format!(
+    out.push_str(&format!(
         "rr_set_parallel_backend(\"{}\");\n",
         parallel_cfg.backend.as_str()
     ));
-    with_runtime.push_str(&format!(
+    out.push_str(&format!(
         "rr_set_parallel_threads({});\n",
         parallel_cfg.threads
     ));
-    with_runtime.push_str(&format!(
+    out.push_str(&format!(
         "rr_set_parallel_min_trip({});\n",
         parallel_cfg.min_trip
     ));
-    with_runtime.push_str(&final_output);
-    with_runtime
+}
+
+fn compile_time_native_roots(entry_path: &str) -> Vec<String> {
+    let entry = Path::new(entry_path);
+    let canonical = fs::canonicalize(entry).unwrap_or_else(|_| entry.to_path_buf());
+    let Some(entry_dir) = canonical.parent().map(Path::to_path_buf) else {
+        return Vec::new();
+    };
+    let mut cur = entry_dir.clone();
+    loop {
+        let probe = cur.join("Cargo.toml");
+        if probe.is_file() {
+            return vec![cur.to_string_lossy().replace('\\', "/")];
+        }
+        let Some(parent) = cur.parent() else {
+            break;
+        };
+        if parent == cur {
+            break;
+        }
+        cur = parent.to_path_buf();
+    }
+    vec![entry_dir.to_string_lossy().replace('\\', "/")]
 }
 
 pub fn compile(
@@ -1062,6 +1133,24 @@ pub fn compile_with_configs(
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    compile_with_configs_with_options(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_cfg,
+        CompileOutputOptions::default(),
+    )
+}
+
+pub fn compile_with_configs_with_options(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    output_opts: CompileOutputOptions,
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
     let (code, map, _, _) = compile_with_configs_using_emit_cache(
         entry_path,
         entry_input,
@@ -1069,6 +1158,7 @@ pub fn compile_with_configs(
         type_cfg,
         parallel_cfg,
         None,
+        output_opts,
     )?;
     Ok((code, map))
 }
@@ -1080,6 +1170,7 @@ pub(crate) fn compile_with_configs_using_emit_cache(
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
     cache: Option<&mut dyn EmitFunctionCache>,
+    output_opts: CompileOutputOptions,
 ) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
     let ui = CliLog::new();
     let compile_started = Instant::now();
@@ -1103,6 +1194,7 @@ pub(crate) fn compile_with_configs_using_emit_cache(
     } = run_mir_synthesis(&ui, TOTAL_STEPS, desugared_hir, &global_symbols, type_cfg)?;
 
     run_tachyon_phase(&ui, TOTAL_STEPS, optimize, &mut all_fns)?;
+    verify_emittable_program(&all_fns)?;
 
     let (final_output, final_source_map, emit_cache_hits, emit_cache_misses) =
         emit_r_functions_cached(
@@ -1116,31 +1208,88 @@ pub(crate) fn compile_with_configs_using_emit_cache(
             cache,
         )?;
 
-    let step_runtime = ui.step_start(
-        6,
-        TOTAL_STEPS,
-        "Runtime Injection",
-        "link static analysis guards",
-    );
-
-    let with_runtime = inject_runtime_prelude(
-        entry_path,
-        type_cfg,
-        parallel_cfg,
-        final_output,
-        &top_level_calls,
-    );
-    ui.step_line_ok(&format!("Output size: {}", human_size(with_runtime.len())));
-    ui.trace(
-        "runtime",
-        &format!("linked in {}", format_duration(step_runtime.elapsed())),
-    );
+    let final_code = if output_opts.inject_runtime {
+        let step_runtime = ui.step_start(
+            6,
+            TOTAL_STEPS,
+            "Runtime Injection",
+            "link static analysis guards",
+        );
+        let with_runtime = inject_runtime_prelude(
+            entry_path,
+            type_cfg,
+            parallel_cfg,
+            final_output,
+            &top_level_calls,
+        );
+        ui.step_line_ok(&format!("Output size: {}", human_size(with_runtime.len())));
+        ui.trace(
+            "runtime",
+            &format!("linked in {}", format_duration(step_runtime.elapsed())),
+        );
+        with_runtime
+    } else {
+        let step_runtime = ui.step_start(
+            6,
+            TOTAL_STEPS,
+            "Runtime Injection",
+            "helper-only (--no-runtime)",
+        );
+        let mut without_runtime = String::new();
+        without_runtime.push_str(crate::runtime::R_RUNTIME);
+        if !without_runtime.ends_with('\n') {
+            without_runtime.push('\n');
+        }
+        append_runtime_configuration(
+            &mut without_runtime,
+            entry_path,
+            type_cfg,
+            parallel_cfg,
+            false,
+        );
+        without_runtime.push_str(&final_output);
+        for call in &top_level_calls {
+            without_runtime.push_str(&format!("{}()\n", call));
+        }
+        ui.step_line_ok(&format!(
+            "Output size: {}",
+            human_size(without_runtime.len())
+        ));
+        ui.trace(
+            "runtime",
+            &format!("helper-only in {}", format_duration(step_runtime.elapsed())),
+        );
+        without_runtime
+    };
     ui.pulse_success(compile_started.elapsed());
 
     Ok((
-        with_runtime,
+        final_code,
         final_source_map,
         emit_cache_hits,
         emit_cache_misses,
     ))
+}
+
+fn verify_emittable_program(
+    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+) -> crate::error::RR<()> {
+    let mut names: Vec<&String> = all_fns.keys().collect();
+    names.sort();
+    for name in names {
+        let Some(fn_ir) = all_fns.get(name) else {
+            continue;
+        };
+        crate::mir::verify::verify_emittable_ir(fn_ir).map_err(|e| {
+            crate::error::InternalCompilerError::new(
+                crate::error::Stage::Codegen,
+                format!(
+                    "emittable MIR verification failed for function '{}': {}",
+                    fn_ir.name, e
+                ),
+            )
+            .into_exception()
+        })?;
+    }
+    Ok(())
 }

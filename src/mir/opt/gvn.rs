@@ -470,7 +470,7 @@ fn compute_dominators(
 
             if let Some(mut set) = new_dom {
                 set.insert(bb);
-                if set != *doms.get(&bb).unwrap() {
+                if doms.get(&bb).is_some_and(|curr| set != *curr) {
                     doms.insert(bb, set);
                     changed = true;
                 }

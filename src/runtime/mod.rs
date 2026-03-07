@@ -82,6 +82,20 @@ rr_set_native_lib <- function(path) {
   .rr_env$native_loaded <- FALSE
 }
 
+rr_set_native_roots <- function(paths) {
+  if (is.null(paths) || length(paths) < 1L) {
+    .rr_env$native_anchor_roots <- character(0)
+    return(invisible(NULL))
+  }
+  vals <- vapply(
+    as.character(paths),
+    function(p) normalizePath(p, winslash = "/", mustWork = FALSE),
+    character(1)
+  )
+  vals <- unique(vals[nzchar(vals)])
+  .rr_env$native_anchor_roots <- vals
+}
+
 .rr_env$type_mode <- "strict"
 .rr_env$native_backend <- tolower(Sys.getenv("RR_NATIVE_BACKEND", "off"))
 if (!(.rr_env$native_backend %in% c("off", "optional", "required"))) {
@@ -105,6 +119,7 @@ if (is.na(.rr_env$parallel_min_trip) || .rr_env$parallel_min_trip < 0L) {
 }
 .rr_env$native_autobuild <- tolower(Sys.getenv("RR_NATIVE_AUTOBUILD", "1"))
 .rr_env$native_autobuild <- .rr_env$native_autobuild %in% c("1", "true", "yes", "on")
+.rr_env$native_anchor_roots <- character(0)
 
 rr_native_lib_ext <- function() {
   if (identical(.Platform$OS.type, "windows")) return(".dll")
@@ -122,17 +137,26 @@ rr_native_script_path <- function() {
 }
 
 rr_native_candidate_roots <- function() {
-  script_path <- rr_native_script_path()
-  if (!nzchar(script_path)) return(character(0))
-  cur <- dirname(script_path)
   roots <- character(0)
   seen <- character(0)
-  while (nzchar(cur) && !(cur %in% seen)) {
-    roots <- c(roots, cur)
-    seen <- c(seen, cur)
-    parent <- dirname(cur)
-    if (!nzchar(parent) || identical(parent, cur)) break
-    cur <- parent
+  if (!is.null(.rr_env$native_anchor_roots) && length(.rr_env$native_anchor_roots) > 0L) {
+    for (root in .rr_env$native_anchor_roots) {
+      if (nzchar(root) && !(root %in% seen)) {
+        roots <- c(roots, root)
+        seen <- c(seen, root)
+      }
+    }
+  }
+  script_path <- rr_native_script_path()
+  if (nzchar(script_path)) {
+    cur <- dirname(script_path)
+    while (nzchar(cur) && !(cur %in% seen)) {
+      roots <- c(roots, cur)
+      seen <- c(seen, cur)
+      parent <- dirname(cur)
+      if (!nzchar(parent) || identical(parent, cur)) break
+      cur <- parent
+    }
   }
   roots
 }

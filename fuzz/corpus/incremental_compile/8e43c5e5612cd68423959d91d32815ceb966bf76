@@ -1,0 +1,9 @@
+fnfn {{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{helper(flag) {
+   {
+  if (flag) { :eturn 1; }
+  retueturn 2;
+}
+
+fn main() {
+  flag = TRUE
+  print(helper(fla{{{{{{{{{{{{{{{{{{{{-{{{{{{{{{{{step(1ma[, 

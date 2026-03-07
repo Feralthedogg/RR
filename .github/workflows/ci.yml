@@ -23,10 +23,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Format
-        run: cargo fmt --check || true
+        run: cargo fmt --check
 
   test:
     name: Core Tests + Perf Gate
@@ -130,3 +130,6 @@ jobs:
 
       - name: Type Solver Fuzz Smoke
         run: cargo fuzz run type_solver fuzz/corpus/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
+
+      - name: Incremental Fuzz Smoke
+        run: cargo fuzz run incremental_compile fuzz/corpus/incremental_compile -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048

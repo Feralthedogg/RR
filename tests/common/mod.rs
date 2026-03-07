@@ -59,7 +59,6 @@ pub fn compile_rr(rr_bin: &Path, rr_src: &Path, out_path: &Path, level: &str) {
         .arg(rr_src)
         .arg("-o")
         .arg(out_path)
-        .arg("--no-runtime")
         .arg(level)
         .status()
         .expect("failed to run RR compiler");
@@ -90,11 +89,7 @@ pub fn run_compile_case(
 
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let mut cmd = Command::new(rr_bin);
-    cmd.arg(&rr_path)
-        .arg("-o")
-        .arg(&out_path)
-        .arg("--no-runtime")
-        .arg(level);
+    cmd.arg(&rr_path).arg("-o").arg(&out_path).arg(level);
     for (k, v) in env_kv {
         cmd.env(k, v);
     }

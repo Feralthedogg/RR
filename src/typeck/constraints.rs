@@ -34,13 +34,13 @@ impl ConstraintSet {
     pub fn solve(&mut self) {
         let mut changed = true;
         let mut guard = 0usize;
+        let constraints = &self.constraints;
+        let bindings = &mut self.bindings;
         while changed && guard < 64 {
             guard += 1;
             changed = false;
-            let constraint_count = self.constraints.len();
-            for idx in 0..constraint_count {
-                let c = self.constraints[idx].clone();
-                if self.apply(c) {
+            for constraint in constraints {
+                if Self::apply_constraint(bindings, constraint) {
                     changed = true;
                 }
             }
@@ -51,37 +51,46 @@ impl ConstraintSet {
         self.bindings.get(&v).cloned().unwrap_or(TypeTerm::Any)
     }
 
-    fn apply(&mut self, c: TypeConstraint) -> bool {
-        match c {
-            TypeConstraint::Bind(v, term) => self.bind_var(v, term),
+    fn apply_constraint(
+        bindings: &mut FxHashMap<TyVar, TypeTerm>,
+        constraint: &TypeConstraint,
+    ) -> bool {
+        match constraint {
+            TypeConstraint::Bind(v, term) => Self::bind_var_ref(bindings, *v, term),
             TypeConstraint::Eq(a, b) => {
-                let ta = self.resolve(a);
-                let tb = self.resolve(b);
+                let ta = Self::resolve_in(bindings, *a);
+                let tb = Self::resolve_in(bindings, *b);
                 let mut changed = false;
-                changed |= self.bind_var(a, tb.clone());
-                changed |= self.bind_var(b, ta);
+                changed |= Self::bind_var_ref(bindings, *a, &tb);
+                changed |= Self::bind_var_ref(bindings, *b, &ta);
                 changed
             }
             TypeConstraint::ElementOf { container, element } => {
-                let c = self.resolve(container);
-                self.bind_var(element, c.index_element())
+                let container_term = Self::resolve_in(bindings, *container);
+                let element_term = container_term.index_element();
+                Self::bind_var_ref(bindings, *element, &element_term)
             }
             TypeConstraint::Unbox { boxed, value } => {
-                let b = self.resolve(boxed);
-                self.bind_var(value, b.unbox())
+                let boxed_term = Self::resolve_in(bindings, *boxed);
+                let value_term = boxed_term.unbox();
+                Self::bind_var_ref(bindings, *value, &value_term)
             }
         }
     }
 
-    fn bind_var(&mut self, v: TyVar, term: TypeTerm) -> bool {
-        let next = if let Some(prev) = self.bindings.get(&v) {
-            prev.join(&term)
+    fn resolve_in(bindings: &FxHashMap<TyVar, TypeTerm>, v: TyVar) -> TypeTerm {
+        bindings.get(&v).cloned().unwrap_or(TypeTerm::Any)
+    }
+
+    fn bind_var_ref(bindings: &mut FxHashMap<TyVar, TypeTerm>, v: TyVar, term: &TypeTerm) -> bool {
+        let next = if let Some(prev) = bindings.get(&v) {
+            prev.join(term)
         } else {
-            term
+            term.clone()
         };
-        let changed = self.bindings.get(&v) != Some(&next);
+        let changed = bindings.get(&v) != Some(&next);
         if changed {
-            self.bindings.insert(v, next);
+            bindings.insert(v, next);
         }
         changed
     }

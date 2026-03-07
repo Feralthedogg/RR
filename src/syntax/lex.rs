@@ -89,7 +89,10 @@ impl<'a> Lexer<'a> {
         let mut s = String::new();
         while let Some(c) = self.peek() {
             if pred(c) {
-                s.push(self.advance().unwrap());
+                let Some(next) = self.advance() else {
+                    break;
+                };
+                s.push(next);
             } else {
                 break;
             }

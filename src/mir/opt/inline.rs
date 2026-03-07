@@ -145,8 +145,9 @@ impl MirInliner {
             }
         }
 
-        if let Some((bid, idx, callee_name, args, target_val, call_dst, call_span)) = candidate {
-            let callee = all_fns.get(&callee_name).unwrap();
+        if let Some((bid, idx, callee_name, args, target_val, call_dst, call_span)) = candidate
+            && let Some(callee) = all_fns.get(&callee_name)
+        {
             let before_size = Self::fn_ir_size(caller);
             self.perform_inline(
                 caller, bid, idx, &args, target_val, call_dst, callee, call_span,

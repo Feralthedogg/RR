@@ -59,7 +59,6 @@ print(plain(1));
         .arg(&rr_path)
         .arg("-o")
         .arg(&out_path)
-        .arg("--no-runtime")
         .arg("-O1")
         .status()
         .expect("failed to run RR compiler");

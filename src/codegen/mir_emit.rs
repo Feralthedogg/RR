@@ -8,7 +8,7 @@ use crate::typeck::{PrimTy, ShapeTy};
 use crate::utils::Span;
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapEntry {
     pub r_line: u32,
     pub rr_span: Span,
@@ -66,6 +66,10 @@ pub struct RBackend {
     value_binding_log: Vec<ValueBindingUndo>,
     var_version_log: Vec<VarVersionUndo>,
     branch_snapshot_depth: usize,
+    expr_use_counts_scratch: HashMap<usize, usize>,
+    expr_path_scratch: HashSet<usize>,
+    emitted_ids_scratch: HashSet<usize>,
+    emitted_temp_names_scratch: Vec<String>,
 }
 
 impl Default for RBackend {
@@ -86,6 +90,10 @@ impl RBackend {
             value_binding_log: Vec::new(),
             var_version_log: Vec::new(),
             branch_snapshot_depth: 0,
+            expr_use_counts_scratch: HashMap::new(),
+            expr_path_scratch: HashSet::new(),
+            emitted_ids_scratch: HashSet::new(),
+            emitted_temp_names_scratch: Vec::new(),
         }
     }
 
@@ -114,6 +122,9 @@ impl RBackend {
         self.value_binding_log.clear();
         self.var_version_log.clear();
         self.branch_snapshot_depth = 0;
+        self.expr_use_counts_scratch.clear();
+        self.expr_path_scratch.clear();
+        self.emitted_ids_scratch.clear();
 
         self.write(fn_ir.name.as_str());
         self.write(" <- function(");
@@ -172,7 +183,7 @@ impl RBackend {
             Instr::Assign { dst, src, span } => {
                 let label = format!("assign {}", dst);
                 self.emit_mark(*span, Some(label.as_str()));
-                let mut cse_temps: Vec<String> = Vec::new();
+                self.emitted_temp_names_scratch.clear();
                 let v = if let Some(bound) = self.resolve_bound_value(*src) {
                     bound
                 } else {
@@ -182,7 +193,7 @@ impl RBackend {
                     if preview == *dst {
                         preview
                     } else {
-                        cse_temps = self.emit_common_subexpr_temps(*src, values, params);
+                        self.emit_common_subexpr_temps(*src, values, params);
                         self.resolve_val(*src, values, params, true) // Prefer expression for RHS
                     }
                 };
@@ -192,10 +203,7 @@ impl RBackend {
                     self.note_var_write(dst);
                     self.bind_value_to_var(*src, dst);
                 }
-                for t in cse_temps {
-                    // Keep hoisted temps local to this assignment to avoid stale bindings.
-                    self.note_var_write(&t);
-                }
+                self.invalidate_emitted_cse_temps();
             }
             Instr::Eval { val, span } => {
                 self.emit_mark(*span, Some("eval"));
@@ -355,20 +363,26 @@ impl RBackend {
         });
     }
 
-    fn emit_common_subexpr_temps(
-        &mut self,
-        root: usize,
-        values: &[Value],
-        params: &[String],
-    ) -> Vec<String> {
-        let mut counts: HashMap<usize, usize> = HashMap::new();
-        Self::collect_expr_use_counts(root, values, &mut counts, &mut HashSet::new());
+    fn emit_common_subexpr_temps(&mut self, root: usize, values: &[Value], params: &[String]) {
+        let mut counts = std::mem::take(&mut self.expr_use_counts_scratch);
+        let mut path = std::mem::take(&mut self.expr_path_scratch);
+        let mut emitted_ids = std::mem::take(&mut self.emitted_ids_scratch);
+        let mut temps = std::mem::take(&mut self.emitted_temp_names_scratch);
+        counts.clear();
+        path.clear();
+        emitted_ids.clear();
+        temps.clear();
+
+        Self::collect_expr_use_counts(root, values, &mut counts, &mut path);
         if !counts.values().any(|c| *c > 1) {
-            return Vec::new();
+            self.expr_use_counts_scratch = counts;
+            self.expr_path_scratch = path;
+            self.emitted_ids_scratch = emitted_ids;
+            self.emitted_temp_names_scratch = temps;
+            return;
         }
 
-        let mut emitted_ids: HashSet<usize> = HashSet::new();
-        let mut temps = Vec::new();
+        path.clear();
         self.emit_hoisted_subexprs_dfs(
             root,
             root,
@@ -376,10 +390,13 @@ impl RBackend {
             params,
             &counts,
             &mut emitted_ids,
-            &mut HashSet::new(),
+            &mut path,
             &mut temps,
         );
-        temps
+        self.expr_use_counts_scratch = counts;
+        self.expr_path_scratch = path;
+        self.emitted_ids_scratch = emitted_ids;
+        self.emitted_temp_names_scratch = temps;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -397,7 +414,7 @@ impl RBackend {
         if !path.insert(vid) {
             return;
         }
-        for child in Self::expr_children(vid, values) {
+        Self::for_each_expr_child(vid, values, |child| {
             self.emit_hoisted_subexprs_dfs(
                 child,
                 root,
@@ -408,7 +425,7 @@ impl RBackend {
                 path,
                 temps,
             );
-        }
+        });
         path.remove(&vid);
 
         if vid == root {
@@ -443,24 +460,57 @@ impl RBackend {
         if !path.insert(root) {
             return;
         }
-        for child in Self::expr_children(root, values) {
+        Self::for_each_expr_child(root, values, |child| {
             Self::collect_expr_use_counts(child, values, counts, path);
-        }
+        });
         path.remove(&root);
     }
 
-    fn expr_children(vid: usize, values: &[Value]) -> Vec<usize> {
+    fn for_each_expr_child<F>(vid: usize, values: &[Value], mut visit: F)
+    where
+        F: FnMut(usize),
+    {
         match &values[vid].kind {
-            ValueKind::Binary { lhs, rhs, .. } => vec![*lhs, *rhs],
-            ValueKind::Unary { rhs, .. } => vec![*rhs],
-            ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args.clone(),
-            ValueKind::Len { base } | ValueKind::Indices { base } => vec![*base],
-            ValueKind::Range { start, end } => vec![*start, *end],
-            ValueKind::Index1D { base, idx, .. } => vec![*base, *idx],
-            ValueKind::Index2D { base, r, c } => vec![*base, *r, *c],
-            ValueKind::Phi { args } => args.iter().map(|(v, _)| *v).collect(),
-            ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => Vec::new(),
+            ValueKind::Binary { lhs, rhs, .. } => {
+                visit(*lhs);
+                visit(*rhs);
+            }
+            ValueKind::Unary { rhs, .. } => visit(*rhs),
+            ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => {
+                for arg in args {
+                    visit(*arg);
+                }
+            }
+            ValueKind::Len { base } | ValueKind::Indices { base } => visit(*base),
+            ValueKind::Range { start, end } => {
+                visit(*start);
+                visit(*end);
+            }
+            ValueKind::Index1D { base, idx, .. } => {
+                visit(*base);
+                visit(*idx);
+            }
+            ValueKind::Index2D { base, r, c } => {
+                visit(*base);
+                visit(*r);
+                visit(*c);
+            }
+            ValueKind::Phi { args } => {
+                for (value, _) in args {
+                    visit(*value);
+                }
+            }
+            ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => {}
         }
+    }
+
+    fn invalidate_emitted_cse_temps(&mut self) {
+        let mut temps = std::mem::take(&mut self.emitted_temp_names_scratch);
+        for temp in temps.drain(..) {
+            // Keep hoisted temps local to this assignment to avoid stale bindings.
+            self.note_var_write(&temp);
+        }
+        self.emitted_temp_names_scratch = temps;
     }
 
     fn should_hoist_common_subexpr(vid: usize, uses: usize, values: &[Value]) -> bool {
@@ -659,8 +709,8 @@ impl RBackend {
                 val.kind,
                 ValueKind::Load { .. } | ValueKind::Param { .. } | ValueKind::Call { .. }
             );
-        if should_use_name {
-            return val.origin_var.as_ref().unwrap().clone();
+        if should_use_name && let Some(origin_var) = &val.origin_var {
+            return origin_var.clone();
         }
 
         match &val.kind {
@@ -777,8 +827,8 @@ impl RBackend {
         if Self::can_elide_identity_floor_call(callee, args, names, values) {
             return self.resolve_val(args[0], values, params, false);
         }
-        let arg_strs = self.resolve_named_args(args, names, values, params);
-        format!("{}({})", callee, arg_strs.join(", "))
+        let arg_list = self.build_named_arg_list(args, names, values, params);
+        format!("{}({})", callee, arg_list)
     }
 
     fn resolve_intrinsic_expr(
@@ -788,8 +838,8 @@ impl RBackend {
         values: &[Value],
         params: &[String],
     ) -> String {
-        let arg_strs = self.resolve_plain_args(args, values, params);
-        format!("{}({})", Self::intrinsic_helper(op), arg_strs.join(", "))
+        let arg_list = self.build_plain_arg_list(args, values, params);
+        format!("{}({})", Self::intrinsic_helper(op), arg_list)
     }
 
     fn resolve_index1d_expr(
@@ -834,36 +884,39 @@ impl RBackend {
         format!("{}[{}, {}]", b, r_idx, c_idx)
     }
 
-    fn resolve_named_args(
+    fn build_named_arg_list(
         &self,
         args: &[usize],
         names: &[Option<String>],
         values: &[Value],
         params: &[String],
-    ) -> Vec<String> {
-        let mut arg_strs: Vec<String> = Vec::with_capacity(args.len());
+    ) -> String {
+        let mut out = String::new();
         for (i, a) in args.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
             let value = self.resolve_val(*a, values, params, false);
             if let Some(Some(name)) = names.get(i) {
-                arg_strs.push(format!("{} = {}", name, value));
+                out.push_str(name);
+                out.push_str(" = ");
+                out.push_str(&value);
             } else {
-                arg_strs.push(value);
+                out.push_str(&value);
             }
         }
-        arg_strs
+        out
     }
 
-    fn resolve_plain_args(
-        &self,
-        args: &[usize],
-        values: &[Value],
-        params: &[String],
-    ) -> Vec<String> {
-        let mut arg_strs: Vec<String> = Vec::with_capacity(args.len());
-        for arg in args {
-            arg_strs.push(self.resolve_val(*arg, values, params, false));
+    fn build_plain_arg_list(&self, args: &[usize], values: &[Value], params: &[String]) -> String {
+        let mut out = String::new();
+        for (idx, arg) in args.iter().enumerate() {
+            if idx > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&self.resolve_val(*arg, values, params, false));
         }
-        arg_strs
+        out
     }
 
     fn intrinsic_helper(op: IntrinsicOp) -> &'static str {

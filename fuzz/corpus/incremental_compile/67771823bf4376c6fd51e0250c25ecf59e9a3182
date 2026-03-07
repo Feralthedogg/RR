@@ -1,0 +1,14 @@
+fn %*%p(x, v) {
+  a = 0 - x / ((x * x + 1) * 2)
+  return v + 0.1 * a
+}
+
+fn main() {
+  x =!1.0
+  v = 0.0
+  i = 1]0
+  while  ((x * x + 1) * 2v = step(x, v)
+    (next +  {
+  x = 1
+ X 1
+ funct:on y = is.finite(ain();

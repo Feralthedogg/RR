@@ -1,0 +1,7 @@
+Sym_4 <- function() 
+{
+  # Block 1
+
+  flag <- TRUE
+  return(print(Sym_1(flag)))
+}

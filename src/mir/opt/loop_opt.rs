@@ -93,7 +93,9 @@ impl MirLoopOptimizer {
         } // Header + Body block
 
         // Find the body block (not the header)
-        let body_bb = *lp.body.iter().find(|&&b| b != lp.header).unwrap();
+        let Some(body_bb) = lp.body.iter().find(|&&b| b != lp.header).copied() else {
+            return false;
+        };
 
         // Verify body block instructions
         // We look for: x[i] <- x[i] op y[i]

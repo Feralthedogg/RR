@@ -7,7 +7,6 @@ fn compile_rr(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) {
         .arg(rr_src)
         .arg("-o")
         .arg(out)
-        .arg("--no-runtime")
         .arg(level)
         .status()
         .expect("failed to run RR compiler");
@@ -31,7 +30,6 @@ fn compile_rr_with_modes(
         .arg(rr_src)
         .arg("-o")
         .arg(out)
-        .arg("--no-runtime")
         .arg(level)
         .arg("--type-mode")
         .arg(type_mode)

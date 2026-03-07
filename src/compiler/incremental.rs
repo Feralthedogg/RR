@@ -1,6 +1,9 @@
 use crate::codegen::mir_emit::MapEntry;
-use crate::compiler::pipeline::{EmitFunctionCache, compile_with_configs_using_emit_cache};
-use crate::compiler::{OptLevel, ParallelConfig, compile_with_configs};
+use crate::compiler::pipeline::{
+    CompileOutputOptions, EmitFunctionCache, compile_output_cache_salt,
+    compile_with_configs_using_emit_cache,
+};
+use crate::compiler::{OptLevel, ParallelConfig, compile_with_configs_with_options};
 use crate::error::{InternalCompilerError, RR, RRCode, RRException, Stage};
 use crate::typeck::TypeConfig;
 use crate::utils::Span;
@@ -11,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const CACHE_VERSION: &str = "rr-incremental-v1";
+const CACHE_VERSION: &str = concat!("rr-incremental-v2|", env!("CARGO_PKG_VERSION"));
 const IMPORT_PATTERN: &str = r#"(?m)^\s*import\s+"([^"]+)"\s*;"#;
 static IMPORT_RE: OnceLock<Regex> = OnceLock::new();
 
@@ -52,6 +55,7 @@ pub struct IncrementalStats {
     pub phase2_emit_hits: usize,
     pub phase2_emit_misses: usize,
     pub phase3_memory_hit: bool,
+    pub strict_verification_checked: bool,
     pub strict_verification_passed: bool,
 }
 
@@ -71,6 +75,21 @@ pub struct IncrementalCompileOutput {
 struct CachedArtifact {
     r_code: String,
     source_map: Vec<MapEntry>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum StrictArtifactTier {
+    Phase1Disk,
+    Phase3Memory,
+}
+
+impl StrictArtifactTier {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Phase1Disk => "phase1 disk artifact",
+            Self::Phase3Memory => "phase3 memory artifact",
+        }
+    }
 }
 
 struct DiskFnEmitCache {
@@ -156,9 +175,38 @@ pub fn compile_with_configs_incremental(
     options: IncrementalOptions,
     session: Option<&mut IncrementalSession>,
 ) -> RR<IncrementalCompileOutput> {
+    compile_with_configs_incremental_with_output_options(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_cfg,
+        options,
+        CompileOutputOptions::default(),
+        session,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn compile_with_configs_incremental_with_output_options(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    options: IncrementalOptions,
+    output_options: CompileOutputOptions,
+    session: Option<&mut IncrementalSession>,
+) -> RR<IncrementalCompileOutput> {
     if !options.enabled {
-        let (r_code, source_map) =
-            compile_with_configs(entry_path, entry_input, opt_level, type_cfg, parallel_cfg)?;
+        let (r_code, source_map) = compile_with_configs_with_options(
+            entry_path,
+            entry_input,
+            opt_level,
+            type_cfg,
+            parallel_cfg,
+            output_options,
+        )?;
         return Ok(IncrementalCompileOutput {
             r_code,
             source_map,
@@ -168,17 +216,24 @@ pub fn compile_with_configs_incremental(
 
     let mut stats = IncrementalStats::default();
     let fingerprint = collect_module_fingerprints(entry_path, entry_input)?;
-    let cache_key = build_artifact_key(&fingerprint, opt_level, type_cfg, parallel_cfg, options);
-    let mut strict_expected: Option<CachedArtifact> = None;
+    let cache_key = build_artifact_key(
+        &fingerprint,
+        opt_level,
+        type_cfg,
+        parallel_cfg,
+        options,
+        output_options,
+    );
+    let mut strict_expected = Vec::new();
 
     if options.phase3
         && let Some(s) = session.as_ref()
         && let Some(hit) = s.phase3_artifacts.get(&cache_key)
     {
+        stats.phase3_memory_hit = true;
         if options.strict_verify {
-            strict_expected = Some(hit.clone());
+            strict_expected.push((StrictArtifactTier::Phase3Memory, hit.clone()));
         } else {
-            stats.phase3_memory_hit = true;
             return Ok(IncrementalCompileOutput {
                 r_code: hit.r_code.clone(),
                 source_map: hit.source_map.clone(),
@@ -191,10 +246,10 @@ pub fn compile_with_configs_incremental(
     if options.phase1
         && let Some(hit) = load_artifact(&cache_root, &cache_key)?
     {
+        stats.phase1_artifact_hit = true;
         if options.strict_verify {
-            strict_expected = Some(hit.clone());
+            strict_expected.push((StrictArtifactTier::Phase1Disk, hit.clone()));
         } else {
-            stats.phase1_artifact_hit = true;
             if options.phase3
                 && let Some(s) = session
             {
@@ -217,12 +272,20 @@ pub fn compile_with_configs_incremental(
             type_cfg,
             parallel_cfg,
             Some(&mut fn_cache),
+            output_options,
         )?;
         stats.phase2_emit_hits = hits;
         stats.phase2_emit_misses = misses;
         (code, map)
     } else {
-        compile_with_configs(entry_path, entry_input, opt_level, type_cfg, parallel_cfg)?
+        compile_with_configs_with_options(
+            entry_path,
+            entry_input,
+            opt_level,
+            type_cfg,
+            parallel_cfg,
+            output_options,
+        )?
     };
     let built = CachedArtifact { r_code, source_map };
 
@@ -235,17 +298,11 @@ pub fn compile_with_configs_incremental(
         s.phase3_artifacts.insert(cache_key, built.clone());
     }
     if options.strict_verify {
-        if let Some(expected) = strict_expected
-            && expected.r_code != built.r_code
-        {
-            return Err(InternalCompilerError::new(
-                Stage::Codegen,
-                "strict incremental verification failed: cache artifact mismatch",
-            )
-            .note("Disable --strict-incremental-verify or clear target/.rr-cache and rebuild.")
-            .into_exception());
+        stats.strict_verification_checked = !strict_expected.is_empty();
+        for (tier, expected) in &strict_expected {
+            verify_strict_artifact_match(*tier, expected, &built)?;
         }
-        stats.strict_verification_passed = true;
+        stats.strict_verification_passed = stats.strict_verification_checked;
     }
     Ok(IncrementalCompileOutput {
         r_code: built.r_code,
@@ -348,6 +405,7 @@ fn build_artifact_key(
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
     options: IncrementalOptions,
+    output_options: CompileOutputOptions,
 ) -> String {
     let mut payload = String::new();
     payload.push_str(CACHE_VERSION);
@@ -373,6 +431,14 @@ fn build_artifact_key(
     } else {
         "nostrict"
     });
+    payload.push('|');
+    payload.push_str(if output_options.inject_runtime {
+        "runtime"
+    } else {
+        "helper-only"
+    });
+    payload.push('|');
+    payload.push_str(&compile_output_cache_salt().to_string());
     for module in modules {
         payload.push('|');
         payload.push_str(&module.canonical_path.to_string_lossy());
@@ -413,6 +479,36 @@ fn artifact_paths(cache_root: &Path, key: &str) -> (PathBuf, PathBuf) {
         artifact_dir.join(format!("{}.R", key)),
         artifact_dir.join(format!("{}.map", key)),
     )
+}
+
+fn verify_strict_artifact_match(
+    tier: StrictArtifactTier,
+    expected: &CachedArtifact,
+    built: &CachedArtifact,
+) -> RR<()> {
+    if expected.r_code != built.r_code {
+        return Err(InternalCompilerError::new(
+            Stage::Codegen,
+            format!(
+                "strict incremental verification failed: {} R output mismatch",
+                tier.label()
+            ),
+        )
+        .note("Disable --strict-incremental-verify or clear target/.rr-cache and rebuild.")
+        .into_exception());
+    }
+    if expected.source_map != built.source_map {
+        return Err(InternalCompilerError::new(
+            Stage::Codegen,
+            format!(
+                "strict incremental verification failed: {} source map mismatch",
+                tier.label()
+            ),
+        )
+        .note("Disable --strict-incremental-verify or clear target/.rr-cache and rebuild.")
+        .into_exception());
+    }
+    Ok(())
 }
 
 fn load_artifact(cache_root: &Path, key: &str) -> RR<Option<CachedArtifact>> {

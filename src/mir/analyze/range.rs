@@ -151,6 +151,9 @@ impl RangeFacts {
 pub fn analyze_ranges(fn_ir: &FnIR) -> Vec<RangeFacts> {
     let mut bb_facts = vec![RangeFacts::new(); fn_ir.blocks.len()];
     let mut worklist = VecDeque::new();
+    let mut current_facts = RangeFacts::new();
+    let mut then_facts = RangeFacts::new();
+    let mut else_facts = RangeFacts::new();
 
     // Init entry block
     worklist.push_back(fn_ir.entry);
@@ -175,7 +178,7 @@ pub fn analyze_ranges(fn_ir: &FnIR) -> Vec<RangeFacts> {
     while let Some(bid) = worklist.pop_front() {
         *iterations.entry(bid).or_insert(0) += 1;
 
-        let mut current_facts = bb_facts[bid].clone();
+        current_facts.clone_from(&bb_facts[bid]);
         transfer_block(bid, fn_ir, &mut current_facts);
 
         // Propagate to successors
@@ -192,14 +195,14 @@ pub fn analyze_ranges(fn_ir: &FnIR) -> Vec<RangeFacts> {
                 else_bb,
             } => {
                 // Then branch: try to narrow
-                let mut then_facts = current_facts.clone();
+                then_facts.clone_from(&current_facts);
                 narrow_facts(&mut then_facts, *cond, true, fn_ir);
                 if bb_facts[*then_bb].join(&then_facts) {
                     worklist.push_back(*then_bb);
                 }
 
                 // Else branch: try to narrow
-                let mut else_facts = current_facts.clone();
+                else_facts.clone_from(&current_facts);
                 narrow_facts(&mut else_facts, *cond, false, fn_ir);
                 if bb_facts[*else_bb].join(&else_facts) {
                     worklist.push_back(*else_bb);

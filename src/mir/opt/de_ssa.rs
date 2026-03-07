@@ -155,9 +155,10 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
             None => true,
         };
         if unreachable_phi {
-            fn_ir.values[phi].kind = ValueKind::Const(Lit::Null);
-            fn_ir.values[phi].phi_block = None;
-            changed = true;
+            // Leave dead/unreachable Phi untouched. Emittable IR validation will reject any
+            // reachable Phi that survives de-SSA, but dead Phi values should not be rewritten
+            // into NULL because that silently changes semantics if they later become observable.
+            continue;
         }
     }
 
@@ -371,4 +372,36 @@ fn resolve_phi_source_for_pred(
     };
     visiting.remove(&src);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+    use crate::mir::{Facts, FnIR, Terminator, ValueKind};
+    use crate::utils::Span;
+
+    #[test]
+    fn unreachable_phi_is_not_rewritten_to_null() {
+        let mut f = FnIR::new("dead_phi".to_string(), Vec::new());
+        let entry = f.add_block();
+        let dead = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+        f.blocks[entry].term = Terminator::Return(None);
+        f.blocks[dead].term = Terminator::Unreachable;
+
+        let phi = f.add_value(
+            ValueKind::Phi { args: Vec::new() },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        f.values[phi].phi_block = Some(dead);
+
+        let _ = run(&mut f);
+        assert!(
+            matches!(f.values[phi].kind, ValueKind::Phi { .. }),
+            "dead phi should stay dead, not become NULL"
+        );
+    }
 }

@@ -155,7 +155,12 @@ impl<'a> Structurizer<'a> {
 
         match seq.len() {
             0 => StructuredBlock::Sequence(vec![]),
-            1 => seq.pop().unwrap(),
+            1 => {
+                let Some(block) = seq.pop() else {
+                    return StructuredBlock::Sequence(vec![]);
+                };
+                block
+            }
             _ => StructuredBlock::Sequence(seq),
         }
     }
@@ -328,7 +333,7 @@ fn compute_postdoms(
 
             if let Some(mut set) = new_set {
                 set.insert(b);
-                if set != *postdoms.get(&b).unwrap() {
+                if postdoms.get(&b).is_some_and(|curr| set != *curr) {
                     postdoms.insert(b, set);
                     changed = true;
                 }

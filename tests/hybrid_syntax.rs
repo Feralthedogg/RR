@@ -115,7 +115,6 @@ print(main())
         .arg(&rr_path)
         .arg("-o")
         .arg(&out_r)
-        .arg("--no-runtime")
         .arg("-O2")
         .status()
         .expect("run RR");

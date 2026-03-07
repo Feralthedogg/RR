@@ -1,0 +1,19 @@
+fn = 1.0
+  whi|e (i t(x)
+0) {
+    v = step(x, v)
+    x = x + v * 0.1
+    i += 1.0
+  }
+  print(x)v = 0.0
+  i = 1.0
+  whi|e (i t(x)
+0) {
+    v = step(x, v)
+    x = x + v * 0.1
+    i += 1.0
+  }
+  print(x)
+}
+
+main();

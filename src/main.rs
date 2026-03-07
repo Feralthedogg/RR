@@ -1,7 +1,8 @@
 use RR::compiler::{
-    CliLog, IncrementalOptions, IncrementalSession, OptLevel, ParallelBackend, ParallelConfig,
-    ParallelMode, compile_with_configs, compile_with_configs_incremental, parallel_config_from_env,
-    type_config_from_env,
+    CliLog, CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel,
+    ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs,
+    compile_with_configs_incremental, compile_with_configs_incremental_with_output_options,
+    compile_with_configs_with_options, parallel_config_from_env, type_config_from_env,
 };
 use RR::runtime::runner::Runner;
 use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
@@ -99,7 +100,7 @@ fn print_usage() {
     eprintln!("  --poll-ms <N>                             Watch polling interval in milliseconds");
     eprintln!("  --once                                    Run a single watch tick and exit");
     eprintln!("  --keep-r                      Keep generated .gen.R when running");
-    eprintln!("  --no-runtime                  Compile only (legacy mode)");
+    eprintln!("  --no-runtime                  Emit helper-only R without source/native bootstrap");
 }
 
 fn print_version() {
@@ -495,24 +496,29 @@ fn cmd_legacy(args: &[String]) -> i32 {
         }
     };
 
+    let output_opts = CompileOutputOptions {
+        inject_runtime: !opts.no_runtime,
+    };
     let result = if opts.incremental.enabled {
-        compile_with_configs_incremental(
+        compile_with_configs_incremental_with_output_options(
             &input_path,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
             opts.incremental,
+            output_opts,
             None,
         )
         .map(|v| (v.r_code, v.source_map))
     } else {
-        compile_with_configs(
+        compile_with_configs_with_options(
             &input_path,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
+            output_opts,
         )
     };
     match result {
@@ -530,7 +536,7 @@ fn cmd_legacy(args: &[String]) -> i32 {
             } else if !opts.no_runtime {
                 Runner::run(&input_path, &input, &r_code, &source_map, None, opts.keep_r)
             } else {
-                ui.success("Compilation successful (runtime skipped)");
+                ui.success("Compilation successful (helper-only emission)");
                 0
             }
         }

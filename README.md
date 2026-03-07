@@ -102,6 +102,7 @@ Common options:
 - `-o <file>`
 - `--out-dir <dir>`
 - `--no-runtime`
+  - omit source/native bootstrap while keeping helper definitions and runtime settings
 - `--type-mode strict|gradual`
 - `--native-backend off|optional|required`
 - `--parallel-mode off|optional|required`

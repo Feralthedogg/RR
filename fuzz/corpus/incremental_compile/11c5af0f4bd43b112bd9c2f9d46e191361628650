@@ -1,0 +1,7 @@
+fn step(x, v) {
+  a = 0 - x / ((x * x + 1) * 2)
+  return v + 0.0 * a
+}
+
+fn main() {
+ t  w);

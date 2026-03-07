@@ -119,15 +119,21 @@ impl Runner {
                 active_module_color = palette_for_module(module);
                 active_code_color = active_module_color;
             }
-            if let Some(cap) = rr_code_regex().captures(line) {
+            if let Some(regex) = rr_code_regex()
+                && let Some(cap) = regex.captures(line)
+            {
                 active_code_color = palette_for_rr_code(&cap[1], active_module_color);
             }
-            if rrdiag_regex().captures(line).is_some() {
+            if let Some(regex) = rrdiag_regex()
+                && regex.captures(line).is_some()
+            {
                 // Runtime already emits formatted multi-line user diagnostics.
                 continue;
             }
 
-            if let Some(cap) = rr_runtime_loc_regex().captures(line) {
+            if let Some(regex) = rr_runtime_loc_regex()
+                && let Some(cap) = regex.captures(line)
+            {
                 let rr_line: u32 = cap[1].parse().unwrap_or(0);
                 let rr_col: u32 = cap[2].parse().unwrap_or(0);
                 eprintln!(
@@ -141,7 +147,9 @@ impl Runner {
                 continue;
             }
 
-            if let Some(cap) = r_loc_regex().captures(line) {
+            if let Some(regex) = r_loc_regex()
+                && let Some(cap) = regex.captures(line)
+            {
                 let file = &cap[1];
                 let r_line: u32 = cap[2].parse().unwrap_or(0);
                 if (file.ends_with(".gen.R") || file.ends_with(".R"))
@@ -172,24 +180,32 @@ impl Runner {
     }
 }
 
-fn rr_runtime_loc_regex() -> &'static Regex {
-    static RR_RE: OnceLock<Regex> = OnceLock::new();
-    RR_RE.get_or_init(|| Regex::new(r"RR:(\d+):(\d+):").expect("valid RR runtime location regex"))
+fn rr_runtime_loc_regex() -> Option<&'static Regex> {
+    static RR_RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RR_RE
+        .get_or_init(|| Regex::new(r"RR:(\d+):(\d+):").ok())
+        .as_ref()
 }
 
-fn r_loc_regex() -> &'static Regex {
-    static R_LOC_RE: OnceLock<Regex> = OnceLock::new();
-    R_LOC_RE.get_or_init(|| Regex::new(r"([^:\s]+):(\d+):(\d+):").expect("valid R location regex"))
+fn r_loc_regex() -> Option<&'static Regex> {
+    static R_LOC_RE: OnceLock<Option<Regex>> = OnceLock::new();
+    R_LOC_RE
+        .get_or_init(|| Regex::new(r"([^:\s]+):(\d+):(\d+):").ok())
+        .as_ref()
 }
 
-fn rrdiag_regex() -> &'static Regex {
-    static RRDIAG_RE: OnceLock<Regex> = OnceLock::new();
-    RRDIAG_RE.get_or_init(|| Regex::new(r"^RRDIAG\|(.+)$").expect("valid RRDIAG regex"))
+fn rrdiag_regex() -> Option<&'static Regex> {
+    static RRDIAG_RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RRDIAG_RE
+        .get_or_init(|| Regex::new(r"^RRDIAG\|(.+)$").ok())
+        .as_ref()
 }
 
-fn rr_code_regex() -> &'static Regex {
-    static RR_CODE_RE: OnceLock<Regex> = OnceLock::new();
-    RR_CODE_RE.get_or_init(|| Regex::new(r"error\[(ICE\d+|E\d+)\]").expect("valid RR code regex"))
+fn rr_code_regex() -> Option<&'static Regex> {
+    static RR_CODE_RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RR_CODE_RE
+        .get_or_init(|| Regex::new(r"error\[(ICE\d+|E\d+)\]").ok())
+        .as_ref()
 }
 
 fn fallback_stderr_style<'a>(

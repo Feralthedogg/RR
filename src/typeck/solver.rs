@@ -1,4 +1,4 @@
-use crate::error::{RR, RRCode, RRException, Stage};
+use crate::error::{InternalCompilerError, RR, RRCode, RRException, Stage};
 use crate::hir::def::Ty;
 use crate::mir::{FnIR, Instr, Terminator, ValueId, ValueKind};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -166,7 +166,13 @@ pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -
                 );
             let enforce_scalar_ret = scalar_ret_demands.contains(&name)
                 && can_apply_index_return_override(all_fns, &name, ShapeTy::Scalar, &TypeTerm::Int);
-            let fn_ir = all_fns.get_mut(&name).expect("fn exists");
+            let Some(fn_ir) = all_fns.get_mut(&name) else {
+                return Err(InternalCompilerError::new(
+                    Stage::Mir,
+                    format!("type solver missing function '{}'", name),
+                )
+                .into_exception());
+            };
             let mut ret = analyze_function(fn_ir, &fn_ret)?;
             let mut ret_term = analyze_function_terms(fn_ir, &fn_ret_term);
             if enforce_vector_ret {
