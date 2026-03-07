@@ -1,8 +1,0 @@
-Sym_1 <- function() 
-{
-  # Block 1
-
-  x <- 1L
-  y <- 2L
-  return(print(3L))
-}
