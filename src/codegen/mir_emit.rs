@@ -101,16 +101,12 @@ impl RBackend {
         &mut self,
         fn_ir: &FnIR,
     ) -> Result<(String, Vec<MapEntry>), crate::error::RRException> {
-        if fn_ir
-            .values
-            .iter()
-            .any(|v| matches!(v.kind, ValueKind::Phi { .. }))
-        {
+        if let Err(err) = crate::mir::verify::verify_emittable_ir(fn_ir) {
             return Err(crate::error::RRException::new(
                 "codegen",
                 crate::error::RRCode::ICE9001,
                 crate::error::Stage::Codegen,
-                "Phi should be eliminated before codegen",
+                err.to_string(),
             ));
         }
         self.output.clear();

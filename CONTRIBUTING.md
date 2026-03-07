@@ -160,3 +160,6 @@ If you must break a `MUST`/`SHOULD` rule:
 - Error type/category is correct (user error vs ICE).
 - Relevant tests and checks were executed.
 - Docs updated if CLI/runtime/error semantics changed.
+
+For a concrete post-change verification pass, use
+[`docs/contributing-audit.md`](docs/contributing-audit.md).

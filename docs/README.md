@@ -25,6 +25,7 @@ If you are working on the compiler:
 - [Tachyon Engine](optimization.md): optimization passes and vectorization coverage
 - [Runtime and Errors](runtime-and-errors.md): emitted runtime helpers and diagnostics model
 - [Testing and Quality Gates](testing.md): integration, perf, and fuzz coverage
+- [Contributing Audit Checklist](contributing-audit.md): final manual and command-based verification pass
 
 If you need behavior limits:
 
@@ -48,6 +49,8 @@ If you need behavior limits:
   - environment-driven behavior switches
 - `testing.md`
   - test families, perf gates, fuzzing
+- `contributing-audit.md`
+  - post-change verification checklist for compiler contributors
 
 ## VitePress
 

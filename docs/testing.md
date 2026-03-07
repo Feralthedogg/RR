@@ -27,6 +27,9 @@ Run lints:
 cargo clippy --all-targets -- -D warnings
 ```
 
+For the post-change audit pass used before merging compiler work, see
+[Contributing Audit Checklist](contributing-audit.md).
+
 ## Test Families
 
 ### Frontend and Syntax
@@ -204,6 +207,8 @@ scripts/fuzz_smoke.sh
 
 By default this uses `fuzz/corpus_smoke/*` so that smoke runs stay bounded.
 Set `FUZZ_CORPUS_ROOT=fuzz/corpus` when you want to run against the full corpus set.
+The smoke script forces `RR_QUIET_LOG=1` so compiler progress output does not drown
+out libFuzzer stats, coverage changes, and crash reports.
 
 Replay a pipeline crash artifact:
 
@@ -228,3 +233,4 @@ The example-heavy runtime suites run in a dedicated CI job so failures in
 do not get buried inside the core Rust test log.
 
 For compiler changes, targeted regression tests are preferred over broad snapshot updates.
+Use [Contributing Audit Checklist](contributing-audit.md) as the final manual sign-off pass.

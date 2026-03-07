@@ -11,6 +11,9 @@ Current compiler line: `RR Tachyon v4.0.0`.
   - Disable ANSI colors.
 - `RR_VERBOSE_LOG`
   - Force detailed compile progress traces in CLI logger.
+- `RR_QUIET_LOG`
+  - Suppress compile progress banner, per-stage status lines, and success summaries.
+  - Intended for fuzzing, CI soak runs, and other automation where pipeline progress is noise.
 - `RR_SLOW_STEP_MS` (default `3000`)
   - When a compile stage runs longer than this threshold (ms), print an automatic slow-stage progress line.
   - During Tachyon optimization, this also enables tier progress traces (`always`/`heavy`/`de-ssa`) once the slow threshold is reached.

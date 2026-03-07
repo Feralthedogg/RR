@@ -27,7 +27,7 @@ for target in "${TARGETS[@]}"; do
   mkdir -p "$scratch"
   cp -R "$corpus/." "$scratch/"
   echo "== fuzz smoke: $target =="
-  cargo +"$TOOLCHAIN" fuzz run "$target" "$scratch" -- \
+  RR_QUIET_LOG=1 cargo +"$TOOLCHAIN" fuzz run "$target" "$scratch" -- \
     -dict="$DICT" \
     -max_total_time="$SECS" \
     -rss_limit_mb=2048 \

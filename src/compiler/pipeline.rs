@@ -125,6 +125,7 @@ impl Default for CompileOutputOptions {
 
 pub struct CliLog {
     color: bool,
+    quiet: bool,
     detailed: bool,
     slow_step_ms: usize,
     slow_step_repeat_ms: usize,
@@ -194,6 +195,18 @@ fn parse_nonnegative_usize_env(key: &str) -> Option<usize> {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
 }
 
+fn env_truthy(key: &str) -> bool {
+    env::var(key)
+        .ok()
+        .map(|raw| {
+            matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 pub fn parallel_config_from_env() -> ParallelConfig {
     let mode = env::var("RR_PARALLEL_MODE")
         .ok()
@@ -225,13 +238,15 @@ impl CliLog {
         let no_color = env::var_os("NO_COLOR").is_some();
         let force_color = env::var_os("RR_FORCE_COLOR").is_some();
         let force_verbose = env::var_os("RR_VERBOSE_LOG").is_some();
+        let quiet = env_truthy("RR_QUIET_LOG");
         let slow_step_ms = parse_nonnegative_usize_env("RR_SLOW_STEP_MS").unwrap_or(3000);
         let slow_step_repeat_ms = parse_nonnegative_usize_env("RR_SLOW_STEP_REPEAT_MS")
             .unwrap_or(6000)
             .max(200);
         Self {
             color: (force_color || is_tty) && !no_color,
-            detailed: is_tty || force_verbose,
+            quiet,
+            detailed: !quiet && (is_tty || force_verbose),
             slow_step_ms,
             slow_step_repeat_ms,
         }
@@ -274,6 +289,9 @@ impl CliLog {
     }
 
     fn banner(&self, input: &str, level: OptLevel) {
+        if self.quiet {
+            return;
+        }
         println!(
             "{} {}",
             self.yellow_bold("[+]"),
@@ -322,6 +340,9 @@ impl CliLog {
     }
 
     fn step_start(&self, idx: usize, total: usize, title: &str, detail: &str) -> CliStep {
+        if self.quiet {
+            return CliStep::new(Instant::now());
+        }
         let tag = format!("[{}/{}]", idx, total);
         println!(
             "{} {} {} {}",
@@ -396,6 +417,9 @@ impl CliLog {
     }
 
     fn step_line_ok(&self, detail: &str) {
+        if self.quiet {
+            return;
+        }
         println!("   {} {}", self.green_bold("[ok]"), self.white_bold(detail));
     }
 
@@ -411,6 +435,9 @@ impl CliLog {
     }
 
     fn pulse_success(&self, total: Duration) {
+        if self.quiet {
+            return;
+        }
         println!(
             "{} {} {}",
             self.green_bold("[ok]"),
@@ -420,13 +447,22 @@ impl CliLog {
     }
 
     pub fn success(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         println!("{} {}", self.green_bold("[ok]"), self.white_bold(msg));
     }
     pub fn warn(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         eprintln!("{} {}", self.yellow_bold("!"), self.yellow_bold(msg));
     }
 
     pub fn error(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         eprintln!("{} {}", self.red_bold("x"), self.red_bold(msg));
     }
 }
