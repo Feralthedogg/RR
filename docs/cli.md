@@ -95,6 +95,11 @@ RR watch . -O2
 - `--parallel-threads <N>`
 - `--parallel-min-trip <N>`
 
+Builtin resolution note:
+
+- most math/aggregation builtins such as `abs`, `sqrt`, `exp`, `sum`, `mean`, and `print` are reserved for builtin/intrinsic lowering
+- only the scalar-indexing group `length`, `floor`, `round`, `ceiling`, and `trunc` is allowed to shadow builtin names
+
 ## Incremental and Watch Options
 
 - `--incremental[=off|1|1,2|1,2,3|all]`

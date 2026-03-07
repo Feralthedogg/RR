@@ -121,6 +121,11 @@ RR accepts both R-style and native-style surface forms.
 
 Recommended user-facing style is the R-like form unless you have a project reason to prefer the native style.
 
+Builtin naming rule:
+
+- use distinct helper names such as `demo_abs` or `my_sqrt` for user-defined math helpers
+- only `length`, `floor`, `round`, `ceiling`, and `trunc` are intended to shadow builtin names
+
 ## Next Reading
 
 - [CLI Reference](cli.md)

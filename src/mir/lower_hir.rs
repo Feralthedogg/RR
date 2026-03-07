@@ -39,6 +39,12 @@ pub struct MirLowerer<'a> {
 }
 
 impl<'a> MirLowerer<'a> {
+    // Most math/data builtins are treated as intrinsics by later passes.
+    // Only the small scalar-indexing group is allowed to shadow base R names.
+    fn allow_user_builtin_shadowing(name: &str) -> bool {
+        matches!(name, "length" | "floor" | "round" | "ceiling" | "trunc")
+    }
+
     pub fn new(
         name: String,
         params: Vec<String>,
@@ -757,6 +763,46 @@ impl<'a> MirLowerer<'a> {
                 match callee.as_ref() {
                     hir::HirExpr::Global(sym) => {
                         if let Some(name) = self.symbols.get(sym) {
+                            if name.starts_with("rr_") {
+                                return Ok(self.fn_ir.add_value(
+                                    ValueKind::Call {
+                                        callee: name.clone(),
+                                        args: v_args,
+                                        names: arg_names,
+                                    },
+                                    span,
+                                    Facts::empty(),
+                                    None,
+                                ));
+                            }
+                            if Self::allow_user_builtin_shadowing(name)
+                                && let Some(expected) = self.known_functions.get(name)
+                            {
+                                if *expected != v_args.len() {
+                                    return Err(crate::error::RRException::new(
+                                        "RR.SemanticError",
+                                        crate::error::RRCode::E1002,
+                                        crate::error::Stage::Mir,
+                                        format!(
+                                            "function '{}' expects {} argument(s), got {}",
+                                            name,
+                                            expected,
+                                            v_args.len()
+                                        ),
+                                    )
+                                    .at(span));
+                                }
+                                return Ok(self.fn_ir.add_value(
+                                    ValueKind::Call {
+                                        callee: format!("Sym_{}", sym.0),
+                                        args: v_args,
+                                        names: arg_names,
+                                    },
+                                    span,
+                                    Facts::empty(),
+                                    None,
+                                ));
+                            }
                             if name == "length" {
                                 if v_args.len() != 1 {
                                     return Err(crate::error::RRException::new(
@@ -772,18 +818,6 @@ impl<'a> MirLowerer<'a> {
                                     .at(span));
                                 }
                                 return Ok(self.add_value(ValueKind::Len { base: v_args[0] }, span));
-                            }
-                            if name.starts_with("rr_") {
-                                return Ok(self.fn_ir.add_value(
-                                    ValueKind::Call {
-                                        callee: name.clone(),
-                                        args: v_args,
-                                        names: arg_names,
-                                    },
-                                    span,
-                                    Facts::empty(),
-                                    None,
-                                ));
                             }
                             // Known builtins should keep their original names.
                             if matches!(

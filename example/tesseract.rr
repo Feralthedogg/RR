@@ -18,27 +18,28 @@
 fn floor(x: float) -> float = x - (x % 1.0)
 
 // fn block + no-paren if
-// ~ abs = function(x) { if (x < 0.0) { return 0.0 - x } x }
-fn abs(x: float) -> float {
+// builtin math names are reserved for optimizer/runtime lowering, so keep
+// showcase helpers under distinct names.
+fn demo_abs(x: float) -> float {
     if x < 0.0 { return 0.0 - x }
     x
 }
 
 // Classic R function assignment style
-fn max(a, b) {
+fn demo_max(a, b) {
     if (a > b) { return a }
     b
 }
 
 // Mixed assignment operators (= and <- are equivalent)
-fn exp(x) {
+fn demo_exp(x) {
     x2 = x * x
     return 1.0 + x + x2 * 0.5 + (x2 * x) * 0.1666
 }
 
 // Lambda alias form
-// ~ sqrt = function(x) { ... }
-fn sqrt(x: float) -> float {
+// ~ demo.sqrt = function(x) { ... }
+fn demo_sqrt(x: float) -> float {
     g = x / 2.0
     if g == 0.0 { return 0.0 }
     i = 0.0
@@ -52,6 +53,8 @@ fn barrier_alloc(n, val, depth) {
     // Release-friendly fill allocation (much faster than scalar write loop).
     rep.int(val, n)
 }
+// RR currently allows a small scalar-indexing group like round/floor to shadow
+// builtin names. This keeps cube-index helpers deterministic under lowering.
 fn round(x) {
     r = x % 1.0
     if (r >= 0.5) { return x - r + 1.0 }
@@ -874,7 +877,7 @@ fn advect_particles(px, py, pf, u, v, dt, N, total_grid) {
 
     }
 
-    return px
+    return {px: px, py: py, pf: pf}
 
 }
 fn idx_torus(x, y, w, h) {
@@ -1545,7 +1548,10 @@ fn tesseract_main() {
         du1 = compute_tendency(u, v, h, h_trn, coriolis, visc, adj_l, adj_r, adj_d, adj_u, TOTAL)
 
 
-        p_check = advect_particles(p_x, p_y, p_f, u, v, dt, N, TOTAL)
+        particles = advect_particles(p_x, p_y, p_f, u, v, dt, N, TOTAL)
+        p_x = particles.px
+        p_y = particles.py
+        p_f = particles.pf
 
 
         i = 1.0

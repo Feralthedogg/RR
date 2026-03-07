@@ -158,6 +158,25 @@ Type mode behavior:
 - `strict` (default): compiler reports hint conflicts, call mismatches, and unresolved strict positions (`E1010`/`E1011`/`E1012`)
 - `gradual`: unresolved regions keep runtime-guarded dynamic behavior
 
+### Builtin Resolution and Shadowing
+
+RR does not treat all function names equally at lowering time.
+
+- Reserved builtin/intrinsic names such as `abs`, `sqrt`, `exp`, `sum`, `mean`, `pmax`, `pmin`, `print`, and similar math/data helpers keep builtin lowering semantics.
+- A small scalar-indexing group may be user-defined and shadow builtin names:
+  - `length`
+  - `floor`
+  - `round`
+  - `ceiling`
+  - `trunc`
+
+This split exists because the optimizer and runtime backend rely on intrinsic treatment for most math/vector helpers, while index/rounding helpers need RR-specific scalar semantics in some programs.
+
+Practical rule:
+
+- if you want custom math helpers, use a distinct name such as `demo_abs` or `my_sqrt`
+- only rely on shadowing for the small scalar-indexing group above
+
 ### Control Flow
 
 - `if` / `else`
