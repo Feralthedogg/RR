@@ -1,6 +1,6 @@
 mod common;
 
-use common::{normalize, rscript_available, rscript_path, run_rscript};
+use common::{normalize, rscript_available, rscript_path};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -61,12 +61,18 @@ fn compile_rr_timed(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) -> u1
 
 fn runtime_o2_timed(rscript: &str, script: &Path) -> (u128, String, String, i32) {
     let started = Instant::now();
-    let run = run_rscript(rscript, script);
+    let output = Command::new(rscript)
+        .arg("--vanilla")
+        .arg(script)
+        .env("RR_RUNTIME_MODE", "release")
+        .env("RR_ENABLE_MARKS", "0")
+        .output()
+        .expect("failed to execute Rscript");
     (
         started.elapsed().as_millis(),
-        normalize(&run.stdout),
-        normalize(&run.stderr),
-        run.status,
+        normalize(&String::from_utf8_lossy(&output.stdout)),
+        normalize(&String::from_utf8_lossy(&output.stderr)),
+        output.status.code().unwrap_or(-1),
     )
 }
 

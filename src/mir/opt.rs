@@ -2434,13 +2434,27 @@ impl TachyonEngine {
     }
 
     fn collect_cube_index_helpers(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
+        let round_helpers = Self::collect_round_helpers(all_fns);
         let mut helpers = FxHashSet::default();
         let ordered = Self::sorted_fn_names(all_fns);
         for name in ordered {
             let Some(fn_ir) = all_fns.get(&name) else {
                 continue;
             };
-            if Self::is_cube_index_helper_fn(fn_ir) {
+            if Self::is_cube_index_helper_fn(fn_ir, &round_helpers) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    fn collect_round_helpers(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        for name in Self::sorted_fn_names(all_fns) {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_rr_round_helper_fn(fn_ir) {
                 helpers.insert(name);
             }
         }
@@ -2473,7 +2487,7 @@ impl TachyonEngine {
         rewrites
     }
 
-    fn is_cube_index_helper_fn(fn_ir: &FnIR) -> bool {
+    fn is_cube_index_helper_fn(fn_ir: &FnIR, round_helpers: &FxHashSet<String>) -> bool {
         macro_rules! fail {
             ($msg:expr) => {{
                 if Self::wrap_trace_enabled() {
@@ -2500,10 +2514,10 @@ impl TachyonEngine {
         let Some(vars) = Self::cube_index_return_vars(fn_ir) else {
             fail!("return expression mismatch");
         };
-        if !Self::assignments_match_cube_seed_source(fn_ir, &vars.face_var, 0)
-            || !Self::assignments_match_cube_seed_source(fn_ir, &vars.x_var, 1)
-            || !Self::assignments_match_cube_seed_source(fn_ir, &vars.y_var, 2)
-            || !Self::assignments_match_cube_seed_source(fn_ir, &vars.size_var, 3)
+        if !Self::assignments_match_cube_seed_source(fn_ir, round_helpers, &vars.face_var, 0)
+            || !Self::assignments_match_cube_seed_source(fn_ir, round_helpers, &vars.x_var, 1)
+            || !Self::assignments_match_cube_seed_source(fn_ir, round_helpers, &vars.y_var, 2)
+            || !Self::assignments_match_cube_seed_source(fn_ir, round_helpers, &vars.size_var, 3)
         {
             fail!("seed assignment mismatch");
         }
@@ -2779,7 +2793,12 @@ impl TachyonEngine {
         Some((cond_var, is_lt, bound))
     }
 
-    fn assignments_match_cube_seed_source(fn_ir: &FnIR, var: &str, param_idx: usize) -> bool {
+    fn assignments_match_cube_seed_source(
+        fn_ir: &FnIR,
+        round_helpers: &FxHashSet<String>,
+        var: &str,
+        param_idx: usize,
+    ) -> bool {
         let mut saw_seed = false;
         for bb in &fn_ir.blocks {
             for ins in &bb.instrs {
@@ -2790,7 +2809,7 @@ impl TachyonEngine {
                     continue;
                 }
                 if Self::value_param_index(fn_ir, *src) == Some(param_idx)
-                    || Self::is_round_call_of_param(fn_ir, *src, param_idx)
+                    || Self::is_round_call_of_param(fn_ir, round_helpers, *src, param_idx)
                 {
                     saw_seed = true;
                 }
@@ -2799,14 +2818,178 @@ impl TachyonEngine {
         saw_seed
     }
 
-    fn is_round_call_of_param(fn_ir: &FnIR, vid: ValueId, param_idx: usize) -> bool {
+    fn is_round_call_of_param(
+        fn_ir: &FnIR,
+        round_helpers: &FxHashSet<String>,
+        vid: ValueId,
+        param_idx: usize,
+    ) -> bool {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         let ValueKind::Call { callee, args, .. } = &fn_ir.values[v].kind else {
             return false;
         };
-        callee == "round"
-            && args.len() == 1
+        args.len() == 1
             && Self::value_param_index(fn_ir, args[0]) == Some(param_idx)
+            && (callee == "round" || round_helpers.contains(callee))
+    }
+
+    fn is_rr_round_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [round-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.unsupported_dynamic || fn_ir.params.len() != 1 {
+            fail!("unsupported dynamic or arity != 1");
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let mut saw_mod_seed = false;
+        let mut rem_var: Option<String> = None;
+        let mut branch_term: Option<(BlockId, BlockId, ValueId)> = None;
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                let v = Self::resolve_load_alias_value(fn_ir, *src);
+                let ValueKind::Binary {
+                    op: BinOp::Mod,
+                    lhs,
+                    rhs,
+                } = &fn_ir.values[v].kind
+                else {
+                    continue;
+                };
+                if Self::value_param_index(fn_ir, *lhs) == Some(0)
+                    && Self::value_is_const_one(fn_ir, *rhs)
+                {
+                    saw_mod_seed = true;
+                    rem_var = Some(dst.clone());
+                }
+            }
+            if let Terminator::If {
+                cond,
+                then_bb,
+                else_bb,
+            } = bb.term
+            {
+                branch_term = Some((then_bb, else_bb, cond));
+            }
+        }
+        let Some(rem_var) = rem_var else {
+            fail!("missing rem seed");
+        };
+        if !saw_mod_seed {
+            fail!("mod seed not seen");
+        }
+        let Some((then_bb, else_bb, cond)) = branch_term else {
+            fail!("missing branch");
+        };
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary {
+            op: BinOp::Ge,
+            lhs,
+            rhs,
+        } = &fn_ir.values[cond].kind
+        else {
+            fail!("cond is not >= binary");
+        };
+        if Self::value_var_name(fn_ir, *lhs).as_deref() != Some(rem_var.as_str())
+            || !Self::value_is_const_half(fn_ir, *rhs)
+        {
+            fail!("cond does not compare rem >= 0.5");
+        }
+
+        if !Self::block_returns_param_minus_rem_plus_one(fn_ir, then_bb, 0, &rem_var) {
+            fail!("then block is not (x - r) + 1");
+        }
+        if !Self::block_returns_param_minus_rem(fn_ir, else_bb, 0, &rem_var) {
+            fail!("else block is not x - r");
+        }
+        true
+    }
+
+    fn block_returns_param_minus_rem_plus_one(
+        fn_ir: &FnIR,
+        bid: BlockId,
+        param_idx: usize,
+        rem_var: &str,
+    ) -> bool {
+        let Some(val) = Self::block_single_return_value(fn_ir, bid) else {
+            return false;
+        };
+        let v = Self::resolve_load_alias_value(fn_ir, val);
+        let ValueKind::Binary {
+            op: BinOp::Add,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return false;
+        };
+        (Self::block_returns_param_minus_rem_expr(fn_ir, *lhs, param_idx, rem_var)
+            && Self::value_is_const_one(fn_ir, *rhs))
+            || (Self::block_returns_param_minus_rem_expr(fn_ir, *rhs, param_idx, rem_var)
+                && Self::value_is_const_one(fn_ir, *lhs))
+    }
+
+    fn block_returns_param_minus_rem(
+        fn_ir: &FnIR,
+        bid: BlockId,
+        param_idx: usize,
+        rem_var: &str,
+    ) -> bool {
+        let Some(val) = Self::block_single_return_value(fn_ir, bid) else {
+            return false;
+        };
+        Self::block_returns_param_minus_rem_expr(fn_ir, val, param_idx, rem_var)
+    }
+
+    fn block_returns_param_minus_rem_expr(
+        fn_ir: &FnIR,
+        vid: ValueId,
+        param_idx: usize,
+        rem_var: &str,
+    ) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return false;
+        };
+        Self::value_param_index(fn_ir, *lhs) == Some(param_idx)
+            && Self::value_var_name(fn_ir, *rhs).as_deref() == Some(rem_var)
+    }
+
+    fn block_single_return_value(fn_ir: &FnIR, bid: BlockId) -> Option<ValueId> {
+        match fn_ir.blocks[bid].term {
+            Terminator::Return(Some(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn value_is_const_half(fn_ir: &FnIR, vid: ValueId) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        match fn_ir.values[v].kind {
+            ValueKind::Const(Lit::Float(f)) => (f - 0.5).abs() < f64::EPSILON,
+            _ => false,
+        }
     }
 
     fn is_callmap_vector_safe_user_fn(

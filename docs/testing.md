@@ -106,7 +106,10 @@ The benchmark catalog is intended for repeatable compile-time and runtime compar
 `tesseract.rr` is covered as a dedicated runtime smoke because it exercises the
 largest vectorization and runtime-injection path in the example set.
 The perf smoke compiles the normal runtime-injected artifact; it does not use
-`--no-runtime`. Use `--no-runtime` only when the test is inspecting helper-only emitted R without source/native bootstrap.
+`--no-runtime`. Runtime timing is measured with `RR_RUNTIME_MODE=release` and
+`RR_ENABLE_MARKS=0` so the gate tracks the fast runtime path instead of debug
+marking overhead. Use `--no-runtime` only when the test is inspecting
+helper-only emitted R without source/native bootstrap.
 
 Benchmark runner:
 

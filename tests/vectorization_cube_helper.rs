@@ -9,12 +9,6 @@ fn cube_index_helper_calls_rewrite_to_vector_builtin() {
     fs::create_dir_all(&out_dir).expect("failed to create target/tests");
 
     let rr_src = r#"
-fn round(x) {
-  let r = x % 1;
-  if (r >= 0.5) { return x - r + 1; }
-  return x - r;
-}
-
 fn idx_cube(f, x, y, size) {
   ff = round(f);
   xx = round(x);

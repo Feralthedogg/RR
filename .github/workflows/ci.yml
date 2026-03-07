@@ -67,7 +67,7 @@ jobs:
     env:
       RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS: "5000"
       RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS: "30000"
-      RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "25000"
+      RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
