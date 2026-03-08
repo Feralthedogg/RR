@@ -34,7 +34,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE_SHA="$(python3 - <<'PY'
+          BASE_SHA="$(
+            python3 -c '
           import json
           import os
 
@@ -51,7 +52,7 @@ jobs:
           if base and set(base) == {"0"}:
               base = ""
           print(base)
-          PY
+          '
           )"
           if [[ -n "$BASE_SHA" ]]; then
             bash scripts/contributing_audit.sh --scan-only --base "$BASE_SHA"
