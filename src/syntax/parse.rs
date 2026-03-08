@@ -648,17 +648,144 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.advance(); // import
 
-        let path = match &self.current.kind {
-            TokenKind::String(s) => s.clone(),
-            _ => bail_at!(
-                self.current.span,
-                "RR.ParseError",
-                RRCode::E0001,
-                Stage::Parse,
-                "Expected string after import"
-            ),
+        let mut source = ImportSource::Module;
+        if let TokenKind::Ident(name) = &self.current.kind
+            && name == "r"
+        {
+            source = ImportSource::RPackage;
+            self.advance();
+        }
+
+        let (path, spec) = if source == ImportSource::RPackage
+            && matches!(&self.current.kind, TokenKind::Ident(name) if name == "default")
+        {
+            self.advance();
+            match &self.current.kind {
+                TokenKind::Ident(name) if name == "from" => self.advance(),
+                _ => bail_at!(
+                    self.current.span,
+                    "RR.ParseError",
+                    RRCode::E0001,
+                    Stage::Parse,
+                    "Expected 'from' after 'default' in R import"
+                ),
+            }
+            let pkg = match &self.current.kind {
+                TokenKind::String(s) => {
+                    let pkg = s.clone();
+                    self.advance();
+                    pkg
+                }
+                _ => bail_at!(
+                    self.current.span,
+                    "RR.ParseError",
+                    RRCode::E0001,
+                    Stage::Parse,
+                    "Expected package string after 'from'"
+                ),
+            };
+            let alias = pkg.clone();
+            (pkg, ImportSpec::Namespace(alias))
+        } else if source == ImportSource::RPackage && self.current.kind == TokenKind::LBrace {
+            let mut bindings = Vec::new();
+            self.advance(); // {
+            while self.current.kind != TokenKind::RBrace {
+                let imported = self.parse_dotted_ident("in R package import list")?;
+                let local = match &self.current.kind {
+                    TokenKind::Ident(name) if name == "as" => {
+                        self.advance();
+                        Some(self.parse_dotted_ident("after 'as' in R import list")?)
+                    }
+                    _ => None,
+                };
+                bindings.push(ImportBinding { imported, local });
+                if self.current.kind == TokenKind::Comma {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
+            self.expect(TokenKind::RBrace)?;
+            match &self.current.kind {
+                TokenKind::Ident(name) if name == "from" => self.advance(),
+                _ => bail_at!(
+                    self.current.span,
+                    "RR.ParseError",
+                    RRCode::E0001,
+                    Stage::Parse,
+                    "Expected 'from' after R import list"
+                ),
+            }
+            let pkg = match &self.current.kind {
+                TokenKind::String(s) => {
+                    let pkg = s.clone();
+                    self.advance();
+                    pkg
+                }
+                _ => bail_at!(
+                    self.current.span,
+                    "RR.ParseError",
+                    RRCode::E0001,
+                    Stage::Parse,
+                    "Expected package string after 'from'"
+                ),
+            };
+            (pkg, ImportSpec::Named(bindings))
+        } else if source == ImportSource::RPackage && self.current.kind == TokenKind::Star {
+            self.advance(); // *
+            match &self.current.kind {
+                TokenKind::Ident(name) if name == "as" => self.advance(),
+                _ => bail_at!(
+                    self.current.span,
+                    "RR.ParseError",
+                    RRCode::E0001,
+                    Stage::Parse,
+                    "Expected 'as' after '*' in R namespace import"
+                ),
+            }
+            let alias = self.parse_dotted_ident("after 'as' in R namespace import")?;
+            match &self.current.kind {
+                TokenKind::Ident(name) if name == "from" => self.advance(),
+                _ => bail_at!(
+                    self.current.span,
+                    "RR.ParseError",
+                    RRCode::E0001,
+                    Stage::Parse,
+                    "Expected 'from' after R namespace alias"
+                ),
+            }
+            let pkg = match &self.current.kind {
+                TokenKind::String(s) => {
+                    let pkg = s.clone();
+                    self.advance();
+                    pkg
+                }
+                _ => bail_at!(
+                    self.current.span,
+                    "RR.ParseError",
+                    RRCode::E0001,
+                    Stage::Parse,
+                    "Expected package string after 'from'"
+                ),
+            };
+            (pkg, ImportSpec::Namespace(alias))
+        } else {
+            let path = match &self.current.kind {
+                TokenKind::String(s) => {
+                    let path = s.clone();
+                    self.advance();
+                    path
+                }
+                _ => bail_at!(
+                    self.current.span,
+                    "RR.ParseError",
+                    RRCode::E0001,
+                    Stage::Parse,
+                    "Expected string after import"
+                ),
+            };
+            (path, ImportSpec::Glob)
         };
-        self.advance();
 
         // Optional semicolon?
         if self.current.kind == TokenKind::Semicolon {
@@ -666,7 +793,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Stmt {
-            kind: StmtKind::Import(path),
+            kind: StmtKind::Import { source, path, spec },
             span: start.merge(self.current.span),
         })
     }

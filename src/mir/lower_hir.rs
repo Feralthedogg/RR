@@ -36,6 +36,7 @@ pub struct MirLowerer<'a> {
     symbols: &'a FxHashMap<hir::SymbolId, String>,
     known_functions: &'a FxHashMap<String, usize>,
     loop_stack: Vec<LoopTargets>,
+    tidy_mask_depth: usize,
 }
 
 impl<'a> MirLowerer<'a> {
@@ -74,7 +75,19 @@ impl<'a> MirLowerer<'a> {
             symbols,
             known_functions,
             loop_stack: Vec::new(),
+            tidy_mask_depth: 0,
         }
+    }
+
+    fn with_tidy_mask<T>(&mut self, f: impl FnOnce(&mut Self) -> RR<T>) -> RR<T> {
+        self.tidy_mask_depth += 1;
+        let out = f(self);
+        self.tidy_mask_depth -= 1;
+        out
+    }
+
+    fn in_tidy_mask(&self) -> bool {
+        self.tidy_mask_depth > 0
     }
 
     // Core Helpers
@@ -280,6 +293,8 @@ impl<'a> MirLowerer<'a> {
     // Call update: terminate must track preds
 
     pub fn lower_fn(mut self, f: hir::HirFn) -> RR<FnIR> {
+        self.fn_ir.span = f.span;
+        self.fn_ir.param_spans = f.params.iter().map(|p| p.span).collect();
         self.fn_ir.param_ty_hints = f
             .params
             .iter()
@@ -298,8 +313,14 @@ impl<'a> MirLowerer<'a> {
                     .unwrap_or(crate::typeck::TypeTerm::Any)
             })
             .collect();
+        self.fn_ir.param_hint_spans = f
+            .params
+            .iter()
+            .map(|p| p.ty.as_ref().map(|_| p.span))
+            .collect();
         self.fn_ir.ret_ty_hint = f.ret_ty.as_ref().map(hir_ty_to_type_state);
         self.fn_ir.ret_term_hint = f.ret_ty.as_ref().map(hir_ty_to_type_term);
+        self.fn_ir.ret_hint_span = f.ret_ty.as_ref().map(|_| f.span);
 
         // 1. Bind parameters in the entry block
         for (i, param) in f.params.iter().enumerate() {
@@ -657,6 +678,14 @@ impl<'a> MirLowerer<'a> {
                     .get(&sym)
                     .cloned()
                     .unwrap_or_else(|| format!("Sym_{}", sym.0));
+                if self.in_tidy_mask() && Self::should_lower_as_tidy_symbol(&raw_name) {
+                    return Ok(self.add_value(
+                        ValueKind::RSymbol {
+                            name: raw_name.clone(),
+                        },
+                        Span::default(),
+                    ));
+                }
                 let name = if self.known_functions.contains_key(&raw_name) {
                     format!("Sym_{}", sym.0)
                 } else {
@@ -740,16 +769,33 @@ impl<'a> MirLowerer<'a> {
             hir::HirExpr::Block(blk) => self.lower_block(blk),
 
             hir::HirExpr::Call(hir::HirCall { callee, args, span }) => {
+                let tidy_mask_args = match callee.as_ref() {
+                    hir::HirExpr::Global(sym) => self
+                        .symbols
+                        .get(sym)
+                        .is_some_and(|name| Self::is_tidy_data_mask_call(name)),
+                    _ => false,
+                };
                 let mut v_args = Vec::new();
                 let mut arg_names: Vec<Option<String>> = Vec::new();
                 for arg in args {
                     match arg {
                         hir::HirArg::Pos(e) => {
-                            v_args.push(self.lower_expr(e)?);
+                            let lowered = if tidy_mask_args {
+                                self.with_tidy_mask(|lowerer| lowerer.lower_expr(e))?
+                            } else {
+                                self.lower_expr(e)?
+                            };
+                            v_args.push(lowered);
                             arg_names.push(None);
                         }
                         hir::HirArg::Named { name, value } => {
-                            v_args.push(self.lower_expr(value)?);
+                            let lowered = if tidy_mask_args {
+                                self.with_tidy_mask(|lowerer| lowerer.lower_expr(value))?
+                            } else {
+                                self.lower_expr(value)?
+                            };
+                            v_args.push(lowered);
                             let n = self
                                 .symbols
                                 .get(&name)
@@ -880,7 +926,41 @@ impl<'a> MirLowerer<'a> {
                             }
                             if Self::is_dynamic_fallback_builtin(name) {
                                 self.fn_ir
-                                    .mark_unsupported_dynamic(format!("dynamic builtin: {}", name));
+                                    .mark_hybrid_interop(Self::hybrid_interop_reason(name));
+                                return Ok(self.fn_ir.add_value(
+                                    ValueKind::Call {
+                                        callee: name.clone(),
+                                        args: v_args,
+                                        names: arg_names,
+                                    },
+                                    span,
+                                    Facts::empty(),
+                                    None,
+                                ));
+                            }
+                            if Self::is_namespaced_r_call(name) {
+                                if !Self::is_supported_package_call(name) {
+                                    self.fn_ir.mark_opaque_interop_reason(
+                                        Self::opaque_package_reason(name),
+                                    );
+                                }
+                                return Ok(self.fn_ir.add_value(
+                                    ValueKind::Call {
+                                        callee: name.clone(),
+                                        args: v_args,
+                                        names: arg_names,
+                                    },
+                                    span,
+                                    Facts::empty(),
+                                    None,
+                                ));
+                            }
+                            if self.in_tidy_mask() && Self::is_tidy_helper_call(name) {
+                                if !Self::is_supported_tidy_helper_call(name) {
+                                    self.fn_ir.mark_opaque_interop_reason(
+                                        Self::opaque_tidy_helper_reason(name),
+                                    );
+                                }
                                 return Ok(self.fn_ir.add_value(
                                     ValueKind::Call {
                                         callee: name.clone(),
@@ -1066,10 +1146,7 @@ impl<'a> MirLowerer<'a> {
             }
             hir::HirExpr::Match { scrut, arms } => self.lower_match_expr(*scrut, arms),
             hir::HirExpr::Column(name) => {
-                // Tidy Column -> Constant String
-                // We rely on runtime to distinguish column ref vs string if needed.
-                // But typically @col evaluates to the string "col".
-                Ok(self.add_value(ValueKind::Const(Lit::Str(name)), Span::default()))
+                Ok(self.add_value(ValueKind::RSymbol { name }, Span::default()))
             }
             hir::HirExpr::Unquote(e) => self.lower_expr(*e),
             _ => Err(crate::error::RRException::new(
@@ -1180,6 +1257,217 @@ impl<'a> MirLowerer<'a> {
                 | "sys.frame"
                 | "sys.call"
                 | "do.call"
+                | "library"
+                | "require"
+                | "png"
+                | "plot"
+                | "lines"
+                | "legend"
+                | "dev.off"
+        )
+    }
+
+    fn is_namespaced_r_call(name: &str) -> bool {
+        let Some((pkg, sym)) = name.split_once("::") else {
+            return false;
+        };
+        !pkg.is_empty() && !sym.is_empty() && !pkg.contains(':') && !sym.contains(':')
+    }
+
+    fn is_tidy_data_mask_call(name: &str) -> bool {
+        matches!(
+            name,
+            "ggplot2::aes"
+                | "dplyr::mutate"
+                | "dplyr::filter"
+                | "dplyr::select"
+                | "dplyr::summarise"
+                | "dplyr::arrange"
+                | "dplyr::group_by"
+                | "dplyr::rename"
+                | "tidyr::pivot_longer"
+                | "tidyr::pivot_wider"
+        )
+    }
+
+    fn is_tidy_helper_call(name: &str) -> bool {
+        matches!(
+            name,
+            "starts_with"
+                | "ends_with"
+                | "contains"
+                | "matches"
+                | "everything"
+                | "all_of"
+                | "any_of"
+                | "where"
+                | "desc"
+                | "between"
+                | "n"
+                | "row_number"
+        )
+    }
+
+    fn is_supported_package_call(name: &str) -> bool {
+        matches!(
+            name,
+            "base::data.frame"
+                | "stats::median"
+                | "stats::sd"
+                | "stats::lm"
+                | "stats::predict"
+                | "stats::quantile"
+                | "stats::glm"
+                | "stats::as.formula"
+                | "readr::read_csv"
+                | "readr::write_csv"
+                | "tidyr::pivot_longer"
+                | "tidyr::pivot_wider"
+                | "graphics::plot"
+                | "graphics::lines"
+                | "graphics::legend"
+                | "grDevices::png"
+                | "grDevices::dev.off"
+                | "ggplot2::aes"
+                | "ggplot2::ggplot"
+                | "ggplot2::geom_line"
+                | "ggplot2::geom_point"
+                | "ggplot2::ggtitle"
+                | "ggplot2::theme_minimal"
+                | "ggplot2::ggsave"
+                | "dplyr::mutate"
+                | "dplyr::filter"
+                | "dplyr::select"
+                | "dplyr::summarise"
+                | "dplyr::arrange"
+                | "dplyr::group_by"
+                | "dplyr::rename"
+        )
+    }
+
+    fn is_supported_tidy_helper_call(name: &str) -> bool {
+        Self::is_tidy_helper_call(name)
+    }
+
+    fn should_lower_as_tidy_symbol(name: &str) -> bool {
+        !name.starts_with("rr_")
+            && !Self::is_namespaced_r_call(name)
+            && !Self::is_dynamic_fallback_builtin(name)
+            && !Self::is_tidy_helper_call(name)
+            && !matches!(
+                name,
+                "seq_along"
+                    | "seq_len"
+                    | "c"
+                    | "list"
+                    | "sum"
+                    | "mean"
+                    | "min"
+                    | "max"
+                    | "abs"
+                    | "sqrt"
+                    | "sin"
+                    | "cos"
+                    | "tan"
+                    | "asin"
+                    | "acos"
+                    | "atan"
+                    | "atan2"
+                    | "sinh"
+                    | "cosh"
+                    | "tanh"
+                    | "log"
+                    | "log10"
+                    | "log2"
+                    | "exp"
+                    | "sign"
+                    | "gamma"
+                    | "lgamma"
+                    | "floor"
+                    | "ceiling"
+                    | "trunc"
+                    | "round"
+                    | "pmax"
+                    | "pmin"
+                    | "print"
+                    | "is.na"
+                    | "is.finite"
+                    | "numeric"
+                    | "rep.int"
+                    | "vector"
+                    | "matrix"
+                    | "colSums"
+                    | "rowSums"
+                    | "crossprod"
+                    | "tcrossprod"
+            )
+    }
+
+    fn hybrid_interop_reason(name: &str) -> InteropReason {
+        let (why, suggestion) = match name {
+            "library" | "require" => (
+                "package attachment mutates the runtime search path and cannot be proven stable at compile-time",
+                Some(
+                    "prefer `import r \"pkg\"`, `import r { ... } from \"pkg\"`, or `import r * as ns from \"pkg\"` for namespace-only access",
+                ),
+            ),
+            "plot" | "lines" | "legend" | "png" | "dev.off" => (
+                "unqualified plotting call depends on runtime package attachment and search-path resolution",
+                Some(
+                    "prefer namespaced R imports so the call lowers to `pkg::symbol(...)` directly",
+                ),
+            ),
+            "eval" | "parse" => (
+                "call evaluates code dynamically, so RR cannot stabilize the callee or its argument semantics ahead of time",
+                Some(
+                    "avoid runtime code construction or isolate it behind a dedicated dynamic boundary",
+                ),
+            ),
+            "get" | "assign" | "exists" | "mget" | "rm" | "ls" => (
+                "call reads or mutates environments dynamically, so symbol resolution depends on runtime state",
+                Some(
+                    "prefer explicit RR bindings or namespaced package imports when the target is known",
+                ),
+            ),
+            "parent.frame" | "environment" | "sys.frame" | "sys.call" | "do.call" => (
+                "call depends on runtime stack or environment state that RR cannot model statically",
+                Some("pass the callee and arguments explicitly through RR values where possible"),
+            ),
+            _ => (
+                "call uses a dynamic runtime feature that RR cannot reduce to stable direct interop",
+                None,
+            ),
+        };
+        InteropReason::new(
+            InteropTier::Hybrid,
+            InteropReasonKind::DynamicBuiltin,
+            name,
+            why,
+            suggestion,
+        )
+    }
+
+    fn opaque_package_reason(name: &str) -> InteropReason {
+        InteropReason::new(
+            InteropTier::Opaque,
+            InteropReasonKind::PackageCall,
+            name,
+            "package call is preserved exactly, but RR has no dedicated semantic model for this symbol",
+            Some(
+                "keep the call namespaced or add this symbol to the direct interop surface if RR should reason about it",
+            ),
+        )
+    }
+
+    fn opaque_tidy_helper_reason(name: &str) -> InteropReason {
+        InteropReason::new(
+            InteropTier::Opaque,
+            InteropReasonKind::TidyHelper,
+            name,
+            "tidy helper is forwarded as-is because RR does not model its selector semantics directly",
+            Some(
+                "prefer supported tidy helpers or add this helper to the direct tidy interop surface",
+            ),
         )
     }
 

@@ -74,6 +74,13 @@ print(plain(1));
         "expected hybrid fallback marker in generated R"
     );
     assert!(
+        code.contains("tier=hybrid")
+            && code.contains("kind=dynamic-builtin")
+            && code.contains("call=eval")
+            && code.contains("why="),
+        "expected structured hybrid fallback explanation in generated R:\n{code}"
+    );
+    assert!(
         code.contains("eval("),
         "expected dynamic builtin call to remain as eval(...)"
     );

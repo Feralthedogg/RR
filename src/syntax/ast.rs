@@ -57,8 +57,31 @@ pub enum StmtKind {
         expr: Expr,
     },
     Expr(Expr),
-    Import(String), // import "path"
+    Import {
+        source: ImportSource,
+        path: String,
+        spec: ImportSpec,
+    }, // import "path" | import r "pkg" | import r default from "pkg" | import r { foo as bar } from "pkg" | import r * as ns from "pkg"
     Export(FnDecl), // export fn
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportSource {
+    Module,
+    RPackage,
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportSpec {
+    Glob,
+    Named(Vec<ImportBinding>),
+    Namespace(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportBinding {
+    pub imported: String,
+    pub local: Option<String>,
 }
 
 #[derive(Debug, Clone)]

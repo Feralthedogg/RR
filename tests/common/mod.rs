@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod random_rr;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -55,13 +57,22 @@ pub fn run_rscript(path: &str, script: &Path) -> RunResult {
 }
 
 pub fn compile_rr(rr_bin: &Path, rr_src: &Path, out_path: &Path, level: &str) {
-    let status = Command::new(rr_bin)
-        .arg(rr_src)
-        .arg("-o")
-        .arg(out_path)
-        .arg(level)
-        .status()
-        .expect("failed to run RR compiler");
+    compile_rr_env(rr_bin, rr_src, out_path, level, &[]);
+}
+
+pub fn compile_rr_env(
+    rr_bin: &Path,
+    rr_src: &Path,
+    out_path: &Path,
+    level: &str,
+    env_kv: &[(&str, &str)],
+) {
+    let mut cmd = Command::new(rr_bin);
+    cmd.arg(rr_src).arg("-o").arg(out_path).arg(level);
+    for (k, v) in env_kv {
+        cmd.env(k, v);
+    }
+    let status = cmd.status().expect("failed to run RR compiler");
     assert!(
         status.success(),
         "RR compile failed for {} ({})",

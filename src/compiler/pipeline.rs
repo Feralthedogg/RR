@@ -904,6 +904,7 @@ pub(crate) fn run_tachyon_phase(
         },
     );
     let mut fallback_msgs = Vec::new();
+    let mut opaque_msgs = Vec::new();
     for fn_ir in all_fns.values() {
         if fn_ir.unsupported_dynamic {
             let msg = if fn_ir.fallback_reasons.is_empty() {
@@ -920,9 +921,28 @@ pub(crate) fn run_tachyon_phase(
             };
             fallback_msgs.push(msg);
         }
+        if fn_ir.opaque_interop {
+            let msg = if fn_ir.opaque_reasons.is_empty() {
+                format!(
+                    "Opaque interop enabled for {} (package/runtime call)",
+                    fn_ir.name
+                )
+            } else {
+                format!(
+                    "Opaque interop enabled for {}: {}",
+                    fn_ir.name,
+                    fn_ir.opaque_reasons.join(", ")
+                )
+            };
+            opaque_msgs.push(msg);
+        }
     }
     fallback_msgs.sort();
     for msg in fallback_msgs {
+        ui.warn(&msg);
+    }
+    opaque_msgs.sort();
+    for msg in opaque_msgs {
         ui.warn(&msg);
     }
     let mut pulse_stats = crate::mir::opt::TachyonPulseStats::default();

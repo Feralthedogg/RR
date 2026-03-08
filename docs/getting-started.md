@@ -126,9 +126,17 @@ Builtin naming rule:
 - use distinct helper names such as `demo_abs` or `my_sqrt` for user-defined math helpers
 - only `length`, `floor`, `round`, `ceiling`, and `trunc` are intended to shadow builtin names
 
+R package interop rule:
+
+- `import r "graphics"` is namespace sugar, not `library("graphics")`
+- write `graphics.plot(...)` in RR and RR lowers it to `graphics::plot(...)`
+- use `import r { plot as draw_plot } from "graphics"` when you want a short local alias
+- supported `graphics`, `grDevices`, `ggplot2`, selected `dplyr`, and selected `stats/readr/tidyr` calls lower as direct interop instead of hybrid fallback
+
 ## Next Reading
 
 - [CLI Reference](cli.md)
 - [Configuration](configuration.md)
 - [Language Reference](language.md)
+- [R Interop](r-interop.md)
 - [Compiler Pipeline](compiler-pipeline.md)

@@ -1,0 +1,49 @@
+import r default from "ggplot2";
+import r default from "dplyr";
+import r default from "tidyr";
+import r default from "stats";
+import r * as base from "base";
+
+fn main() {
+    outfile = "rr_tidyr_summary_pivot_wider_modern.png"
+
+    raw = base.data.frame(
+        step = c(0, 1, 2, 3, 0, 1, 2, 3),
+        series = c("value_a", "value_a", "value_a", "value_a", "value_b", "value_b", "value_b", "value_b"),
+        value = c(0.3, 0.7, 1.1, 0.8, 0.2, 0.5, 0.9, 1.2)
+    )
+
+    summary = raw |>
+        dplyr.group_by(series) |>
+        dplyr.summarise(
+            avg = stats.median(value),
+            spread = stats.sd(value)
+        )
+
+    long_metrics = tidyr.pivot_longer(
+        summary,
+        cols = c(@avg, @spread),
+        names_to = "metric",
+        values_to = "metric_value"
+    )
+
+    wide = tidyr.pivot_wider(long_metrics, names_from = series, values_from = metric_value)
+    long_avg = tidyr.pivot_longer(
+        wide,
+        cols = c(@value_a, @value_b),
+        names_to = "series",
+        values_to = "metric_value"
+    )
+
+    p = ggplot2.ggplot(long_avg, ggplot2.aes(x = metric, y = metric_value, color = series, group = series)) +
+        ggplot2.geom_point(size = 4.0) +
+        ggplot2.geom_line(linewidth = 1.1) +
+        ggplot2.ggtitle("RR modern + tidyr + dplyr: summary reshape") +
+        ggplot2.theme_minimal()
+
+    ggplot2.ggsave(filename = outfile, plot = p, width = 7, height = 4.2, dpi = 120)
+    print("saved_plot")
+    print(outfile)
+}
+
+main();

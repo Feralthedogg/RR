@@ -1,5 +1,5 @@
 use crate::mir::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,12 +159,19 @@ impl DataflowSolver {
     }
 
     pub fn analyze_function(fn_ir: &FnIR) -> FxHashMap<ValueId, Facts> {
+        let targets: Vec<ValueId> = fn_ir.values.iter().map(|val| val.id).collect();
+        Self::analyze_values(fn_ir, &targets)
+    }
+
+    pub fn analyze_values(fn_ir: &FnIR, targets: &[ValueId]) -> FxHashMap<ValueId, Facts> {
+        let subset = collect_dependency_subset(fn_ir, targets);
+        let ordered = subset.to_vec();
         let mut facts: FxHashMap<ValueId, Facts> = FxHashMap::default();
-        let mut worklist: VecDeque<ValueId> = VecDeque::new();
+        let mut worklist: VecDeque<ValueId> = VecDeque::from(ordered.clone());
 
         // 1. Initialize
-        for val in &fn_ir.values {
-            worklist.push_back(val.id);
+        for &vid in &ordered {
+            let val = &fn_ir.values[vid];
             // Seed constants early; others start at Bottom.
             let seed = match &val.kind {
                 ValueKind::Const(l) => {
@@ -214,8 +221,7 @@ impl DataflowSolver {
         let mut changed = true;
         while changed {
             changed = false;
-            for i in 0..fn_ir.values.len() {
-                let vid = i;
+            for &vid in &ordered {
                 let val = &fn_ir.values[vid];
                 let old_facts = facts.get(&vid).cloned().unwrap_or(Facts::empty());
                 let new_facts = Self::transfer(val, &facts, fn_ir);
@@ -348,4 +354,41 @@ impl DataflowSolver {
             _ => Facts::empty(),
         }
     }
+}
+
+fn collect_dependency_subset(fn_ir: &FnIR, targets: &[ValueId]) -> Vec<ValueId> {
+    let mut seen = FxHashSet::default();
+    let mut stack: Vec<ValueId> = targets.to_vec();
+
+    while let Some(vid) = stack.pop() {
+        if !seen.insert(vid) {
+            continue;
+        }
+        let Some(value) = fn_ir.values.get(vid) else {
+            continue;
+        };
+        match &value.kind {
+            ValueKind::Binary { lhs, rhs, .. } => {
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
+            ValueKind::Unary { rhs, .. } => {
+                stack.push(*rhs);
+            }
+            ValueKind::Phi { args } => {
+                for (arg, _) in args {
+                    stack.push(*arg);
+                }
+            }
+            ValueKind::Range { start, end } => {
+                stack.push(*start);
+                stack.push(*end);
+            }
+            _ => {}
+        }
+    }
+
+    let mut ordered: Vec<ValueId> = seen.into_iter().collect();
+    ordered.sort_unstable();
+    ordered
 }

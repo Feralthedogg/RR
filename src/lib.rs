@@ -3,6 +3,7 @@
 
 pub mod codegen;
 pub mod compiler;
+pub mod diagnostic;
 pub mod error;
 pub mod hir;
 pub mod mir;

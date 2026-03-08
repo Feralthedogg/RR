@@ -4,8 +4,17 @@ export default defineConfig({
   title: 'RR',
   description: 'An optimizing compiler from RR to R',
   base: '/RR/',
-  
+
   lastUpdated: true,
+
+  markdown: {
+    languageAlias: {
+      rr: 'r',
+    },
+    languageLabel: {
+      rr: 'RR',
+    },
+  },
 
   themeConfig: {
     nav: [
@@ -24,7 +33,7 @@ export default defineConfig({
       },
       {
         text: 'Guide',
-        collapsed: false, 
+        collapsed: false,
         items: [
           { text: 'Getting Started', link: '/getting-started' },
           { text: 'CLI Reference', link: '/cli' },
@@ -41,7 +50,7 @@ export default defineConfig({
       },
       {
         text: 'Internals',
-        collapsed: true, 
+        collapsed: true,
         items: [
           { text: 'Compiler Pipeline', link: '/compiler-pipeline' },
           { text: 'IR Model (HIR & MIR)', link: '/ir-model' },
@@ -68,12 +77,12 @@ export default defineConfig({
 
     editLink: {
       pattern: 'https://github.com/Feralthedogg/RR/edit/main/docs/:path',
-      text: 'Edit this page on GitHub'
+      text: 'Edit this page on GitHub',
     },
 
     footer: {
       message: 'Released under the MIT License.',
-      copyright: 'Copyright © 2026-present Feralthedogg'
+      copyright: 'Copyright © 2026-present Feralthedogg',
     },
 
     outline: 'deep',

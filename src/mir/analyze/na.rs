@@ -80,7 +80,9 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
                     }
                     acc
                 }
-                ValueKind::Param { .. } | ValueKind::Load { .. } => NaState::Maybe,
+                ValueKind::Param { .. } | ValueKind::Load { .. } | ValueKind::RSymbol { .. } => {
+                    NaState::Maybe
+                }
             };
 
             if new_state != states[id] {

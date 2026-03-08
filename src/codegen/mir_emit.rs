@@ -6,7 +6,7 @@ use crate::mir::flow::Facts;
 use crate::mir::structurizer::{StructuredBlock, Structurizer};
 use crate::typeck::{PrimTy, ShapeTy};
 use crate::utils::Span;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapEntry {
@@ -60,15 +60,15 @@ pub struct RBackend {
     current_line: u32,
     pub source_map: Vec<MapEntry>,
     // Codegen-time binding: ValueId -> (var name, var version at bind time).
-    value_bindings: HashMap<usize, (String, u64)>,
+    value_bindings: FxHashMap<usize, (String, u64)>,
     // Per-variable write version used to invalidate stale bindings.
-    var_versions: HashMap<String, u64>,
+    var_versions: FxHashMap<String, u64>,
     value_binding_log: Vec<ValueBindingUndo>,
     var_version_log: Vec<VarVersionUndo>,
     branch_snapshot_depth: usize,
-    expr_use_counts_scratch: HashMap<usize, usize>,
-    expr_path_scratch: HashSet<usize>,
-    emitted_ids_scratch: HashSet<usize>,
+    expr_use_counts_scratch: FxHashMap<usize, usize>,
+    expr_path_scratch: FxHashSet<usize>,
+    emitted_ids_scratch: FxHashSet<usize>,
     emitted_temp_names_scratch: Vec<String>,
 }
 
@@ -85,14 +85,14 @@ impl RBackend {
             indent: 0,
             current_line: 1,
             source_map: Vec::new(),
-            value_bindings: HashMap::new(),
-            var_versions: HashMap::new(),
+            value_bindings: FxHashMap::default(),
+            var_versions: FxHashMap::default(),
             value_binding_log: Vec::new(),
             var_version_log: Vec::new(),
             branch_snapshot_depth: 0,
-            expr_use_counts_scratch: HashMap::new(),
-            expr_path_scratch: HashSet::new(),
-            emitted_ids_scratch: HashSet::new(),
+            expr_use_counts_scratch: FxHashMap::default(),
+            expr_path_scratch: FxHashSet::default(),
+            emitted_ids_scratch: FxHashSet::default(),
             emitted_temp_names_scratch: Vec::new(),
         }
     }
@@ -143,6 +143,16 @@ impl RBackend {
                     "dynamic runtime feature detected".to_string()
                 } else {
                     fn_ir.fallback_reasons.join(", ")
+                }
+            ));
+        }
+        if fn_ir.opaque_interop {
+            self.write_stmt(&format!(
+                "# rr-opaque-interop: {}",
+                if fn_ir.opaque_reasons.is_empty() {
+                    "package/runtime interop requires conservative optimization".to_string()
+                } else {
+                    fn_ir.opaque_reasons.join(", ")
                 }
             ));
         }
@@ -402,9 +412,9 @@ impl RBackend {
         root: usize,
         values: &[Value],
         params: &[String],
-        counts: &HashMap<usize, usize>,
-        emitted_ids: &mut HashSet<usize>,
-        path: &mut HashSet<usize>,
+        counts: &FxHashMap<usize, usize>,
+        emitted_ids: &mut FxHashSet<usize>,
+        path: &mut FxHashSet<usize>,
         temps: &mut Vec<String>,
     ) {
         if !path.insert(vid) {
@@ -449,8 +459,8 @@ impl RBackend {
     fn collect_expr_use_counts(
         root: usize,
         values: &[Value],
-        counts: &mut HashMap<usize, usize>,
-        path: &mut HashSet<usize>,
+        counts: &mut FxHashMap<usize, usize>,
+        path: &mut FxHashSet<usize>,
     ) {
         *counts.entry(root).or_insert(0) += 1;
         if !path.insert(root) {
@@ -496,7 +506,10 @@ impl RBackend {
                     visit(*value);
                 }
             }
-            ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => {}
+            ValueKind::Const(_)
+            | ValueKind::Param { .. }
+            | ValueKind::Load { .. }
+            | ValueKind::RSymbol { .. } => {}
         }
     }
 
@@ -755,6 +768,7 @@ impl RBackend {
                 self.resolve_index2d_expr(*base, *r, *c, values, params)
             }
             ValueKind::Load { var } => var.clone(),
+            ValueKind::RSymbol { name } => name.clone(),
         }
     }
 

@@ -20,14 +20,110 @@ pub type BlockId = usize;
 pub type ValueId = usize;
 pub type VarId = String;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteropTier {
+    Hybrid,
+    Opaque,
+}
+
+impl InteropTier {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hybrid => "hybrid",
+            Self::Opaque => "opaque",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteropReasonKind {
+    DynamicBuiltin,
+    PackageCall,
+    TidyHelper,
+}
+
+impl InteropReasonKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DynamicBuiltin => "dynamic-builtin",
+            Self::PackageCall => "package-call",
+            Self::TidyHelper => "tidy-helper",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InteropReason {
+    pub tier: InteropTier,
+    pub kind: InteropReasonKind,
+    pub callee: Box<str>,
+    pub package: Option<Box<str>>,
+    pub symbol: Option<Box<str>>,
+    pub why: Box<str>,
+    pub suggestion: Option<Box<str>>,
+}
+
+impl InteropReason {
+    pub fn new(
+        tier: InteropTier,
+        kind: InteropReasonKind,
+        callee: impl Into<String>,
+        why: impl Into<String>,
+        suggestion: Option<impl Into<String>>,
+    ) -> Self {
+        let callee = callee.into();
+        let (package, symbol) = callee
+            .split_once("::")
+            .map(|(pkg, sym)| {
+                (
+                    Some(pkg.to_string().into_boxed_str()),
+                    Some(sym.to_string().into_boxed_str()),
+                )
+            })
+            .unwrap_or((None, None));
+        Self {
+            tier,
+            kind,
+            callee: callee.into_boxed_str(),
+            package,
+            symbol,
+            why: why.into().into_boxed_str(),
+            suggestion: suggestion.map(Into::into).map(String::into_boxed_str),
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        let mut parts = vec![
+            format!("tier={}", self.tier.as_str()),
+            format!("kind={}", self.kind.as_str()),
+            format!("call={}", self.callee),
+            format!("why={}", self.why),
+        ];
+        if let Some(pkg) = &self.package {
+            parts.push(format!("package={pkg}"));
+        }
+        if let Some(sym) = &self.symbol {
+            parts.push(format!("symbol={sym}"));
+        }
+        if let Some(suggestion) = &self.suggestion {
+            parts.push(format!("suggestion={suggestion}"));
+        }
+        parts.join(" | ")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FnIR {
     pub name: String,
+    pub span: Span,
     pub params: Vec<VarId>,
+    pub param_spans: Vec<Span>,
     pub param_ty_hints: Vec<TypeState>,
     pub param_term_hints: Vec<TypeTerm>,
+    pub param_hint_spans: Vec<Option<Span>>,
     pub ret_ty_hint: Option<TypeState>,
     pub ret_term_hint: Option<TypeTerm>,
+    pub ret_hint_span: Option<Span>,
     pub inferred_ret_ty: TypeState,
     pub inferred_ret_term: TypeTerm,
     pub blocks: Vec<Block>, // indices are BlockIds
@@ -37,6 +133,12 @@ pub struct FnIR {
     // Hybrid fallback: this function uses dynamic patterns that are not statically optimizable.
     pub unsupported_dynamic: bool,
     pub fallback_reasons: Vec<String>,
+    pub hybrid_interop_reasons: Vec<InteropReason>,
+    // Opaque interop: function contains package/runtime calls RR can preserve and execute,
+    // but not reason about deeply enough for aggressive optimization.
+    pub opaque_interop: bool,
+    pub opaque_reasons: Vec<String>,
+    pub opaque_interop_reasons: Vec<InteropReason>,
 }
 
 #[derive(Debug, Clone)]
@@ -187,6 +289,12 @@ pub enum ValueKind {
     Load {
         var: VarId,
     },
+
+    // Raw symbol preserved for tidy-eval style package interop.
+    // Emits as a bare symbol in generated R, e.g. `trend` not `"trend"`.
+    RSymbol {
+        name: String,
+    },
 }
 
 impl FnIR {
@@ -195,11 +303,15 @@ impl FnIR {
         let param_term_hints = vec![TypeTerm::Any; params.len()];
         Self {
             name,
+            span: Span::default(),
             params,
+            param_spans: Vec::new(),
             param_ty_hints,
             param_term_hints,
+            param_hint_spans: Vec::new(),
             ret_ty_hint: None,
             ret_term_hint: None,
+            ret_hint_span: None,
             inferred_ret_ty: TypeState::unknown(),
             inferred_ret_term: TypeTerm::Any,
             blocks: Vec::new(),
@@ -208,6 +320,10 @@ impl FnIR {
             body_head: 0,
             unsupported_dynamic: false,
             fallback_reasons: Vec::new(),
+            hybrid_interop_reasons: Vec::new(),
+            opaque_interop: false,
+            opaque_reasons: Vec::new(),
+            opaque_interop_reasons: Vec::new(),
         }
     }
 
@@ -249,5 +365,32 @@ impl FnIR {
         if !self.fallback_reasons.iter().any(|r| r == &reason) {
             self.fallback_reasons.push(reason);
         }
+    }
+
+    pub fn mark_hybrid_interop(&mut self, reason: InteropReason) {
+        self.unsupported_dynamic = true;
+        if !self.hybrid_interop_reasons.iter().any(|r| r == &reason) {
+            self.fallback_reasons.push(reason.summary());
+            self.hybrid_interop_reasons.push(reason);
+        }
+    }
+
+    pub fn mark_opaque_interop(&mut self, reason: String) {
+        self.opaque_interop = true;
+        if !self.opaque_reasons.iter().any(|r| r == &reason) {
+            self.opaque_reasons.push(reason);
+        }
+    }
+
+    pub fn mark_opaque_interop_reason(&mut self, reason: InteropReason) {
+        self.opaque_interop = true;
+        if !self.opaque_interop_reasons.iter().any(|r| r == &reason) {
+            self.opaque_reasons.push(reason.summary());
+            self.opaque_interop_reasons.push(reason);
+        }
+    }
+
+    pub fn requires_conservative_optimization(&self) -> bool {
+        self.unsupported_dynamic || self.opaque_interop
     }
 }

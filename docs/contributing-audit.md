@@ -4,6 +4,30 @@ Current compiler line: `RR Tachyon v4.0.0`.
 
 Use this checklist after meaningful compiler changes to verify that the code still matches [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 
+## Current Status
+
+Manual audit status as of `2026-03-08`:
+
+- No open `MUST` violations were found on active production paths under `src/**`.
+- Baseline verification passed:
+  - `cargo check`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test -q`
+  - `FUZZ_SECONDS=1 ./scripts/fuzz_smoke.sh`
+- Extended validation has also been exercised recently:
+  - deterministic `O0/O1/O2` differential tests
+  - pass-by-pass verifier smoke
+  - nightly soak triage/promotion pipeline
+
+Recent items that were explicitly closed during audit/refactor work:
+
+- production-path `panic!/unwrap()/expect()` cleanup on active and legacy compiler paths
+- hot-path `HashMap/HashSet` cleanup in analysis/codegen scratch paths
+- vectorization apply-path decomposition
+- origin-phi materialization decomposition
+- emitted R/runtime option consistency checks
+- incremental cache key and verification correctness fixes
+
 ## Fast Audit
 
 Run these commands from the repository root:
@@ -44,6 +68,15 @@ cargo test -q --test example_perf_smoke -- --ignored --nocapture
 - `--no-runtime` behavior stays aligned with CLI/docs wording.
 - Native backend resolution stays anchored to the intended project root.
 
+## Ongoing Watch Items
+
+These are not current rule violations, but they are the first places likely to regress if new work lands quickly:
+
+- `src/mir/opt/v_opt.rs`: vector materialization and interop lowering remain structurally complex even after recent splits.
+- `src/codegen/mir_emit.rs`: emitted R construction is sensitive to hidden allocation regressions.
+- `src/mir/analyze/range.rs`: analysis precision and hot-loop cost need to stay balanced.
+- `tests/common/random_rr.rs` and differential harnesses: generator growth should stay deterministic and easy to shrink.
+
 ## Review Focus Areas
 
 If you are reviewing RR-to-R compilation changes, inspect these first:
@@ -60,3 +93,8 @@ If you are reviewing RR-to-R compilation changes, inspect these first:
 
 - `cargo test -q` is the baseline gate, not proof of correctness.
 - Fuzz smoke is intended to catch fast regressions; longer fuzz runs are still valuable before release work.
+- The nightly verification pipeline is the stronger validation tier for:
+  - fuzz crash triage
+  - differential mismatch triage
+  - pass-verify failure triage
+  - promote-ready regression candidate generation

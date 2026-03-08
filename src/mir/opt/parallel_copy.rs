@@ -249,7 +249,7 @@ fn replace_var_read(fn_ir: &mut FnIR, src: ValueId, old_var: &VarId, new_var: &V
             let e = replace_var_read(fn_ir, end, old_var, new_var);
             ValueKind::Range { start: s, end: e }
         }
-        ValueKind::Const(_) => return src,
+        ValueKind::Const(_) | ValueKind::RSymbol { .. } => return src,
     };
 
     fn_ir.add_value(new_kind, val.span, val.facts, None)

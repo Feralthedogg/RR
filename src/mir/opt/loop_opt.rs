@@ -300,7 +300,10 @@ impl MirLoopOptimizer {
 
     fn push_value_operands(kind: &ValueKind, out: &mut Vec<ValueId>) {
         match kind {
-            ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => {}
+            ValueKind::Const(_)
+            | ValueKind::Param { .. }
+            | ValueKind::Load { .. }
+            | ValueKind::RSymbol { .. } => {}
             ValueKind::Phi { args } => {
                 for (v, _) in args {
                     out.push(*v);

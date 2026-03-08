@@ -196,8 +196,90 @@ Practical rule:
 ### Modules
 
 - `import "path.rr"` (`;` optional)
+- `import r "graphics"` (`;` optional) for package-name namespace interop; lowers `graphics.plot(...)` to `graphics::plot(...)`
+- `import r { plot, lines } from "graphics"` for named R symbol imports; lowers calls to `graphics::plot(...)`, `graphics::lines(...)`
+- `import r { plot as draw_plot } from "graphics"` supports local aliasing while still lowering to `graphics::plot(...)`
+- `import r * as grDevices from "grDevices"` supports namespace-style access such as `grDevices.png(...)`, lowered to `grDevices::png(...)`
+- `import r default from "ggplot2"` is sugar for namespace import using the package name as the local alias; `ggplot2.ggplot(...)` lowers to `ggplot2::ggplot(...)`
 - `export fn name(...) { ... }`
 - `export function name(...) { ... }`
+
+Example:
+
+```rr
+import r { plot as draw_plot, lines } from "graphics";
+import r default from "grDevices";
+
+main <- function() {
+  grDevices.png(filename = "plot.png", width = 640, height = 360)
+  draw_plot(c(1, 2, 3), c(1, 4, 9), type = "l")
+  lines(c(1, 2, 3), c(1, 2, 3), col = "tomato")
+  grDevices.dev.off()
+  0L
+}
+```
+
+Modern RR-style package interop uses the same import forms:
+
+```rr
+import r default from "ggplot2";
+import r default from "dplyr";
+import r * as base from "base";
+
+fn main() {
+    raw = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
+    series = raw |> dplyr.mutate(
+        trend = x * 0.5 + 0.2,
+        smooth = signal * 0.8 + 0.1
+    )
+    p = ggplot2.ggplot(series, ggplot2.aes(x = x, y = trend)) +
+        ggplot2.geom_line(color = "steelblue") +
+        ggplot2.geom_point(ggplot2.aes(y = smooth), color = "tomato") +
+        ggplot2.theme_minimal()
+    ggplot2.ggsave(filename = "plot.png", plot = p, width = 6, height = 4, dpi = 120)
+}
+
+main();
+```
+
+Direct tidy-eval support is limited but intentional:
+
+- inside `ggplot2::aes(...)` and selected `dplyr::*` verbs, bare unresolved names such as `x`, `signal`, `trend` are preserved as raw R symbols instead of becoming RR undefined-variable errors
+- currently supported tidy data-mask calls:
+  - `ggplot2::aes`
+  - `dplyr::mutate`
+  - `dplyr::filter`
+  - `dplyr::select`
+  - `dplyr::summarise`
+  - `dplyr::arrange`
+  - `dplyr::group_by`
+  - `dplyr::rename`
+  - `tidyr::pivot_longer`
+  - `tidyr::pivot_wider`
+- currently supported helper names inside those calls:
+  - `starts_with`, `ends_with`, `contains`, `matches`, `everything`
+  - `all_of`, `any_of`, `where`, `desc`, `between`, `n`, `row_number`
+
+Supported package calls in this surface are handled as direct RR interop, so they do not force whole-function hybrid fallback.
+Current direct-interop package surface includes:
+
+- `base::data.frame`
+- `stats::median`, `stats::sd`, `stats::lm`, `stats::predict`, `stats::quantile`, `stats::glm`, `stats::as.formula`
+- `readr::read_csv`, `readr::write_csv`
+- `tidyr::pivot_longer`, `tidyr::pivot_wider`
+- `graphics::plot`, `graphics::lines`, `graphics::legend`
+- `grDevices::png`, `grDevices::dev.off`
+- `ggplot2::aes`, `ggplot2::ggplot`, `ggplot2::geom_line`, `ggplot2::geom_point`, `ggplot2::ggtitle`, `ggplot2::theme_minimal`, `ggplot2::ggsave`
+- `dplyr::mutate`, `dplyr::filter`, `dplyr::select`, `dplyr::summarise`, `dplyr::arrange`, `dplyr::group_by`, `dplyr::rename`
+
+Unsupported namespaced package calls are still emitted directly, but the function is marked as opaque interop and optimized conservatively.
+Only truly dynamic runtime features such as `eval`, `parse`, `get`, `assign`, and `do.call` remain hybrid fallback.
+
+Conflict rule:
+
+- imported R locals and namespace aliases share one top-level name table
+- if the same local name would refer to two different package symbols, lowering fails with an error and tells you which earlier binding won
+- use `as` or a different namespace alias to resolve the conflict
 
 Note: `export` is parsed as `export` + function declaration, not as general export of arbitrary assignment expressions.
 
@@ -315,8 +397,9 @@ From `src/hir/lower.rs`:
 - `x |> f(a)` lowers like `f(x, a)`
 - `x |> f(a)?` lowers to `Try(Call(...))`
 - `expr?` currently lowers through MIR mostly as pass-through of the inner expression
-- `@name` currently lowers to a string-like column reference value in MIR
-- `^expr` lowers to the inner expression
+- `@name` lowers to a raw R symbol value and is mainly intended for tidy-eval package interop such as `dplyr::mutate(...)` and `ggplot2::aes(...)`
+- inside tidy-aware package calls, unresolved bare names like `x` or `trend` are also preserved as raw R symbols
+- `^expr` lowers to the inner RR expression and is mainly useful to force an environment value inside tidy-eval contexts
 
 ## Dynamic Builtins (Hybrid Fallback)
 

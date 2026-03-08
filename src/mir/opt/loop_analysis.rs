@@ -13,6 +13,7 @@ pub struct LoopInfo {
     pub is_seq_along: Option<ValueId>, // If it's seq_along(X), stores X
     pub iv: Option<InductionVar>,
     pub limit: Option<ValueId>,
+    pub limit_adjust: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +129,11 @@ impl<'a> LoopAnalyzer<'a> {
             }
         }
 
+        let limit_adjust = iv
+            .as_ref()
+            .map(|iv_val| self.compute_limit_adjust(header, iv_val))
+            .unwrap_or(0);
+
         Some(LoopInfo {
             header,
             latch,
@@ -135,9 +141,44 @@ impl<'a> LoopAnalyzer<'a> {
             exits,
             iv,
             limit,
+            limit_adjust,
             is_seq_len,
             is_seq_along,
         })
+    }
+
+    fn compute_limit_adjust(&self, header: BlockId, iv: &InductionVar) -> i64 {
+        let Terminator::If { cond, .. } = &self.fn_ir.blocks[header].term else {
+            return 0;
+        };
+        let Some((op, lhs, rhs)) = self.resolve_condition_compare(*cond) else {
+            return 0;
+        };
+        let lhs = self.normalize_floor_like_value(lhs);
+        let rhs = self.normalize_floor_like_value(rhs);
+        let normalized_op = if self.is_phi_equivalent(lhs, iv.phi_val) {
+            op
+        } else if self.is_phi_equivalent(rhs, iv.phi_val) {
+            flip_compare(op)
+        } else {
+            return 0;
+        };
+
+        if iv.step > 0 {
+            match normalized_op {
+                BinOp::Lt => -1,
+                BinOp::Le => 0,
+                _ => 0,
+            }
+        } else if iv.step < 0 {
+            match normalized_op {
+                BinOp::Gt => 1,
+                BinOp::Ge => 0,
+                _ => 0,
+            }
+        } else {
+            0
+        }
     }
 
     fn find_induction_variable(
@@ -524,7 +565,10 @@ impl<'a> LoopAnalyzer<'a> {
                         || rec(analyzer, *r, phi_id, seen_vals)
                         || rec(analyzer, *c, phi_id, seen_vals)
                 }
-                ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => false,
+                ValueKind::Const(_)
+                | ValueKind::Param { .. }
+                | ValueKind::Load { .. }
+                | ValueKind::RSymbol { .. } => false,
             }
         }
         rec(self, root, phi_id, &mut FxHashSet::default())
@@ -936,6 +980,16 @@ impl<'a> LoopAnalyzer<'a> {
         } else {
             false
         }
+    }
+}
+
+fn flip_compare(op: BinOp) -> BinOp {
+    match op {
+        BinOp::Le => BinOp::Ge,
+        BinOp::Lt => BinOp::Gt,
+        BinOp::Ge => BinOp::Le,
+        BinOp::Gt => BinOp::Lt,
+        other => other,
     }
 }
 

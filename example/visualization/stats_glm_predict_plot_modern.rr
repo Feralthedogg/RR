@@ -1,0 +1,34 @@
+import r default from "ggplot2";
+import r default from "stats";
+import r * as base from "base";
+
+fn main() {
+    outfile = "rr_stats_glm_predict_plot_modern.png"
+
+    train = base.data.frame(
+        x = c(-2, -1, 0, 1, 2, 3),
+        y = c(-3.1, -1.4, 0.2, 2.0, 3.8, 5.9)
+    )
+    grid = base.data.frame(x = c(-2, -1, 0, 1, 2, 3, 4))
+
+    model = stats.glm(stats.as.formula("y ~ x"), data = train)
+    predicted = stats.predict(model, newdata = grid)
+    fit = base.data.frame(x = grid.x, predicted = predicted)
+
+    p = ggplot2.ggplot(train, ggplot2.aes(x = x, y = y)) +
+        ggplot2.geom_point(color = "steelblue", size = 2.6) +
+        ggplot2.geom_line(
+            data = fit,
+            mapping = ggplot2.aes(x = x, y = predicted),
+            color = "tomato",
+            linewidth = 1.1
+        ) +
+        ggplot2.ggtitle("RR modern + stats::glm/predict") +
+        ggplot2.theme_minimal()
+
+    ggplot2.ggsave(filename = outfile, plot = p, width = 8, height = 4.5, dpi = 120)
+    print("saved_plot")
+    print(outfile)
+}
+
+main();

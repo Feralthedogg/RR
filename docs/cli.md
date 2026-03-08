@@ -100,6 +100,13 @@ Builtin resolution note:
 - most math/aggregation builtins such as `abs`, `sqrt`, `exp`, `sum`, `mean`, and `print` are reserved for builtin/intrinsic lowering
 - only the scalar-indexing group `length`, `floor`, `round`, `ceiling`, and `trunc` is allowed to shadow builtin names
 
+R interop note:
+
+- `import r "pkg"` creates package-name namespace access, so `pkg.fn(...)` lowers to `pkg::fn(...)`
+- `import r { fn as local } from "pkg"` binds one symbol to a local RR name
+- `import r * as pkg from "pkg"` and `import r default from "pkg"` both create namespace-style access
+- currently supported direct-interop packages include `graphics`, `grDevices`, `ggplot2`, selected `dplyr`, and selected `stats/readr/tidyr` calls
+
 ## Incremental and Watch Options
 
 - `--incremental[=off|1|1,2|1,2,3|all]`

@@ -1,3 +1,4 @@
+use crate::diagnostic::{DiagnosticBuilder, finish_diagnostics};
 use crate::error::{InternalCompilerError, RR, RRCode, RRException, Stage};
 use crate::hir::def::Ty;
 use crate::mir::{FnIR, Instr, Terminator, ValueId, ValueKind};
@@ -219,6 +220,7 @@ pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -
         }
     }
 
+    let mut type_errors = Vec::new();
     let mut names: Vec<String> = all_fns.keys().cloned().collect();
     names.sort();
     for name in names {
@@ -232,16 +234,36 @@ pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -
         if let Some(h) = &fn_ir.ret_term_hint {
             let inferred_term = &fn_ir.inferred_ret_term;
             if !h.is_any() && !inferred_term.is_any() && !h.compatible_with(inferred_term) {
-                return Err(RRException::new(
-                    "RR.TypeError",
-                    RRCode::E1010,
-                    Stage::Mir,
-                    format!(
-                        "type hint conflict in function '{}': return hint {:?} vs inferred {:?}",
-                        name, h, inferred_term
-                    ),
-                )
-                .note("Use a compatible return type or remove conflicting annotation."));
+                type_errors.push(
+                    DiagnosticBuilder::new(
+                        "RR.TypeError",
+                        RRCode::E1010,
+                        Stage::Mir,
+                        format!(
+                            "type hint conflict in function '{}': return hint {:?} vs inferred {:?}",
+                            name, h, inferred_term
+                        ),
+                    )
+                    .at(fn_ir.ret_hint_span.unwrap_or(fn_ir.span))
+                    .constraint(
+                        fn_ir.ret_hint_span.unwrap_or(fn_ir.span),
+                        format!("declared return type is constrained to {:?}", h),
+                    )
+                    .origin(
+                        first_return_origin_span(fn_ir).unwrap_or(fn_ir.span),
+                        format!("inferred return flow produces {:?}", inferred_term),
+                    )
+                    .use_site(
+                        fn_ir.span,
+                        "function body must satisfy the declared return contract",
+                    )
+                    .note("Strict mode compares return hints against the inferred function result.")
+                    .fix(format!(
+                        "change the return annotation to {:?}, or return a value compatible with {:?}",
+                        inferred_term, h
+                    ))
+                    .build(),
+                );
             }
         } else if let Some(h) = fn_ir.ret_ty_hint {
             // Backward-compatible primitive-only clash check when structural hint is absent.
@@ -251,8 +273,8 @@ pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -
                     && inferred.prim != PrimTy::Any
                     && h.prim != inferred.prim;
                 if clash {
-                    return Err(
-                        RRException::new(
+                    type_errors.push(
+                        DiagnosticBuilder::new(
                             "RR.TypeError",
                             RRCode::E1010,
                             Stage::Mir,
@@ -261,7 +283,24 @@ pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -
                                 name, h, inferred
                             ),
                         )
-                        .note("Use a compatible return type or remove conflicting annotation."),
+                        .at(fn_ir.ret_hint_span.unwrap_or(fn_ir.span))
+                        .constraint(
+                            fn_ir.ret_hint_span.unwrap_or(fn_ir.span),
+                            format!("declared return type is constrained to {:?}", h),
+                        )
+                        .origin(
+                            first_return_origin_span(fn_ir).unwrap_or(fn_ir.span),
+                            format!("inferred return flow produces {:?}", inferred),
+                        )
+                        .use_site(
+                            fn_ir.span,
+                            "function body must satisfy the declared return contract",
+                        )
+                        .fix(format!(
+                            "change the return annotation to {:?}, or return a {:?} value",
+                            inferred, h
+                        ))
+                        .build(),
                     );
                 }
             }
@@ -269,15 +308,21 @@ pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -
     }
 
     if cfg.mode == TypeMode::Strict {
-        validate_strict(all_fns)?;
+        type_errors.extend(validate_strict(all_fns));
     }
-
-    Ok(())
+    finish_diagnostics(
+        "RR.TypeError",
+        RRCode::E1002,
+        Stage::Mir,
+        format!("type checking failed: {} error(s)", type_errors.len()),
+        type_errors,
+    )
 }
 
-fn validate_strict(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
+fn validate_strict(all_fns: &FxHashMap<String, FnIR>) -> Vec<RRException> {
     let mut names: Vec<String> = all_fns.keys().cloned().collect();
     names.sort();
+    let mut errors = Vec::new();
     for fname in names {
         let Some(fn_ir) = all_fns.get(&fname) else {
             continue;
@@ -294,32 +339,58 @@ fn validate_strict(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
             if let Terminator::If { cond, .. } = bb.term {
                 let cty = fn_ir.values[cond].value_ty;
                 if has_explicit_hints && cty.is_unknown() {
-                    return Err(RRException::new(
-                        "RR.TypeError",
-                        RRCode::E1012,
-                        Stage::Mir,
-                        format!(
-                            "strict mode unresolved condition type in function '{}' (value #{})",
-                            fname, cond
-                        ),
-                    )
-                    .note("Add a logical type hint or simplify condition expression."));
+                    errors.push(
+                        DiagnosticBuilder::new(
+                            "RR.TypeError",
+                            RRCode::E1012,
+                            Stage::Mir,
+                            format!(
+                                "strict mode unresolved condition type in function '{}' (value #{})",
+                                fname, cond
+                            ),
+                        )
+                        .at(fn_ir.values[cond].span)
+                        .origin(
+                            fn_ir.values[cond].span,
+                            "condition value originates here and has unresolved type facts",
+                        )
+                        .constraint(
+                            fn_ir.span,
+                            "strict mode requires branch conditions to be logical scalars",
+                        )
+                        .use_site(fn_ir.values[cond].span, "used here as an if/while condition")
+                        .fix("add an explicit logical type hint or cast before the condition")
+                        .build(),
+                    );
                 }
             }
             for ins in &bb.instrs {
                 if let crate::mir::Instr::StoreIndex1D { idx, .. } = ins {
                     let ity = fn_ir.values[*idx].value_ty;
                     if has_explicit_hints && ity.is_unknown() {
-                        return Err(RRException::new(
-                            "RR.TypeError",
-                            RRCode::E1012,
-                            Stage::Mir,
-                            format!(
-                                "strict mode unresolved index type in function '{}' (value #{})",
-                                fname, idx
-                            ),
-                        )
-                        .note("Add an integer index hint or explicit cast before indexing."));
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.TypeError",
+                                RRCode::E1012,
+                                Stage::Mir,
+                                format!(
+                                    "strict mode unresolved index type in function '{}' (value #{})",
+                                    fname, idx
+                                ),
+                            )
+                            .at(fn_ir.values[*idx].span)
+                            .origin(
+                                fn_ir.values[*idx].span,
+                                "index value originates here and has unresolved type facts",
+                            )
+                            .constraint(
+                                fn_ir.span,
+                                "strict mode requires assignment indices to be integer scalars",
+                            )
+                            .use_site(fn_ir.values[*idx].span, "used here as an index")
+                            .fix("add an explicit integer type hint or cast before indexing")
+                            .build(),
+                        );
                     }
                 }
             }
@@ -341,41 +412,98 @@ fn validate_strict(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
                         && !got_term.is_any()
                         && !expected_term.compatible_with(&got_term)
                     {
-                        return Err(RRException::new(
-                            "RR.TypeError",
-                            RRCode::E1011,
-                            Stage::Mir,
-                            format!(
-                                "call signature type mismatch in '{}': arg {} expects {:?}, got {:?}",
-                                callee,
-                                i + 1,
-                                expected_term,
-                                got_term
-                            ),
-                        ));
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.TypeError",
+                                RRCode::E1011,
+                                Stage::Mir,
+                                format!(
+                                    "call signature type mismatch in '{}': arg {} expects {:?}, got {:?}",
+                                    callee,
+                                    i + 1,
+                                    expected_term,
+                                    got_term
+                                ),
+                            )
+                            .at(v.span)
+                            .origin(
+                                fn_ir.values[args[i]].span,
+                                format!("argument {} originates here with inferred type {:?}", i + 1, got_term),
+                            )
+                            .constraint(
+                                callee_fn
+                                    .param_hint_spans
+                                    .get(i)
+                                    .and_then(|s| *s)
+                                    .or_else(|| callee_fn.param_spans.get(i).copied())
+                                    .unwrap_or(callee_fn.span),
+                                format!("callee parameter {} requires {:?}", i + 1, expected_term),
+                            )
+                            .use_site(v.span, "call site uses the argument here")
+                            .fix(format!(
+                                "cast argument {} or change the callee parameter annotation to a compatible type",
+                                i + 1
+                            ))
+                            .build(),
+                        );
                     }
 
                     let expected = callee_fn.param_ty_hints[i];
                     let got = fn_ir.values[args[i]].value_ty;
                     if !is_arg_compatible(expected, got) {
-                        return Err(RRException::new(
-                            "RR.TypeError",
-                            RRCode::E1011,
-                            Stage::Mir,
-                            format!(
-                                "call signature type mismatch in '{}': arg {} expects {:?}, got {:?}",
-                                callee,
-                                i + 1,
-                                expected,
-                                got
-                            ),
-                        ));
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.TypeError",
+                                RRCode::E1011,
+                                Stage::Mir,
+                                format!(
+                                    "call signature type mismatch in '{}': arg {} expects {:?}, got {:?}",
+                                    callee,
+                                    i + 1,
+                                    expected,
+                                    got
+                                ),
+                            )
+                            .at(v.span)
+                            .origin(
+                                fn_ir.values[args[i]].span,
+                                format!("argument {} originates here with inferred type {:?}", i + 1, got),
+                            )
+                            .constraint(
+                                callee_fn
+                                    .param_hint_spans
+                                    .get(i)
+                                    .and_then(|s| *s)
+                                    .or_else(|| callee_fn.param_spans.get(i).copied())
+                                    .unwrap_or(callee_fn.span),
+                                format!("callee parameter {} requires {:?}", i + 1, expected),
+                            )
+                            .use_site(v.span, "call site uses the argument here")
+                            .fix(format!(
+                                "cast argument {} or change the callee parameter annotation to a compatible type",
+                                i + 1
+                            ))
+                            .build(),
+                        );
                     }
                 }
             }
         }
     }
-    Ok(())
+    errors
+}
+
+fn first_return_origin_span(fn_ir: &FnIR) -> Option<crate::utils::Span> {
+    let reachable = compute_reachable(fn_ir);
+    for (bid, bb) in fn_ir.blocks.iter().enumerate() {
+        if !reachable.get(bid).copied().unwrap_or(false) {
+            continue;
+        }
+        if let Terminator::Return(Some(val)) = bb.term {
+            return Some(fn_ir.values[val].span);
+        }
+    }
+    None
 }
 
 fn analyze_function(fn_ir: &mut FnIR, fn_ret: &FxHashMap<String, TypeState>) -> RR<TypeState> {
@@ -1060,7 +1188,7 @@ fn infer_value_term(fn_ir: &FnIR, vid: ValueId, fn_ret: &FxHashMap<String, TypeT
         ValueKind::Index1D { base, .. } | ValueKind::Index2D { base, .. } => {
             fn_ir.values[*base].value_term.index_element()
         }
-        ValueKind::Load { .. } => TypeTerm::Any,
+        ValueKind::Load { .. } | ValueKind::RSymbol { .. } => TypeTerm::Any,
         ValueKind::Intrinsic { op, args } => {
             use crate::mir::IntrinsicOp;
             match op {
@@ -1209,6 +1337,7 @@ fn infer_value_type(
             }
         }
         ValueKind::Load { var } => var_tys.get(var).copied().unwrap_or(TypeState::unknown()),
+        ValueKind::RSymbol { .. } => TypeState::unknown(),
         ValueKind::Intrinsic { op, args } => {
             use crate::mir::IntrinsicOp;
             match op {

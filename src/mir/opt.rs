@@ -170,6 +170,7 @@ impl TachyonEngine {
 
     fn verify_or_panic(fn_ir: &FnIR, stage: &str) {
         if let Err(e) = crate::mir::verify::verify_ir(fn_ir) {
+            Self::dump_verify_failure(fn_ir, stage, &e.to_string());
             InternalCompilerError::new(
                 Stage::Opt,
                 format!(
@@ -186,11 +187,9 @@ impl TachyonEngine {
         match crate::mir::verify::verify_ir(fn_ir) {
             Ok(()) => true,
             Err(e) => {
-                fn_ir.unsupported_dynamic = true;
+                Self::dump_verify_failure(fn_ir, stage, &e.to_string());
                 let reason = format!("invalid MIR at {}: {}", stage, e);
-                if !fn_ir.fallback_reasons.iter().any(|r| r == &reason) {
-                    fn_ir.fallback_reasons.push(reason);
-                }
+                fn_ir.mark_unsupported_dynamic(reason);
                 false
             }
         }
@@ -215,6 +214,57 @@ impl TachyonEngine {
 
     fn verify_each_pass() -> bool {
         Self::env_bool("RR_VERIFY_EACH_PASS", false)
+    }
+
+    fn verify_dump_dir() -> Option<String> {
+        env::var("RR_VERIFY_DUMP_DIR").ok().and_then(|v| {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+    }
+
+    fn sanitize_dump_component(raw: &str) -> String {
+        let mut out = String::with_capacity(raw.len());
+        for ch in raw.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                out.push(ch);
+            } else {
+                out.push('_');
+            }
+        }
+        if out.is_empty() {
+            "unnamed".to_string()
+        } else {
+            out
+        }
+    }
+
+    fn dump_verify_failure(fn_ir: &FnIR, stage: &str, reason: &str) {
+        let Some(root) = Self::verify_dump_dir() else {
+            return;
+        };
+        Self::dump_verify_failure_to(std::path::Path::new(&root), fn_ir, stage, reason);
+    }
+
+    fn dump_verify_failure_to(root: &std::path::Path, fn_ir: &FnIR, stage: &str, reason: &str) {
+        if fs::create_dir_all(root).is_err() {
+            return;
+        }
+        let file_name = format!(
+            "{}__{}.mir.txt",
+            Self::sanitize_dump_component(stage),
+            Self::sanitize_dump_component(&fn_ir.name)
+        );
+        let path = root.join(file_name);
+        let payload = format!(
+            "# verify failure\nstage: {stage}\nfunction: {}\nreason: {reason}\n\n{:#?}\n",
+            fn_ir.name, fn_ir
+        );
+        let _ = fs::write(path, payload);
     }
 
     fn maybe_verify(fn_ir: &FnIR, stage: &str) {
@@ -1183,7 +1233,7 @@ impl TachyonEngine {
                 let Some(fn_ir) = all_fns.get(name) else {
                     continue;
                 };
-                if !fn_ir.unsupported_dynamic {
+                if !fn_ir.requires_conservative_optimization() {
                     selected.insert(name.clone());
                 }
             }
@@ -1204,7 +1254,7 @@ impl TachyonEngine {
             let Some(fn_ir) = all_fns.get(name) else {
                 continue;
             };
-            if fn_ir.unsupported_dynamic {
+            if fn_ir.requires_conservative_optimization() {
                 continue;
             }
             let ir_size = Self::fn_ir_size(fn_ir);
@@ -1290,8 +1340,8 @@ impl TachyonEngine {
             }
             let _ = de_ssa::run(fn_ir);
             // Keep this lightweight but convergent to avoid dead temp noise after De-SSA.
-            // Hybrid fallback functions skip cleanup to preserve dynamic semantics.
-            if !fn_ir.unsupported_dynamic {
+            // Conservative interop functions skip cleanup to preserve package/runtime semantics.
+            if !fn_ir.requires_conservative_optimization() {
                 let mut changed = true;
                 let mut guard = 0;
                 while changed && guard < 8 {
@@ -1311,7 +1361,7 @@ impl TachyonEngine {
         proven_param_slots: Option<&FxHashSet<usize>>,
     ) -> TachyonPulseStats {
         let mut stats = TachyonPulseStats::default();
-        if fn_ir.unsupported_dynamic {
+        if fn_ir.requires_conservative_optimization() {
             return stats;
         }
         if !Self::verify_or_reject(fn_ir, "AlwaysTier/Start") {
@@ -1545,9 +1595,9 @@ impl TachyonEngine {
             let Some(fn_ir) = all_fns.get_mut(name) else {
                 continue;
             };
-            if fn_ir.unsupported_dynamic {
+            if fn_ir.requires_conservative_optimization() {
                 stats.skipped_functions += 1;
-                let _ = Self::verify_or_reject(fn_ir, "SkipOpt/UnsupportedDynamic");
+                let _ = Self::verify_or_reject(fn_ir, "SkipOpt/ConservativeInterop");
                 Self::emit_progress(
                     &mut progress,
                     TachyonProgressTier::Heavy,
@@ -1621,10 +1671,10 @@ impl TachyonEngine {
                         let Some(fn_ir) = all_fns.get_mut(name) else {
                             continue;
                         };
-                        if fn_ir.unsupported_dynamic {
+                        if fn_ir.requires_conservative_optimization() {
                             Self::maybe_verify(
                                 fn_ir,
-                                "After Inline Cleanup (Skipped: UnsupportedDynamic)",
+                                "After Inline Cleanup (Skipped: ConservativeInterop)",
                             );
                             continue;
                         }
@@ -1658,7 +1708,7 @@ impl TachyonEngine {
                 stats.de_ssa_hits += 1;
             }
             // Cleanup after De-SSA to drop dead temps and unreachable blocks.
-            if !fn_ir.unsupported_dynamic {
+            if !fn_ir.requires_conservative_optimization() {
                 let sc_changed = self.simplify_cfg(fn_ir);
                 let dce_changed = self.dce(fn_ir);
                 if sc_changed {
@@ -2006,7 +2056,7 @@ impl TachyonEngine {
                 return false;
             }};
         }
-        if fn_ir.unsupported_dynamic || fn_ir.params.len() != 4 {
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 4 {
             return false;
         }
 
@@ -2497,7 +2547,7 @@ impl TachyonEngine {
             }};
         }
 
-        if fn_ir.unsupported_dynamic || fn_ir.params.len() != 4 {
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 4 {
             return false;
         }
         for bb in &fn_ir.blocks {
@@ -2842,8 +2892,8 @@ impl TachyonEngine {
                 return false;
             }};
         }
-        if fn_ir.unsupported_dynamic || fn_ir.params.len() != 1 {
-            fail!("unsupported dynamic or arity != 1");
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 1 {
+            fail!("conservative interop or arity != 1");
         }
         for bb in &fn_ir.blocks {
             for ins in &bb.instrs {
@@ -2997,7 +3047,7 @@ impl TachyonEngine {
         fn_ir: &FnIR,
         user_whitelist: &FxHashSet<String>,
     ) -> bool {
-        if fn_ir.unsupported_dynamic {
+        if fn_ir.requires_conservative_optimization() {
             return false;
         }
         if name.starts_with("Sym_top_") {
@@ -3050,6 +3100,7 @@ impl TachyonEngine {
         }
         match &fn_ir.values[vid].kind {
             ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => true,
+            ValueKind::RSymbol { .. } => false,
             ValueKind::Unary { rhs, .. } => {
                 Self::is_vector_safe_user_expr(fn_ir, *rhs, user_whitelist, seen)
             }
@@ -3485,6 +3536,7 @@ impl TachyonEngine {
 mod tests {
     use super::*;
     use crate::utils::Span;
+    use std::fs;
 
     fn dummy_fn(name: &str, approx_size: usize) -> FnIR {
         let mut fn_ir = FnIR::new(name.to_string(), vec![]);
@@ -3646,5 +3698,27 @@ mod tests {
             let last = tier_events.last().expect("non-empty tier events");
             assert_eq!(last.completed, last.total);
         }
+    }
+
+    #[test]
+    fn verify_failure_dump_writes_stage_and_function_snapshot() {
+        let fn_ir = dummy_fn("dump_target", 8);
+        let out_dir = std::env::temp_dir().join(format!(
+            "rr-verify-dump-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        TachyonEngine::dump_verify_failure_to(&out_dir, &fn_ir, "vectorize/post", "bad phi");
+        let dump_path = out_dir.join("vectorize_post__dump_target.mir.txt");
+        let dump = fs::read_to_string(&dump_path).expect("verify dump should be written");
+        assert!(dump.contains("stage: vectorize/post"));
+        assert!(dump.contains("function: dump_target"));
+        assert!(dump.contains("reason: bad phi"));
+        assert!(dump.contains("FnIR"));
+        let _ = fs::remove_file(&dump_path);
+        let _ = fs::remove_dir(&out_dir);
     }
 }

@@ -41,3 +41,10 @@ path = "fuzz_targets/incremental.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "generated_pipeline"
+path = "fuzz_targets/generated_pipeline.rs"
+test = false
+doc = false
+bench = false

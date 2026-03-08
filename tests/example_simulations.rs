@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 const REFERENCE_EQUIV_CASES: &[&str] = &[
     "bootstrap_mean",
+    "lm_predict_quantile_band",
     "markov_weather_chain",
     "monte_carlo_pi",
     "projectile_drag",

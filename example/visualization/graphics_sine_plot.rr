@@ -1,0 +1,38 @@
+import r { plot as draw_plot, lines, legend } from "graphics";
+import r default from "grDevices";
+
+main <- function() {
+  outfile <- "rr_graphics_sine_plot.png"
+  i <- seq_len(200)
+  x <- (i - 1) * (6.28318 / 199)
+  signal <- sin(x) + (0.15 * cos(x * 3))
+  trend <- 0.25 * sin(x * 0.5)
+
+  grDevices.png(filename = outfile, width = 960, height = 540)
+  draw_plot(
+    x,
+    signal,
+    type = "l",
+    col = "steelblue",
+    lwd = 3,
+    main = "RR + graphics: damped signal",
+    xlab = "x",
+    ylab = "signal"
+  )
+  lines(x, trend, col = "tomato", lwd = 2, lty = 2)
+  legend(
+    "topright",
+    legend = c("signal", "trend"),
+    col = c("steelblue", "tomato"),
+    lty = c(1, 2),
+    lwd = c(3, 2),
+    bty = "n"
+  )
+  grDevices.dev.off()
+
+  print("saved_plot")
+  print(outfile)
+  0L
+}
+
+print(main())

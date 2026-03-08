@@ -82,8 +82,16 @@ These cover command wiring, mode flags, and backend fallback behavior.
 
 - `commercial_determinism.rs`
 - `commercial_stress_differential.rs`
+- `random_differential.rs`
+- `pass_verify_examples.rs`
+- `reduction_user_call_regression.rs`
 
 These exercise larger workloads and determinism-sensitive paths.
+`random_differential.rs` additionally generates small deterministic RR programs,
+executes a hand-written reference R version, and compares `-O0/-O1/-O2`
+artifacts against the same reference output. `pass_verify_examples.rs` forces
+`RR_VERIFY_EACH_PASS=1` on representative examples so verifier regressions show
+up at the exact pass boundary instead of only at final emission time.
 
 ### Performance Gate
 
@@ -170,6 +178,69 @@ Compared outputs:
 - normalized stdout
 - normalized stderr
 
+`tests/random_differential.rs` extends this with generated programs. Each case
+is emitted as both RR and reference R, then executed under `-O0`, `-O1`, and
+`-O2` with `RR_VERIFY_EACH_PASS=1`. This is the closest thing in-tree to
+translation validation for optimizer changes.
+
+Each persisted failure bundle now carries a machine-readable `bundle.manifest`
+file. Triage and promotion scripts validate that manifest before generating
+regression skeletons, so nightly automation fails closed instead of silently
+processing malformed bundles.
+
+Run only the generated differential suite:
+
+```bash
+cargo test -q --test random_differential
+RR_RANDOM_DIFFERENTIAL_COUNT=12 RR_RANDOM_DIFFERENTIAL_SEED=0xA11CE5EED55AA11C cargo test -q --test random_differential
+RR_RANDOM_DIFFERENTIAL_COUNT=12 RR_RANDOM_DIFFERENTIAL_SEED=0x5EED123456789ABC cargo test -q --test random_differential
+RR_RANDOM_DIFFERENTIAL_COUNT=72 cargo test -q --test random_differential -- --nocapture
+RR_RANDOM_DIFFERENTIAL_SEED=0xA11CE5EED55AA11C cargo test -q --test random_differential -- --nocapture
+```
+
+The default CI workflow runs two smaller deterministic differential slices:
+
+- `RR_RANDOM_DIFFERENTIAL_COUNT=12`, `RR_RANDOM_DIFFERENTIAL_SEED=0xA11CE5EED55AA11C`
+- `RR_RANDOM_DIFFERENTIAL_COUNT=12`, `RR_RANDOM_DIFFERENTIAL_SEED=0x5EED123456789ABC`
+
+The generator currently covers:
+
+- branch-heavy vector folds
+- scalar recurrences
+- matrix row/column aggregation
+- nested loops
+- call chains
+- tail recursion
+- record mutation / field access
+- direct `stats` / `base` namespace interop
+
+On mismatch, `random_differential.rs` writes a failure bundle under
+`target/tests/random_differential_failures/` with:
+
+- `case.rr`
+- `reference.R`
+- emitted `compiled.R`
+- stdout/stderr for reference and compiled runs
+- `bundle.manifest`
+- `README.txt`
+
+Nightly differential soak additionally triages those bundles into
+`.artifacts/differential-triage/` with:
+
+- `summary.md`
+- `job-summary.md`
+- `summary.json`
+- copied bundle inputs and outputs
+- generated `regression.rs` skeletons
+- a nightly `cargo test` smoke run of those generated skeletons
+
+Promote a triaged bundle into a checked-in regression test with:
+
+```bash
+scripts/promote_differential_regression.sh .artifacts/differential-triage/<bundle-dir>
+scripts/triage_driver.sh promote differential .artifacts/differential-triage/<bundle-dir>
+```
+
 ## Performance Knobs
 
 `tests/perf_regression_gate.rs` uses:
@@ -179,6 +250,37 @@ Compared outputs:
 
 Adjust these only when you intentionally re-baseline compile-time expectations.
 
+## Per-Pass Verification
+
+`RR_VERIFY_EACH_PASS=1` runs the MIR verifier after each optimization pass.
+This is slower, but it is the right mode when validating optimizer changes or
+reproducing a suspected miscompile.
+
+Example:
+
+```bash
+RR_VERIFY_EACH_PASS=1 cargo test -q --test pass_verify_examples
+RR_VERIFY_EACH_PASS=1 cargo run -- example/tesseract.rr -O2 -o /tmp/tesseract.R
+```
+
+If `pass_verify_examples` fails, it writes a repro bundle under
+`target/tests/pass_verify_failures/` with:
+
+- `case.rr`
+- `compiler.stdout`
+- `compiler.stderr`
+- emitted `compiled.R` when codegen completed
+- copied verifier dumps under `verify-dumps/` when available
+
+Nightly soak triages those bundles into `.artifacts/pass-verify-triage/` and
+generates `regression.rs` skeletons, then runs a nightly `cargo test` smoke
+over those generated tests. Promote one into a checked-in regression test with:
+
+```bash
+scripts/promote_pass_verify_regression.sh .artifacts/pass-verify-triage/<bundle-dir>
+scripts/triage_driver.sh promote pass-verify .artifacts/pass-verify-triage/<bundle-dir>
+```
+
 ## Fuzzing
 
 Targets:
@@ -187,6 +289,7 @@ Targets:
 - `fuzz/fuzz_targets/pipeline.rs`
 - `fuzz/fuzz_targets/type_solver.rs`
 - `fuzz/fuzz_targets/incremental.rs` (`incremental_compile`)
+- `fuzz/fuzz_targets/generated_pipeline.rs` (`generated_pipeline`)
 
 Dictionary:
 
@@ -200,7 +303,24 @@ cargo +nightly fuzz run parser fuzz/corpus/parser -- -dict=fuzz/dictionaries/rr.
 cargo +nightly fuzz run pipeline fuzz/corpus/pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run type_solver fuzz/corpus/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run incremental_compile fuzz/corpus/incremental_compile -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
+cargo +nightly fuzz run generated_pipeline fuzz/corpus/generated_pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 ```
+
+`generated_pipeline` differs from the raw parser/pipeline targets: it decodes
+a small seed, generates valid RR programs, and then drives the optimizer,
+verifier, and codegen on those generated programs. Use it when you want
+valid-program stress instead of arbitrary malformed input stress.
+
+Longer soak coverage runs separately in
+[`nightly-soak.yml`](../.github/workflows/nightly-soak.yml):
+
+- larger `random_differential` suites
+- longer `pipeline`, `incremental_compile`, and `generated_pipeline` fuzz runs
+  at `-max_total_time=300`
+- uploaded differential soak logs
+- uploaded fuzz logs and any crash artifacts for local replay
+- uploaded triage summaries with minimized crash inputs and replay commands
+- uploaded verifier dumps from `RR_VERIFY_EACH_PASS=1` failures
 
 Smoke runner:
 
@@ -220,12 +340,47 @@ cargo +nightly fuzz run pipeline fuzz/artifacts/pipeline/crash-<hash> -- -runs=1
 cargo +nightly fuzz tmin pipeline fuzz/artifacts/pipeline/crash-<hash>
 ```
 
+Generate a local triage report from any crash artifacts:
+
+```bash
+scripts/fuzz_triage.sh
+scripts/triage_driver.sh triage fuzz
+```
+
+This script:
+
+- replays each crash once to confirm reproducibility
+- copies and minimizes the input with `cargo fuzz tmin`
+- writes replay commands and per-case logs into `.artifacts/fuzz-triage/summary.md`
+- writes a compact CI-friendly table into `.artifacts/fuzz-triage/job-summary.md`
+- writes machine-readable counts and case metadata into `.artifacts/fuzz-triage/summary.json`
+- generates either `regression.rs` (plain RR text input) or `regression.md`
+  (non-text/manual replay case) per artifact
+- nightly soak also runs `cargo test` smoke over generated `regression.rs` cases
+
+Promote a generated triage case into the repository test suite:
+
+```bash
+scripts/promote_fuzz_regression.sh .artifacts/fuzz-triage/pipeline_crash_<hash>
+scripts/triage_driver.sh promote fuzz .artifacts/fuzz-triage/pipeline_crash_<hash>
+```
+
+For text RR inputs this copies:
+
+- `minimized-input` -> `tests/fuzz_regressions/<name>.rr`
+- `regression.rs` -> `tests/<name>.rs`
+
+For non-text cases it creates a manual replay note under
+`tests/fuzz_regressions/manual_<name>/`.
+
 ## CI Expectations
 
 The CI workflow is expected to run:
 
 - Rust test suite
 - R-backed integration coverage
+- dedicated differential test coverage against reference R
+- per-pass verifier smoke with `RR_VERIFY_EACH_PASS=1`
 - dedicated example perf smoke with timing output
 - linting
 - fuzz smoke coverage for key targets
@@ -237,3 +392,129 @@ do not get buried inside the core Rust test log.
 
 For compiler changes, targeted regression tests are preferred over broad snapshot updates.
 Use [Contributing Audit Checklist](contributing-audit.md) as the final manual sign-off pass.
+
+## Unified Triage Driver
+
+The preferred local entrypoint for triage automation is:
+
+```bash
+scripts/triage_driver.sh triage differential
+scripts/triage_driver.sh triage pass-verify
+scripts/triage_driver.sh triage fuzz
+scripts/triage_driver.sh smoke differential .artifacts/differential-triage
+scripts/triage_driver.sh promote fuzz .artifacts/fuzz-triage/<case-dir>
+```
+
+The underlying scripts remain available for focused debugging, but the driver
+keeps nightly and local workflows aligned.
+
+## Triage Artifact Schemas
+
+Persisted failure bundles now use a versioned manifest contract:
+
+```text
+schema: rr-triage-bundle
+version: 1
+kind: fuzz|differential|pass-verify
+...
+```
+
+Required common fields:
+
+- `schema`
+- `version`
+- `kind`
+
+Required kind-specific fields:
+
+- `fuzz`
+  - `target`
+  - `artifact`
+  - `repro_status`
+  - `tmin_status`
+  - `skeleton_kind`
+- `differential`
+  - `case`
+  - `opt`
+  - `reference_status`
+  - `compiled_status`
+- `pass-verify`
+  - `case`
+  - `status`
+
+Triage outputs also write a machine-readable report:
+
+```json
+{
+  "schema": "rr-triage-report",
+  "version": 1,
+  "kind": "fuzz|differential|pass-verify",
+  "cases": []
+}
+```
+
+Nightly soak then aggregates those per-kind reports into:
+
+- `.artifacts/nightly-soak/verification-summary.json`
+- `.artifacts/nightly-soak/verification-summary.md`
+- `.artifacts/nightly-soak/top-promotion-candidates.json`
+- `.artifacts/nightly-soak/top-promotion-candidates.md`
+
+The markdown summary also includes a conservative `Promotion Candidates`
+section. A case appears there only when nightly produced a checked-in-test
+capable `regression.rs` skeleton for that bundle. Candidates are ranked with a
+stable priority policy so the top of the nightly summary points at the most
+actionable regressions first:
+
+- `pass-verify`: critical
+- `differential`: critical/high depending on exit-status divergence
+- `fuzz`: high/medium depending on replay and minimization quality
+
+The aggregate report uses:
+
+```json
+{
+  "schema": "rr-verification-summary",
+  "version": 1,
+  "sources": { ... },
+  "differential": { ... },
+  "pass_verify": { ... },
+  "fuzz": { ... },
+  "totals": { ... }
+}
+```
+
+It also records the nightly run context when GitHub Actions metadata is
+available:
+
+- `github_run_id`
+- `github_run_attempt`
+- `github_workflow`
+- `github_job`
+- `github_ref_name`
+- `github_sha`
+
+and summarizes:
+
+- `differential_by_opt`
+- `fuzz_by_target`
+- `promotion_candidates_by_kind`
+- `promotion_candidates_by_severity`
+
+Generate it locally from existing triage outputs with:
+
+```bash
+bash scripts/verification_summary.sh .artifacts .artifacts/nightly-soak
+```
+
+That summary emits promote-ready commands such as:
+
+```bash
+scripts/triage_driver.sh promote differential .artifacts/differential-triage/<bundle-dir>
+scripts/triage_driver.sh promote pass-verify .artifacts/pass-verify-triage/<bundle-dir>
+scripts/triage_driver.sh promote fuzz .artifacts/fuzz-triage/<case-dir>
+```
+
+The separate `top-promotion-candidates.*` files are intended for downstream
+automation or notification hooks that only need the highest-priority promote
+targets instead of the full nightly report.

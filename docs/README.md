@@ -17,6 +17,7 @@ If you are using RR:
 - [CLI Reference](cli.md): command forms, options, watch/build behavior
 - [Configuration](configuration.md): environment variables and optimizer/runtime knobs
 - [Language Reference](language.md): syntax and supported forms
+- [R Interop](r-interop.md): supported R package interop surface and fallback tiers
 
 If you are working on the compiler:
 
@@ -39,6 +40,8 @@ If you need behavior limits:
   - command-line surface and execution modes
 - `language.md`
   - surface syntax and language behavior
+- `r-interop.md`
+  - direct/opaque/hybrid R package interop model and supported package surface
 - `compiler-pipeline.md`
   - pipeline phases, pass order, and validation points
 - `optimization.md`

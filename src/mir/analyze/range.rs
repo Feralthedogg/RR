@@ -1,6 +1,7 @@
 use crate::mir::*;
 use crate::syntax::ast::{BinOp, Lit};
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SymbolicBound {
@@ -100,7 +101,7 @@ impl RangeInterval {
 
 #[derive(Debug, Clone)]
 pub struct RangeFacts {
-    pub values: HashMap<ValueId, RangeInterval>,
+    pub values: FxHashMap<ValueId, RangeInterval>,
 }
 
 impl Default for RangeFacts {
@@ -112,7 +113,7 @@ impl Default for RangeFacts {
 impl RangeFacts {
     pub fn new() -> Self {
         Self {
-            values: HashMap::new(),
+            values: FxHashMap::default(),
         }
     }
 
@@ -173,7 +174,7 @@ pub fn analyze_ranges(fn_ir: &FnIR) -> Vec<RangeFacts> {
     }
     bb_facts[fn_ir.entry] = initial_facts;
 
-    let mut iterations = HashMap::new();
+    let mut iterations = FxHashMap::default();
 
     while let Some(bid) = worklist.pop_front() {
         *iterations.entry(bid).or_insert(0) += 1;
@@ -224,7 +225,7 @@ pub fn analyze_ranges(fn_ir: &FnIR) -> Vec<RangeFacts> {
     bb_facts
 }
 
-fn transfer_block(bid: BlockId, fn_ir: &FnIR, facts: &mut RangeFacts) {
+pub(crate) fn transfer_block(bid: BlockId, fn_ir: &FnIR, facts: &mut RangeFacts) {
     let block = &fn_ir.blocks[bid];
     for instr in &block.instrs {
         transfer_instr(instr, &fn_ir.values, facts);
@@ -253,7 +254,7 @@ pub fn transfer_instr(instr: &Instr, values: &[Value], facts: &mut RangeFacts) {
 }
 
 pub fn ensure_value_range(vid: ValueId, values: &[Value], facts: &mut RangeFacts) -> RangeInterval {
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     ensure_value_range_inner(vid, values, facts, &mut seen)
 }
 
@@ -261,7 +262,7 @@ fn ensure_value_range_inner(
     vid: ValueId,
     values: &[Value],
     facts: &mut RangeFacts,
-    seen: &mut HashSet<ValueId>,
+    seen: &mut FxHashSet<ValueId>,
 ) -> RangeInterval {
     if let Some(existing) = facts.values.get(&vid) {
         return existing.clone();
@@ -309,13 +310,14 @@ fn ensure_value_range_inner(
         | ValueKind::Index1D { .. }
         | ValueKind::Index2D { .. }
         | ValueKind::Load { .. }
+        | ValueKind::RSymbol { .. }
         | ValueKind::Const(_) => RangeInterval::top(),
     };
 
     seen.remove(&vid);
-    if interval != RangeInterval::top() {
-        facts.values.insert(vid, interval.clone());
-    }
+    // Cache all results, including Top, so repeated queries within the same block
+    // do not re-walk large value graphs.
+    facts.values.insert(vid, interval.clone());
     interval
 }
 

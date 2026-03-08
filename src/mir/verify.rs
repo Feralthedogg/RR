@@ -154,6 +154,7 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
                 check_val(fn_ir, *r)?;
                 check_val(fn_ir, *c)?;
             }
+            ValueKind::RSymbol { .. } => {}
             ValueKind::Len { base } | ValueKind::Indices { base } => check_val(fn_ir, *base)?,
             ValueKind::Range { start, end } => {
                 check_val(fn_ir, *start)?;

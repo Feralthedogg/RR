@@ -1,0 +1,23 @@
+import "../common/sim_utils.rr";
+import r default from "stats";
+import r * as base from "base";
+
+fn main() {
+    xs = c(0.0, 1.0, 2.0, 3.0, 4.0, 5.0)
+    ys = c(1.2, 2.8, 4.7, 6.1, 7.9, 9.8)
+
+    train = base.data.frame(x = xs, y = ys)
+    model = stats.lm(stats.as.formula("y ~ x"), data = train)
+
+    grid = base.data.frame(x = c(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0))
+    predicted = stats.predict(model, newdata = grid)
+    bands = stats.quantile(predicted, probs = c(0.10, 0.50, 0.90))
+
+    print_metric("lm_pred_start", predicted[1])
+    print_metric("lm_pred_end", predicted[length(predicted)])
+    print_metric("lm_q10", bands[1])
+    print_metric("lm_q50", bands[2])
+    print_metric("lm_q90", bands[3])
+}
+
+main();

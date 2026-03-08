@@ -1,0 +1,36 @@
+import r default from "ggplot2";
+import r default from "stats";
+import r * as base from "base";
+
+fn main() {
+    outfile = "rr_stats_quantile_band_plot_modern.png"
+    x = c(0, 1, 2, 3, 4, 5, 6)
+    signal = c(0.2, 0.8, 1.4, 1.1, 0.7, 0.3, -0.1)
+
+    quantiles = stats.quantile(signal, probs = c(0.1, 0.5, 0.9))
+    spread = stats.sd(signal)
+
+    band = base.data.frame(
+        x = x,
+        signal = signal,
+        q_low = rep.int(quantiles[1], length(x)),
+        q_mid = rep.int(quantiles[2], length(x)),
+        q_high = rep.int(quantiles[3], length(x)),
+        spread_up = rep.int(quantiles[2] + spread * 0.35, length(x))
+    )
+
+    p = ggplot2.ggplot(band, ggplot2.aes(x = x)) +
+        ggplot2.geom_line(ggplot2.aes(y = signal), color = "steelblue", linewidth = 1.2) +
+        ggplot2.geom_line(ggplot2.aes(y = q_mid), color = "tomato", linewidth = 1.0, linetype = 2) +
+        ggplot2.geom_line(ggplot2.aes(y = q_low), color = "gray45", linewidth = 0.9, linetype = 3) +
+        ggplot2.geom_line(ggplot2.aes(y = q_high), color = "gray45", linewidth = 0.9, linetype = 3) +
+        ggplot2.geom_point(ggplot2.aes(y = spread_up), color = "darkgreen", size = 2.0) +
+        ggplot2.ggtitle("RR modern + stats: quantile band trace") +
+        ggplot2.theme_minimal()
+
+    ggplot2.ggsave(filename = outfile, plot = p, width = 8, height = 4.5, dpi = 120)
+    print("saved_plot")
+    print(outfile)
+}
+
+main();

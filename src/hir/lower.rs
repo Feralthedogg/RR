@@ -31,6 +31,10 @@ pub struct Lowerer {
     // Top-level aliases of function values, e.g. `let f = fn(...) { ... }`.
     // Used so function bodies can resolve `f(...)` directly to lifted symbols.
     global_fn_aliases: FxHashMap<String, SymbolId>,
+    // Named imports from R packages, lowered to pkg::symbol references.
+    r_import_aliases: FxHashMap<String, SymbolId>,
+    // Namespace imports from R packages, lowered from ns.foo(...) to pkg::foo(...).
+    r_namespace_aliases: FxHashMap<String, String>,
 }
 
 impl Default for Lowerer {
@@ -56,6 +60,8 @@ impl Lowerer {
             warn_implicit_decl,
             pending_fns: Vec::new(),
             global_fn_aliases: FxHashMap::default(),
+            r_import_aliases: FxHashMap::default(),
+            r_namespace_aliases: FxHashMap::default(),
         }
     }
 
@@ -195,6 +201,12 @@ impl Lowerer {
             HirExpr::Local(lid)
         } else if let Some(sym) = self.global_fn_aliases.get(dotted).copied() {
             HirExpr::Global(sym)
+        } else if let Some(sym) = self.r_import_aliases.get(dotted).copied() {
+            HirExpr::Global(sym)
+        } else if let Some((root, rest)) = dotted.split_once('.')
+            && let Some(pkg) = self.r_namespace_aliases.get(root)
+        {
+            HirExpr::Global(self.intern_symbol(&format!("{}::{}", pkg, rest)))
         } else {
             HirExpr::Global(self.intern_symbol(dotted))
         }
@@ -441,7 +453,7 @@ impl Lowerer {
                     visit_expr(lowerer, scopes, seen, captures, expr);
                 }
                 ast::StmtKind::FnDecl { .. }
-                | ast::StmtKind::Import(_)
+                | ast::StmtKind::Import { .. }
                 | ast::StmtKind::Export(_)
                 | ast::StmtKind::Break
                 | ast::StmtKind::Next => {}
@@ -637,13 +649,144 @@ impl Lowerer {
                     items.push(HirItem::Fn(fn_item));
                     self.flush_pending_fns(&mut items);
                 }
-                ast::StmtKind::Import(path) => {
-                    let import = HirImport {
-                        module: path,
-                        spec: HirImportSpec::Glob,
-                        span: stmt.span,
-                    };
-                    items.push(HirItem::Import(import));
+                ast::StmtKind::Import { source, path, spec } => {
+                    match source {
+                        ast::ImportSource::Module => {
+                            if !matches!(spec, ast::ImportSpec::Glob) {
+                                return Err(RRException::new(
+                                    "RR.SemanticError",
+                                    RRCode::E1002,
+                                    Stage::Lower,
+                                    "RR module import does not support named or namespace specifiers"
+                                        .to_string(),
+                                )
+                                .at(stmt.span));
+                            }
+                            let import = HirImport {
+                                module: path,
+                                spec: HirImportSpec::Glob,
+                                span: stmt.span,
+                            };
+                            items.push(HirItem::Import(import));
+                        }
+                        ast::ImportSource::RPackage => match spec {
+                            ast::ImportSpec::Glob => {
+                                let alias = path.clone();
+                                if self.r_import_aliases.contains_key(&alias) {
+                                    let prev_name = self
+                                        .r_import_aliases
+                                        .get(&alias)
+                                        .and_then(|sym| self.symbols.get(sym))
+                                        .cloned()
+                                        .unwrap_or_else(|| "<unknown>".to_string());
+                                    return Err(RRException::new(
+                                        "RR.SemanticError",
+                                        RRCode::E1002,
+                                        Stage::Lower,
+                                        format!(
+                                            "R namespace alias '{}' conflicts with imported symbol '{}'; choose another alias",
+                                            alias, prev_name
+                                        ),
+                                    )
+                                    .at(stmt.span));
+                                }
+                                if let Some(prev_pkg) =
+                                    self.r_namespace_aliases.get(&alias).cloned()
+                                    && prev_pkg != path
+                                {
+                                    return Err(RRException::new(
+                                        "RR.SemanticError",
+                                        RRCode::E1002,
+                                        Stage::Lower,
+                                        format!(
+                                            "R namespace alias '{}' is already bound to package '{}'; choose another alias",
+                                            alias, prev_pkg
+                                        ),
+                                    )
+                                    .at(stmt.span));
+                                }
+                                self.r_namespace_aliases.insert(alias, path);
+                            }
+                            ast::ImportSpec::Named(bindings) => {
+                                for binding in bindings {
+                                    let local =
+                                        binding.local.unwrap_or_else(|| binding.imported.clone());
+                                    let qualified = format!("{}::{}", path, binding.imported);
+                                    let sym = self.intern_symbol(&qualified);
+                                    if let Some(prev) = self.r_import_aliases.get(&local).copied()
+                                        && prev != sym
+                                    {
+                                        let prev_name = self
+                                            .symbols
+                                            .get(&prev)
+                                            .cloned()
+                                            .unwrap_or_else(|| "<unknown>".to_string());
+                                        return Err(RRException::new(
+                                                "RR.SemanticError",
+                                                RRCode::E1002,
+                                                Stage::Lower,
+                                                format!(
+                                                    "R import local '{}' is already bound to '{}'; use 'as' to choose a different local name",
+                                                    local, prev_name
+                                                ),
+                                            )
+                                            .at(stmt.span));
+                                    }
+                                    if let Some(prev_pkg) = self.r_namespace_aliases.get(&local)
+                                        && prev_pkg != &path
+                                    {
+                                        return Err(RRException::new(
+                                                "RR.SemanticError",
+                                                RRCode::E1002,
+                                                Stage::Lower,
+                                                format!(
+                                                    "R import local '{}' conflicts with namespace alias for package '{}'; use 'as' to rename the imported symbol",
+                                                    local, prev_pkg
+                                                ),
+                                            )
+                                            .at(stmt.span));
+                                    }
+                                    self.r_import_aliases.insert(local, sym);
+                                }
+                            }
+                            ast::ImportSpec::Namespace(alias) => {
+                                if self.r_import_aliases.contains_key(&alias) {
+                                    let prev_name = self
+                                        .r_import_aliases
+                                        .get(&alias)
+                                        .and_then(|sym| self.symbols.get(sym))
+                                        .cloned()
+                                        .unwrap_or_else(|| "<unknown>".to_string());
+                                    return Err(RRException::new(
+                                            "RR.SemanticError",
+                                            RRCode::E1002,
+                                            Stage::Lower,
+                                            format!(
+                                                "R namespace alias '{}' conflicts with imported symbol '{}'; choose another alias",
+                                                alias, prev_name
+                                            ),
+                                        )
+                                        .at(stmt.span));
+                                }
+                                if let Some(prev_pkg) =
+                                    self.r_namespace_aliases.get(&alias).cloned()
+                                    && prev_pkg != path
+                                {
+                                    return Err(RRException::new(
+                                            "RR.SemanticError",
+                                            RRCode::E1002,
+                                            Stage::Lower,
+                                            format!(
+                                                "R namespace alias '{}' is already bound to package '{}'; choose another alias",
+                                                alias, prev_pkg
+                                            ),
+                                        )
+                                        .at(stmt.span));
+                                }
+                                self.r_namespace_aliases.insert(alias, path);
+                            }
+                        },
+                    }
                     self.flush_pending_fns(&mut items);
                 }
                 ast::StmtKind::Export(fndecl) => {
@@ -772,13 +915,13 @@ impl Lowerer {
                 ty_hint,
                 init,
             } => {
-                let lid = self.declare_local(&name);
-                let sym = self.intern_symbol(&name);
                 let val = if let Some(e) = init {
                     Some(self.lower_expr(e)?)
                 } else {
                     None
                 };
+                let lid = self.declare_local(&name);
+                let sym = self.intern_symbol(&name);
                 if self.scopes.len() == 1
                     && let Some(HirExpr::Global(global_sym)) = &val
                     && self
@@ -824,9 +967,14 @@ impl Lowerer {
                 else_blk,
             } => {
                 let c = self.lower_expr(cond)?;
+                self.enter_scope();
                 let t = self.lower_block(then_blk)?;
+                self.exit_scope();
                 let e = if let Some(blk) = else_blk {
-                    Some(self.lower_block(blk)?)
+                    self.enter_scope();
+                    let lowered = self.lower_block(blk)?;
+                    self.exit_scope();
+                    Some(lowered)
                 } else {
                     None
                 };
@@ -839,7 +987,9 @@ impl Lowerer {
             }
             ast::StmtKind::While { cond, body } => {
                 let c = self.lower_expr(cond)?;
+                self.enter_scope();
                 let b = self.lower_block(body)?;
+                self.exit_scope();
                 Ok(HirStmt::While {
                     cond: c,
                     body: b,
@@ -948,6 +1098,8 @@ impl Lowerer {
                 if let Some(lid) = self.lookup(&n) {
                     Ok(HirExpr::Local(lid))
                 } else if let Some(sym) = self.global_fn_aliases.get(&n).copied() {
+                    Ok(HirExpr::Global(sym))
+                } else if let Some(sym) = self.r_import_aliases.get(&n).copied() {
                     Ok(HirExpr::Global(sym))
                 } else {
                     Ok(HirExpr::Global(self.intern_symbol(&n)))

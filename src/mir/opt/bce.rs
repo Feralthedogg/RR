@@ -910,7 +910,10 @@ fn collect_index_safety(
                 visit_limit,
             );
         }
-        ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => {}
+        ValueKind::Const(_)
+        | ValueKind::Param { .. }
+        | ValueKind::Load { .. }
+        | ValueKind::RSymbol { .. } => {}
     }
 }
 

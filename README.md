@@ -136,6 +136,9 @@ Representative coverage includes:
 - simulation catalog coverage in `example/data_science/` and `example/physics/`
 - benchmark workload smoke coverage in `example/benchmarks/`
 - RR vs R differential tests
+- generated `-O0/-O1/-O2` differential tests against reference R
+- per-pass MIR verification smoke with `RR_VERIFY_EACH_PASS=1`
+- generator-driven valid-program fuzzing for optimizer/codegen stability
 - compile-time performance gates
 - fuzz targets for parser, pipeline, type solver, and incremental compilation
 
@@ -147,6 +150,19 @@ Benchmark helper:
 scripts/bench_examples.sh
 ```
 
+Optimizer validation helpers:
+
+```bash
+cargo test -q --test random_differential
+RR_RANDOM_DIFFERENTIAL_COUNT=12 RR_RANDOM_DIFFERENTIAL_SEED=0xA11CE5EED55AA11C cargo test -q --test random_differential
+RR_RANDOM_DIFFERENTIAL_COUNT=12 RR_RANDOM_DIFFERENTIAL_SEED=0x5EED123456789ABC cargo test -q --test random_differential
+RR_VERIFY_EACH_PASS=1 cargo test -q --test pass_verify_examples
+RR_RANDOM_DIFFERENTIAL_COUNT=72 cargo test -q --test random_differential -- --nocapture
+```
+
+The generated differential harness covers loops, recurrences, matrices,
+records, and direct `stats`/`base` namespace interop cases.
+
 ## Fuzzing
 
 ```bash
@@ -155,6 +171,7 @@ cargo +nightly fuzz run parser fuzz/corpus/parser -- -dict=fuzz/dictionaries/rr.
 cargo +nightly fuzz run pipeline fuzz/corpus/pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run type_solver fuzz/corpus/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run incremental_compile fuzz/corpus/incremental_compile -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
+cargo +nightly fuzz run generated_pipeline fuzz/corpus/generated_pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 ```
 
 Smoke runner:
@@ -165,6 +182,33 @@ scripts/fuzz_smoke.sh
 
 Default smoke runs use the small `fuzz/corpus_smoke/` sets.
 Use `FUZZ_CORPUS_ROOT=fuzz/corpus` to exercise the full corpus.
+Longer soak coverage runs in `.github/workflows/nightly-soak.yml`.
+The default CI differential job now runs two deterministic seed slices:
+
+- `RR_RANDOM_DIFFERENTIAL_COUNT=12`, `RR_RANDOM_DIFFERENTIAL_SEED=0xA11CE5EED55AA11C`
+- `RR_RANDOM_DIFFERENTIAL_COUNT=12`, `RR_RANDOM_DIFFERENTIAL_SEED=0x5EED123456789ABC`
+
+Nightly soak uploads differential logs plus any fuzz crash artifacts so failures
+can be reproduced locally. It also uploads a triage bundle with minimized crash
+inputs and replay commands, plus verifier dumps from per-pass verification.
+Differential mismatches also persist repro bundles under
+`target/tests/random_differential_failures/`, and nightly differential triage
+turns those bundles into summary tables plus regression skeletons under
+`.artifacts/differential-triage/` and smoke-tests those generated regressions.
+Per-pass verifier failures from `pass_verify_examples` likewise persist under
+`target/tests/pass_verify_failures/` and are triaged into
+`.artifacts/pass-verify-triage/` with the same nightly smoke pass. Fuzz triage
+also smoke-tests generated text regressions. These triage bundles now carry
+machine-readable `bundle.manifest` files, and the shared
+`scripts/triage_driver.sh` validates those manifests before triage/promote
+automation proceeds. Triage outputs now also include `summary.json`, and nightly
+aggregates differential/pass-verify/fuzz triage into a single
+`.artifacts/nightly-soak/verification-summary.json` file so verification
+statistics can be consumed without scraping markdown. The paired
+`verification-summary.md` also lists promote-ready regression candidates when a
+bundle already has a smoke-tested `regression.rs` skeleton. Nightly also emits
+`top-promotion-candidates.json` / `.md` for downstream automation that only
+needs the highest-priority promote targets.
 
 ## Documentation
 

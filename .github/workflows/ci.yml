@@ -60,6 +60,42 @@ jobs:
           --skip tesseract_compiles_across_opt_levels
           --skip tesseract_runs_at_o2
 
+  differential:
+    name: Differential + Pass Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - differential_count: "12"
+            differential_seed: "0xA11CE5EED55AA11C"
+          - differential_count: "12"
+            differential_seed: "0x5EED123456789ABC"
+    env:
+      RR_RANDOM_DIFFERENTIAL_COUNT: ${{ matrix.differential_count }}
+      RR_RANDOM_DIFFERENTIAL_SEED: ${{ matrix.differential_seed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rscript
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core
+
+      - name: Random Differential
+        run: cargo test -q --test random_differential
+
+      - name: Pass Verify Examples
+        run: RR_VERIFY_EACH_PASS=1 cargo test -q --test pass_verify_examples
+
   examples:
     name: Example Smoke + Perf
     runs-on: ubuntu-latest
@@ -133,3 +169,6 @@ jobs:
 
       - name: Incremental Fuzz Smoke
         run: cargo fuzz run incremental_compile fuzz/corpus/incremental_compile -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
+
+      - name: Generated Pipeline Fuzz Smoke
+        run: cargo fuzz run generated_pipeline fuzz/corpus/generated_pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048

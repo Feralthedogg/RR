@@ -10,6 +10,9 @@ hero:
       text: Getting Started
       link: /getting-started
     - theme: alt
+      text: R Interop
+      link: /r-interop
+    - theme: alt
       text: CLI Reference
       link: /cli
     - theme: alt
@@ -25,4 +28,6 @@ features:
     details: RR emits standalone <code>.R</code> scripts with runtime helpers injected when needed, so output can run through ordinary <code>Rscript</code>.
   - title: Implementation-Tracked Docs
     details: Reference and internals docs are written against the code in <code>src/compiler</code>, <code>src/mir</code>, <code>src/runtime</code>, and tests.
+  - title: R Package Interop
+    details: RR now documents direct interop, opaque interop, and hybrid fallback tiers for <code>import r</code> and namespaced R package calls.
 ---

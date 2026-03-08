@@ -91,6 +91,39 @@ pub struct Frame {
     pub span: Option<Span>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticLabelKind {
+    Primary,
+    Origin,
+    Constraint,
+    Use,
+}
+
+impl DiagnosticLabelKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Origin => "origin",
+            Self::Constraint => "constraint",
+            Self::Use => "use",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticLabel {
+    pub kind: DiagnosticLabelKind,
+    pub span: Span,
+    pub message: Box<str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticFix {
+    pub message: Box<str>,
+    pub span: Option<Span>,
+    pub replacement: Option<Box<str>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RRException {
     pub module: &'static str,
@@ -100,6 +133,8 @@ pub struct RRException {
     pub span: Option<Span>,
     pub stacktrace: Box<Vec<Frame>>,
     pub notes: Box<Vec<String>>,
+    pub labels: Box<Vec<DiagnosticLabel>>,
+    pub fixes: Box<Vec<DiagnosticFix>>,
     pub related: Box<Vec<RRException>>,
 }
 
@@ -159,6 +194,8 @@ impl RRException {
             span: None,
             stacktrace: Box::new(Vec::new()),
             notes: Box::new(Vec::new()),
+            labels: Box::new(Vec::new()),
+            fixes: Box::new(Vec::new()),
             related: Box::new(Vec::new()),
         }
     }
@@ -190,6 +227,43 @@ impl RRException {
 
     pub fn note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
+        self
+    }
+
+    pub fn label(
+        mut self,
+        kind: DiagnosticLabelKind,
+        span: Span,
+        message: impl Into<String>,
+    ) -> Self {
+        self.labels.push(DiagnosticLabel {
+            kind,
+            span,
+            message: message.into().into_boxed_str(),
+        });
+        self
+    }
+
+    pub fn fix(mut self, message: impl Into<String>) -> Self {
+        self.fixes.push(DiagnosticFix {
+            message: message.into().into_boxed_str(),
+            span: None,
+            replacement: None,
+        });
+        self
+    }
+
+    pub fn replace(
+        mut self,
+        span: Span,
+        replacement: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        self.fixes.push(DiagnosticFix {
+            message: message.into().into_boxed_str(),
+            span: Some(span),
+            replacement: Some(replacement.into().into_boxed_str()),
+        });
         self
     }
 
@@ -255,10 +329,40 @@ impl RRException {
             return;
         }
 
-        if let Some(src) = source
-            && let Some(span) = self.span
-        {
-            self.show_snippet(src, span, color);
+        if let Some(src) = source {
+            if let Some(span) = self.span {
+                self.show_snippet(src, span, color, Some("primary"), palette.caret);
+            }
+            for label in self.labels.iter() {
+                let label_color = match label.kind {
+                    DiagnosticLabelKind::Primary => palette.caret,
+                    DiagnosticLabelKind::Origin => "1;94",
+                    DiagnosticLabelKind::Constraint => "1;38;5;208",
+                    DiagnosticLabelKind::Use => "1;92",
+                };
+                println!(
+                    "{}",
+                    style(
+                        color,
+                        label_color,
+                        &format!(
+                            "    {}: {}:{}:{}: {}",
+                            label.kind.as_str(),
+                            file,
+                            label.span.start_line,
+                            label.span.start_col,
+                            label.message
+                        ),
+                    )
+                );
+                self.show_snippet(
+                    src,
+                    label.span,
+                    color,
+                    Some(label.kind.as_str()),
+                    label_color,
+                );
+            }
         }
 
         if !self.stacktrace.is_empty() {
@@ -294,6 +398,19 @@ impl RRException {
                 println!("{}", style(color, palette.hint, &format!("hint: {}", n)));
             }
         }
+        for fix in self.fixes.iter() {
+            let mut line = format!("fix: {}", fix.message);
+            if let Some(span) = fix.span {
+                line.push_str(&format!(
+                    " @ {}:{}:{}",
+                    file, span.start_line, span.start_col
+                ));
+            }
+            if let Some(replacement) = &fix.replacement {
+                line.push_str(&format!(" => `{}`", replacement));
+            }
+            println!("{}", style(color, "1;92", &line));
+        }
     }
 
     fn stage_name(&self) -> &'static str {
@@ -310,7 +427,14 @@ impl RRException {
         }
     }
 
-    fn show_snippet(&self, source: &str, span: Span, color: bool) {
+    fn show_snippet(
+        &self,
+        source: &str,
+        span: Span,
+        color: bool,
+        label: Option<&str>,
+        caret_color: &str,
+    ) {
         let lines: Vec<&str> = source.lines().collect();
         if span.start_line > 0 && span.start_line as usize <= lines.len() {
             let line_idx = (span.start_line - 1) as usize;
@@ -320,11 +444,11 @@ impl RRException {
                 style(color, "2", &format!("{:>4} | {}", span.start_line, line))
             );
             let indent = " ".repeat(span.start_col as usize + 6);
-            let caret = format!("{}^", indent);
-            println!(
-                "{}",
-                style(color, palette_for_module(self.module).caret, &caret)
-            );
+            let caret = match label {
+                Some(label) => format!("{}^ [{}]", indent, label),
+                None => format!("{}^", indent),
+            };
+            println!("{}", style(color, caret_color, &caret));
         }
     }
 }
