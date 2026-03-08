@@ -32,52 +32,7 @@ jobs:
 
       - name: Contributing Audit
         shell: bash
-        run: |
-          set -euo pipefail
-          BASE_SHA="$(
-            python3 -c '
-          import json
-          import os
-
-          event_name = os.environ.get("GITHUB_EVENT_NAME", "")
-          event_path = os.environ.get("GITHUB_EVENT_PATH", "")
-          base = ""
-          if event_path:
-              with open(event_path, "r", encoding="utf-8") as fh:
-                  event = json.load(fh)
-              if event_name == "pull_request":
-                  base = event.get("pull_request", {}).get("base", {}).get("sha", "")
-              elif event_name == "push":
-                  base = event.get("before", "")
-          if base and set(base) == {"0"}:
-              base = ""
-          print(base)
-          '
-          )"
-          if [[ -n "$BASE_SHA" ]]; then
-            bash scripts/contributing_audit.sh --scan-only --base "$BASE_SHA"
-          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            bash scripts/contributing_audit.sh --scan-only --base "$(git rev-parse --verify HEAD^)"
-          else
-            HEAD_FILES="$(
-              git diff-tree --root --no-commit-id --name-only -r HEAD --
-              | awk '
-                  /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^CONTRIBUTING\.md$/ {
-                    print
-                  }
-                '
-              | sort -u
-            )"
-            if [[ -n "$HEAD_FILES" ]]; then
-              AUDIT_FILES=()
-              while IFS= read -r line; do
-                AUDIT_FILES+=("$line")
-              done <<<"$HEAD_FILES"
-              bash scripts/contributing_audit.sh --scan-only --files "${AUDIT_FILES[@]}"
-            else
-              bash scripts/contributing_audit.sh --scan-only
-            fi
-          fi
+        run: bash scripts/ci_contributing_audit.sh
 
   test:
     name: Core Tests + Perf Gate
