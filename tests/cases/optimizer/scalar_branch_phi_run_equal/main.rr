@@ -1,0 +1,12 @@
+fn choose(flag, x, y) {
+  let z = 0L
+  if flag {
+    z = x
+  } else {
+    z = y
+  }
+  print(z)
+  return z
+}
+
+print(choose(TRUE, 3L, 5L))

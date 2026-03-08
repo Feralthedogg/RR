@@ -1,0 +1,12 @@
+fn centered_sum(x) {
+  let n = length(x)
+  let mu = mean(x)
+  let acc = 0.0
+  for i in 1..n {
+    acc = acc + (x[i] - mu)
+  }
+  print(acc)
+  acc
+}
+
+print(centered_sum(c(2.0, 4.0, 6.0, 8.0)))

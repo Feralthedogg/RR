@@ -1,0 +1,18 @@
+fn clamp01(x) {
+  if x < 0.0 {
+    return 0.0
+  }
+  if x > 1.0 {
+    return 1.0
+  }
+  x
+}
+
+fn main() {
+  print(clamp01(-1.0))
+  print(clamp01(0.5))
+  print(clamp01(3.0))
+  return 0.0
+}
+
+print(main())

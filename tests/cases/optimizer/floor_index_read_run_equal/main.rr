@@ -1,0 +1,8 @@
+fn main() {
+  let x = c(10.0, 20.0, 30.0)
+  let idx = 2.8
+  print(x[floor(idx)])
+  return x[floor(idx)]
+}
+
+print(main())

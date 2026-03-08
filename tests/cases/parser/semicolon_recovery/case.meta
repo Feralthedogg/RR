@@ -1,0 +1,4 @@
+expect=parse-error
+flag=--no-runtime
+stdout_contains=semicolons are not supported
+stdout_not_contains=before LBrace

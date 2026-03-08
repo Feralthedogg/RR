@@ -1,0 +1,9 @@
+fn bad() {
+  return 1L;
+}
+
+fn good() {
+  return 2L
+}
+
+print(good())

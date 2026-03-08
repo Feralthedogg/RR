@@ -1,0 +1,6 @@
+expect=type-error
+flag=--no-runtime
+flag=--type-mode
+flag=strict
+stdout_contains=found 3 error(s)
+stdout_contains=fix:

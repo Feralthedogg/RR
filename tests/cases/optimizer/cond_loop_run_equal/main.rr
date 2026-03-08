@@ -1,0 +1,15 @@
+fn cond_loop(n, k) {
+  x = seq_len(n)
+  y = seq_len(n)
+  for (i in 1L..length(x)) {
+    if (x[i] > k) {
+      y[i] = x[i]
+    } else {
+      y[i] = 0L
+    }
+  }
+  print(sum(y))
+  return sum(y)
+}
+
+print(cond_loop(20L, 8L))

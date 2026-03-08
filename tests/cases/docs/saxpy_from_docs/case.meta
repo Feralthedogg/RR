@@ -1,0 +1,5 @@
+expect=compile-ok
+flag=--no-runtime
+flag=-O2
+stdout_contains=Vectorized: 1
+emit_contains=rr_assign_slice(out, i, n, ((.arg_a * .arg_x) + rr_index1_read_vec(out, rr_index_vec_floor(i:n))))

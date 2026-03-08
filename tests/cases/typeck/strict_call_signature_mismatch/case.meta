@@ -1,0 +1,6 @@
+expect=type-error
+flag=--no-runtime
+flag=--type-mode
+flag=strict
+stdout_contains=error[E1011]
+stdout_contains=arg 1 expects Int, got Char

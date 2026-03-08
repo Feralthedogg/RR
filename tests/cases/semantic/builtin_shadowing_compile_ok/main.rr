@@ -1,0 +1,9 @@
+fn sum(x) {
+  return x + 1L
+}
+
+fn main() {
+  return sum(2L)
+}
+
+print(main())

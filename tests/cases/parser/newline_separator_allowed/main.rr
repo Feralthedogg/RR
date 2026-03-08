@@ -1,0 +1,8 @@
+fn main() {
+  x <- 1L
+  y <- 2L
+  print(x + y)
+  return x + y
+}
+
+print(main())

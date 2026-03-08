@@ -1,0 +1,10 @@
+fn total(n) {
+  let acc = 0L
+  for i in 1L..n {
+    acc = acc + (i * i)
+  }
+  print(acc)
+  return acc
+}
+
+print(total(10L))

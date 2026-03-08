@@ -1,0 +1,10 @@
+fn main() {
+  let acc = 0L
+  for i in 1L..4L {
+    acc = acc + i
+  }
+  print(acc)
+  return acc
+}
+
+print(main())

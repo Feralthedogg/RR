@@ -1,0 +1,4 @@
+expect=semantic-error
+flag=--no-runtime
+env=RR_STRICT_LET=1
+stdout_contains=assignment to undeclared variable 'x'

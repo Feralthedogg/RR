@@ -1,0 +1,5 @@
+expect=type-error
+flag=--no-runtime
+flag=--type-mode
+flag=strict
+stdout_contains=error[E1010]

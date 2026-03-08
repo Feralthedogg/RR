@@ -1,0 +1,5 @@
+expect=semantic-error
+flag=--no-runtime
+stdout_contains=semantic validation failed
+stdout_contains=undefined variable 'a'
+stdout_contains=undefined variable 'b'

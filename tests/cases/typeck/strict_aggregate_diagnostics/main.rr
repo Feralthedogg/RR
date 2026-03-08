@@ -1,0 +1,14 @@
+fn bad_ret() -> float {
+  return "oops"
+}
+
+fn expects_int(x: int) -> int {
+  return x
+}
+
+fn main() -> int {
+  y <- expects_int("bad")
+  return bad_ret() + y
+}
+
+print(main())

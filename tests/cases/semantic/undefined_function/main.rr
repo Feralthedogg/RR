@@ -1,0 +1,5 @@
+fn main() {
+  return foo(1L)
+}
+
+print(main())

@@ -1,0 +1,6 @@
+fn main() {
+  let x = 1L
+  return y + x
+}
+
+print(main())

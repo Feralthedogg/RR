@@ -1,0 +1,5 @@
+expect=compile-ok
+flag=--no-runtime
+flag=-O2
+stdout_contains=Reduced: 1
+emit_contains=acc <- sum((.arg_x * .arg_x))

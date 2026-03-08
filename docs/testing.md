@@ -19,6 +19,7 @@ Run one integration suite:
 
 ```bash
 cargo test -q --test vectorization_extended
+cargo test -q --test case_regressions
 ```
 
 Run lints:
@@ -56,6 +57,27 @@ GitHub Actions runs the diff-scoped `--scan-only` variant on each PR/push so
 new work cannot introduce fresh `CONTRIBUTING.md` rule violations unnoticed.
 
 ## Test Families
+
+### File-Based Compiler Regressions
+
+- `tests/cases/*`
+- `tests/case_regressions.rs`
+
+This is the fast path for adding small compiler regressions without creating a
+new Rust integration test file each time. Cases are grouped by category
+(`parser`, `semantic`, `typeck`, `optimizer`, `docs`) and use a tiny
+line-oriented `case.meta` sidecar to describe expectations such as:
+
+- `parse-error`
+- `semantic-error`
+- `type-error`
+- `compile-ok`
+- `run-equal-o0-o2`
+
+The harness can also assert on compile stdout/stderr, emitted R substrings, and
+per-case environment variables. Use it for narrow bug repros, optimizer shape
+checks, and doc/example sync cases. The in-tree format reference lives in
+`tests/cases/README.md` at the repository root.
 
 ### Frontend and Syntax
 

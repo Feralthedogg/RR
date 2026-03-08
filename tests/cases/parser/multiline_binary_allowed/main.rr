@@ -1,0 +1,9 @@
+fn main() {
+  let x = (1L +
+    2L +
+    3L)
+  print(x)
+  return x
+}
+
+print(main())

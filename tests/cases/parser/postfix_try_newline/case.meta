@@ -1,0 +1,2 @@
+expect=compile-ok
+flag=--no-runtime

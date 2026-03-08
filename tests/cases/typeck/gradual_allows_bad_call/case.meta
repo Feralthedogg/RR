@@ -1,0 +1,4 @@
+expect=compile-ok
+flag=--no-runtime
+flag=--type-mode
+flag=gradual

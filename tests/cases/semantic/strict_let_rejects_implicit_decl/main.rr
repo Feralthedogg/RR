@@ -1,0 +1,6 @@
+fn main() {
+  x <- 1L
+  return x
+}
+
+print(main())

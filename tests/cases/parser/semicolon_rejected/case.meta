@@ -1,0 +1,3 @@
+expect=parse-error
+flag=--no-runtime
+stdout_contains=semicolons are not supported

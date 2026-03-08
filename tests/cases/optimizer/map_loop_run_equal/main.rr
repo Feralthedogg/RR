@@ -1,0 +1,11 @@
+fn map_loop(n) {
+  x = seq_len(n)
+  y = seq_len(n)
+  for (i in 1L..length(x)) {
+    y[i] = (x[i] * 2L) + 1L
+  }
+  print(sum(y))
+  return sum(y)
+}
+
+print(map_loop(20L))

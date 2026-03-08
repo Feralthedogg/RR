@@ -1,0 +1,7 @@
+fn main() {
+  let s = "hello
+  print(s)
+  return 0L
+}
+
+print(main())

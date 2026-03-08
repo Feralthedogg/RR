@@ -1,0 +1,5 @@
+fn id_int(x: int) -> int {
+  return x
+}
+
+print(id_int(4L))

@@ -1,0 +1,9 @@
+fn expects_int(x: int) -> int {
+  return x
+}
+
+fn main() -> int {
+  return expects_int("bad")
+}
+
+print(main())

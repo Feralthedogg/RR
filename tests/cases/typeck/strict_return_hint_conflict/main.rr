@@ -1,0 +1,5 @@
+fn bad(a: float) -> float {
+  return "oops"
+}
+
+print(bad(1.0))

@@ -1,0 +1,10 @@
+fn saxpy(x, y, a) {
+  let n = length(x)
+  let out = y
+  for i in 1..n {
+    out[i] = (a * x[i]) + y[i]
+  }
+  out
+}
+
+print(saxpy(c(1.0, 2.0, 3.0), c(4.0, 5.0, 6.0), 2.0)[2.0])

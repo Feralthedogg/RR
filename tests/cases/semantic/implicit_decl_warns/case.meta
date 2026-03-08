@@ -1,0 +1,4 @@
+expect=compile-ok
+flag=--no-runtime
+env=RR_WARN_IMPLICIT_DECL=1
+stderr_contains=implicit declaration via assignment
