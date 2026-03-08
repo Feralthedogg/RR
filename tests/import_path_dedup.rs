@@ -15,14 +15,17 @@ fn equivalent_import_paths_are_loaded_once() {
 
     let imported_path = proj_dir.join("module.rr");
     let imported_src = r#"
-print("DEDUPE_SENTINEL_8J2K");
+print("DEDUPE_SENTINEL_8J2K")
+
 "#;
     fs::write(&imported_path, imported_src).expect("failed to write module.rr");
 
     let main_path = proj_dir.join("main.rr");
     let main_src = r#"
-import "./module.rr";
-import "module.rr";
+import "./module.rr"
+
+import "module.rr"
+
 "#;
     fs::write(&main_path, main_src).expect("failed to write main.rr");
 

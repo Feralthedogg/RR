@@ -15,14 +15,14 @@ fn build_command_writes_r_files_into_build_dir() {
 
     let main_src = r#"
 fn main() {
-  let x = 1;
-  print(x);
+  let x = 1
+  print(x)
 }
-main();
+main()
 "#;
     let util_src = r#"
 fn helper(x) {
-  return x + 1;
+  return x + 1
 }
 "#;
     fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
@@ -68,9 +68,9 @@ fn run_command_finds_main_rr_from_dot() {
 
     let main_src = r#"
 fn main() {
-  print(123);
+  print(123)
 }
-main();
+main()
 "#;
     fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
 

@@ -10,26 +10,41 @@ fn cube_index_helper_calls_rewrite_to_vector_builtin() {
 
     let rr_src = r#"
 fn idx_cube(f, x, y, size) {
-  ff = round(f);
-  xx = round(x);
-  yy = round(y);
-  ss = round(size);
-  if (ff < 1) { ff = 1; }
-  if (ff > 6) { ff = 6; }
-  if (xx < 1) { xx = 1; }
-  if (xx > ss) { xx = ss; }
-  if (yy < 1) { yy = 1; }
-  if (yy > ss) { yy = ss; }
-  return ((ff - 1) * ss * ss) + ((xx - 1) * ss) + yy;
+  ff = round(f)
+
+  xx = round(x)
+
+  yy = round(y)
+
+  ss = round(size)
+
+  if (ff < 1) { ff = 1
+ }
+  if (ff > 6) { ff = 6
+ }
+  if (xx < 1) { xx = 1
+ }
+  if (xx > ss) { xx = ss
+ }
+  if (yy < 1) { yy = 1
+ }
+  if (yy > ss) { yy = ss
+ }
+  return ((ff - 1) * ss * ss) + ((xx - 1) * ss) + yy
+
 }
 
 fn scatter_face(field, size) {
-  let total = (6 * size) * size;
-  let out = seq_len(total) * 0;
+  let total = (6 * size) * size
+
+  let out = seq_len(total) * 0
+
   for (i in 1..size) {
-    out[idx_cube(1, i, 1, size)] = field[i];
+    out[idx_cube(1, i, 1, size)] = field[i]
+
   }
-  return out;
+  return out
+
 }
 "#;
 

@@ -1,6 +1,6 @@
-import "../common/sim_utils.rr";
-import r default from "stats";
-import r * as base from "base";
+import "../common/sim_utils.rr"
+import r default from "stats"
+import r * as base from "base"
 
 fn main() {
     xs = c(0.0, 1.0, 2.0, 3.0, 4.0, 5.0)
@@ -20,4 +20,4 @@ fn main() {
     print_metric("lm_q90", bands[3])
 }
 
-main();
+main()

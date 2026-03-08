@@ -15,10 +15,10 @@ fn invalid_character_must_fail_compile() {
 
     let bad_src = r#"
 fn main() {
-  let x = 1$;
-  print(x);
+  let x = 1$
+  print(x)
 }
-main();
+main()
 "#;
     let rr_path = proj_dir.join("bad.rr");
     let out_path = proj_dir.join("bad.R");
@@ -63,9 +63,9 @@ fn unterminated_string_must_fail_compile() {
     let bad_src = r#"
 fn main() {
   let s = "hello;
-  print(s);
+  print(s)
 }
-main();
+main()
 "#;
     let rr_path = proj_dir.join("bad_string.rr");
     let out_path = proj_dir.join("bad_string.R");

@@ -30,13 +30,38 @@ cargo clippy --all-targets -- -D warnings
 For the post-change audit pass used before merging compiler work, see
 [Contributing Audit Checklist](contributing-audit.md).
 
+Audit helper:
+
+```bash
+scripts/contributing_audit.sh
+scripts/contributing_audit.sh --scan-only
+```
+
+Cleanroom strict verification helper:
+
+```bash
+scripts/verify_cleanroom.sh
+scripts/verify_cleanroom.sh --files src/syntax/parse.rs tests/statement_boundaries.rs
+scripts/verify_cleanroom.sh --fast --files scripts/verify_cleanroom.sh
+```
+
+This creates a detached clean worktree at `HEAD`, overlays only the selected
+current-tree files, and runs the strict local verification stack there. Use it
+when your main worktree is already dirty and you want a verification result that
+matches a clean checkout plus only the patch you intend to review. `--fast`
+keeps the cleanroom setup but limits execution to `fmt`, `check`, `clippy`, and
+the contributing audit.
+
+GitHub Actions runs the diff-scoped `--scan-only` variant on each PR/push so
+new work cannot introduce fresh `CONTRIBUTING.md` rule violations unnoticed.
+
 ## Test Families
 
 ### Frontend and Syntax
 
 - `syntax_errors.rs`
 - `parse_multi_errors.rs`
-- `semicolon_required.rs`
+- `statement_boundaries.rs`
 
 These cover parsing, error recovery, and syntax diagnostics.
 

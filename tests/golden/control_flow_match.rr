@@ -1,25 +1,25 @@
 fn loop_ops(n) {
-  let s = 0L;
+  let s = 0L
   for (i in 1L..n) {
     if (i == 3L) {
-      next;
+      next
     }
     if (i == 6L) {
-      break;
+      break
     }
-    s = s + i;
+    s = s + i
   }
-  return s;
+  return s
 }
 
 fn fact(n) {
-  let acc = 1L;
-  let i = 1L;
+  let acc = 1L
+  let i = 1L
   while (i <= n) {
-    acc = acc * i;
-    i = i + 1L;
+    acc = acc * i
+    i = i + 1L
   }
-  return acc;
+  return acc
 }
 
 fn match_list(v) {
@@ -27,7 +27,7 @@ fn match_list(v) {
     [a, b, ..rest] => a + b + length(rest),
     [x] => x,
     _ => 0L
-  };
+  }
 }
 
 fn match_record(v) {
@@ -35,19 +35,19 @@ fn match_record(v) {
     {a: x, b: y} => x + y,
     {a: x} => x,
     _ => 0L
-  };
+  }
 }
 
 fn main() {
-  print(loop_ops(10L));
-  print(fact(6L));
-  print(match_list([10L, 20L, 30L, 40L]));
-  print(match_list([7L]));
-  print(match_list(NULL));
-  print(match_record({a: 3L, b: 4L}));
-  print(match_record({a: 9L}));
-  print(match_record({c: 1L}));
-  return 0L;
+  print(loop_ops(10L))
+  print(fact(6L))
+  print(match_list([10L, 20L, 30L, 40L]))
+  print(match_list([7L]))
+  print(match_list(NULL))
+  print(match_record({a: 3L, b: 4L}))
+  print(match_record({a: 9L}))
+  print(match_record({c: 1L}))
+  return 0L
 }
 
-print(main());
+print(main())

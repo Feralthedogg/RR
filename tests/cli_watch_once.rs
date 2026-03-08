@@ -22,9 +22,9 @@ fn watch_once_compiles_and_exits_successfully() {
     let main_path = proj_dir.join("main.rr");
     let source = r#"
 fn main() {
-  print(42L);
+  print(42L)
 }
-main();
+main()
 "#;
     fs::write(&main_path, source).expect("failed to write main.rr");
 

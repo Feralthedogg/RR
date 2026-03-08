@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     n = 128.0
@@ -27,4 +27,4 @@ fn main() {
     print_metric("bootstrap_bench_acc", acc)
 }
 
-main();
+main()

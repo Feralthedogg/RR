@@ -28,7 +28,7 @@ solve.cg <- function(v) {
 }
 
 fn dot.mul(z) {
-  return z * 2L;
+  return z * 2L
 }
 
 idx.cube <- function(f, x, y, size) {

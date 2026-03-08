@@ -21,7 +21,8 @@ fn import_r_package_lowers_to_package_name_namespace_alias() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-import r "graphics";
+import r "graphics"
+
 
 main <- function() {
   graphics.plot(c(1, 2, 3), c(1, 4, 9), type = "l")
@@ -73,8 +74,10 @@ fn named_alias_and_default_r_imports_lower_to_namespaced_calls() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-import r { plot as draw_plot } from "graphics";
-import r default from "grDevices";
+import r { plot as draw_plot } from "graphics"
+
+import r default from "grDevices"
+
 
 main <- function() {
   outfile <- "named_import_plot.png"
@@ -146,8 +149,10 @@ fn namespace_r_import_lowers_to_namespaced_calls() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-import r * as graphics from "graphics";
-import r * as grDevices from "grDevices";
+import r * as graphics from "graphics"
+
+import r * as grDevices from "grDevices"
+
 
 main <- function() {
   outfile <- "namespace_import_plot.png"
@@ -213,10 +218,14 @@ fn direct_stats_readr_tidyr_interop_avoids_opaque_and_hybrid() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-import r default from "base";
-import r default from "stats";
-import r default from "readr";
-import r default from "tidyr";
+import r default from "base"
+
+import r default from "stats"
+
+import r default from "readr"
+
+import r default from "tidyr"
+
 
 fn main() {
     raw = base.data.frame(name = c("a", "b"), value_a = c(1.0, 3.0), value_b = c(2.0, 4.0))
@@ -269,7 +278,8 @@ fn unsupported_namespaced_r_call_uses_opaque_interop_not_hybrid_fallback() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-	import r * as utils from "utils";
+	import r * as utils from "utils"
+
 
 	main <- function() {
 	  print(utils.head(c(1, 2, 3), 2))

@@ -1,6 +1,6 @@
-import r default from "ggplot2";
-import r default from "dplyr";
-import r * as base from "base";
+import r default from "ggplot2"
+import r default from "dplyr"
+import r * as base from "base"
 
 fn main() {
     outfile = "rr_dplyr_ggplot2_pipeline_modern.png"
@@ -24,4 +24,4 @@ fn main() {
     print(outfile)
 }
 
-main();
+main()

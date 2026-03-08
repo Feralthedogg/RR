@@ -18,10 +18,10 @@ fn run_compile_with_env(
 fn undefined_variable_must_fail() {
     let src = r#"
 fn main() {
-  let x = 1;
-  return y + x;
+  let x = 1
+  return y + x
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "undefined_var.rr");
     assert!(!ok, "compile must fail for undefined variable");
@@ -41,9 +41,9 @@ main();
 fn undefined_function_must_fail() {
     let src = r#"
 fn main() {
-  return foo(1);
+  return foo(1)
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "undefined_fn.rr");
     assert!(!ok, "compile must fail for undefined function");
@@ -63,12 +63,12 @@ main();
 fn arity_mismatch_must_fail() {
     let src = r#"
 fn add(a, b) {
-  return a + b;
+  return a + b
 }
 fn main() {
-  return add(1);
+  return add(1)
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "arity_mismatch.rr");
     assert!(!ok, "compile must fail for arity mismatch");
@@ -88,11 +88,11 @@ main();
 fn implicit_declaration_warns_by_default() {
     let src = r#"
 fn main() {
-  x <- 1;
-  x <- x + 1;
-  return x;
+  x <- 1
+  x <- x + 1
+  return x
 }
-main();
+main()
 "#;
     let (ok, _stdout, stderr) = run_compile_with_env(
         src,
@@ -114,10 +114,10 @@ main();
 fn strict_let_mode_rejects_implicit_declaration() {
     let src = r#"
 fn main() {
-  x <- 1;
-  return x;
+  x <- 1
+  return x
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) =
         run_compile_with_env(src, "implicit_decl_strict.rr", &[("RR_STRICT_LET", "1")]);

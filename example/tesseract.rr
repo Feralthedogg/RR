@@ -21,13 +21,17 @@ fn floor(x: float) -> float = x - (x % 1.0)
 // builtin math names are reserved for optimizer/runtime lowering, so keep
 // showcase helpers under distinct names.
 fn demo_abs(x: float) -> float {
-    if x < 0.0 { return 0.0 - x }
+    if x < 0.0 {
+        return 0.0 - x
+    }
     x
 }
 
 // Classic R function assignment style
 fn demo_max(a, b) {
-    if (a > b) { return a }
+    if (a > b) {
+        return a
+    }
     b
 }
 
@@ -41,7 +45,9 @@ fn demo_exp(x) {
 // ~ demo.sqrt = function(x) { ... }
 fn demo_sqrt(x: float) -> float {
     g = x / 2.0
-    if g == 0.0 { return 0.0 }
+    if g == 0.0 {
+        return 0.0
+    }
     i = 0.0
     while i < 5.0 {
         g = (g + x / g) * 0.5
@@ -57,7 +63,9 @@ fn barrier_alloc(n, val, depth) {
 // builtin names. This keeps cube-index helpers deterministic under lowering.
 fn round(x) {
     r = x % 1.0
-    if (r >= 0.5) { return x - r + 1.0 }
+    if (r >= 0.5) {
+        return x - r + 1.0
+    }
     x - r
 }
 
@@ -68,12 +76,24 @@ fn idx_cube(f, x, y, size) {
     yy = round(y)
     ss = round(size)
 
-    if ff < 1.0 { ff = 1.0 }
-    if ff > 6.0 { ff = 6.0 }
-    if xx < 1.0 { xx = 1.0 }
-    if xx > ss { xx = ss }
-    if yy < 1.0 { yy = 1.0 }
-    if yy > ss { yy = ss }
+    if ff < 1.0 {
+        ff = 1.0
+    }
+    if ff > 6.0 {
+        ff = 6.0
+    }
+    if xx < 1.0 {
+        xx = 1.0
+    }
+    if xx > ss {
+        xx = ss
+    }
+    if yy < 1.0 {
+        yy = 1.0
+    }
+    if yy > ss {
+        yy = ss
+    }
 
     (ff - 1.0) * ss * ss + (xx - 1.0) * ss + yy
 }
@@ -84,9 +104,15 @@ fn get_lat(f, x, y, size) {
     u = (x / size) * 2.0 - 1.0
     v = (y / size) * 2.0 - 1.0
     lat = 0.0
-    if (f == 5.0) { lat = 45.0 + (1.0 - (u * u + v * v) * 0.25) * 45.0 }
-    if (f == 6.0) { lat = -45.0 - (1.0 - (u * u + v * v) * 0.25) * 45.0 }
-    if (f < 5.0) { lat = v * 45.0 }
+    if (f == 5.0) {
+        lat = 45.0 + (1.0 - (u * u + v * v) * 0.25) * 45.0
+    }
+    if (f == 6.0) {
+        lat = -45.0 - (1.0 - (u * u + v * v) * 0.25) * 45.0
+    }
+    if (f < 5.0) {
+        lat = v * 45.0
+    }
     lat
 }
 
@@ -97,7 +123,9 @@ fn syntax.demo() {
     // Pipe demo: a |> f() ~ f(a)
     x = arr |> sum()
     // Field access demo: meta.name
-    if meta.version >= 1.0 { x = x + 0.0 }
+    if meta.version >= 1.0 {
+        x = x + 0.0
+    }
     x
 }
 
@@ -525,7 +553,9 @@ fn solve_cg(b, n_l, n_r, n_d, n_u, size) {
     }
 
     rs_old = dot_product(r, r, size)
-    if (is.na(rs_old) || !is.finite(rs_old) || rs_old == 0.0) { rs_old = 0.0000001 }
+    if (is.na(rs_old) || !is.finite(rs_old) || rs_old == 0.0) {
+        rs_old = 0.0000001
+    }
 
     rs_new = 0.0
     alpha = 0.0
@@ -543,10 +573,14 @@ fn solve_cg(b, n_l, n_r, n_d, n_u, size) {
         Ap = sparse_mat_vec(p, n_l, n_r, n_d, n_u, size)
 
         p_Ap = dot_product(p, Ap, size)
-        if (is.na(p_Ap) || !is.finite(p_Ap) || p_Ap == 0.0) { p_Ap = 0.0000001 }
+        if (is.na(p_Ap) || !is.finite(p_Ap) || p_Ap == 0.0) {
+            p_Ap = 0.0000001
+        }
 
         alpha = rs_old / p_Ap
-        if (is.na(alpha) || !is.finite(alpha)) { alpha = 0.0 }
+        if (is.na(alpha) || !is.finite(alpha)) {
+            alpha = 0.0
+        }
 
 
         i = 1.0
@@ -563,10 +597,14 @@ fn solve_cg(b, n_l, n_r, n_d, n_u, size) {
         }
 
         rs_new = dot_product(r, r, size)
-        if (is.na(rs_new) || !is.finite(rs_new)) { rs_new = rs_old }
+        if (is.na(rs_new) || !is.finite(rs_new)) {
+            rs_new = rs_old
+        }
 
         beta = rs_new / rs_old
-        if (is.na(beta) || !is.finite(beta)) { beta = 0.0 }
+        if (is.na(beta) || !is.finite(beta)) {
+            beta = 0.0
+        }
 
 
         i = 1.0

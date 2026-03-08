@@ -69,25 +69,42 @@ fn lambda_and_closure_calls_work_end_to_end() {
 
     let rr_src = r#"
 fn apply_twice(f, x) {
-  return f(f(x));
+  return f(f(x))
+
 }
 
 fn main() {
-  let inc = fn(v) { return v + 1; };
-  let seed = 10;
-  let add_seed = fn(v) { return v + seed; };
-  let r1 = inc(2);
-  let r2 = add_seed(5);
-  let r3 = apply_twice(inc, 3);
-  let r4 = (fn(a) { return a * 2; })(6);
-  print(r1);
-  print(r2);
-  print(r3);
-  print(r4);
-  return r1 + r2 + r3 + r4;
+  let inc = fn(v) { return v + 1
+ }
+
+  let seed = 10
+
+  let add_seed = fn(v) { return v + seed
+ }
+
+  let r1 = inc(2)
+
+  let r2 = add_seed(5)
+
+  let r3 = apply_twice(inc, 3)
+
+  let r4 = (fn(a) { return a * 2
+ })(6)
+
+  print(r1)
+
+  print(r2)
+
+  print(r3)
+
+  print(r4)
+
+  return r1 + r2 + r3 + r4
+
 }
 
-print(main());
+print(main())
+
 "#;
 
     let rr_path = out_dir.join("lambda_closure.rr");

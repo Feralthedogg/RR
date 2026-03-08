@@ -36,6 +36,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: 'Getting Started', link: '/getting-started' },
+          { text: 'Writing RR for Performance & Safety', link: '/writing-rr' },
           { text: 'CLI Reference', link: '/cli' },
           { text: 'Configuration', link: '/configuration' },
         ],

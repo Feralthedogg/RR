@@ -6,9 +6,11 @@ use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 fn strict_mode_reports_return_type_hint_conflict() {
     let src = r#"
 fn bad(a: float) -> float {
-  return "oops";
+  return "oops"
+
 }
-bad(1.0);
+bad(1.0)
+
 "#;
 
     let res = compile_with_config(

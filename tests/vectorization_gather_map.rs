@@ -10,13 +10,18 @@ fn indirect_index_map_vectorizes_to_gather_form() {
 
     let rr_src = r#"
 fn gather_map(n) {
-  let src = seq_len(n) * 2;
-  let idx = seq_len(n);
-  let out = seq_len(n);
+  let src = seq_len(n) * 2
+
+  let idx = seq_len(n)
+
+  let out = seq_len(n)
+
   for (i in 1..length(out)) {
-    out[i] = src[idx[i]];
+    out[i] = src[idx[i]]
+
   }
-  return out;
+  return out
+
 }
 "#;
 

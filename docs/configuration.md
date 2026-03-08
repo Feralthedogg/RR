@@ -26,6 +26,8 @@ Current compiler line: `RR Tachyon v4.0.0`.
   - Forbid implicit declaration through assignment (`<-` / `=` to undeclared name).
 - `RR_STRICT_ASSIGN`
   - Alias trigger for strict-let behavior.
+- `RR_WARN_IMPLICIT_DECL`
+  - Emit warnings when assignment would implicitly declare a variable.
 
 ## Type and Native Backend
 
@@ -50,10 +52,25 @@ Current compiler line: `RR Tachyon v4.0.0`.
 - `RR_PARALLEL_MIN_TRIP` (default `4096`)
   - Minimum vector length before attempting parallel dispatch.
 
+## Runtime Behavior
+
+- `RR_RUNTIME_MODE` (`debug` | `release`, default `debug`)
+  - Controls the embedded runtime safety/performance mode.
+- `RR_STRICT_INDEX_READ` (default `false`)
+  - Turn NA read-index behavior into a hard runtime error.
+- `RR_FAST_RUNTIME` (default `false`)
+  - Force fast runtime rebinding regardless of `RR_RUNTIME_MODE`.
+- `RR_ENABLE_MARKS` (`0` | `1`, default `1`)
+  - Explicitly disable or enable `rr_mark` source tracking.
+  - When fast runtime is active, marks are disabled by default unless this is explicitly set.
+
 ## Optimizer Control
 
 - `RR_VERIFY_EACH_PASS` (default `false`)
   - Run MIR verifier after each pass.
+- `RR_VERIFY_DUMP_DIR`
+  - Optional directory for MIR verifier failure dumps.
+  - When verification fails, Tachyon writes per-stage MIR snapshots there for debugging.
 - `RR_OPT_MAX_ITERS` (default `24`)
   - Max per-function optimization iterations.
 - `RR_MAX_FN_OPT_MS` (default `250`)
@@ -74,8 +91,17 @@ Current compiler line: `RR Tachyon v4.0.0`.
   - Lower this value to bound compile time on very large functions at the cost of fewer guard eliminations.
 - `RR_SELECTIVE_OPT_BUDGET` (default `true`)
   - Enable selective optimization under budget pressure (optimize scored subset of functions instead of all-or-nothing fallback).
-- `RR_ADAPTIVE_IR_BUDGET` (default `false`)
+- `RR_ADAPTIVE_IR_BUDGET` (default `true`)
   - Enable code-analysis-driven dynamic IR budget estimation.
+  - This is the default path for large workloads such as `tesseract`, so Tier-B can keep full heavy optimization enabled when global IR pressure is high but function mix still looks tractable.
+- `RR_ENABLE_LICM` (default `true`)
+  - Enable loop-invariant code motion.
+  - LICM is additionally guarded by compact-function heuristics; large loop-heavy functions are skipped to keep compile time bounded.
+  - Set `0` to disable LICM globally.
+- `RR_ENABLE_GVN` (default `true`)
+  - Enable GVN/CSE.
+  - Current guardrails restrict GVN to loop-free, store-free functions and skip known unsafe runtime helpers.
+  - Set `0` to disable GVN globally.
 - `RR_PROFILE_USE` (default unset)
   - Optional profile hints file for hot-function prioritization in selective budget mode.
   - Format: one entry per line, `function=count` (also accepts `function:count` or `function count`).
@@ -85,6 +111,9 @@ Current compiler line: `RR Tachyon v4.0.0`.
   - Emit per-loop vectorization trace logs from `v_opt`.
   - Intended for compiler development and regression debugging, not normal end-user use.
   - Shows loop headers, IV origin, skip reasons, and matcher/materialization reject details.
+- `RR_WRAP_TRACE` (default `false`)
+  - Emit Tachyon wrap-detection and wrap-rewrite debug logs.
+  - Intended for compiler debugging, not normal end-user use.
 
 ## Inlining Policy
 

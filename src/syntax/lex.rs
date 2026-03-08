@@ -391,7 +391,10 @@ impl<'a> Lexer<'a> {
             }
             Some(';') => {
                 self.advance();
-                TokenKind::Semicolon
+                TokenKind::Invalid(
+                    "semicolons are not supported; end the statement with a newline or '}'"
+                        .to_string(),
+                )
             }
             None => TokenKind::EOF,
             Some(c) => {

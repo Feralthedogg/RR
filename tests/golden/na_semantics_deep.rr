@@ -1,15 +1,15 @@
 fn main() {
-  let x = c(1L, NA, 3L);
-  let l = c(TRUE, NA, FALSE);
-  let i = NA;
+  let x = c(1L, NA, 3L)
+  let l = c(TRUE, NA, FALSE)
+  let i = NA
 
-  print(x + 1L);
-  print(x > 1L);
-  print(l & TRUE);
-  print(l | FALSE);
-  print(x[i]);
+  print(x + 1L)
+  print(x > 1L)
+  print(l & TRUE)
+  print(l | FALSE)
+  print(x[i])
 
-  return 0L;
+  return 0L
 }
 
-print(main());
+print(main())

@@ -17,29 +17,43 @@ fn scalar_user_call_in_reduction_does_not_vectorize_unsafely() {
     let src = r#"
 fn mix(v, tweak) {
   if ((v % 2L) == 0L) {
-    return v + tweak;
+    return v + tweak
+
   } else {
-    return v - tweak;
+    return v - tweak
+
   }
 }
 
 fn main() {
-  let rows = 2L;
-  let cols = 5L;
-  let vals = seq_len(rows * cols);
-  let m = matrix(vals, rows, cols);
-  let rs = rowSums(m);
-  let total = 0L;
-  let i = 1L;
+  let rows = 2L
+
+  let cols = 5L
+
+  let vals = seq_len(rows * cols)
+
+  let m = matrix(vals, rows, cols)
+
+  let rs = rowSums(m)
+
+  let total = 0L
+
+  let i = 1L
+
   while (i <= length(rs)) {
-    total = total + mix(rs[i], 2L);
-    i = i + 1L;
+    total = total + mix(rs[i], 2L)
+
+    i = i + 1L
+
   }
-  print(total);
-  return total;
+  print(total)
+
+  return total
+
 }
 
-print(main());
+print(main())
+
 "#;
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

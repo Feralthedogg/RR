@@ -18,14 +18,19 @@ fn off_and_optional_have_equivalent_output_without_native_library() {
 
     let src = r#"
 fn call_abs(n: int) {
-  let x = seq_len(n) - 4;
-  let y = seq_len(n);
+  let x = seq_len(n) - 4
+
+  let y = seq_len(n)
+
   for (i in 1..length(x)) {
-    y[i] = abs(x[i]);
+    y[i] = abs(x[i])
+
   }
-  return y;
+  return y
+
 }
-print(call_abs(5L));
+print(call_abs(5L))
+
 "#;
 
     let (off_code, _map1) = compile_with_config(

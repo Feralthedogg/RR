@@ -10,11 +10,11 @@ fn shifted_index_read_is_bce_optimized() {
 
     let rr_src = r#"
 fn shifted(x) {
-  let y = seq_along(x);
+  let y = seq_along(x)
   for (i in 1..(length(x) - 1)) {
-    y[i] = x[i + 1];
+    y[i] = x[i + 1]
   }
-  return y;
+  return y
 }
 "#;
 

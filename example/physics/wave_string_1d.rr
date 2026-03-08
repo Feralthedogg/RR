@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     prev1 = 0.0
@@ -35,4 +35,4 @@ fn main() {
     print_metric("wave_abs_mass", abs1(curr1) + abs1(curr2) + abs1(curr3) + abs1(curr4) + abs1(curr5))
 }
 
-main();
+main()

@@ -4,4 +4,4 @@ fn main() {
   print(x + y)
 }
 
-main();
+main()

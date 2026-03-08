@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     x = 0.0
@@ -18,10 +18,14 @@ fn main() {
         x = x + dt * vx
         y = y + dt * vy
         max_y = max1(max_y, y)
-        if (y < 0.0) { step = 241.0 } else { step += 1.0 }
+        if (y < 0.0) {
+            step = 241.0
+        } else {
+            step += 1.0
+        }
     }
     print_metric("projectile_range", x)
     print_metric("projectile_peak", max_y)
 }
 
-main();
+main()

@@ -1,4 +1,4 @@
-import "../../example/common/sim_utils.rr";
+import "../../example/common/sim_utils.rr"
 
 fn main() {
     n = 256.0
@@ -18,4 +18,4 @@ fn main() {
     print_metric("monte_carlo_pi", estimate)
 }
 
-main();
+main()

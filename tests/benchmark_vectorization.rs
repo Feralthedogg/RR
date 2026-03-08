@@ -12,15 +12,15 @@ fn benchmark_sym10_stays_vectorized_and_read_check_free() {
 
     let rr_program = r#"
 fn vec_map(n) {
-  let x = seq_len(n);
-  let y = seq_len(n);
+  let x = seq_len(n)
+  let y = seq_len(n)
   for (i in 1..length(x)) {
-    y[i] = x[i] + x[i];
+    y[i] = x[i] + x[i]
   }
-  return y;
+  return y
 }
 
-print(vec_map(8));
+print(vec_map(8))
 "#;
     fs::write(&rr_src, rr_program).expect("failed to write RR source");
 

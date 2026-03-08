@@ -21,7 +21,9 @@ Literal keywords:
 
 ## Modern vs. Traditional Syntax Examples
 
-RR allows developers to write in a modern, Rust-like syntax, while fully supporting traditional R syntax to ensure seamless portability of existing code. You can mix and match these styles.
+RR allows developers to write in a modern, Rust-like syntax while still supporting
+many traditional R-style surface forms. You can mix and match these styles within
+the subset RR currently implements.
 
 ### 1. Assignment and Declarations
 **Traditional R:**
@@ -59,7 +61,7 @@ fn add(a: float, b: float) -> float = a + b
 **Traditional R:**
 ```R
 if (x > 0) {
-  for (i in 1:n) {
+  for (i in seq_len(n)) {
     x <- x + i
   }
 }
@@ -116,7 +118,8 @@ Current lexer limits:
 - Logical: `!`, `&&`, `||`
 - Single `&` and `|` are also tokenized as logical operators
 - Others: `..`, `.`, `|>`, `?`, `@`, `^`, `=>`, `->`
-- Delimiters: `()`, `{}`, `[]`, `,`, `:`, `;`
+- Delimiters: `()`, `{}`, `[]`, `,`, `:`
+- `;` is rejected; statements are newline-delimited
 
 ## Statements
 
@@ -195,8 +198,8 @@ Practical rule:
 
 ### Modules
 
-- `import "path.rr"` (`;` optional)
-- `import r "graphics"` (`;` optional) for package-name namespace interop; lowers `graphics.plot(...)` to `graphics::plot(...)`
+- `import "path.rr"`
+- `import r "graphics"` for package-name namespace interop; lowers `graphics.plot(...)` to `graphics::plot(...)`
 - `import r { plot, lines } from "graphics"` for named R symbol imports; lowers calls to `graphics::plot(...)`, `graphics::lines(...)`
 - `import r { plot as draw_plot } from "graphics"` supports local aliasing while still lowering to `graphics::plot(...)`
 - `import r * as grDevices from "grDevices"` supports namespace-style access such as `grDevices.png(...)`, lowered to `grDevices::png(...)`
@@ -207,8 +210,8 @@ Practical rule:
 Example:
 
 ```rr
-import r { plot as draw_plot, lines } from "graphics";
-import r default from "grDevices";
+import r { plot as draw_plot, lines } from "graphics"
+import r default from "grDevices"
 
 main <- function() {
   grDevices.png(filename = "plot.png", width = 640, height = 360)
@@ -222,9 +225,9 @@ main <- function() {
 Modern RR-style package interop uses the same import forms:
 
 ```rr
-import r default from "ggplot2";
-import r default from "dplyr";
-import r * as base from "base";
+import r default from "ggplot2"
+import r default from "dplyr"
+import r * as base from "base"
 
 fn main() {
     raw = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
@@ -239,7 +242,7 @@ fn main() {
     ggplot2.ggsave(filename = "plot.png", plot = p, width = 6, height = 4, dpi = 120)
 }
 
-main();
+main()
 ```
 
 Direct tidy-eval support is limited but intentional:
@@ -356,10 +359,11 @@ Current limits:
 
 ## Semicolon and Newline Policy
 
-- Semicolons are optional in most places
-- Same-line statement boundaries require `;`
-- Missing same-line separator triggers:
-  - `Missing ';' before ... on the same line`
+- Semicolons are not part of RR statement syntax
+- End statements with a newline or `}`
+- Same-line statement packing is rejected
+- Same-line statement boundary failures report:
+  - `statements must be separated by a newline or '}' before ...`
 
 Important newline rule:
 

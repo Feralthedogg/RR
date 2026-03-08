@@ -10,26 +10,41 @@ fn wrap_index_helper_calls_rewrite_to_vector_builtin() {
 
     let rr_src = r#"
 fn idx_torus(x, y, w, h) {
-  let xx = x;
-  let yy = y;
-  if (xx < 1) { xx = w; }
-  if (xx > w) { xx = 1; }
-  if (yy < 1) { yy = h; }
-  if (yy > h) { yy = 1; }
-  return ((yy - 1) * w) + xx;
+  let xx = x
+
+  let yy = y
+
+  if (xx < 1) { xx = w
+ }
+  if (xx > w) { xx = 1
+ }
+  if (yy < 1) { yy = h
+ }
+  if (yy > h) { yy = 1
+ }
+  return ((yy - 1) * w) + xx
+
 }
 
 fn lap_x(field, w, h) {
-  let size = w * h;
-  let out = seq_len(size);
+  let size = w * h
+
+  let out = seq_len(size)
+
   for (i in 1..size) {
-    let y = floor((i - 1) / w) + 1;
-    let x = i - (floor((i - 1) / w) * w);
-    let l = field[idx_torus(x - 1, y, w, h)];
-    let r = field[idx_torus(x + 1, y, w, h)];
-    out[i] = l + r;
+    let y = floor((i - 1) / w) + 1
+
+    let x = i - (floor((i - 1) / w) * w)
+
+    let l = field[idx_torus(x - 1, y, w, h)]
+
+    let r = field[idx_torus(x + 1, y, w, h)]
+
+    out[i] = l + r
+
   }
-  return out;
+  return out
+
 }
 "#;
 

@@ -1,4 +1,4 @@
-import "../../example/common/sim_utils.rr";
+import "../../example/common/sim_utils.rr"
 
 fn main() {
     s = 999.0
@@ -22,4 +22,4 @@ fn main() {
     print_metric("sir_final_recovered", r)
 }
 
-main();
+main()

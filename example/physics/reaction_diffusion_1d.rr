@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     n = 21.0
@@ -32,4 +32,4 @@ fn main() {
     print_metric("reaction_v_center", v[11.0])
 }
 
-main();
+main()

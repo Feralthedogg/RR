@@ -18,18 +18,18 @@ fn pipe_try_match_lowering_is_implemented_without_unimplemented_logs() {
 
     let rr_src = r#"
 fn add1(x) {
-  return x + 1;
+  return x + 1
 }
 
 fn main() {
-  let x = 4;
-  let y = x |> add1();
-  let z = (y + 1)?;
-  let m = match (z) { 6 => 10, _ => 0 };
-  print(m);
-  return m;
+  let x = 4
+  let y = x |> add1()
+  let z = (y + 1)?
+  let m = match (z) { 6 => 10, _ => 0 }
+  print(m)
+  return m
 }
-main();
+main()
 "#;
 
     let rr_path = proj_dir.join("case.rr");

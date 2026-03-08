@@ -1,8 +1,8 @@
-import r default from "ggplot2";
-import r default from "dplyr";
-import r default from "tidyr";
-import r default from "stats";
-import r * as base from "base";
+import r default from "ggplot2"
+import r default from "dplyr"
+import r default from "tidyr"
+import r default from "stats"
+import r * as base from "base"
 
 fn main() {
     outfile = "rr_tidyr_summary_pivot_wider_modern.png"
@@ -46,4 +46,4 @@ fn main() {
     print(outfile)
 }
 
-main();
+main()

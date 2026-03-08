@@ -16,19 +16,19 @@ fn run_compile_strict(source: &str, file_name: &str) -> (bool, String, String) {
 fn strict_type_errors_aggregate_with_labeled_spans_and_fixits() {
     let src = r#"
 fn bad_ret() -> float {
-  return "oops";
+  return "oops"
 }
 
 fn expects_int(x: int) -> int {
-  return x;
+  return x
 }
 
 fn main() -> int {
-  y <- expects_int("bad");
-  return bad_ret() + y;
+  y <- expects_int("bad")
+  return bad_ret() + y
 }
 
-main();
+main()
 "#;
 
     let (ok, stdout, _stderr) = run_compile_strict(src, "type_multi.rr");

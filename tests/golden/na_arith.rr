@@ -1,8 +1,8 @@
 fn main() {
-  let x = c(1L, NA, 3L);
-  let y = x + 1L;
-  print(y);
-  return 0L;
+  let x = c(1L, NA, 3L)
+  let y = x + 1L
+  print(y)
+  return 0L
 }
 
-print(main());
+print(main())

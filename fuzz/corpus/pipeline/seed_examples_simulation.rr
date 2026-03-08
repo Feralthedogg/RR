@@ -10,4 +10,4 @@ fn main() {
   print(xs[8.0])
 }
 
-main();
+main()

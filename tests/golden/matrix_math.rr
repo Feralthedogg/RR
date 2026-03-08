@@ -1,19 +1,19 @@
 fn main() {
-  let a = matrix(seq_len(12L), 3L, 4L);
-  let b = matrix(seq_len(12L) + 1L, 3L, 4L);
-  let c = a + b;
-  let d0 = sum(abs(c - (a + b)));
+  let a = matrix(seq_len(12L), 3L, 4L)
+  let b = matrix(seq_len(12L) + 1L, 3L, 4L)
+  let c = a + b
+  let d0 = sum(abs(c - (a + b)))
 
-  let d1 = sum(rowSums(a)) - sum(a);
-  let d2 = sum(colSums(a)) - sum(a);
-  let d3 = a[2L, 3L] - 8L;
+  let d1 = sum(rowSums(a)) - sum(a)
+  let d2 = sum(colSums(a)) - sum(a)
+  let d3 = a[2L, 3L] - 8L
 
-  print(d0);
-  print(d1);
-  print(d2);
-  print(d3);
+  print(d0)
+  print(d1)
+  print(d2)
+  print(d3)
 
-  return d0 + abs(d1) + abs(d2) + abs(d3);
+  return d0 + abs(d1) + abs(d2) + abs(d3)
 }
 
-print(main());
+print(main())

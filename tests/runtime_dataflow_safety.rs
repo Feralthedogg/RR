@@ -10,13 +10,18 @@ fn run_compile(source: &str, file_name: &str) -> (bool, String, String) {
 fn range_and_dataflow_runtime_hazards_are_detected() {
     let src = r#"
 fn bad(x) {
-  y <- x[length(x) - length(x)];
-  z <- 10L / (length(x) - length(x));
-  w <- seq_len((length(x) - length(x)) - 1L);
-  return z + length(w) + y;
+  y <- x[length(x) - length(x)]
+
+  z <- 10L / (length(x) - length(x))
+
+  w <- seq_len((length(x) - length(x)) - 1L)
+
+  return z + length(w) + y
+
 }
 
-bad(c(1L, 2L, 3L));
+bad(c(1L, 2L, 3L))
+
 "#;
 
     let (ok, stdout, _stderr) = run_compile(src, "runtime_dataflow.rr");

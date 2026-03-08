@@ -24,71 +24,100 @@ fn opt_levels_match_o0_semantics() {
             "loop_inline_tco",
             r#"
 fn inc(x) {
-    return x + 1;
+    return x + 1
+
 }
 
 fn test_sum(n) {
-    let x = seq_along(n);
-    let s = 0;
+    let x = seq_along(n)
+
+    let s = 0
+
     for (i in 1..length(x)) {
-        s = s + inc(x[i]);
+        s = s + inc(x[i])
+
     }
-    return s;
+    return s
+
 }
 
 fn test_map(n) {
-    let x = seq_along(n);
-    let y = seq_along(n);
+    let x = seq_along(n)
+
+    let y = seq_along(n)
+
     for (i in 1..length(x)) {
-        y[i] = x[i] * 2;
+        y[i] = x[i] * 2
+
     }
-    return y;
+    return y
+
 }
 
 fn test_recursive_sum(n, acc) {
     if (n <= 0) {
-        return acc;
+        return acc
+
     } else {
-        return test_recursive_sum(n - 1, acc + n);
+        return test_recursive_sum(n - 1, acc + n)
+
     }
 }
 
-print(test_sum(10));
-print(test_map(6));
-print(test_recursive_sum(10, 0));
+print(test_sum(10))
+
+print(test_map(6))
+
+print(test_recursive_sum(10, 0))
+
 "#,
         ),
         (
             "branch_and_swap",
             r#"
 fn branchy(n) {
-    let a = 0;
-    let b = 1;
+    let a = 0
+
+    let b = 1
+
     for (i in 1..n) {
         if (i <= 10) {
-            a = a + i;
+            a = a + i
+
         } else {
-            b = b + i;
+            b = b + i
+
         }
     }
-    return a + b;
+    return a + b
+
 }
 
 fn swapn(n) {
-    let a = 1;
-    let b = 2;
+    let a = 1
+
+    let b = 2
+
     for (i in 1..n) {
-        let t = a;
-        a = b;
-        b = t;
+        let t = a
+
+        a = b
+
+        b = t
+
     }
-    print(a);
-    print(b);
-    return a + b;
+    print(a)
+
+    print(b)
+
+    return a + b
+
 }
 
-print(branchy(20));
-print(swapn(7));
+print(branchy(20))
+
+print(swapn(7))
+
 "#,
         ),
     ];

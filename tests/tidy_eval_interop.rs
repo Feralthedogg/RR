@@ -13,9 +13,9 @@ fn tidy_eval_bare_symbols_lower_to_raw_package_calls() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-import r default from "ggplot2";
-import r default from "dplyr";
-import r * as base from "base";
+import r default from "ggplot2"
+import r default from "dplyr"
+import r * as base from "base"
 
 fn main() {
     df = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
@@ -26,7 +26,7 @@ fn main() {
     print(p)
 }
 
-main();
+main()
 "#;
 
     let rr_path = out_dir.join("tidy_eval_interop.rr");
@@ -79,9 +79,9 @@ fn tidy_eval_column_and_env_markers_compile_when_packages_are_available() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-import r default from "ggplot2";
-import r default from "dplyr";
-import r * as base from "base";
+import r default from "ggplot2"
+import r default from "dplyr"
+import r * as base from "base"
 
 fn main() {
     offset = 0.25
@@ -93,7 +93,7 @@ fn main() {
     print(p)
 }
 
-main();
+main()
 "#;
 
     let rr_path = out_dir.join("tidy_eval_markers.rr");

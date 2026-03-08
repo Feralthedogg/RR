@@ -10,11 +10,14 @@ fn floor_index_param_is_canonicalized_once() {
 
     let rr_src = r#"
 fn gather(a, idx, n) {
-  let out = a;
+  let out = a
+
   for (i in 1..n) {
-    out[i] = a[floor(idx[i])];
+    out[i] = a[floor(idx[i])]
+
   }
-  return out;
+  return out
+
 }
 "#;
 

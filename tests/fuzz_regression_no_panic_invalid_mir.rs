@@ -69,16 +69,16 @@ fn build_mir_without_semantic_gate(src: &str) -> FxHashMap<String, RR::mir::FnIR
 fn invalid_mir_from_undefined_variable_is_rejected_without_panic() {
     let src = r#"
 fn inc(x) {
-  return x + 1L;
+  return x + 1L
 }
 
 fn main() {
-  let x = seq_len(8L);
-  let y = seq_len(4L);
+  let x = seq_len(8L)
+  let y = seq_len(4L)
   for (i in 1L..length(x)) {
-    y[i] = inc(p[i]);
+    y[i] = inc(p[i])
   }
-  return sum(y);
+  return sum(y)
 }
 "#;
 

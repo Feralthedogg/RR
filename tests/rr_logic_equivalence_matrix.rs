@@ -35,20 +35,28 @@ fn rr_compiled_r_matches_reference_logic_across_mode_matrix() {
             name: "loop_branch_sum",
             rr_src: r#"
 fn kernel(n, k) {
-  let x = seq_len(n);
-  let i = 1L;
-  let s = 0L;
+  let x = seq_len(n)
+
+  let i = 1L
+
+  let s = 0L
+
   while (i <= length(x)) {
     if (x[i] > k) {
-      s = s + (x[i] * 2L);
+      s = s + (x[i] * 2L)
+
     } else {
-      s = s + (x[i] - 1L);
+      s = s + (x[i] - 1L)
+
     }
-    i = i + 1L;
+    i = i + 1L
+
   }
-  return s;
+  return s
+
 }
-print(kernel(12L, 7L));
+print(kernel(12L, 7L))
+
 "#,
             ref_r_src: r#"
 kernel <- function(n, k) {
@@ -72,16 +80,25 @@ print(kernel(12L, 7L))
             name: "matrix_row_col_summary",
             rr_src: r#"
 fn main() {
-  let v = seq_len(6L);
-  let m = matrix(v, 2L, 3L);
-  let r = rowSums(m);
-  let c = colSums(m);
-  print(sum(r));
-  print(sum(c));
-  print(m[2L, 3L]);
-  return sum(r) + sum(c) + m[2L, 3L];
+  let v = seq_len(6L)
+
+  let m = matrix(v, 2L, 3L)
+
+  let r = rowSums(m)
+
+  let c = colSums(m)
+
+  print(sum(r))
+
+  print(sum(c))
+
+  print(m[2L, 3L])
+
+  return sum(r) + sum(c) + m[2L, 3L]
+
 }
-print(main());
+print(main())
+
 "#,
             ref_r_src: r#"
 main <- function() {
@@ -101,15 +118,23 @@ print(main())
             name: "na_semantics_bundle",
             rr_src: r#"
 fn main() {
-  let x = c(1L, NA, 3L);
-  let l = c(TRUE, NA, FALSE);
-  print(x + 2L);
-  print(l & TRUE);
-  print(l | FALSE);
-  print(x[NA]);
-  return 0L;
+  let x = c(1L, NA, 3L)
+
+  let l = c(TRUE, NA, FALSE)
+
+  print(x + 2L)
+
+  print(l & TRUE)
+
+  print(l | FALSE)
+
+  print(x[NA])
+
+  return 0L
+
 }
-print(main());
+print(main())
+
 "#,
             ref_r_src: r#"
 main <- function() {
@@ -128,13 +153,19 @@ print(main())
             name: "typed_numeric_reduce",
             rr_src: r#"
 fn score(n: int) -> float {
-  let x = seq_len(n);
-  let y = abs((x * 3L) - 7L);
-  let s = sum(y);
-  let m = mean(y);
-  return s + m;
+  let x = seq_len(n)
+
+  let y = abs((x * 3L) - 7L)
+
+  let s = sum(y)
+
+  let m = mean(y)
+
+  return s + m
+
 }
-print(score(10L));
+print(score(10L))
+
 "#,
             ref_r_src: r#"
 score <- function(n) {
@@ -151,19 +182,30 @@ print(score(10L))
             name: "closure_and_apply",
             rr_src: r#"
 fn apply_twice(f, x) {
-  return f(f(x));
+  return f(f(x))
+
 }
 
 fn main() {
-  let seed = 5L;
-  let add_seed = fn(v) { return v + seed; };
-  let r1 = apply_twice(add_seed, 10L);
-  let r2 = (fn(z) { return z * 2L; })(7L);
-  print(r1);
-  print(r2);
-  return r1 + r2;
+  let seed = 5L
+
+  let add_seed = fn(v) { return v + seed
+ }
+
+  let r1 = apply_twice(add_seed, 10L)
+
+  let r2 = (fn(z) { return z * 2L
+ })(7L)
+
+  print(r1)
+
+  print(r2)
+
+  return r1 + r2
+
 }
-print(main());
+print(main())
+
 "#,
             ref_r_src: r#"
 apply_twice <- function(f, x) {

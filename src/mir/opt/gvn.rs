@@ -1,8 +1,13 @@
 use crate::mir::analyze::{alias, effects, na};
+use crate::mir::opt::loop_analysis::LoopAnalyzer;
 use crate::mir::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub fn optimize(fn_ir: &mut FnIR) -> bool {
+    if !is_safe_gvn_candidate(fn_ir) {
+        return false;
+    }
+
     let mut changed = false;
     let mut value_table: HashMap<ValueKind, ValueId> = HashMap::new();
     let mut replacements: HashMap<ValueId, ValueId> = HashMap::new();
@@ -47,6 +52,39 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
     changed
 }
 
+fn is_safe_gvn_candidate(fn_ir: &FnIR) -> bool {
+    if !LoopAnalyzer::new(fn_ir).find_loops().is_empty() {
+        return false;
+    }
+
+    if fn_ir.values.iter().any(|value| match &value.kind {
+        ValueKind::Call { callee, .. } => is_unsafe_runtime_helper(callee),
+        _ => false,
+    }) {
+        return false;
+    }
+
+    !fn_ir.blocks.iter().any(|blk| {
+        blk.instrs.iter().any(|instr| {
+            matches!(
+                instr,
+                Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. }
+            )
+        })
+    })
+}
+
+fn is_unsafe_runtime_helper(callee: &str) -> bool {
+    matches!(
+        callee,
+        "rr_recur_add_const"
+            | "rr_assign_slice"
+            | "rr_shift_assign"
+            | "rr_assign_index_vec"
+            | "rr_assign_index_vec_masked"
+    )
+}
+
 #[derive(Debug, Default)]
 struct CseContext {
     mutated_aliases: HashSet<alias::AliasClass>,
@@ -88,13 +126,10 @@ fn is_cse_eligible(fn_ir: &FnIR, kind: &ValueKind, ctx: &CseContext) -> bool {
             if !effects::call_is_pure(callee) {
                 return false;
             }
-            if ctx.has_impure_call || ctx.has_unknown_mutation {
+            if is_unsafe_runtime_helper(callee) {
                 return false;
             }
-            if !args
-                .iter()
-                .all(|a| matches!(fn_ir.values[*a].kind, ValueKind::Const(_)))
-            {
+            if ctx.has_impure_call || ctx.has_unknown_mutation {
                 return false;
             }
             !args

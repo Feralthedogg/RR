@@ -1,33 +1,35 @@
 fn add1(x) {
-  return x + 1L;
+  return x + 1L
 }
 
 fn apply_twice(f, x) {
-  return f(f(x));
+  return f(f(x))
 }
 
 fn main() {
-  let rec = {a: 3L, b: 4L};
-  rec.a = rec.a + 2L;
+  let rec = {a: 3L, b: 4L}
+  rec.a = rec.a + 2L
 
-  let seed = 10L;
-  let add_seed = fn(v) { return v + seed; };
+  let seed = 10L
+  let add_seed = fn(v) = v + seed
 
-  let r1 = 4L |> add1();
-  let r2 = (r1 + 1L)?;
-  let r3 = apply_twice(fn(v) { return v + 1L; }, 3L);
-  let r4 = add_seed(5L);
-  let r5 = (fn(a) { return a * 2L; })(6L);
+  let r1 = 4L |> add1()
+  let r2 = match ((r1 + 1L)?) {
+    x => x
+  }
+  let r3 = apply_twice(fn(v) = v + 1L, 3L)
+  let r4 = add_seed(5L)
+  let r5 = (fn(a) = a * 2L)(6L)
 
-  print(rec.a);
-  print(rec.b);
-  print(r1);
-  print(r2);
-  print(r3);
-  print(r4);
-  print(r5);
+  print(rec.a)
+  print(rec.b)
+  print(r1)
+  print(r2)
+  print(r3)
+  print(r4)
+  print(r5)
 
-  return rec.a + rec.b + r1 + r2 + r3 + r4 + r5;
+  return rec.a + rec.b + r1 + r2 + r3 + r4 + r5
 }
 
-print(main());
+print(main())

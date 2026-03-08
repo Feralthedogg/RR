@@ -1,5 +1,5 @@
-import r { plot as draw_plot, lines, legend } from "graphics";
-import r default from "grDevices";
+import r { plot as draw_plot, lines, legend } from "graphics"
+import r default from "grDevices"
 
 fn main() {
     outfile = "rr_graphics_sine_plot_modern.png"
@@ -34,4 +34,4 @@ fn main() {
     print(outfile)
 }
 
-main();
+main()

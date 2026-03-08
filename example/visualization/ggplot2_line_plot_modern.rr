@@ -1,5 +1,5 @@
-import r default from "ggplot2";
-import r * as base from "base";
+import r default from "ggplot2"
+import r * as base from "base"
 
 fn main() {
     outfile = "rr_ggplot2_line_plot_modern.png"
@@ -18,4 +18,4 @@ fn main() {
     print(outfile)
 }
 
-main();
+main()

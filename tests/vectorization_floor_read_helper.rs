@@ -10,13 +10,18 @@ fn floor_index_map_uses_floor_read_helper() {
 
     let rr_src = r#"
 fn floor_gather(n) {
-  let src = seq_len(n) * 2;
-  let idx = seq_len(n) + 0.25;
-  let out = seq_len(n);
+  let src = seq_len(n) * 2
+
+  let idx = seq_len(n) + 0.25
+
+  let out = seq_len(n)
+
   for (i in 1..length(out)) {
-    out[i] = src[floor(idx[i])];
+    out[i] = src[floor(idx[i])]
+
   }
-  return out;
+  return out
+
 }
 "#;
 

@@ -99,32 +99,32 @@ fn rr_source(p: Params) -> String {
     format!(
         r#"
 fn kernel(n, k, a, b, c) {{
-  let x = seq_len(n);
-  let y = seq_len(n);
-  let s = 0L;
+  let x = seq_len(n)
+  let y = seq_len(n)
+  let s = 0L
   for (i in 1L..length(x)) {{
     if ((((x[i] * a) + b) - c) > k) {{
-      y[i] = (((x[i] * a) + b) - c) - k;
+      y[i] = (((x[i] * a) + b) - c) - k
     }} else {{
-      y[i] = (((x[i] * a) + b) - c) + k;
+      y[i] = (((x[i] * a) + b) - c) + k
     }}
-    s = s + y[i];
+    s = s + y[i]
   }}
-  return s;
+  return s
 }}
 
 fn mix(n, k, a, b, c) {{
-  let i = 1L;
-  let acc = 0L;
+  let i = 1L
+  let acc = 0L
   while (i <= n) {{
-    acc = acc + (((i * a) + b) - c);
-    i = i + 1L;
+    acc = acc + (((i * a) + b) - c)
+    i = i + 1L
   }}
-  let ys = kernel(n, k, a, b, c);
-  return acc + ys;
+  let ys = kernel(n, k, a, b, c)
+  return acc + ys
 }}
 
-print(mix({}L, {}L, {}L, {}L, {}L));
+print(mix({}L, {}L, {}L, {}L, {}L))
 "#,
         p.n, p.k, p.a, p.b, p.c
     )

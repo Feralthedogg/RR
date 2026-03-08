@@ -20,9 +20,9 @@ fn run_compile_strict(source: &str, file_name: &str) -> (bool, String, String) {
 fn static_if_na_condition_must_fail() {
     let src = r#"
 fn main() {
-  if (NA) { return 1L; } else { return 0L; }
+  if (NA) { return 1L } else { return 0L }
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "if_na.rr");
     assert!(!ok, "compile must fail for statically NA condition");
@@ -42,9 +42,9 @@ main();
 fn static_divide_by_zero_must_fail() {
     let src = r#"
 fn main() {
-  return 1L / 0L;
+  return 1L / 0L
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "div_zero.rr");
     assert!(!ok, "compile must fail for guaranteed divide by zero");
@@ -64,11 +64,11 @@ main();
 fn static_invalid_write_index_must_fail() {
     let src = r#"
 fn main() {
-  x <- c(1L, 2L, 3L);
-  x[0L] <- 10L;
-  return x;
+  x <- c(1L, 2L, 3L)
+  x[0L] <- 10L
+  return x
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "bad_write_index.rr");
     assert!(!ok, "compile must fail for statically invalid write index");
@@ -88,13 +88,13 @@ main();
 fn multiple_static_runtime_errors_are_reported_together() {
     let src = r#"
 fn main() {
-  x <- c(1L, 2L);
-  y <- x[0L];
-  z <- 1L / 0L;
-  if (NA) { return 1L; }
-  return z + y;
+  x <- c(1L, 2L)
+  y <- x[0L]
+  z <- 1L / 0L
+  if (NA) { return 1L }
+  return z + y
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "runtime_multi.rr");
     assert!(!ok, "compile must fail");
@@ -129,9 +129,9 @@ main();
 fn strict_mode_reports_type_hint_conflict() {
     let src = r#"
 fn bad(a: float) -> float {
-  return "oops";
+  return "oops"
 }
-bad(1.0);
+bad(1.0)
 "#;
     let (ok, stdout, _stderr) = run_compile_strict(src, "strict_type_conflict.rr");
     assert!(!ok, "strict compile must fail for hint conflict");

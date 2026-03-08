@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     n = 192.0
@@ -36,4 +36,4 @@ fn main() {
     print_metric("rd_bench_mass", vector_sum(b))
 }
 
-main();
+main()

@@ -1,7 +1,7 @@
-import r default from "ggplot2";
-import r default from "readr";
-import r default from "tidyr";
-import r * as base from "base";
+import r default from "ggplot2"
+import r default from "readr"
+import r default from "tidyr"
+import r * as base from "base"
 
 fn main() {
     csvfile = "rr_readr_tidyr_ggplot2_pipeline_modern.csv"
@@ -33,4 +33,4 @@ fn main() {
     print(outfile)
 }
 
-main();
+main()

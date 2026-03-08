@@ -15,4 +15,4 @@ fn main() {
   print(x)
 }
 
-main();
+main()

@@ -11,56 +11,149 @@ fn malformed_and_invalid_programs_fail_without_ice() {
     let corpus: [(&str, &str); 14] = [
         (
             "lex_bad_char",
-            "fn main() { let x = 1$; return x; } main();",
+            r#"
+fn main() {
+  let x = 1$
+  return x
+}
+main()
+"#,
         ),
         (
             "lex_unterminated_string",
-            "fn main() { let s = \"abc; return s; } main();",
+            r#"
+fn main() {
+  let s = "abc
+  return s
+}
+main()
+"#,
         ),
         (
             "parse_missing_expr",
-            "fn main() { let x = ; return x; } main();",
+            r#"
+fn main() {
+  let x =
+  return x
+}
+main()
+"#,
         ),
         (
-            "parse_missing_semicolon",
-            "fn main() { let x = 1L return x; } main();",
+            "parse_same_line_statement_boundary",
+            r#"
+fn main() {
+  let x = 1L return x
+}
+main()
+"#,
         ),
         (
             "parse_unbalanced",
-            "fn main() { if (1L < 2L) { return 1L; } main();",
+            r#"
+fn main() {
+  if (1L < 2L) {
+    return 1L
+  }
+main()
+"#,
         ),
         (
             "semantic_undef_var",
-            "fn main() { return nope + 1L; } main();",
+            r#"
+fn main() {
+  return nope + 1L
+}
+main()
+"#,
         ),
         (
             "semantic_undef_fn",
-            "fn main() { return missing_fn(1L); } main();",
+            r#"
+fn main() {
+  return missing_fn(1L)
+}
+main()
+"#,
         ),
         (
             "semantic_arity",
-            "fn f(a,b){ return a+b; } fn main(){ return f(1L); } main();",
+            r#"
+fn f(a, b) {
+  return a + b
+}
+fn main() {
+  return f(1L)
+}
+main()
+"#,
         ),
         (
             "runtime_static_na_cond",
-            "fn main(){ if (NA) { return 1L; } return 0L; } main();",
+            r#"
+fn main() {
+  if (NA) {
+    return 1L
+  }
+  return 0L
+}
+main()
+"#,
         ),
         (
             "runtime_static_div0",
-            "fn main(){ return 1L / 0L; } main();",
+            r#"
+fn main() {
+  return 1L / 0L
+}
+main()
+"#,
         ),
         (
             "runtime_static_oob_write",
-            "fn main(){ let x = c(1L,2L); x[0L] = 3L; return x; } main();",
+            r#"
+fn main() {
+  let x = c(1L, 2L)
+  x[0L] = 3L
+  return x
+}
+main()
+"#,
         ),
-        ("multi_semantic", "fn main(){ return a + b + c; } main();"),
+        (
+            "multi_semantic",
+            r#"
+fn main() {
+  return a + b + c
+}
+main()
+"#,
+        ),
         (
             "multi_parse",
-            "fn main(){ let x = ; let y = ; return ; } main();",
+            r#"
+fn main() {
+  let x =
+  let y =
+  return
+}
+main()
+"#,
         ),
         (
             "multi_runtime",
-            "fn main(){ let x=c(1L,2L); y<-x[0L]; z<-1L/0L; if (NA) { return 1L; } return y+z; } main();",
+            r#"
+fn main() {
+  let x = c(1L, 2L)
+  y <- x[0L]
+  z <- 1L / 0L
+  if (NA) {
+    return 1L
+  }
+  return y + z
+}
+main()
+"#,
         ),
     ];
 
@@ -89,13 +182,13 @@ fn malformed_and_invalid_programs_fail_without_ice() {
 fn aggregate_diagnostics_report_all_relevant_findings() {
     let src = r#"
 fn main() {
-  x <- c(1L, 2L);
-  y <- x[0L];
-  z <- 1L / 0L;
-  if (NA) { return 1L; }
-  return y + z;
+  x <- c(1L, 2L)
+  y <- x[0L]
+  z <- 1L / 0L
+  if (NA) { return 1L }
+  return y + z
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "aggregate_all.rr");
     assert!(!ok, "compile must fail");

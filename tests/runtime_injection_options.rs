@@ -29,10 +29,12 @@ fn no_runtime_flag_emits_pure_r_without_runtime_prelude() {
         &rr_path,
         r#"
 fn add(a, b) {
-  return a + b;
+  return a + b
+
 }
 
-print(add(1, 2));
+print(add(1, 2))
+
 "#,
     )
     .expect("failed to write RR source");
@@ -89,10 +91,12 @@ fn runtime_injection_embeds_compile_time_native_roots() {
     let rr_path = proj.join("native_case.rr");
     let src = r#"
 fn addv(x: vector<float>, y: vector<float>) -> vector<float> {
-  return x + y;
+  return x + y
+
 }
 
-print(addv(c(1.0, 2.0), c(3.0, 4.0)));
+print(addv(c(1.0, 2.0), c(3.0, 4.0)))
+
 "#;
     fs::write(&rr_path, src).expect("failed to write RR source");
 

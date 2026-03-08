@@ -1,10 +1,10 @@
 fn main() {
-  let x = c(TRUE, NA, FALSE);
-  let y = x & TRUE;
-  let z = x | FALSE;
-  print(y);
-  print(z);
-  return 0L;
+  let x = c(TRUE, NA, FALSE)
+  let y = x & TRUE
+  let z = x | FALSE
+  print(y)
+  print(z)
+  return 0L
 }
 
-print(main());
+print(main())

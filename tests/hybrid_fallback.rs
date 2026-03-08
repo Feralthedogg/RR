@@ -39,15 +39,19 @@ fn dynamic_builtin_marks_hybrid_fallback_and_executes() {
 
     let rr_src = r#"
 fn dyn_eval(x) {
-  return eval(x);
+  return eval(x)
+
 }
 
 fn plain(x) {
-  return x + 1;
+  return x + 1
+
 }
 
-print(dyn_eval(41));
-print(plain(1));
+print(dyn_eval(41))
+
+print(plain(1))
+
 "#;
 
     let rr_path = out_dir.join("hybrid_fallback.rr");

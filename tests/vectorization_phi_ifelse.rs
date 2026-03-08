@@ -37,30 +37,31 @@ fn tesseract_emits_expected_vectorized_kernels() {
 
     let code = fs::read_to_string(&out).expect("failed to read O2 output");
     assert!(
-        code.contains("Sym_78 <- function(u, v, n_l, n_r, n_d, n_u, size)")
-            && code
-                .contains(".__rr_cse_105 <- rr_index1_read_vec(.arg_n_r, .tachyon_scatter_idx_0)")
-            && code.contains(
-                "visc <- rr_assign_index_vec(visc, .tachyon_scatter_idx_0, .tachyon_scatter_val_0)"
-            ),
-        "expected Smagorinsky kernel to lower to vector gather/scatter form"
+        code.contains("mix_sq <- ((Cs * DX) * (Cs * DX))")
+            && code.contains("visc <- rr_assign_slice(visc, i, .arg_size, (mix_sq * sqrt(")
+            && code.contains("rr_index1_read_vec(.arg_u, .arg_n_r)")
+            && code.contains("rr_index1_read_vec(.arg_v, .arg_n_l)"),
+        "expected Smagorinsky kernel to lower to vector gather/slice form"
     );
     assert!(
-        code.contains(
-            "Sym_83 <- function(u, v, h, h_trn, coriolis, visc, n_l, n_r, n_d, n_u, size)"
-        ) && code.contains(
-            "du <- rr_assign_index_vec(du, .tachyon_scatter_idx_0, .tachyon_scatter_val_0)"
-        ),
-        "expected tendency kernel to lower to vector gather/scatter form"
+        code.contains("du <- rr_assign_slice(du, i, .arg_size, (((0 - ((9.81 * (")
+            && code.contains("rr_index1_read_vec(.arg_h, .arg_n_r)")
+            && code.contains("rr_index1_read_vec(.arg_u, .arg_n_l)"),
+        "expected tendency kernel to lower to vector gather/slice form"
     );
     assert!(
-        code.contains("Sym_103 <- function(field, w, h)")
-            && code.contains("rr_wrap_index_vec_i(")
-            && code.contains(
-                "lap <- rr_assign_index_vec(lap, .tachyon_scatter_idx_0, .tachyon_scatter_val_0)"
-            )
+        code.contains("rr_wrap_index_vec_i(")
+            && code.contains("lap <- rr_assign_slice(lap, i, size, (")
             && !code.contains("(NULL -"),
-        "expected laplacian kernel to lower to vector wrap-index gather/scatter form without NULL arithmetic"
+        "expected laplacian kernel to lower to vector wrap-index gather/slice form without NULL arithmetic"
+    );
+    let has_weno_flux_guard = code.contains("flux <- rr_ifelse_strict((.arg_u_vel > 0), (")
+        || code.contains("flux <- rr_ifelse_strict((.arg_u_vel > idx_rrr), (");
+    assert!(
+        has_weno_flux_guard
+            && code.contains("Sym_109(.__rr_cse_102, .arg_field, .__rr_cse_104, .__rr_cse_106")
+            && code.contains("rr_index_vec_floor(.arg_n_rr)"),
+        "expected WENO advection kernel to lower to vector conditional form"
     );
     assert!(
         code.contains("return(rr_named_list(\"px\", .arg_px, \"py\", .arg_py, \"pf\", .arg_pf))")
@@ -79,12 +80,16 @@ fn tesseract_emits_expected_vectorized_kernels() {
         "expected optimized tesseract output to avoid hybrid fallback comments after MIR validation"
     );
     assert!(
-        code.contains("rr_assign_index_vec("),
-        "expected optimized tesseract output to retain vector scatter lowering"
-    );
-    assert!(
         code.contains("rr_index1_read_vec("),
         "expected optimized tesseract output to retain vector gather lowering"
+    );
+    assert!(
+        code.contains("rr_assign_slice("),
+        "expected optimized tesseract output to retain vector slice lowering"
+    );
+    assert!(
+        !code.contains("Sym_1("),
+        "expected floor helper calls to rewrite to builtin floor paths in optimized output"
     );
     assert!(
         code.contains("Particle 1 Position (X):"),

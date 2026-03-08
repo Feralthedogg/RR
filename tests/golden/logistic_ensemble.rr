@@ -1,7 +1,7 @@
-import "../../example/common/sim_utils.rr";
+import "../../example/common/sim_utils.rr"
 
 fn evolve(x, rate, cap) {
-    return x + rate * x * (1.0 - x / cap);
+    return x + rate * x * (1.0 - x / cap)
 }
 
 fn main() {
@@ -23,4 +23,4 @@ fn main() {
     print_metric("logistic_mass", total)
 }
 
-main();
+main()

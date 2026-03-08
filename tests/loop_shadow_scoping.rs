@@ -24,29 +24,42 @@ fn shadowed_loop_local_does_not_leak_outside_while_scope() {
 
     let rr_src = r#"
 fn update_box(box, step, gain, shift) {
-  box.total = box.total + ((step * gain) + shift);
+  box.total = box.total + ((step * gain) + shift)
+
   if ((step % 2L) == 0L) {
-    box.evens = box.evens + step;
+    box.evens = box.evens + step
+
   } else {
-    box.odds = box.odds + step;
+    box.odds = box.odds + step
+
   }
-  return box;
+  return box
+
 }
 
 fn main() {
-  let box = {total: 0L, evens: 0L, odds: 0L};
-  let i = 1L;
+  let box = {total: 0L, evens: 0L, odds: 0L}
+
+  let i = 1L
+
   while (i <= 6L) {
-    let box = update_box(box, i, 3L, 1L);
-    i = i + 1L;
+    let box = update_box(box, i, 3L, 1L)
+
+    i = i + 1L
+
   }
-  print(box.total);
-  print(box.evens);
-  print(box.odds);
-  return box.total + box.evens + box.odds;
+  print(box.total)
+
+  print(box.evens)
+
+  print(box.odds)
+
+  return box.total + box.evens + box.odds
+
 }
 
-print(main());
+print(main())
+
 "#;
 
     let rr_path = out_dir.join("loop_shadow_scoping.rr");

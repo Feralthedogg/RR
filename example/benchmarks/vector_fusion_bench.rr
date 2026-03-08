@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     n = 2048.0
@@ -19,4 +19,4 @@ fn main() {
     print_metric("vector_fusion_mean", vector_mean(z))
 }
 
-main();
+main()

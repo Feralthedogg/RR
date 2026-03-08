@@ -1,6 +1,6 @@
-import r default from "ggplot2";
-import r default from "stats";
-import r * as base from "base";
+import r default from "ggplot2"
+import r default from "stats"
+import r * as base from "base"
 
 fn main() {
     outfile = "rr_stats_glm_predict_plot_modern.png"
@@ -31,4 +31,4 @@ fn main() {
     print(outfile)
 }
 
-main();
+main()

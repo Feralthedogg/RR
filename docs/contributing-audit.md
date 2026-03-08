@@ -33,11 +33,38 @@ Recent items that were explicitly closed during audit/refactor work:
 Run these commands from the repository root:
 
 ```bash
+scripts/contributing_audit.sh
 cargo check
 cargo clippy --all-targets -- -D warnings
 cargo test -q
 FUZZ_SECONDS=1 ./scripts/fuzz_smoke.sh
 ```
+
+For a quick heuristic-only pass over the current worktree without running cargo/fuzz:
+
+```bash
+scripts/contributing_audit.sh --scan-only
+```
+
+For a strict clean-checkout style pass that removes ambiguity from an already
+dirty worktree, run:
+
+```bash
+scripts/verify_cleanroom.sh
+scripts/verify_cleanroom.sh --files src/mir/opt/v_opt.rs tests/vectorization_phi_ifelse.rs
+scripts/verify_cleanroom.sh --fast --files scripts/verify_cleanroom.sh
+```
+
+`verify_cleanroom.sh` creates a detached worktree at `HEAD`, overlays only the
+selected current-tree files, then runs `fmt`, `check`, `clippy`, the full test
+suite, pass-by-pass verifier smoke, the contributing audit, fuzz smoke, and the
+docs build in that clean environment. Use `--files` whenever unrelated dirty
+changes are present in the source worktree. Use `--fast` when you want to verify
+the cleanroom wiring itself before paying for the full strict stack.
+
+CI runs the same audit in `--scan-only` mode against the diff for each PR/push.
+It does not run `--all` yet because the repository still has historical whole-tree
+debt that is being paid down incrementally.
 
 ## When To Do More
 
@@ -58,6 +85,7 @@ cargo test -q --test example_perf_smoke -- --ignored --nocapture
 
 ## Manual Review Checklist
 
+- `scripts/contributing_audit.sh` reports no static `error[...]` findings on the intended scope.
 - No new production `panic!`, `unwrap()`, or `expect()` on normal compiler paths.
 - No new `unsafe` in `src/**` without adjacent `// SAFETY:` rationale.
 - Deterministic traversal is preserved where output order matters.

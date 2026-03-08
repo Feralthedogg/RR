@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     orbit = 1.0
@@ -30,4 +30,4 @@ fn main() {
     print_metric("orbit_bench_speed", speed_acc)
 }
 
-main();
+main()

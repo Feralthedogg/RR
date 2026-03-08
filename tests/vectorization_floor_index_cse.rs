@@ -10,11 +10,14 @@ fn floor_index_vectorization_reuses_index_floor() {
 
     let rr_src = r#"
 fn floor_idx_cse(a, b, n_l, n_r, n) {
-  let out = a;
+  let out = a
+
   for (i in 1..n) {
-    out[i] = (a[floor(n_r[i])] + b[floor(n_r[i])]) - (a[floor(n_l[i])] + b[floor(n_l[i])]);
+    out[i] = (a[floor(n_r[i])] + b[floor(n_r[i])]) - (a[floor(n_l[i])] + b[floor(n_l[i])])
+
   }
-  return out;
+  return out
+
 }
 "#;
 

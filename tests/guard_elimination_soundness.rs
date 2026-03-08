@@ -6,11 +6,11 @@ fn typed_condition_elides_truthy_wrapper_at_branch_site() {
     let src = r#"
 fn main(flag: bool) -> int {
   if (flag) {
-    return 1L;
+    return 1L
   }
-  return 0L;
+  return 0L
 }
-print(main(true));
+print(main(true))
 "#;
     let (code, _map) = compile_with_config(
         "guard_elide.rr",
@@ -34,11 +34,11 @@ fn unresolved_condition_keeps_wrapper() {
     let src = r#"
 fn main(x) {
   if (x) {
-    return 1L;
+    return 1L
   }
-  return 0L;
+  return 0L
 }
-print(main(TRUE));
+print(main(TRUE))
 "#;
     let (code, _map) = compile_with_config(
         "guard_keep.rr",

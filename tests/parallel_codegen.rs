@@ -5,10 +5,12 @@ use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 fn emits_parallel_runtime_prelude_and_vector_wrapper_call() {
     let src = r#"
 fn addv(x: vector<float>, y: vector<float>) -> vector<float> {
-  return x + y;
+  return x + y
+
 }
 
-print(addv(c(1.0, 2.0), c(3.0, 4.0)));
+print(addv(c(1.0, 2.0), c(3.0, 4.0)))
+
 "#;
 
     let (code, _map) = compile_with_configs(

@@ -1155,6 +1155,7 @@ fn match_expr_map(
     let start = iv.init_val;
     let end = lp.limit?;
     let mut found: Vec<(ValueId, ValueId)> = Vec::new();
+    let mut cube_candidate: Option<(ValueId, ValueId, CubeSliceIndexInfo)> = None;
 
     for &bid in &lp.body {
         for instr in &fn_ir.blocks[bid].instrs {
@@ -1169,37 +1170,118 @@ fn match_expr_map(
                     ..
                 } => {
                     let idx_ok = is_canonical_store_index(fn_ir, *idx, iv_phi);
-                    if *is_vector || !idx_ok {
+                    if *is_vector {
                         if vectorize_trace_enabled() {
-                            let phi_detail = match &fn_ir.values[*idx].kind {
-                                ValueKind::Phi { args } => {
-                                    let parts: Vec<String> = args
-                                        .iter()
-                                        .map(|(v, b)| format!("b{}:{:?}", b, fn_ir.values[*v].kind))
-                                        .collect();
-                                    format!(" phi_args=[{}]", parts.join(" | "))
-                                }
-                                ValueKind::Load { var } => {
-                                    let unique_src = unique_assign_source(fn_ir, var)
-                                        .map(|src| format!("{:?}", fn_ir.values[src].kind))
-                                        .unwrap_or_else(|| "none".to_string());
-                                    format!(
-                                        " load_var='{}' iv_origin={:?} unique_src={}",
-                                        var,
-                                        induction_origin_var(fn_ir, iv_phi),
-                                        unique_src
-                                    )
-                                }
-                                _ => String::new(),
-                            };
                             eprintln!(
-                                "   [vec-expr-map] reject: non-canonical store index (fn={}, idx_ok={}, idx={:?}{})",
-                                fn_ir.name, idx_ok, fn_ir.values[*idx].kind, phi_detail
+                                "   [vec-expr-map] reject: non-canonical store index (fn={}, idx_ok={}, idx={:?})",
+                                fn_ir.name, idx_ok, fn_ir.values[*idx].kind
                             );
                         }
                         return None;
                     }
                     let dest = canonical_value(fn_ir, *base);
+                    if !idx_ok {
+                        let Some(cube) = match_cube_slice_index_info(
+                            fn_ir,
+                            lp,
+                            user_call_whitelist,
+                            *idx,
+                            iv_phi,
+                        ) else {
+                            if vectorize_trace_enabled() {
+                                let phi_detail = match &fn_ir.values[*idx].kind {
+                                    ValueKind::Phi { args } => {
+                                        let parts: Vec<String> = args
+                                            .iter()
+                                            .map(|(v, b)| {
+                                                format!("b{}:{:?}", b, fn_ir.values[*v].kind)
+                                            })
+                                            .collect();
+                                        format!(" phi_args=[{}]", parts.join(" | "))
+                                    }
+                                    ValueKind::Load { var } => {
+                                        let unique_src = unique_assign_source(fn_ir, var)
+                                            .map(|src| format!("{:?}", fn_ir.values[src].kind))
+                                            .unwrap_or_else(|| "none".to_string());
+                                        format!(
+                                            " load_var='{}' iv_origin={:?} unique_src={}",
+                                            var,
+                                            induction_origin_var(fn_ir, iv_phi),
+                                            unique_src
+                                        )
+                                    }
+                                    _ => String::new(),
+                                };
+                                eprintln!(
+                                    "   [vec-expr-map] reject: non-canonical store index (fn={}, idx_ok={}, idx={:?}{})",
+                                    fn_ir.name, idx_ok, fn_ir.values[*idx].kind, phi_detail
+                                );
+                            }
+                            return None;
+                        };
+                        if !found.is_empty() || cube_candidate.is_some() {
+                            if vectorize_trace_enabled() {
+                                eprintln!(
+                                    "   [vec-expr-map] reject: duplicate StoreIndex1D destination"
+                                );
+                            }
+                            return None;
+                        }
+                        let expr_iv_dependent = expr_has_iv_dependency(fn_ir, *val, iv_phi);
+                        let expr_ok = if expr_iv_dependent {
+                            is_vectorizable_expr(fn_ir, *val, iv_phi, lp, true, false)
+                        } else {
+                            is_loop_invariant_scalar_expr(fn_ir, *val, iv_phi, user_call_whitelist)
+                        };
+                        if !expr_ok {
+                            if vectorize_trace_enabled() {
+                                eprintln!(
+                                    "   [vec-expr-map] reject: rhs is neither vectorizable nor loop-invariant scalar"
+                                );
+                            }
+                            return None;
+                        }
+                        if expr_has_non_vector_safe_call_in_vector_context(
+                            fn_ir,
+                            *val,
+                            iv_phi,
+                            user_call_whitelist,
+                            &mut FxHashSet::default(),
+                        ) {
+                            if vectorize_trace_enabled() {
+                                let rhs_detail = match &fn_ir.values[*val].kind {
+                                    ValueKind::Binary { lhs, rhs, .. } => format!(
+                                        "lhs={:?} rhs={:?}",
+                                        fn_ir.values[*lhs].kind, fn_ir.values[*rhs].kind
+                                    ),
+                                    other => format!("{:?}", other),
+                                };
+                                eprintln!(
+                                    "   [vec-expr-map] reject: rhs contains non-vector-safe call; rhs={:?}; detail={}",
+                                    fn_ir.values[*val].kind, rhs_detail
+                                );
+                            }
+                            return None;
+                        }
+                        if expr_reads_base_non_iv(fn_ir, *val, dest, iv_phi) {
+                            if vectorize_trace_enabled() {
+                                eprintln!(
+                                    "   [vec-expr-map] reject: loop-carried dependence on destination"
+                                );
+                            }
+                            return None;
+                        }
+                        cube_candidate = Some((dest, *val, cube));
+                        continue;
+                    }
+                    if cube_candidate.is_some() {
+                        if vectorize_trace_enabled() {
+                            eprintln!(
+                                "   [vec-expr-map] reject: duplicate StoreIndex1D destination"
+                            );
+                        }
+                        return None;
+                    }
                     if found
                         .iter()
                         .any(|(existing_dest, _)| same_base_value(fn_ir, *existing_dest, dest))
@@ -1260,6 +1342,22 @@ fn match_expr_map(
     }
 
     if found.is_empty() {
+        if let Some((dest, expr, cube)) = cube_candidate {
+            return Some(VectorPlan::CubeSliceExprMap {
+                dest,
+                expr,
+                iv_phi,
+                face: cube.face,
+                row: cube.row,
+                size: cube.size,
+                ctx: cube.ctx,
+                start,
+                end,
+            });
+        }
+        return None;
+    }
+    if cube_candidate.is_some() {
         return None;
     }
     let entries: Vec<ExprMapEntry> = found
@@ -1294,18 +1392,24 @@ fn match_scatter_expr_map(
     lp: &LoopInfo,
     user_call_whitelist: &FxHashSet<String>,
 ) -> Option<VectorPlan> {
-    if lp.body.len() > 2 {
-        return None;
-    }
+    let trace_enabled = vectorize_trace_enabled();
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
-    let mut found: Option<(ValueId, ValueId, ValueId)> = None;
+    let mut found: Option<(BlockId, ValueId, ValueId, ValueId)> = None;
 
     for &bid in &lp.body {
         for instr in &fn_ir.blocks[bid].instrs {
             match instr {
                 Instr::Assign { .. } | Instr::Eval { .. } => {}
-                Instr::StoreIndex2D { .. } => return None,
+                Instr::StoreIndex2D { .. } => {
+                    if trace_enabled {
+                        eprintln!(
+                            "   [vec-scatter] {} reject: saw StoreIndex2D in loop body",
+                            fn_ir.name
+                        );
+                    }
+                    return None;
+                }
                 Instr::StoreIndex1D {
                     base,
                     idx,
@@ -1313,19 +1417,51 @@ fn match_scatter_expr_map(
                     is_vector,
                     ..
                 } => {
-                    if bid != lp.latch {
-                        return None;
-                    }
                     if *is_vector || found.is_some() {
+                        if trace_enabled {
+                            eprintln!(
+                                "   [vec-scatter] {} reject: non-canonical store count/vector flag (is_vector={}, found_already={})",
+                                fn_ir.name,
+                                is_vector,
+                                found.is_some()
+                            );
+                        }
                         return None;
                     }
-                    found = Some((canonical_value(fn_ir, *base), *idx, *val));
+                    found = Some((bid, canonical_value(fn_ir, *base), *idx, *val));
                 }
             }
         }
     }
 
-    let (dest, idx, expr) = found?;
+    let (store_bid, dest, idx, expr) = found?;
+    let idx_root = canonical_value(fn_ir, idx);
+    let is_cube_scatter = matches!(
+        &fn_ir.values[idx_root].kind,
+        ValueKind::Call { callee, args, names }
+            if callee == "rr_idx_cube_vec_i"
+                && (args.len() == 4 || args.len() == 5)
+                && names.iter().all(|n| n.is_none())
+    );
+    if store_bid != lp.latch && !is_cube_scatter {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: store not in latch (bb={} latch={})",
+                fn_ir.name, store_bid, lp.latch
+            );
+        }
+        return None;
+    }
+    if lp.body.len() > 2 && !is_cube_scatter {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: loop body too large for non-cube scatter (body_len={})",
+                fn_ir.name,
+                lp.body.len()
+            );
+        }
+        return None;
+    }
     if is_iv_equivalent(fn_ir, idx, iv_phi)
         || is_floor_like_iv_expr(
             fn_ir,
@@ -1335,14 +1471,34 @@ fn match_scatter_expr_map(
             &mut FxHashSet::default(),
         )
     {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: index is canonical IV-equivalent",
+                fn_ir.name
+            );
+        }
         return None;
     }
     if !expr_has_iv_dependency(fn_ir, idx, iv_phi) {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: index has no IV dependency ({:?})",
+                fn_ir.name, fn_ir.values[idx_root].kind
+            );
+        }
         return None;
     }
     if !is_vectorizable_expr(fn_ir, idx, iv_phi, lp, true, false)
         || !is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false)
     {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: idx/expr not vectorizable (idx={:?} expr={:?})",
+                fn_ir.name,
+                fn_ir.values[idx_root].kind,
+                fn_ir.values[canonical_value(fn_ir, expr)].kind
+            );
+        }
         return None;
     }
     if expr_has_non_vector_safe_call_in_vector_context(
@@ -1358,9 +1514,21 @@ fn match_scatter_expr_map(
         user_call_whitelist,
         &mut FxHashSet::default(),
     ) {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: idx/expr contains non-vector-safe call",
+                fn_ir.name
+            );
+        }
         return None;
     }
     if expr_reads_base_non_iv(fn_ir, expr, dest, iv_phi) {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: expr reads destination via non-IV access",
+                fn_ir.name
+            );
+        }
         return None;
     }
     Some(VectorPlan::ScatterExprMap {
@@ -1421,6 +1589,77 @@ fn match_cube_slice_expr_map(
     }
 
     let (dest, idx, expr) = found?;
+    let cube = match_cube_slice_index_info(fn_ir, lp, user_call_whitelist, idx, iv_phi)?;
+
+    let expr_iv_dependent = expr_has_iv_dependency(fn_ir, expr, iv_phi);
+    let expr_ok = if expr_iv_dependent {
+        is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false)
+    } else {
+        is_loop_invariant_scalar_expr(fn_ir, expr, iv_phi, user_call_whitelist)
+    };
+    if !expr_ok {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-cube-slice] {} reject: expr is neither vectorizable nor loop-invariant scalar ({:?})",
+                fn_ir.name, fn_ir.values[expr].kind
+            );
+        }
+        return None;
+    }
+    if expr_has_non_vector_safe_call_in_vector_context(
+        fn_ir,
+        expr,
+        iv_phi,
+        user_call_whitelist,
+        &mut FxHashSet::default(),
+    ) {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-cube-slice] {} reject: expr contains non-vector-safe call ({:?})",
+                fn_ir.name, fn_ir.values[expr].kind
+            );
+        }
+        return None;
+    }
+    if expr_reads_base_non_iv(fn_ir, expr, dest, iv_phi) {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-cube-slice] {} reject: expr reads destination via non-IV access",
+                fn_ir.name
+            );
+        }
+        return None;
+    }
+
+    Some(VectorPlan::CubeSliceExprMap {
+        dest,
+        expr,
+        iv_phi,
+        face: cube.face,
+        row: cube.row,
+        size: cube.size,
+        ctx: cube.ctx,
+        start,
+        end,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct CubeSliceIndexInfo {
+    face: ValueId,
+    row: ValueId,
+    size: ValueId,
+    ctx: Option<ValueId>,
+}
+
+fn match_cube_slice_index_info(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    user_call_whitelist: &FxHashSet<String>,
+    idx: ValueId,
+    iv_phi: ValueId,
+) -> Option<CubeSliceIndexInfo> {
+    let trace_enabled = vectorize_trace_enabled();
     let ValueKind::Call {
         callee,
         args,
@@ -1516,56 +1755,11 @@ fn match_cube_slice_expr_map(
         None
     };
 
-    let expr_iv_dependent = expr_has_iv_dependency(fn_ir, expr, iv_phi);
-    let expr_ok = if expr_iv_dependent {
-        is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false)
-    } else {
-        is_loop_invariant_scalar_expr(fn_ir, expr, iv_phi, user_call_whitelist)
-    };
-    if !expr_ok {
-        if trace_enabled {
-            eprintln!(
-                "   [vec-cube-slice] {} reject: expr is neither vectorizable nor loop-invariant scalar ({:?})",
-                fn_ir.name, fn_ir.values[expr].kind
-            );
-        }
-        return None;
-    }
-    if expr_has_non_vector_safe_call_in_vector_context(
-        fn_ir,
-        expr,
-        iv_phi,
-        user_call_whitelist,
-        &mut FxHashSet::default(),
-    ) {
-        if trace_enabled {
-            eprintln!(
-                "   [vec-cube-slice] {} reject: expr contains non-vector-safe call ({:?})",
-                fn_ir.name, fn_ir.values[expr].kind
-            );
-        }
-        return None;
-    }
-    if expr_reads_base_non_iv(fn_ir, expr, dest, iv_phi) {
-        if trace_enabled {
-            eprintln!(
-                "   [vec-cube-slice] {} reject: expr reads destination via non-IV access",
-                fn_ir.name
-            );
-        }
-        return None;
-    }
-
-    Some(VectorPlan::CubeSliceExprMap {
-        dest,
-        expr,
-        iv_phi,
+    Some(CubeSliceIndexInfo {
         face: args[0],
         row: args[1],
         size: args[3],
         ctx,
-        start,
-        end,
     })
 }
 
@@ -2449,17 +2643,113 @@ fn is_origin_var_iv_alias_in_loop(
     let Some(origin_var) = fn_ir.values[candidate].origin_var.as_deref() else {
         return false;
     };
-    let Some(src) = unique_assign_source_in_loop(fn_ir, lp, origin_var) else {
+    let iv_origin = induction_origin_var(fn_ir, iv_phi);
+    let matches_iv = |src: ValueId| {
+        is_iv_equivalent(fn_ir, src, iv_phi)
+            || is_floor_like_iv_expr(
+                fn_ir,
+                src,
+                iv_phi,
+                &mut FxHashSet::default(),
+                &mut FxHashSet::default(),
+            )
+    };
+    let matches_seed = |src: ValueId| {
+        let src = canonical_value(fn_ir, src);
+        matches_iv(src)
+            || matches!(
+                (&fn_ir.values[src].kind, iv_origin.as_deref()),
+                (ValueKind::Load { var }, Some(iv_var)) if var == iv_var
+            )
+    };
+    if let Some(src) = loop_entry_seed_source_in_loop(fn_ir, lp, origin_var)
+        && matches_seed(src)
+    {
+        return true;
+    }
+    if let Some(src) = unique_assign_source_in_loop(fn_ir, lp, origin_var)
+        && matches_seed(src)
+    {
+        return true;
+    }
+    let target_bb =
+        value_use_block_in_loop(fn_ir, lp, candidate).or(fn_ir.values[candidate].phi_block);
+    let Some(target_bb) = target_bb else {
         return false;
     };
-    is_iv_equivalent(fn_ir, src, iv_phi)
-        || is_floor_like_iv_expr(
-            fn_ir,
-            src,
-            iv_phi,
-            &mut FxHashSet::default(),
-            &mut FxHashSet::default(),
-        )
+    let Some(src) = unique_assign_source_reaching_block_in_loop(fn_ir, lp, origin_var, target_bb)
+    else {
+        return false;
+    };
+    !matches!(
+        fn_ir.values[canonical_value(fn_ir, src)].kind,
+        ValueKind::Phi { .. }
+    ) && matches_seed(src)
+}
+
+fn collapse_same_var_passthrough_phi_to_load(
+    fn_ir: &FnIR,
+    root: ValueId,
+    var: &str,
+    seen: &mut FxHashSet<ValueId>,
+) -> Option<ValueId> {
+    let root = canonical_value(fn_ir, root);
+    if !seen.insert(root) {
+        return None;
+    }
+    let out = match &fn_ir.values[root].kind {
+        ValueKind::Load { var: load_var } if load_var == var => Some(root),
+        ValueKind::Phi { args }
+            if !args.is_empty() && fn_ir.values[root].origin_var.as_deref() == Some(var) =>
+        {
+            let mut found: Option<ValueId> = None;
+            for (arg, _) in args {
+                let arg = canonical_value(fn_ir, *arg);
+                let load = collapse_same_var_passthrough_phi_to_load(fn_ir, arg, var, seen)?;
+                match found {
+                    None => found = Some(load),
+                    Some(prev) if canonical_value(fn_ir, prev) == canonical_value(fn_ir, load) => {}
+                    Some(_) => return None,
+                }
+            }
+            found
+        }
+        _ => None,
+    };
+    seen.remove(&root);
+    out
+}
+
+fn loop_entry_seed_source_in_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> Option<ValueId> {
+    let mut seed: Option<ValueId> = None;
+    for bid in &lp.body {
+        for ins in &fn_ir.blocks[*bid].instrs {
+            let Instr::Assign { dst, src, .. } = ins else {
+                continue;
+            };
+            if dst != var {
+                continue;
+            }
+            let src = canonical_value(fn_ir, *src);
+            if is_passthrough_load_of_var(fn_ir, src, var)
+                || collapse_same_var_passthrough_phi_to_load(
+                    fn_ir,
+                    src,
+                    var,
+                    &mut FxHashSet::default(),
+                )
+                .is_some()
+            {
+                continue;
+            }
+            match seed {
+                None => seed = Some(src),
+                Some(prev) if canonical_value(fn_ir, prev) == src => {}
+                Some(_) => return None,
+            }
+        }
+    }
+    seed
 }
 
 fn has_any_var_binding(fn_ir: &FnIR, var: &str) -> bool {
@@ -3066,6 +3356,71 @@ fn apply_call_map_plan(
     finish_vector_assignment(fn_ir, site, dest_var, mapped_val)
 }
 
+fn same_load_leaf_var_in_phi_tree(
+    fn_ir: &FnIR,
+    root: ValueId,
+    seen: &mut FxHashSet<ValueId>,
+) -> Option<VarId> {
+    let root = canonical_value(fn_ir, root);
+    if !seen.insert(root) {
+        return None;
+    }
+    let out = match &fn_ir.values[root].kind {
+        ValueKind::Load { var } => Some(var.clone()),
+        ValueKind::Phi { args } if !args.is_empty() => {
+            let mut found: Option<VarId> = None;
+            for (arg, _) in args {
+                let leaf_var = same_load_leaf_var_in_phi_tree(fn_ir, *arg, seen)?;
+                match &found {
+                    None => found = Some(leaf_var),
+                    Some(prev) if prev == &leaf_var => {}
+                    Some(_) => return None,
+                }
+            }
+            found
+        }
+        _ => None,
+    };
+    seen.remove(&root);
+    out
+}
+
+fn recover_cube_slice_snapshot_scalar(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    value: ValueId,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+) -> Option<ValueId> {
+    let root = canonical_value(fn_ir, value);
+    let target_bb = fn_ir.values[root]
+        .phi_block
+        .or_else(|| value_use_block_in_loop(fn_ir, lp, root));
+    let snapshot_var = fn_ir.values[root]
+        .origin_var
+        .clone()
+        .or_else(|| induction_origin_var(fn_ir, root))?;
+    let candidate = target_bb
+        .and_then(|bb| unique_assign_source_reaching_block_in_loop(fn_ir, lp, &snapshot_var, bb))
+        .or_else(|| unique_assign_source_in_loop(fn_ir, lp, &snapshot_var))
+        .map(|src| canonical_value(fn_ir, src))
+        .filter(|src| {
+            *src != root && !value_depends_on(fn_ir, *src, root, &mut FxHashSet::default())
+        })
+        .unwrap_or(root);
+    let leaf_var = same_load_leaf_var_in_phi_tree(fn_ir, candidate, &mut FxHashSet::default())?;
+    if has_assignment_in_loop(fn_ir, lp, &leaf_var) {
+        return None;
+    }
+    let load = intern_materialized_value(
+        fn_ir,
+        interner,
+        ValueKind::Load { var: leaf_var },
+        fn_ir.values[root].span,
+        fn_ir.values[root].facts,
+    );
+    Some(resolve_materialized_value(fn_ir, load))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_cube_slice_expr_map_plan(
     fn_ir: &mut FnIR,
@@ -3116,6 +3471,10 @@ fn apply_cube_slice_expr_map_plan(
             match materialize_loop_invariant_scalar_expr(fn_ir, value, iv_phi, lp, memo, interner) {
                 Some(v) => Some(resolve_materialized_value(fn_ir, v)),
                 None => {
+                    if let Some(v) = recover_cube_slice_snapshot_scalar(fn_ir, lp, value, interner)
+                    {
+                        return Some(v);
+                    }
                     if trace_enabled {
                         eprintln!(
                             "   [vec-apply-expr] {} fail: invariant scalar {} materialization ({:?})",
@@ -3191,47 +3550,7 @@ fn apply_cube_slice_expr_map_plan(
         }
     };
 
-    let expr_vec = if is_scalar_broadcast_value(fn_ir, expr_vec) {
-        let slice_len = if is_const_one(fn_ir, start) {
-            end
-        } else {
-            let span = crate::utils::Span::dummy();
-            let facts = crate::mir::def::Facts::empty();
-            let span_delta = fn_ir.add_value(
-                ValueKind::Binary {
-                    op: crate::syntax::ast::BinOp::Sub,
-                    lhs: end,
-                    rhs: start,
-                },
-                span,
-                facts,
-                None,
-            );
-            let one_val = fn_ir.add_value(ValueKind::Const(Lit::Float(1.0)), span, facts, None);
-            fn_ir.add_value(
-                ValueKind::Binary {
-                    op: crate::syntax::ast::BinOp::Add,
-                    lhs: span_delta,
-                    rhs: one_val,
-                },
-                span,
-                facts,
-                None,
-            )
-        };
-        fn_ir.add_value(
-            ValueKind::Call {
-                callee: "rep.int".to_string(),
-                args: vec![expr_vec, slice_len],
-                names: vec![None, None],
-            },
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        )
-    } else {
-        expr_vec
-    };
+    let expr_vec = broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, start, end);
 
     let has_ctx = ctx.is_some();
     let mut start_args = vec![face, row, start, size];
@@ -3334,6 +3653,12 @@ fn apply_expr_map_plan(
         }
     };
 
+    let expr_vec = if whole_dest {
+        expr_vec
+    } else {
+        broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, start, end)
+    };
+
     let out_val = if whole_dest {
         if !same_length_proven(fn_ir, dest, expr_vec) {
             let check_val = fn_ir.add_value(
@@ -3432,6 +3757,11 @@ fn apply_multi_expr_map_plan(
             expr_vec,
             &format!("exprmap{}", entry_index),
         );
+        let expr_vec = if entry.whole_dest {
+            expr_vec
+        } else {
+            broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, start, end)
+        };
         let out_val = if entry.whole_dest {
             if !same_length_proven(fn_ir, entry.dest, expr_vec) {
                 let check_val = fn_ir.add_value(
@@ -3534,6 +3864,56 @@ fn apply_scatter_expr_map_plan(
         None,
     );
     finish_vector_assignment(fn_ir, site, dest_var, out_val)
+}
+
+fn broadcast_scalar_expr_to_slice_len(
+    fn_ir: &mut FnIR,
+    expr_vec: ValueId,
+    start: ValueId,
+    end: ValueId,
+) -> ValueId {
+    if !is_scalar_broadcast_value(fn_ir, expr_vec) {
+        return expr_vec;
+    }
+
+    let slice_len = if is_const_one(fn_ir, start) {
+        end
+    } else {
+        let span = crate::utils::Span::dummy();
+        let facts = crate::mir::def::Facts::empty();
+        let span_delta = fn_ir.add_value(
+            ValueKind::Binary {
+                op: crate::syntax::ast::BinOp::Sub,
+                lhs: end,
+                rhs: start,
+            },
+            span,
+            facts,
+            None,
+        );
+        let one_val = fn_ir.add_value(ValueKind::Const(Lit::Float(1.0)), span, facts, None);
+        fn_ir.add_value(
+            ValueKind::Binary {
+                op: crate::syntax::ast::BinOp::Add,
+                lhs: span_delta,
+                rhs: one_val,
+            },
+            span,
+            facts,
+            None,
+        )
+    };
+
+    fn_ir.add_value(
+        ValueKind::Call {
+            callee: "rep.int".to_string(),
+            args: vec![expr_vec, slice_len],
+            names: vec![None, None],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    )
 }
 
 fn apply_map_2d_row_plan(
@@ -4029,6 +4409,9 @@ fn loop_has_non_iv_loop_carried_state_except(
         {
             continue;
         }
+        if loop_carried_phi_is_invariant_passthrough(fn_ir, lp, value.id, iv_phi) {
+            continue;
+        }
         let Some(origin_var) = value.origin_var.as_deref() else {
             continue;
         };
@@ -4041,9 +4424,112 @@ fn loop_has_non_iv_loop_carried_state_except(
         if !var_observed_outside_loop(fn_ir, lp, origin_var) {
             continue;
         }
+        if vectorize_trace_enabled() {
+            let phi_args = match &value.kind {
+                ValueKind::Phi { args } => args
+                    .iter()
+                    .map(|(arg, pred)| {
+                        let arg = canonical_value(fn_ir, *arg);
+                        format!(
+                            "{}@{} kind={:?} origin={:?}",
+                            arg, pred, fn_ir.values[arg].kind, fn_ir.values[arg].origin_var
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                _ => String::new(),
+            };
+            eprintln!(
+                "   [vec-loop-state] {} reject: phi={} var={} bb={} observed_outside_loop kind={:?} args=[{}]",
+                fn_ir.name, value.id, origin_var, phi_bb, value.kind, phi_args
+            );
+        }
         return true;
     }
     false
+}
+
+fn loop_carried_phi_is_invariant_passthrough(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    phi_vid: ValueId,
+    iv_phi: ValueId,
+) -> bool {
+    fn invariant_passthrough_key(
+        fn_ir: &FnIR,
+        lp: &LoopInfo,
+        root: ValueId,
+        iv_phi: ValueId,
+        seen: &mut FxHashSet<ValueId>,
+    ) -> Option<String> {
+        let root = canonical_value(fn_ir, root);
+        if !seen.insert(root) {
+            return None;
+        }
+        if is_iv_equivalent(fn_ir, root, iv_phi) || expr_has_iv_dependency(fn_ir, root, iv_phi) {
+            return None;
+        }
+        let out = match &fn_ir.values[root].kind {
+            ValueKind::Const(lit) => Some(format!("const:{lit:?}")),
+            ValueKind::Param { index } => Some(format!("param:{index}")),
+            ValueKind::Load { var } => Some(format!("load:{var}")),
+            ValueKind::Phi { args }
+                if fn_ir.values[root]
+                    .phi_block
+                    .is_some_and(|bb| lp.body.contains(&bb)) =>
+            {
+                if let Some(var) = fn_ir.values[root].origin_var.as_deref()
+                    && has_assignment_in_loop(fn_ir, lp, var)
+                {
+                    return None;
+                }
+                let mut found: Option<String> = None;
+                let mut saw_non_self = false;
+                for (arg, _) in args {
+                    let arg = canonical_value(fn_ir, *arg);
+                    if arg == root {
+                        continue;
+                    }
+                    saw_non_self = true;
+                    let key = invariant_passthrough_key(fn_ir, lp, arg, iv_phi, seen)?;
+                    match &found {
+                        None => found = Some(key),
+                        Some(prev) if prev == &key => {}
+                        Some(_) => return None,
+                    }
+                }
+                if saw_non_self { found } else { None }
+            }
+            _ => None,
+        };
+        seen.remove(&root);
+        out
+    }
+
+    let phi_vid = canonical_value(fn_ir, phi_vid);
+    let ValueKind::Phi { args } = &fn_ir.values[phi_vid].kind else {
+        return false;
+    };
+    if !fn_ir.values[phi_vid]
+        .phi_block
+        .is_some_and(|bb| lp.body.contains(&bb))
+    {
+        return false;
+    }
+
+    let mut found: Option<String> = None;
+    for (arg, _) in args {
+        let key = invariant_passthrough_key(fn_ir, lp, *arg, iv_phi, &mut FxHashSet::default());
+        let Some(key) = key else {
+            return false;
+        };
+        match &found {
+            None => found = Some(key),
+            Some(prev) if prev == &key => {}
+            Some(_) => return false,
+        }
+    }
+    found.is_some()
 }
 
 fn var_observed_outside_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> bool {
@@ -5564,7 +6050,7 @@ fn is_int_index_vector_value(fn_ir: &FnIR, vid: ValueId) -> bool {
 
 fn is_scalar_broadcast_value(fn_ir: &FnIR, vid: ValueId) -> bool {
     let v = &fn_ir.values[canonical_value(fn_ir, vid)];
-    v.value_ty.shape == ShapeTy::Scalar
+    matches!(v.kind, ValueKind::Const(_)) || v.value_ty.shape == ShapeTy::Scalar
 }
 
 fn has_assignment_in_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> bool {
@@ -5939,37 +6425,52 @@ fn trace_passthrough_origin_phi_step(
 
 fn classify_passthrough_origin_phi_arms(
     fn_ir: &FnIR,
+    lp: &LoopInfo,
     step: PassthroughOriginPhiStep,
     var: &str,
 ) -> Option<PassthroughOriginPhiArms> {
-    let then_assign = if is_passthrough_load_of_var(fn_ir, step.then_val, var) {
+    let then_load = is_passthrough_load_of_var(fn_ir, step.then_val, var);
+    let else_load = is_passthrough_load_of_var(fn_ir, step.else_val, var);
+    let then_local_assign = if then_load {
         last_assign_to_var_in_block(fn_ir, step.then_bb, var)
     } else {
         None
     };
-    let else_assign = if is_passthrough_load_of_var(fn_ir, step.else_val, var) {
+    let else_local_assign = if else_load {
         last_assign_to_var_in_block(fn_ir, step.else_bb, var)
+    } else {
+        None
+    };
+    let then_reaching_assign = if then_load && then_local_assign.is_none() {
+        unique_assign_source_reaching_block_in_loop(fn_ir, lp, var, step.then_bb)
+    } else {
+        None
+    };
+    let else_reaching_assign = if else_load && else_local_assign.is_none() {
+        unique_assign_source_reaching_block_in_loop(fn_ir, lp, var, step.else_bb)
     } else {
         None
     };
     let then_prior_state = is_prior_origin_phi_state(fn_ir, step.then_val, var, step.phi_bb);
     let else_prior_state = is_prior_origin_phi_state(fn_ir, step.else_val, var, step.phi_bb);
-    let then_passthrough = then_prior_state
-        || (is_passthrough_load_of_var(fn_ir, step.then_val, var) && then_assign.is_none());
-    let else_passthrough = else_prior_state
-        || (is_passthrough_load_of_var(fn_ir, step.else_val, var) && else_assign.is_none());
+    let then_passthrough = then_prior_state || (then_load && then_local_assign.is_none());
+    let else_passthrough = else_prior_state || (else_load && else_local_assign.is_none());
 
     if then_passthrough && !else_passthrough {
         Some(PassthroughOriginPhiArms {
             pass_then: true,
-            prev_state_raw: then_prior_state.then_some(canonical_value(fn_ir, step.then_val)),
-            update_val: else_assign.unwrap_or_else(|| canonical_value(fn_ir, step.else_val)),
+            prev_state_raw: then_prior_state
+                .then_some(canonical_value(fn_ir, step.then_val))
+                .or(then_reaching_assign),
+            update_val: else_local_assign.unwrap_or_else(|| canonical_value(fn_ir, step.else_val)),
         })
     } else if else_passthrough && !then_passthrough {
         Some(PassthroughOriginPhiArms {
             pass_then: false,
-            prev_state_raw: else_prior_state.then_some(canonical_value(fn_ir, step.else_val)),
-            update_val: then_assign.unwrap_or_else(|| canonical_value(fn_ir, step.then_val)),
+            prev_state_raw: else_prior_state
+                .then_some(canonical_value(fn_ir, step.else_val))
+                .or(else_reaching_assign),
+            update_val: then_local_assign.unwrap_or_else(|| canonical_value(fn_ir, step.then_val)),
         })
     } else {
         None
@@ -6014,6 +6515,24 @@ fn passthrough_origin_phi_prev_source(
     unique_assign_source_reaching_block_in_loop(fn_ir, lp, var, step.phi_bb)
 }
 
+fn resolve_non_phi_prev_source_in_loop(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    var: &str,
+    step: PassthroughOriginPhiStep,
+    source: ValueId,
+) -> Option<ValueId> {
+    let source = canonical_value(fn_ir, source);
+    if !value_depends_on(fn_ir, source, step.phi, &mut FxHashSet::default()) {
+        return Some(source);
+    }
+    unique_assign_source_reaching_block_in_loop(fn_ir, lp, var, step.phi_bb).and_then(|reaching| {
+        let reaching = canonical_value(fn_ir, reaching);
+        (!value_depends_on(fn_ir, reaching, step.phi, &mut FxHashSet::default()))
+            .then_some(reaching)
+    })
+}
+
 fn passthrough_origin_phi_condition_parts(
     fn_ir: &FnIR,
     step: PassthroughOriginPhiStep,
@@ -6047,7 +6566,7 @@ fn materialize_passthrough_origin_phi_state(
     };
     trace_passthrough_origin_phi_step(fn_ir, "vec-materialize", var, step);
 
-    let Some(arms) = classify_passthrough_origin_phi_arms(fn_ir, step, var) else {
+    let Some(arms) = classify_passthrough_origin_phi_arms(fn_ir, lp, step, var) else {
         trace_materialize_reject(
             fn_ir,
             step.phi,
@@ -6063,6 +6582,19 @@ fn materialize_passthrough_origin_phi_state(
             fn_ir,
             step.phi,
             "passthrough-origin-phi: no reaching seed assign",
+        );
+        return None;
+    };
+
+    let Some(prev_source) = resolve_non_phi_prev_source_in_loop(fn_ir, lp, var, step, prev_source)
+    else {
+        trace_materialize_reject(
+            fn_ir,
+            step.phi,
+            &format!(
+                "passthrough-origin-phi: prev_source still depends on phi ({:?})",
+                fn_ir.values[canonical_value(fn_ir, prev_source)].kind
+            ),
         );
         return None;
     };
@@ -7055,7 +7587,7 @@ fn materialize_passthrough_origin_phi_state_scalar(
     };
     trace_passthrough_origin_phi_step(fn_ir, "vec-scalar-phi", var, step);
 
-    let Some(arms) = classify_passthrough_origin_phi_arms(fn_ir, step, var) else {
+    let Some(arms) = classify_passthrough_origin_phi_arms(fn_ir, lp, step, var) else {
         if trace_enabled {
             eprintln!(
                 "   [vec-scalar-phi] {} phi={} var={} reject: could not classify pass/update (then_passthrough=false else_passthrough=false then_prior=false else_prior=false)",
@@ -7077,19 +7609,19 @@ fn materialize_passthrough_origin_phi_state_scalar(
         passthrough_origin_phi_prev_source(fn_ir, lp, var, step, arms.prev_state_raw)?;
 
     let prev_state = {
-        let prev_raw = prev_source;
-        if depends_on_phi(prev_raw, fn_ir) {
+        let Some(prev_raw) = resolve_non_phi_prev_source_in_loop(fn_ir, lp, var, step, prev_source)
+        else {
             if trace_enabled {
                 eprintln!(
                     "   [vec-scalar-phi] {} phi={} var={} reject: prev_raw still depends on phi ({:?})",
                     fn_ir.name,
                     step.phi,
                     var,
-                    fn_ir.values[canonical_value(fn_ir, prev_raw)].kind
+                    fn_ir.values[canonical_value(fn_ir, prev_source)].kind
                 );
             }
             return None;
-        }
+        };
         materialize_loop_invariant_scalar_expr(fn_ir, prev_raw, iv_phi, lp, memo, interner)?
     };
 

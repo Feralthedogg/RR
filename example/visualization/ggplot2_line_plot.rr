@@ -1,5 +1,5 @@
-import r default from "ggplot2";
-import r * as base from "base";
+import r default from "ggplot2"
+import r * as base from "base"
 
 main <- function() {
   outfile <- "rr_ggplot2_line_plot.png"

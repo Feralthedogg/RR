@@ -33,7 +33,8 @@ fn optional_parallel_openmp_falls_back_without_semantic_change() {
     }
 
     let rr_src = r#"
-print(0L);
+print(0L)
+
 "#;
 
     let ref_src = r#"

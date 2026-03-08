@@ -10,17 +10,26 @@ fn scalar_floor_index_read_is_lowered_to_idx_helper() {
 
     let rr_src = r#"
 fn scalar_idx_kernel(n) {
-  let src = seq_len(n) + 0.25;
-  let x = seq_len(n) * 10;
-  let out = seq_len(n);
-  let i = 1.0;
+  let src = seq_len(n) + 0.25
+
+  let x = seq_len(n) * 10
+
+  let out = seq_len(n)
+
+  let i = 1.0
+
   while (i <= n) {
-    let ii = floor(i);
-    let j = floor(src[ii]);
-    out[ii] = x[j];
-    i = i + 1.0;
+    let ii = floor(i)
+
+    let j = floor(src[ii])
+
+    out[ii] = x[j]
+
+    i = i + 1.0
+
   }
-  return out;
+  return out
+
 }
 "#;
 

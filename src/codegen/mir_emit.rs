@@ -163,6 +163,7 @@ impl RBackend {
         self.indent -= 1;
         self.write_indent();
         self.write("}\n");
+        Self::prune_dead_cse_temps(&mut self.output);
 
         Ok((
             std::mem::take(&mut self.output),
@@ -516,10 +517,82 @@ impl RBackend {
     fn invalidate_emitted_cse_temps(&mut self) {
         let mut temps = std::mem::take(&mut self.emitted_temp_names_scratch);
         for temp in temps.drain(..) {
-            // Keep hoisted temps local to this assignment to avoid stale bindings.
+            // Keep hoisted temps local to the statement that emitted them.
             self.note_var_write(&temp);
         }
         self.emitted_temp_names_scratch = temps;
+    }
+
+    fn prune_dead_cse_temps(output: &mut String) {
+        let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
+        if lines.is_empty() {
+            return;
+        }
+
+        loop {
+            let temp_defs: Vec<(usize, String, String)> = lines
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, line)| {
+                    let (name, indent) = Self::extract_cse_assign_name(line)?;
+                    Some((idx, name, indent))
+                })
+                .collect();
+            if temp_defs.is_empty() {
+                break;
+            }
+
+            let mut changed = false;
+            for (idx, name, indent) in temp_defs {
+                let is_live = lines.iter().enumerate().any(|(other_idx, line)| {
+                    other_idx != idx && Self::line_contains_symbol(line, &name)
+                });
+                if !is_live {
+                    lines[idx] = format!("{}# rr-cse-pruned", indent);
+                    changed = true;
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        let mut rebuilt = lines.join("\n");
+        rebuilt.push('\n');
+        *output = rebuilt;
+    }
+
+    fn extract_cse_assign_name(line: &str) -> Option<(String, String)> {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with(".__rr_cse_") {
+            return None;
+        }
+        let (name, _) = trimmed.split_once(" <- ")?;
+        Some((
+            name.to_string(),
+            line[..line.len() - trimmed.len()].to_string(),
+        ))
+    }
+
+    fn line_contains_symbol(line: &str, symbol: &str) -> bool {
+        let mut search_from = 0;
+        while let Some(rel_idx) = line[search_from..].find(symbol) {
+            let idx = search_from + rel_idx;
+            let before = line[..idx].chars().next_back();
+            let after = line[idx + symbol.len()..].chars().next();
+            let boundary_ok = before.is_none_or(|ch| !Self::is_symbol_char(ch))
+                && after.is_none_or(|ch| !Self::is_symbol_char(ch));
+            if boundary_ok {
+                return true;
+            }
+            search_from = idx + symbol.len();
+        }
+        false
+    }
+
+    fn is_symbol_char(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.')
     }
 
     fn should_hoist_common_subexpr(vid: usize, uses: usize, values: &[Value]) -> bool {
@@ -1127,5 +1200,64 @@ impl RBackend {
             self.write(&format!(" # rr:{}:{}", span.start_line, span.start_col));
         }
         self.newline();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RBackend;
+
+    #[test]
+    fn prune_dead_cse_temps_removes_unused_chain() {
+        let mut output = [
+            "Sym <- function() ",
+            "{",
+            "  .__rr_cse_1 <- (a + b)",
+            "  .__rr_cse_2 <- (.__rr_cse_1 * c)",
+            "  x <- 1",
+            "}",
+            "",
+        ]
+        .join("\n");
+        RBackend::prune_dead_cse_temps(&mut output);
+        assert!(!output.contains(".__rr_cse_1 <-"));
+        assert!(!output.contains(".__rr_cse_2 <-"));
+        assert!(output.contains("# rr-cse-pruned"));
+    }
+
+    #[test]
+    fn prune_dead_cse_temps_keeps_live_temp() {
+        let mut output = [
+            "Sym <- function() ",
+            "{",
+            "  .__rr_cse_1 <- (a + b)",
+            "  x <- .__rr_cse_1",
+            "}",
+            "",
+        ]
+        .join("\n");
+        RBackend::prune_dead_cse_temps(&mut output);
+        assert!(output.contains(".__rr_cse_1 <- (a + b)"));
+        assert!(!output.contains("# rr-cse-pruned"));
+    }
+
+    #[test]
+    fn invalidate_emitted_cse_temps_drops_stale_binding() {
+        let mut backend = RBackend::new();
+        backend.note_var_write(".__rr_cse_7");
+        backend.bind_value_to_var(7, ".__rr_cse_7");
+        backend
+            .emitted_temp_names_scratch
+            .push(".__rr_cse_7".to_string());
+
+        assert_eq!(
+            backend.resolve_bound_value(7).as_deref(),
+            Some(".__rr_cse_7")
+        );
+
+        backend.invalidate_emitted_cse_temps();
+
+        assert!(backend.resolve_bound_value(7).is_none());
+        assert!(backend.emitted_temp_names_scratch.is_empty());
     }
 }

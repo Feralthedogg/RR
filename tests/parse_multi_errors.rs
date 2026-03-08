@@ -10,11 +10,11 @@ fn run_compile(source: &str, file_name: &str) -> (bool, String, String) {
 fn parse_errors_are_reported_together() {
     let src = r#"
 fn main() {
-  let x = 1$;
-  let y = ;
-  return x + ;
+  let x = 1$
+  let y =
+  return x +
 }
-main();
+main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "parse_multi.rr");
     assert!(!ok, "compile must fail");

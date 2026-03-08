@@ -65,8 +65,7 @@ pub enum TokenKind {
     LBracket,
     RBracket, // [ ]
     Comma,
-    Colon,
-    Semicolon, // , : ;
+    Colon, // , :
 
     Invalid(String),
     EOF,

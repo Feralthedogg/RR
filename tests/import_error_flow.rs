@@ -16,11 +16,11 @@ fn missing_import_returns_error_instead_of_exiting() {
 
     let entry_path = proj_dir.join("main.rr");
     let source = r#"
-import "missing.rr";
+import "missing.rr"
 fn main() {
-  return 1;
+  return 1
 }
-main();
+main()
 "#;
     fs::write(&entry_path, source).expect("failed to write main.rr");
 
@@ -47,8 +47,8 @@ fn conflicting_named_r_import_reports_previous_binding() {
 
     let entry_path = proj_dir.join("main.rr");
     let source = r#"
-import r { plot } from "graphics";
-import r { plot } from "stats";
+import r { plot } from "graphics"
+import r { plot } from "stats"
 "#;
     fs::write(&entry_path, source).expect("failed to write main.rr");
 
@@ -76,8 +76,8 @@ fn conflicting_namespace_alias_reports_imported_symbol() {
 
     let entry_path = proj_dir.join("main.rr");
     let source = r#"
-import r { plot as graphics } from "graphics";
-import r * as graphics from "grDevices";
+import r { plot as graphics } from "graphics"
+import r * as graphics from "grDevices"
 "#;
     fs::write(&entry_path, source).expect("failed to write main.rr");
 
@@ -106,8 +106,8 @@ fn package_name_import_conflicts_with_named_symbol_alias() {
 
     let entry_path = proj_dir.join("main.rr");
     let source = r#"
-import r "graphics";
-import r { median as graphics } from "stats";
+import r "graphics"
+import r { median as graphics } from "stats"
 "#;
     fs::write(&entry_path, source).expect("failed to write main.rr");
 

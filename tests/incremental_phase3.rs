@@ -24,9 +24,9 @@ fn incremental_phase3_reuses_in_memory_session_cache() {
     let main_path = proj_dir.join("main.rr");
     let source = r#"
 fn main() {
-  print(123L);
+  print(123L)
 }
-main();
+main()
 "#;
     fs::write(&main_path, source).expect("failed to write main.rr");
 

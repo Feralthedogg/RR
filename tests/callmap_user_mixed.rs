@@ -55,24 +55,24 @@ fn callmap_supports_user_and_builtin_mixed_chain() {
 
     let rr_src = r#"
 fn g(u) {
-  return sqrt(u);
+  return sqrt(u)
 }
 
 fn f(a, b) {
-  return pmax(log(a), b);
+  return pmax(log(a), b)
 }
 
 fn mixed(n) {
-  let x = seq_len(n);
-  let z = seq_len(n) + 5;
-  let y = seq_len(n);
+  let x = seq_len(n)
+  let z = seq_len(n) + 5
+  let y = seq_len(n)
   for (i in 1..length(x)) {
-    y[i] = f(x[i] + 1, g(z[i]));
+    y[i] = f(x[i] + 1, g(z[i]))
   }
-  return y;
+  return y
 }
 
-print(mixed(8));
+print(mixed(8))
 "#;
     let rr_path = out_dir.join("callmap_user_mixed.rr");
     fs::write(&rr_path, rr_src).expect("failed to write source");

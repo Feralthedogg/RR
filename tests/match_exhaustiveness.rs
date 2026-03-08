@@ -9,10 +9,12 @@ fn non_exhaustive_match_is_rejected_during_lowering() {
 fn classify(v) {
   return match(v) {
     1 => 10
-  };
+  }
+
 }
 
-print(classify(2));
+print(classify(2))
+
 "#;
 
     let err = compile_with_configs(

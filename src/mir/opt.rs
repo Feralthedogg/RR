@@ -290,7 +290,7 @@ impl TachyonEngine {
     }
 
     fn adaptive_ir_budget_enabled() -> bool {
-        Self::env_bool("RR_ADAPTIVE_IR_BUDGET", false)
+        Self::env_bool("RR_ADAPTIVE_IR_BUDGET", true)
     }
 
     fn selective_budget_enabled() -> bool {
@@ -315,11 +315,22 @@ impl TachyonEngine {
     }
 
     fn licm_enabled() -> bool {
-        Self::env_bool("RR_ENABLE_LICM", false)
+        Self::env_bool("RR_ENABLE_LICM", true)
+    }
+
+    fn licm_allowed_for_fn(fn_ir: &FnIR) -> bool {
+        if fn_ir.values.len() > 256 {
+            return false;
+        }
+        if fn_ir.blocks.len() > 64 {
+            return false;
+        }
+        let loop_count = loop_analysis::LoopAnalyzer::new(fn_ir).find_loops().len();
+        loop_count > 0 && loop_count <= 4
     }
 
     fn gvn_enabled() -> bool {
-        Self::env_bool("RR_ENABLE_GVN", false)
+        Self::env_bool("RR_ENABLE_GVN", true)
     }
 
     fn profile_use_path() -> Option<String> {
@@ -392,8 +403,9 @@ impl TachyonEngine {
         callee: &str,
         args: &[ValueId],
         names: &[Option<String>],
+        floor_helpers: &FxHashSet<String>,
     ) -> bool {
-        if !matches!(callee, "floor" | "ceiling" | "trunc") {
+        if !matches!(callee, "floor" | "ceiling" | "trunc") && !floor_helpers.contains(callee) {
             return false;
         }
         if args.len() != 1 || names.len() > 1 {
@@ -489,7 +501,10 @@ impl TachyonEngine {
         TypeState::vector(PrimTy::Int, false).with_len(Some(LenSym((slot as u32) + 1)))
     }
 
-    fn collect_floor_index_param_slots(fn_ir: &FnIR) -> FxHashSet<usize> {
+    fn collect_floor_index_param_slots(
+        fn_ir: &FnIR,
+        floor_helpers: &FxHashSet<String>,
+    ) -> FxHashSet<usize> {
         let mut slots = FxHashSet::default();
         for v in &fn_ir.values {
             let ValueKind::Call {
@@ -506,7 +521,7 @@ impl TachyonEngine {
                 }
                 continue;
             }
-            if !Self::is_floor_like_single_positional_call(callee, args, names) {
+            if !Self::is_floor_like_single_positional_call(callee, args, names, floor_helpers) {
                 continue;
             }
             let Some(inner) = args.first().copied() else {
@@ -569,7 +584,10 @@ impl TachyonEngine {
         rec(fn_ir, vid, &mut FxHashSet::default())
     }
 
-    fn collect_floor_index_base_vars(fn_ir: &FnIR) -> FxHashSet<String> {
+    fn collect_floor_index_base_vars(
+        fn_ir: &FnIR,
+        floor_helpers: &FxHashSet<String>,
+    ) -> FxHashSet<String> {
         let mut vars = FxHashSet::default();
         for v in &fn_ir.values {
             let ValueKind::Call {
@@ -586,7 +604,7 @@ impl TachyonEngine {
                 }
                 continue;
             }
-            if !Self::is_floor_like_single_positional_call(callee, args, names) {
+            if !Self::is_floor_like_single_positional_call(callee, args, names, floor_helpers) {
                 continue;
             }
             let Some(inner) = args.first().copied() else {
@@ -638,6 +656,7 @@ impl TachyonEngine {
 
     fn collect_proven_floor_index_param_slots(
         all_fns: &FxHashMap<String, FnIR>,
+        floor_helpers: &FxHashSet<String>,
     ) -> FxHashMap<String, FxHashSet<usize>> {
         let mut floor_slots_by_fn: FxHashMap<String, FxHashSet<usize>> = FxHashMap::default();
         let ordered_names = Self::sorted_fn_names(all_fns);
@@ -645,7 +664,7 @@ impl TachyonEngine {
             let Some(fn_ir) = all_fns.get(name) else {
                 continue;
             };
-            let slots = Self::collect_floor_index_param_slots(fn_ir);
+            let slots = Self::collect_floor_index_param_slots(fn_ir, floor_helpers);
             if !slots.is_empty() {
                 floor_slots_by_fn.insert(name.clone(), slots);
             }
@@ -744,7 +763,11 @@ impl TachyonEngine {
         false
     }
 
-    fn mark_floor_index_param_metadata(fn_ir: &mut FnIR, slots: &FxHashSet<usize>) -> bool {
+    fn mark_floor_index_param_metadata(
+        fn_ir: &mut FnIR,
+        slots: &FxHashSet<usize>,
+        floor_helpers: &FxHashSet<String>,
+    ) -> bool {
         let mut changed = false;
         for vid in 0..fn_ir.values.len() {
             let kind = fn_ir.values[vid].kind.clone();
@@ -808,7 +831,13 @@ impl TachyonEngine {
                     callee,
                     args,
                     names,
-                } if Self::is_floor_like_single_positional_call(&callee, &args, &names) => {
+                } if Self::is_floor_like_single_positional_call(
+                    &callee,
+                    &args,
+                    &names,
+                    floor_helpers,
+                ) =>
+                {
                     let Some(inner) = args.first().copied() else {
                         continue;
                     };
@@ -873,9 +902,10 @@ impl TachyonEngine {
     fn canonicalize_floor_index_params(
         fn_ir: &mut FnIR,
         proven_param_slots: Option<&FxHashSet<usize>>,
+        floor_helpers: &FxHashSet<String>,
     ) -> bool {
-        let slots = Self::collect_floor_index_param_slots(fn_ir);
-        let base_vars = Self::collect_floor_index_base_vars(fn_ir);
+        let slots = Self::collect_floor_index_param_slots(fn_ir, floor_helpers);
+        let base_vars = Self::collect_floor_index_base_vars(fn_ir, floor_helpers);
         if slots.is_empty() && base_vars.is_empty() {
             return false;
         }
@@ -942,7 +972,7 @@ impl TachyonEngine {
             bb.instrs = merged;
         }
 
-        changed | Self::mark_floor_index_param_metadata(fn_ir, &slots)
+        changed | Self::mark_floor_index_param_metadata(fn_ir, &slots, floor_helpers)
     }
 
     fn load_hot_profile_counts() -> FxHashMap<String, usize> {
@@ -1327,6 +1357,12 @@ impl TachyonEngine {
         names
     }
 
+    fn sorted_names(set: &FxHashSet<String>) -> Vec<String> {
+        let mut names: Vec<String> = set.iter().cloned().collect();
+        names.sort();
+        names
+    }
+
     // Required lowering-to-codegen stabilization passes.
     // This must run even in O0, because codegen cannot emit Phi.
     pub fn stabilize_for_codegen(&self, all_fns: &mut FxHashMap<String, FnIR>) {
@@ -1359,6 +1395,7 @@ impl TachyonEngine {
         &self,
         fn_ir: &mut FnIR,
         proven_param_slots: Option<&FxHashSet<usize>>,
+        floor_helpers: &FxHashSet<String>,
     ) -> TachyonPulseStats {
         let mut stats = TachyonPulseStats::default();
         if fn_ir.requires_conservative_optimization() {
@@ -1368,7 +1405,7 @@ impl TachyonEngine {
             return stats;
         }
         let canonicalized_index_params =
-            Self::canonicalize_floor_index_params(fn_ir, proven_param_slots);
+            Self::canonicalize_floor_index_params(fn_ir, proven_param_slots, floor_helpers);
         if canonicalized_index_params {
             Self::maybe_verify(fn_ir, "After AlwaysTier/ParamIndexCanonicalize");
         }
@@ -1533,14 +1570,30 @@ impl TachyonEngine {
         stats.selective_budget_mode = plan.selective_mode && selective_enabled;
         let ordered_names = Self::sorted_fn_names(all_fns);
         let ordered_total = ordered_names.len();
-        let proven_floor_param_slots = Self::collect_proven_floor_index_param_slots(all_fns);
+        let floor_helpers = Self::collect_floor_helpers(all_fns);
+        let proven_floor_param_slots =
+            Self::collect_proven_floor_index_param_slots(all_fns, &floor_helpers);
+        if !floor_helpers.is_empty() {
+            let rewrites = Self::rewrite_floor_helper_calls(all_fns, &floor_helpers);
+            if Self::wrap_trace_enabled() && rewrites > 0 {
+                let helper_names = Self::sorted_names(&floor_helpers).join(", ");
+                eprintln!(
+                    "   [floor] rewrote {} call site(s) using helper(s): {}",
+                    rewrites, helper_names
+                );
+            }
+        }
 
         // Tier A (always): lightweight canonicalization for every safe function.
         for (idx, name) in ordered_names.iter().enumerate() {
             let Some(fn_ir) = all_fns.get_mut(name) else {
                 continue;
             };
-            let s = self.run_always_tier_with_stats(fn_ir, proven_floor_param_slots.get(name));
+            let s = self.run_always_tier_with_stats(
+                fn_ir,
+                proven_floor_param_slots.get(name),
+                &floor_helpers,
+            );
             stats.accumulate(s);
             Self::emit_progress(
                 &mut progress,
@@ -1560,9 +1613,10 @@ impl TachyonEngine {
         if !wrap_index_helpers.is_empty() {
             let rewrites = Self::rewrite_wrap_index_helper_calls(all_fns, &wrap_index_helpers);
             if Self::wrap_trace_enabled() && rewrites > 0 {
+                let helper_names = Self::sorted_names(&wrap_index_helpers).join(", ");
                 eprintln!(
-                    "   [wrap] rewrote {} call site(s) using helper(s): {:?}",
-                    rewrites, wrap_index_helpers
+                    "   [wrap] rewrote {} call site(s) using helper(s): {}",
+                    rewrites, helper_names
                 );
             }
         }
@@ -1575,9 +1629,10 @@ impl TachyonEngine {
         if !cube_index_helpers.is_empty() {
             let rewrites = Self::rewrite_cube_index_helper_calls(all_fns, &cube_index_helpers);
             if Self::wrap_trace_enabled() && rewrites > 0 {
+                let helper_names = Self::sorted_names(&cube_index_helpers).join(", ");
                 eprintln!(
-                    "   [cube] rewrote {} call site(s) using helper(s): {:?}",
-                    rewrites, cube_index_helpers
+                    "   [cube] rewrote {} call site(s) using helper(s): {}",
+                    rewrites, helper_names
                 );
             }
         }
@@ -1740,7 +1795,13 @@ impl TachyonEngine {
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
     ) -> TachyonPulseStats {
-        self.run_function_with_proven_index_slots(fn_ir, callmap_user_whitelist, None)
+        let floor_helpers = FxHashSet::default();
+        self.run_function_with_proven_index_slots(
+            fn_ir,
+            callmap_user_whitelist,
+            None,
+            &floor_helpers,
+        )
     }
 
     fn run_function_with_stats_with_proven(
@@ -1749,7 +1810,13 @@ impl TachyonEngine {
         callmap_user_whitelist: &FxHashSet<String>,
         proven_param_slots: Option<&FxHashSet<usize>>,
     ) -> TachyonPulseStats {
-        self.run_function_with_proven_index_slots(fn_ir, callmap_user_whitelist, proven_param_slots)
+        let floor_helpers = FxHashSet::default();
+        self.run_function_with_proven_index_slots(
+            fn_ir,
+            callmap_user_whitelist,
+            proven_param_slots,
+            &floor_helpers,
+        )
     }
 
     fn run_function_with_proven_index_slots(
@@ -1757,6 +1824,7 @@ impl TachyonEngine {
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
         proven_param_slots: Option<&FxHashSet<usize>>,
+        floor_helpers: &FxHashSet<String>,
     ) -> TachyonPulseStats {
         let mut stats = TachyonPulseStats::default();
         let mut changed = true;
@@ -1781,7 +1849,7 @@ impl TachyonEngine {
             return stats;
         }
         let canonicalized_index_params =
-            Self::canonicalize_floor_index_params(fn_ir, proven_param_slots);
+            Self::canonicalize_floor_index_params(fn_ir, proven_param_slots, floor_helpers);
         if canonicalized_index_params {
             Self::maybe_verify(fn_ir, "After ParamIndexCanonicalize");
         }
@@ -1905,7 +1973,7 @@ impl TachyonEngine {
                 Self::maybe_verify(fn_ir, "After LoopOpt");
                 changed |= loop_changed;
 
-                let licm_changed = if Self::licm_enabled() {
+                let licm_changed = if Self::licm_enabled() && Self::licm_allowed_for_fn(fn_ir) {
                     let c = licm::MirLicm::new().optimize(fn_ir);
                     if c {
                         stats.licm_hits += 1;
@@ -2498,6 +2566,45 @@ impl TachyonEngine {
         helpers
     }
 
+    fn collect_floor_helpers(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        for name in Self::sorted_fn_names(all_fns) {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_rr_floor_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    fn rewrite_floor_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            for v in &mut fn_ir.values {
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &mut v.kind
+                else {
+                    continue;
+                };
+                if !helpers.contains(callee.as_str()) || args.len() != 1 {
+                    continue;
+                }
+                *callee = "floor".to_string();
+                *names = vec![None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
     fn collect_round_helpers(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
         let mut helpers = FxHashSet::default();
         for name in Self::sorted_fn_names(all_fns) {
@@ -2883,6 +2990,83 @@ impl TachyonEngine {
             && (callee == "round" || round_helpers.contains(callee))
     }
 
+    fn is_rr_floor_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [floor-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 1 {
+            fail!("conservative interop or arity != 1");
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let mut returns = Vec::new();
+        for bb in &fn_ir.blocks {
+            if let Terminator::Return(Some(v)) = bb.term {
+                returns.push(v);
+            }
+        }
+        if returns.is_empty() {
+            fail!("missing return");
+        }
+        let mut saw_real_return = false;
+        for ret in returns {
+            let ret = Self::resolve_load_alias_value(fn_ir, ret);
+            if matches!(fn_ir.values[ret].kind, ValueKind::Const(Lit::Null)) {
+                continue;
+            }
+            saw_real_return = true;
+            let ValueKind::Binary {
+                op: BinOp::Sub,
+                lhs,
+                rhs,
+            } = &fn_ir.values[ret].kind
+            else {
+                if Self::wrap_trace_enabled() {
+                    eprintln!(
+                        "   [floor-detect] {}: return kind {:?}",
+                        fn_ir.name, fn_ir.values[ret].kind
+                    );
+                }
+                fail!("return is not subtraction");
+            };
+            if Self::value_param_index(fn_ir, *lhs) != Some(0) {
+                fail!("sub lhs is not param");
+            }
+            let rhs = Self::resolve_load_alias_value(fn_ir, *rhs);
+            let ValueKind::Binary {
+                op: BinOp::Mod,
+                lhs: mod_lhs,
+                rhs: mod_rhs,
+            } = &fn_ir.values[rhs].kind
+            else {
+                fail!("sub rhs is not modulo");
+            };
+            if Self::value_param_index(fn_ir, *mod_lhs) != Some(0)
+                || !Self::value_is_const_one(fn_ir, *mod_rhs)
+            {
+                fail!("modulo operands do not match floor pattern");
+            }
+        }
+        if !saw_real_return {
+            fail!("missing non-null return");
+        }
+        true
+    }
+
     fn is_rr_round_helper_fn(fn_ir: &FnIR) -> bool {
         macro_rules! fail {
             ($msg:expr) => {{
@@ -2945,7 +3129,7 @@ impl TachyonEngine {
         if !saw_mod_seed {
             fail!("mod seed not seen");
         }
-        let Some((then_bb, else_bb, cond)) = branch_term else {
+        let Some((_, _, cond)) = branch_term else {
             fail!("missing branch");
         };
         let cond = Self::resolve_load_alias_value(fn_ir, cond);
@@ -2962,26 +3146,42 @@ impl TachyonEngine {
         {
             fail!("cond does not compare rem >= 0.5");
         }
-
-        if !Self::block_returns_param_minus_rem_plus_one(fn_ir, then_bb, 0, &rem_var) {
-            fail!("then block is not (x - r) + 1");
+        let mut saw_minus_rem = false;
+        let mut saw_minus_rem_plus_one = false;
+        for bb in &fn_ir.blocks {
+            let Terminator::Return(Some(ret)) = bb.term else {
+                continue;
+            };
+            let ret = Self::resolve_load_alias_value(fn_ir, ret);
+            if matches!(fn_ir.values[ret].kind, ValueKind::Const(Lit::Null)) {
+                continue;
+            }
+            if Self::returns_param_minus_rem_expr(fn_ir, ret, 0, &rem_var) {
+                saw_minus_rem = true;
+                continue;
+            }
+            if Self::returns_param_minus_rem_plus_one_expr(fn_ir, ret, 0, &rem_var) {
+                saw_minus_rem_plus_one = true;
+                continue;
+            }
+            fail!("return is neither x - r nor (x - r) + 1");
         }
-        if !Self::block_returns_param_minus_rem(fn_ir, else_bb, 0, &rem_var) {
-            fail!("else block is not x - r");
+        if !saw_minus_rem {
+            fail!("missing x - r return");
+        }
+        if !saw_minus_rem_plus_one {
+            fail!("missing (x - r) + 1 return");
         }
         true
     }
 
-    fn block_returns_param_minus_rem_plus_one(
+    fn returns_param_minus_rem_plus_one_expr(
         fn_ir: &FnIR,
-        bid: BlockId,
+        vid: ValueId,
         param_idx: usize,
         rem_var: &str,
     ) -> bool {
-        let Some(val) = Self::block_single_return_value(fn_ir, bid) else {
-            return false;
-        };
-        let v = Self::resolve_load_alias_value(fn_ir, val);
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
         let ValueKind::Binary {
             op: BinOp::Add,
             lhs,
@@ -2990,25 +3190,13 @@ impl TachyonEngine {
         else {
             return false;
         };
-        (Self::block_returns_param_minus_rem_expr(fn_ir, *lhs, param_idx, rem_var)
+        (Self::returns_param_minus_rem_expr(fn_ir, *lhs, param_idx, rem_var)
             && Self::value_is_const_one(fn_ir, *rhs))
-            || (Self::block_returns_param_minus_rem_expr(fn_ir, *rhs, param_idx, rem_var)
+            || (Self::returns_param_minus_rem_expr(fn_ir, *rhs, param_idx, rem_var)
                 && Self::value_is_const_one(fn_ir, *lhs))
     }
 
-    fn block_returns_param_minus_rem(
-        fn_ir: &FnIR,
-        bid: BlockId,
-        param_idx: usize,
-        rem_var: &str,
-    ) -> bool {
-        let Some(val) = Self::block_single_return_value(fn_ir, bid) else {
-            return false;
-        };
-        Self::block_returns_param_minus_rem_expr(fn_ir, val, param_idx, rem_var)
-    }
-
-    fn block_returns_param_minus_rem_expr(
+    fn returns_param_minus_rem_expr(
         fn_ir: &FnIR,
         vid: ValueId,
         param_idx: usize,
@@ -3025,13 +3213,6 @@ impl TachyonEngine {
         };
         Self::value_param_index(fn_ir, *lhs) == Some(param_idx)
             && Self::value_var_name(fn_ir, *rhs).as_deref() == Some(rem_var)
-    }
-
-    fn block_single_return_value(fn_ir: &FnIR, bid: BlockId) -> Option<ValueId> {
-        match fn_ir.blocks[bid].term {
-            Terminator::Return(Some(v)) => Some(v),
-            _ => None,
-        }
     }
 
     fn value_is_const_half(fn_ir: &FnIR, vid: ValueId) -> bool {
@@ -3218,142 +3399,87 @@ impl TachyonEngine {
     }
 
     fn dce(&self, fn_ir: &mut FnIR) -> bool {
+        let reachable = Self::reachable_blocks(fn_ir);
+        let mut live_in: Vec<FxHashSet<VarId>> = vec![FxHashSet::default(); fn_ir.blocks.len()];
+        let mut live_out: Vec<FxHashSet<VarId>> = vec![FxHashSet::default(); fn_ir.blocks.len()];
+
+        let mut dataflow_changed = true;
+        while dataflow_changed {
+            dataflow_changed = false;
+            for bid in (0..fn_ir.blocks.len()).rev() {
+                if !reachable.contains(&bid) {
+                    continue;
+                }
+
+                let succ_live = Self::successor_live_vars(fn_ir, bid, &live_in);
+                let block_live = self.compute_block_live_in(fn_ir, bid, &succ_live, &fn_ir.values);
+                if live_out[bid] != succ_live {
+                    live_out[bid] = succ_live.clone();
+                    dataflow_changed = true;
+                }
+                if live_in[bid] != block_live {
+                    live_in[bid] = block_live;
+                    dataflow_changed = true;
+                }
+            }
+        }
+
         let mut changed = false;
-
-        // 1. Mark used values
-        let mut used = FxHashSet::default();
-
-        // Final values used in terminators
-        for blk in &fn_ir.blocks {
-            match &blk.term {
-                Terminator::If { cond, .. } => {
-                    used.insert(*cond);
-                }
-                Terminator::Return(Some(id)) => {
-                    used.insert(*id);
-                }
-                _ => {}
+        for bid in 0..fn_ir.blocks.len() {
+            if !reachable.contains(&bid) {
+                continue;
             }
-        }
+            let mut live = Self::successor_live_vars(fn_ir, bid, &live_in);
+            self.collect_term_live_vars(&fn_ir.blocks[bid].term, &fn_ir.values, &mut live);
 
-        // Instructions with side effects are roots
-        for blk in &fn_ir.blocks {
-            for instr in &blk.instrs {
-                if self.has_side_effect_instr(instr, &fn_ir.values) {
-                    match instr {
-                        Instr::Assign { src, .. } => {
-                            used.insert(*src);
-                        }
-                        Instr::Eval { val, .. } => {
-                            used.insert(*val);
-                        }
-                        Instr::StoreIndex1D { base, idx, val, .. } => {
-                            used.insert(*base);
-                            used.insert(*idx);
-                            used.insert(*val);
-                        }
-                        Instr::StoreIndex2D {
-                            base, r, c, val, ..
-                        } => {
-                            used.insert(*base);
-                            used.insert(*r);
-                            used.insert(*c);
-                            used.insert(*val);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Propagate usage (transitive closure)
-        let mut worklist: Vec<ValueId> = used.iter().cloned().collect();
-        while let Some(vid) = worklist.pop() {
-            let val = &fn_ir.values[vid];
-            match &val.kind {
-                ValueKind::Binary { lhs, rhs, .. } => {
-                    if used.insert(*lhs) {
-                        worklist.push(*lhs);
-                    }
-                    if used.insert(*rhs) {
-                        worklist.push(*rhs);
-                    }
-                }
-                ValueKind::Unary { rhs, .. } => {
-                    if used.insert(*rhs) {
-                        worklist.push(*rhs);
-                    }
-                }
-                ValueKind::Call { args, .. } => {
-                    for a in args {
-                        if used.insert(*a) {
-                            worklist.push(*a);
-                        }
-                    }
-                }
-                ValueKind::Phi { args } => {
-                    for (a, _) in args {
-                        if used.insert(*a) {
-                            worklist.push(*a);
-                        }
-                    }
-                }
-                ValueKind::Index1D { base, idx, .. } => {
-                    if used.insert(*base) {
-                        worklist.push(*base);
-                    }
-                    if used.insert(*idx) {
-                        worklist.push(*idx);
-                    }
-                }
-                ValueKind::Index2D { base, r, c } => {
-                    if used.insert(*base) {
-                        worklist.push(*base);
-                    }
-                    if used.insert(*r) {
-                        worklist.push(*r);
-                    }
-                    if used.insert(*c) {
-                        worklist.push(*c);
-                    }
-                }
-                ValueKind::Len { base } => {
-                    if used.insert(*base) {
-                        worklist.push(*base);
-                    }
-                }
-                ValueKind::Indices { base } => {
-                    if used.insert(*base) {
-                        worklist.push(*base);
-                    }
-                }
-                ValueKind::Range { start, end } => {
-                    if used.insert(*start) {
-                        worklist.push(*start);
-                    }
-                    if used.insert(*end) {
-                        worklist.push(*end);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // 3. Remove dead instructions
-        for blk in &mut fn_ir.blocks {
-            let old_len = blk.instrs.len();
-            let values = &fn_ir.values; // Grab values before retain closure
-            blk.instrs.retain(|instr| {
-                if self.has_side_effect_instr(instr, values) {
-                    return true;
-                }
-
+            let mut new_instrs_rev = Vec::with_capacity(fn_ir.blocks[bid].instrs.len());
+            for instr in fn_ir.blocks[bid].instrs.iter().rev() {
                 match instr {
-                    Instr::Assign { src, .. } => used.contains(src),
-                    Instr::Eval { val, .. } => used.contains(val),
-                    _ => true,
+                    Instr::Assign { dst, src, span } => {
+                        let pinned = Self::is_pinned_live_var(dst);
+                        let removable = Self::can_eliminate_assign_dst(dst);
+                        if pinned || !removable || live.remove(dst) {
+                            self.collect_value_live_vars(*src, &fn_ir.values, &mut live);
+                            new_instrs_rev.push(instr.clone());
+                        } else if self.has_side_effect_val(*src, &fn_ir.values) {
+                            self.collect_value_live_vars(*src, &fn_ir.values, &mut live);
+                            new_instrs_rev.push(Instr::Eval {
+                                val: *src,
+                                span: *span,
+                            });
+                            changed = true;
+                        } else {
+                            changed = true;
+                        }
+                    }
+                    Instr::Eval { val, .. } => {
+                        if self.has_side_effect_val(*val, &fn_ir.values) {
+                            self.collect_value_live_vars(*val, &fn_ir.values, &mut live);
+                            new_instrs_rev.push(instr.clone());
+                        } else {
+                            changed = true;
+                        }
+                    }
+                    Instr::StoreIndex1D { base, idx, val, .. } => {
+                        self.collect_value_live_vars(*base, &fn_ir.values, &mut live);
+                        self.collect_value_live_vars(*idx, &fn_ir.values, &mut live);
+                        self.collect_value_live_vars(*val, &fn_ir.values, &mut live);
+                        new_instrs_rev.push(instr.clone());
+                    }
+                    Instr::StoreIndex2D {
+                        base, r, c, val, ..
+                    } => {
+                        self.collect_value_live_vars(*base, &fn_ir.values, &mut live);
+                        self.collect_value_live_vars(*r, &fn_ir.values, &mut live);
+                        self.collect_value_live_vars(*c, &fn_ir.values, &mut live);
+                        self.collect_value_live_vars(*val, &fn_ir.values, &mut live);
+                        new_instrs_rev.push(instr.clone());
+                    }
                 }
-            });
-            if blk.instrs.len() != old_len {
+            }
+            new_instrs_rev.reverse();
+            if fn_ir.blocks[bid].instrs != new_instrs_rev {
+                fn_ir.blocks[bid].instrs = new_instrs_rev;
                 changed = true;
             }
         }
@@ -3365,12 +3491,163 @@ impl TachyonEngine {
         match instr {
             Instr::StoreIndex1D { .. } => true,
             Instr::StoreIndex2D { .. } => true,
-            Instr::Assign { .. } => {
-                // Assignments are kept conservative unless proven dead.
-                true
-            }
+            Instr::Assign { src, .. } => self.has_side_effect_val(*src, values),
             Instr::Eval { val, .. } => self.has_side_effect_val(*val, values),
         }
+    }
+
+    fn reachable_blocks(fn_ir: &FnIR) -> FxHashSet<BlockId> {
+        let mut reachable = FxHashSet::default();
+        let mut queue = vec![fn_ir.entry];
+        reachable.insert(fn_ir.entry);
+        let mut head = 0;
+        while head < queue.len() {
+            let bid = queue[head];
+            head += 1;
+            for succ in Self::block_successors(fn_ir, bid) {
+                if reachable.insert(succ) {
+                    queue.push(succ);
+                }
+            }
+        }
+        reachable
+    }
+
+    fn block_successors(fn_ir: &FnIR, bid: BlockId) -> Vec<BlockId> {
+        match &fn_ir.blocks[bid].term {
+            Terminator::Goto(target) => vec![*target],
+            Terminator::If {
+                then_bb, else_bb, ..
+            } => vec![*then_bb, *else_bb],
+            Terminator::Return(_) | Terminator::Unreachable => Vec::new(),
+        }
+    }
+
+    fn successor_live_vars(
+        fn_ir: &FnIR,
+        bid: BlockId,
+        live_in: &[FxHashSet<VarId>],
+    ) -> FxHashSet<VarId> {
+        let mut live = FxHashSet::default();
+        for succ in Self::block_successors(fn_ir, bid) {
+            live.extend(live_in[succ].iter().cloned());
+        }
+        live
+    }
+
+    fn compute_block_live_in(
+        &self,
+        fn_ir: &FnIR,
+        bid: BlockId,
+        succ_live: &FxHashSet<VarId>,
+        values: &[Value],
+    ) -> FxHashSet<VarId> {
+        let blk = &fn_ir.blocks[bid];
+        let mut live = succ_live.clone();
+        self.collect_term_live_vars(&blk.term, values, &mut live);
+        for instr in blk.instrs.iter().rev() {
+            match instr {
+                Instr::Assign { dst, src, .. } => {
+                    let removable = Self::can_eliminate_assign_dst(dst);
+                    if Self::is_pinned_live_var(dst)
+                        || !removable
+                        || live.remove(dst)
+                        || self.has_side_effect_val(*src, values)
+                    {
+                        self.collect_value_live_vars(*src, values, &mut live);
+                    }
+                }
+                Instr::Eval { val, .. } => {
+                    if self.has_side_effect_val(*val, values) {
+                        self.collect_value_live_vars(*val, values, &mut live);
+                    }
+                }
+                Instr::StoreIndex1D { base, idx, val, .. } => {
+                    self.collect_value_live_vars(*base, values, &mut live);
+                    self.collect_value_live_vars(*idx, values, &mut live);
+                    self.collect_value_live_vars(*val, values, &mut live);
+                }
+                Instr::StoreIndex2D {
+                    base, r, c, val, ..
+                } => {
+                    self.collect_value_live_vars(*base, values, &mut live);
+                    self.collect_value_live_vars(*r, values, &mut live);
+                    self.collect_value_live_vars(*c, values, &mut live);
+                    self.collect_value_live_vars(*val, values, &mut live);
+                }
+            }
+        }
+        live
+    }
+
+    fn collect_term_live_vars(
+        &self,
+        term: &Terminator,
+        values: &[Value],
+        live: &mut FxHashSet<VarId>,
+    ) {
+        match term {
+            Terminator::If { cond, .. } => self.collect_value_live_vars(*cond, values, live),
+            Terminator::Return(Some(val)) => self.collect_value_live_vars(*val, values, live),
+            Terminator::Goto(_) | Terminator::Return(None) | Terminator::Unreachable => {}
+        }
+    }
+
+    fn collect_value_live_vars(
+        &self,
+        root: ValueId,
+        values: &[Value],
+        live: &mut FxHashSet<VarId>,
+    ) {
+        let mut stack = vec![root];
+        let mut seen = FxHashSet::default();
+        while let Some(vid) = stack.pop() {
+            if !seen.insert(vid) {
+                continue;
+            }
+            if let Some(origin_var) = &values[vid].origin_var {
+                live.insert(origin_var.clone());
+            }
+            match &values[vid].kind {
+                ValueKind::Load { var } => {
+                    live.insert(var.clone());
+                }
+                ValueKind::Binary { lhs, rhs, .. } => {
+                    stack.push(*lhs);
+                    stack.push(*rhs);
+                }
+                ValueKind::Unary { rhs, .. } => stack.push(*rhs),
+                ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => {
+                    stack.extend(args.iter().copied());
+                }
+                ValueKind::Index1D { base, idx, .. } => {
+                    stack.push(*base);
+                    stack.push(*idx);
+                }
+                ValueKind::Index2D { base, r, c } => {
+                    stack.push(*base);
+                    stack.push(*r);
+                    stack.push(*c);
+                }
+                ValueKind::Range { start, end } => {
+                    stack.push(*start);
+                    stack.push(*end);
+                }
+                ValueKind::Len { base } | ValueKind::Indices { base } => stack.push(*base),
+                ValueKind::Phi { args } => {
+                    stack.extend(args.iter().map(|(arg, _)| *arg));
+                }
+                ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::RSymbol { .. } => {}
+            }
+        }
+    }
+
+    fn is_pinned_live_var(var: &str) -> bool {
+        var.starts_with(".arg_")
+    }
+
+    fn can_eliminate_assign_dst(var: &str) -> bool {
+        var.starts_with(".tachyon_") || var.starts_with(".__rr_") || var.starts_with("inlined_")
     }
 
     fn has_side_effect_val(&self, val_id: ValueId, values: &[Value]) -> bool {
@@ -3610,7 +3887,7 @@ mod tests {
         let mut all = FxHashMap::default();
         for i in 0..5 {
             let name = format!("f{}", i);
-            all.insert(name.clone(), dummy_fn(&name, 700));
+            all.insert(name.clone(), dummy_fn(&name, 2_100));
         }
 
         let plan = TachyonEngine::build_opt_plan(&all);
@@ -3637,9 +3914,88 @@ mod tests {
     #[test]
     fn always_tier_runs_light_cleanup() {
         let mut f = fn_with_unreachable_block("cleanup");
-        let stats = TachyonEngine::new().run_always_tier_with_stats(&mut f, None);
+        let floor_helpers = FxHashSet::default();
+        let stats = TachyonEngine::new().run_always_tier_with_stats(&mut f, None, &floor_helpers);
         assert_eq!(stats.always_tier_functions, 1);
         assert!(crate::mir::verify::verify_ir(&f).is_ok());
+    }
+
+    #[test]
+    fn floor_helper_detection_and_rewrite_use_builtin_floor() {
+        let mut helper = FnIR::new("floorish".to_string(), vec!["x".to_string()]);
+        let helper_entry = helper.add_block();
+        helper.entry = helper_entry;
+        helper.body_head = helper_entry;
+        let param = helper.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let one = helper.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let modulo = helper.add_value(
+            ValueKind::Binary {
+                op: BinOp::Mod,
+                lhs: param,
+                rhs: one,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let floorish = helper.add_value(
+            ValueKind::Binary {
+                op: BinOp::Sub,
+                lhs: param,
+                rhs: modulo,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        helper.blocks[helper_entry].term = Terminator::Return(Some(floorish));
+
+        let mut caller = FnIR::new("caller".to_string(), vec!["y".to_string()]);
+        let caller_entry = caller.add_block();
+        caller.entry = caller_entry;
+        caller.body_head = caller_entry;
+        let caller_param = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("y".to_string()),
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "floorish".to_string(),
+                args: vec![caller_param],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[caller_entry].term = Terminator::Return(Some(call));
+
+        let mut all = FxHashMap::default();
+        all.insert(helper.name.clone(), helper);
+        all.insert(caller.name.clone(), caller);
+
+        let helpers = TachyonEngine::collect_floor_helpers(&all);
+        assert!(helpers.contains("floorish"));
+        let rewrites = TachyonEngine::rewrite_floor_helper_calls(&mut all, &helpers);
+        assert_eq!(rewrites, 1);
+
+        let caller = all.get("caller").expect("caller should exist");
+        let ValueKind::Call { callee, .. } = &caller.values[call].kind else {
+            panic!("caller value should remain a call");
+        };
+        assert_eq!(callee, "floor");
     }
 
     #[test]
@@ -3720,5 +4076,98 @@ mod tests {
         assert!(dump.contains("FnIR"));
         let _ = fs::remove_file(&dump_path);
         let _ = fs::remove_dir(&out_dir);
+    }
+
+    #[test]
+    fn dce_removes_shadowed_dead_assign() {
+        let mut fn_ir = FnIR::new("dead_assign".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let one = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let two = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_x = fn_ir.add_value(
+            ValueKind::Load {
+                var: ".tachyon_x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some(".tachyon_x".to_string()),
+        );
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: ".tachyon_x".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: ".tachyon_x".to_string(),
+            src: two,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].term = Terminator::Return(Some(load_x));
+
+        let changed = TachyonEngine::new().dce(&mut fn_ir);
+        assert!(changed);
+        assert_eq!(fn_ir.blocks[entry].instrs.len(), 1);
+        match &fn_ir.blocks[entry].instrs[0] {
+            Instr::Assign { dst, src, .. } => {
+                assert_eq!(dst, ".tachyon_x");
+                assert_eq!(*src, two);
+            }
+            other => panic!("unexpected instruction after DCE: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn dce_preserves_side_effectful_rhs_as_eval() {
+        let mut fn_ir = FnIR::new("dead_assign_call".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let side_effect_call = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "unknown_effect".to_string(),
+                args: Vec::new(),
+                names: Vec::new(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let zero = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: ".tachyon_tmp".to_string(),
+            src: side_effect_call,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].term = Terminator::Return(Some(zero));
+
+        let changed = TachyonEngine::new().dce(&mut fn_ir);
+        assert!(changed);
+        assert_eq!(fn_ir.blocks[entry].instrs.len(), 1);
+        match &fn_ir.blocks[entry].instrs[0] {
+            Instr::Eval { val, .. } => assert_eq!(*val, side_effect_call),
+            other => panic!(
+                "side-effectful dead assign should become Eval, got {:?}",
+                other
+            ),
+        }
     }
 }

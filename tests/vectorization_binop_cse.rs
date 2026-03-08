@@ -10,11 +10,14 @@ fn repeated_vector_binop_is_hoisted_once() {
 
     let rr_src = r#"
 fn kernel(u, n_l, n_r, n) {
-  let out = u;
+  let out = u
+
   for (i in 1..n) {
-    out[i] = ((u[floor(n_r[i])] - u[floor(n_l[i])]) / 2.0) * ((u[floor(n_r[i])] - u[floor(n_l[i])]) / 2.0);
+    out[i] = ((u[floor(n_r[i])] - u[floor(n_l[i])]) / 2.0) * ((u[floor(n_r[i])] - u[floor(n_l[i])]) / 2.0)
+
   }
-  return out;
+  return out
+
 }
 "#;
 

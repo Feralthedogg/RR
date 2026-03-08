@@ -42,11 +42,11 @@ fn main() {
   x = c(1L, 2L, 3L)
   i = 1L
   while (i <= 3L) {
-    print(x[i]);
-    i = i + 1L;
+    print(x[i])
+    i = i + 1L
   }
 }
-main();
+main()
 "#;
     fs::write(&main_path, source).expect("failed to write main.rr");
     (main_path, source)

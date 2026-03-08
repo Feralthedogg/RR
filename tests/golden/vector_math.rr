@@ -1,33 +1,33 @@
 fn map_err(n) {
-  let x = seq_len(n);
-  let y = seq_len(n);
+  let x = seq_len(n)
+  let y = seq_len(n)
   for (i in 1L..length(x)) {
-    y[i] = (x[i] * 2L) + 1L;
+    y[i] = (x[i] * 2L) + 1L
   }
-  let target = (x * 2L) + 1L;
-  return sum(abs(y - target));
+  let target = (x * 2L) + 1L
+  return sum(abs(y - target))
 }
 
 fn cond_err(n, k) {
-  let x = seq_len(n);
-  let y = seq_len(n);
+  let x = seq_len(n)
+  let y = seq_len(n)
   for (i in 1L..length(x)) {
     if (x[i] > k) {
-      y[i] = x[i];
+      y[i] = x[i]
     } else {
-      y[i] = 0L;
+      y[i] = 0L
     }
   }
-  let target = (x > k) * x;
-  return sum(abs(y - target));
+  let target = (x > k) * x
+  return sum(abs(y - target))
 }
 
 fn main() {
-  let e1 = map_err(20L);
-  let e2 = cond_err(20L, 8L);
-  print(e1);
-  print(e2);
-  return e1 + e2;
+  let e1 = map_err(20L)
+  let e2 = cond_err(20L, 8L)
+  print(e1)
+  print(e2)
+  return e1 + e2
 }
 
-print(main());
+print(main())

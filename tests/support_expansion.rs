@@ -21,27 +21,27 @@ fn unary_field_and_seq_len_for_are_supported() {
 
     let rr_src = r#"
 fn t_unary_field() {
-    let a = -5;
-    let b = !FALSE;
-    let rec = {x: 1, y: 2};
-    rec.x = 10;
-    print(a);
-    print(b);
-    print(rec.x);
-    print(rec.y);
-    return rec.x + rec.y;
+    let a = -5
+    let b = !FALSE
+    let rec = {x: 1, y: 2}
+    rec.x = 10
+    print(a)
+    print(b)
+    print(rec.x)
+    print(rec.y)
+    return rec.x + rec.y
 }
 
 fn t_seq_len_sum(n) {
-    let s = 0;
+    let s = 0
     for (i in seq_len(n)) {
-        s = s + i;
+        s = s + i
     }
-    return s;
+    return s
 }
 
-print(t_unary_field());
-print(t_seq_len_sum(5));
+print(t_unary_field())
+print(t_seq_len_sum(5))
 "#;
 
     let rr_path = out_dir.join("support_expansion.rr");

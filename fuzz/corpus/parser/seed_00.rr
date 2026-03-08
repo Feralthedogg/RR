@@ -1,6 +1,6 @@
 fn main() {
-  let x = 1L;
-  return x + 1L;
+  let x = 1L
+  return x + 1L
 }
-main();
+main()
 

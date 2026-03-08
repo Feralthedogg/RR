@@ -16,6 +16,13 @@
 4. Run De-SSA globally before emission.
 5. Cleanup after De-SSA.
 
+Budget policy:
+
+- Adaptive IR budgeting is enabled by default.
+- RR first estimates a program-level and function-level budget from total IR, max function size, and operation density.
+- If the workload still exceeds the adaptive cap, Tier B falls back to deterministic selective mode.
+- `RR_HEAVY_PASS_FN_IR` is a soft threshold for compact heavy-tier candidates, not the global hard ceiling for the compilation unit.
+
 ## Function-Level Iterative Passes
 
 Core loop (bounded by `RR_OPT_MAX_ITERS`):
@@ -37,6 +44,19 @@ Core loop (bounded by `RR_OPT_MAX_ITERS`):
 - LICM (`licm`)
 - fresh allocation tuning (`fresh_alloc`)
 - bounds-check elimination (`bce`)
+
+GVN policy:
+
+- GVN is enabled by default.
+- It currently runs only on loop-free, store-free functions and skips known unsafe runtime helpers.
+- `RR_ENABLE_GVN=0` disables GVN globally.
+
+LICM policy:
+
+- LICM is enabled by default.
+- It only runs on compact loop-bearing functions.
+- Current guardrails skip very large functions/CFGs so compile time stays bounded on workloads such as `tesseract`.
+- `RR_ENABLE_LICM=0` disables LICM globally.
 
 3. Always verify MIR invariants at key boundaries.
 

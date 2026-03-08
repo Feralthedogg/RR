@@ -5,14 +5,19 @@ use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 fn o2_vector_callmap_emits_intrinsic_helpers() {
     let src = r#"
 fn call_abs(n: int) {
-  let x = seq_len(n) - 4;
-  let y = seq_len(n);
+  let x = seq_len(n) - 4
+
+  let y = seq_len(n)
+
   for (i in 1..length(x)) {
-    y[i] = abs(x[i]);
+    y[i] = abs(x[i])
+
   }
-  return y;
+  return y
+
 }
-print(call_abs(5L));
+print(call_abs(5L))
+
 "#;
 
     let (code, _map) = compile_with_config(

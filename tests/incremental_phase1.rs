@@ -24,14 +24,14 @@ fn incremental_phase1_reuses_artifact_when_inputs_unchanged() {
     let main_path = proj_dir.join("main.rr");
     let source = r#"
 fn helper(x) {
-  return x + 1L;
+  return x + 1L
 }
 
 fn main() {
-  let y = helper(2L);
-  print(y);
+  let y = helper(2L)
+  print(y)
 }
-main();
+main()
 "#;
     fs::write(&main_path, source).expect("failed to write main.rr");
 

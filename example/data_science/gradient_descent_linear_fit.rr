@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     xs = c(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)
@@ -39,4 +39,4 @@ fn main() {
     print_metric("gd_loss", loss)
 }
 
-main();
+main()

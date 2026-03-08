@@ -9,6 +9,7 @@ pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
     peek: Token,
+    previous_span: Span,
 }
 
 #[derive(PartialEq, PartialOrd)]
@@ -48,10 +49,12 @@ impl<'a> Parser<'a> {
             lexer,
             current,
             peek,
+            previous_span: Span::default(),
         }
     }
 
     fn advance(&mut self) {
+        self.previous_span = self.current.span;
         self.current = self.peek.clone();
         self.peek = self.lexer.next_token();
     }
@@ -231,11 +234,23 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn can_end_stmt_here(&self) -> bool {
+    fn current_is_structural_stmt_end(&self) -> bool {
         matches!(
             self.current.kind,
             TokenKind::RBrace | TokenKind::EOF | TokenKind::Else
-        ) || Self::is_stmt_start(&self.current.kind)
+        )
+    }
+
+    fn current_starts_stmt_on_new_line_after(&self, span: Span) -> bool {
+        span.end_line > 0
+            && Self::is_stmt_start(&self.current.kind)
+            && self.current.span.start_line > span.end_line
+    }
+
+    fn current_starts_stmt_on_same_line_after(&self, span: Span) -> bool {
+        span.end_line > 0
+            && Self::is_stmt_start(&self.current.kind)
+            && self.current.span.start_line == span.end_line
     }
 
     fn consume_stmt_end(&mut self, fallback: Span) -> RR<Span> {
@@ -249,48 +264,33 @@ impl<'a> Parser<'a> {
                 msg
             );
         }
-        if self.current.kind == TokenKind::Semicolon {
-            let semi = self.current.span;
-            self.advance();
-            return Ok(semi);
-        }
-        if matches!(
-            self.current.kind,
-            TokenKind::RBrace | TokenKind::EOF | TokenKind::Else
-        ) {
+        if self.current_is_structural_stmt_end()
+            || self.current_starts_stmt_on_new_line_after(fallback)
+        {
             return Ok(fallback);
         }
-        if Self::is_stmt_start(&self.current.kind) {
-            let same_line =
-                fallback.end_line > 0 && self.current.span.start_line == fallback.end_line;
-            if same_line {
-                bail_at!(
-                    self.current.span,
-                    "RR.ParseError",
-                    RRCode::E0001,
-                    Stage::Parse,
-                    "Missing ';' before {:?} on the same line",
-                    self.current.kind
-                );
-            }
-            return Ok(fallback);
+        if self.current_starts_stmt_on_same_line_after(fallback) {
+            bail_at!(
+                self.current.span,
+                "RR.ParseError",
+                RRCode::E0001,
+                Stage::Parse,
+                "statements must be separated by a newline or '}}' before {:?}",
+                self.current.kind
+            );
         }
         bail_at!(
             self.current.span,
             "RR.ParseError",
             RRCode::E0001,
             Stage::Parse,
-            "Expected statement separator, got {:?}",
+            "Expected statement boundary, got {:?}",
             self.current.kind
         );
     }
 
     fn recover_stmt_boundary(&mut self) {
         while self.current.kind != TokenKind::EOF {
-            if self.current.kind == TokenKind::Semicolon {
-                self.advance();
-                break;
-            }
             if matches!(self.current.kind, TokenKind::RBrace | TokenKind::Else) {
                 break;
             }
@@ -328,8 +328,10 @@ impl<'a> Parser<'a> {
                     errors.push(e);
                     let before = self.current.span;
                     self.recover_stmt_boundary();
-                    if self.current.span == before && self.current.kind != TokenKind::EOF {
-                        // Prevent infinite recovery loops on the same token.
+                    if self.current.span == before
+                        && matches!(self.current.kind, TokenKind::RBrace | TokenKind::Else)
+                    {
+                        // Skip only structural boundaries that cannot start a valid statement.
                         self.advance();
                     }
                 }
@@ -464,8 +466,10 @@ impl<'a> Parser<'a> {
                     errors.push(e);
                     let before = self.current.span;
                     self.recover_stmt_boundary();
-                    if self.current.span == before && self.current.kind != TokenKind::EOF {
-                        // Prevent infinite recovery loops inside blocks.
+                    if self.current.span == before
+                        && matches!(self.current.kind, TokenKind::RBrace | TokenKind::Else)
+                    {
+                        // Skip only structural boundaries that cannot start a valid statement.
                         self.advance();
                     }
                 }
@@ -606,12 +610,11 @@ impl<'a> Parser<'a> {
     fn parse_return_stmt(&mut self) -> RR<Stmt> {
         let start = self.current.span;
         self.advance(); // return
-        // `return` without value is allowed only at explicit/structural statement end.
-        // Using `is_stmt_start` here breaks `return x + 1` when semicolons are optional.
-        let value = if matches!(
-            self.current.kind,
-            TokenKind::Semicolon | TokenKind::RBrace | TokenKind::EOF | TokenKind::Else
-        ) {
+        // `return` without a value is allowed only at a structural boundary or
+        // when the next statement starts on a later line.
+        let value = if self.current_is_structural_stmt_end()
+            || self.current_starts_stmt_on_new_line_after(start)
+        {
             None
         } else {
             Some(self.parse_expr(Precedence::Lowest)?)
@@ -656,7 +659,7 @@ impl<'a> Parser<'a> {
             self.advance();
         }
 
-        let (path, spec) = if source == ImportSource::RPackage
+        let (path, spec, end_fallback) = if source == ImportSource::RPackage
             && matches!(&self.current.kind, TokenKind::Ident(name) if name == "default")
         {
             self.advance();
@@ -685,7 +688,7 @@ impl<'a> Parser<'a> {
                 ),
             };
             let alias = pkg.clone();
-            (pkg, ImportSpec::Namespace(alias))
+            (pkg, ImportSpec::Namespace(alias), self.previous_span)
         } else if source == ImportSource::RPackage && self.current.kind == TokenKind::LBrace {
             let mut bindings = Vec::new();
             self.advance(); // {
@@ -730,7 +733,7 @@ impl<'a> Parser<'a> {
                     "Expected package string after 'from'"
                 ),
             };
-            (pkg, ImportSpec::Named(bindings))
+            (pkg, ImportSpec::Named(bindings), self.previous_span)
         } else if source == ImportSource::RPackage && self.current.kind == TokenKind::Star {
             self.advance(); // *
             match &self.current.kind {
@@ -768,7 +771,7 @@ impl<'a> Parser<'a> {
                     "Expected package string after 'from'"
                 ),
             };
-            (pkg, ImportSpec::Namespace(alias))
+            (pkg, ImportSpec::Namespace(alias), self.previous_span)
         } else {
             let path = match &self.current.kind {
                 TokenKind::String(s) => {
@@ -784,17 +787,14 @@ impl<'a> Parser<'a> {
                     "Expected string after import"
                 ),
             };
-            (path, ImportSpec::Glob)
+            (path, ImportSpec::Glob, self.previous_span)
         };
 
-        // Optional semicolon?
-        if self.current.kind == TokenKind::Semicolon {
-            self.advance();
-        }
+        let end = self.consume_stmt_end(end_fallback)?;
 
         Ok(Stmt {
             kind: StmtKind::Import { source, path, spec },
-            span: start.merge(self.current.span),
+            span: start.merge(end),
         })
     }
 
@@ -834,7 +834,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_start_ident_or_expr(&mut self) -> RR<Stmt> {
-        // Can be Assign (x = ...) or ExprStmt (x; or call(x);)
+        // Can be Assign (x = ...) or ExprStmt (x or call(x))
         let start = self.current.span;
         let expr = self.parse_expr(Precedence::Lowest)?;
 
@@ -942,9 +942,7 @@ impl<'a> Parser<'a> {
     fn parse_expr(&mut self, precedence: Precedence) -> RR<Expr> {
         let mut left = self.parse_prefix()?;
 
-        while self.current.kind != TokenKind::Semicolon
-            && precedence < Self::token_precedence(&self.current.kind)
-        {
+        while precedence < Self::token_precedence(&self.current.kind) {
             // R-style newline statement termination:
             // don't continue postfix chains across a line break.
             if self.current.span.start_line > left.span.end_line
@@ -1128,23 +1126,25 @@ impl<'a> Parser<'a> {
             TokenKind::Minus => {
                 self.advance();
                 let rhs = self.parse_expr(Precedence::Prefix)?;
+                let end = rhs.span;
                 Ok(Expr {
                     kind: ExprKind::Unary {
                         op: UnaryOp::Neg,
                         rhs: Box::new(rhs),
                     },
-                    span: start,
+                    span: start.merge(end),
                 })
             }
             TokenKind::Bang => {
                 self.advance();
                 let rhs = self.parse_expr(Precedence::Prefix)?;
+                let end = rhs.span;
                 Ok(Expr {
                     kind: ExprKind::Unary {
                         op: UnaryOp::Not,
                         rhs: Box::new(rhs),
                     },
-                    span: start,
+                    span: start.merge(end),
                 })
             }
             _ => bail!(
@@ -1343,8 +1343,8 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Question => {
                 // Postfix Try ?
+                let end = self.current.span;
                 self.advance();
-                let end = self.current.span; // Approx
                 Ok(Expr {
                     kind: ExprKind::Try {
                         expr: Box::new(left),

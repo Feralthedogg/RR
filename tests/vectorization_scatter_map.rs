@@ -10,24 +10,37 @@ fn indirect_scatter_map_vectorizes_to_index_assign() {
 
     let rr_src = r#"
 fn idx_torus(x, y, w, h) {
-  let xx = x;
-  let yy = y;
-  if (xx < 1) { xx = w; }
-  if (xx > w) { xx = 1; }
-  if (yy < 1) { yy = h; }
-  if (yy > h) { yy = 1; }
-  return ((yy - 1) * w) + xx;
+  let xx = x
+
+  let yy = y
+
+  if (xx < 1) { xx = w
+ }
+  if (xx > w) { xx = 1
+ }
+  if (yy < 1) { yy = h
+ }
+  if (yy > h) { yy = 1
+ }
+  return ((yy - 1) * w) + xx
+
 }
 
 fn scatter_shift(field, w, h) {
-  let size = w * h;
-  let out = seq_len(size) * 0;
+  let size = w * h
+
+  let out = seq_len(size) * 0
+
   for (i in 1..size) {
-    let y = floor((i - 1) / w) + 1;
-    let x = i - (floor((i - 1) / w) * w);
-    out[idx_torus(x + 1, y, w, h)] = field[i];
+    let y = floor((i - 1) / w) + 1
+
+    let x = i - (floor((i - 1) / w) * w)
+
+    out[idx_torus(x + 1, y, w, h)] = field[i]
+
   }
-  return out;
+  return out
+
 }
 "#;
 

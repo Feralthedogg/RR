@@ -22,18 +22,18 @@ fn codegen_is_deterministic_for_identical_input() {
 
     let src = r#"
 fn helper(x) {
-  return (x * 2L) + 1L;
+  return (x * 2L) + 1L
 }
 
 fn main() {
-  let x = seq_along(20L);
-  let y = seq_along(20L);
+  let x = seq_along(20L)
+  let y = seq_along(20L)
   for (i in 1L..length(x)) {
-    y[i] = helper(x[i]);
+    y[i] = helper(x[i])
   }
-  print(sum(y));
+  print(sum(y))
 }
-main();
+main()
 "#;
     let rr_path = proj_dir.join("determinism.rr");
     fs::write(&rr_path, src).expect("failed to write source");

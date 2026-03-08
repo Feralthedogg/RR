@@ -10,20 +10,26 @@ fn floor_index_entry_canonicalization_is_skipped_when_callsites_prove_int_vector
 
     let rr_src = r#"
 fn mk_idx(n) {
-  return seq_len(n);
+  return seq_len(n)
+
 }
 
 fn gather(a, idx, n) {
-  let out = a;
+  let out = a
+
   for (i in 1..n) {
-    out[i] = a[floor(idx[i])];
+    out[i] = a[floor(idx[i])]
+
   }
-  return out;
+  return out
+
 }
 
 fn main(n) {
-  let a = seq_len(n);
-  return gather(a, mk_idx(n), n);
+  let a = seq_len(n)
+
+  return gather(a, mk_idx(n), n)
+
 }
 "#;
 

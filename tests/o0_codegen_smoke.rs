@@ -14,15 +14,20 @@ fn o0_codegen_handles_phi_by_running_mandatory_de_ssa() {
 
     let rr_program = r#"
 fn sum_loop(n) {
-  let x = seq_len(n);
-  let s = 0L;
+  let x = seq_len(n)
+
+  let s = 0L
+
   for (i in 1..length(x)) {
-    s = s + x[i];
+    s = s + x[i]
+
   }
-  return s;
+  return s
+
 }
 
-print(sum_loop(8));
+print(sum_loop(8))
+
 "#;
     fs::write(&rr_src, rr_program).expect("failed to write RR source");
 

@@ -33,11 +33,11 @@ fn compile_o2_gradual_no_panic(name: &str, src: &str) -> String {
 fn sccp_integer_multiply_overflow_does_not_panic() {
     let src = r#"
 fn main() {
-  let x = 3037000500L * 3037000500L;
-  print(x);
+  let x = 3037000500L * 3037000500L
+  print(x)
 }
 
-main();
+main()
 "#;
     let code = compile_o2_gradual_no_panic("sccp_mul_overflow_regression.rr", src);
     assert!(
@@ -50,11 +50,11 @@ main();
 fn sccp_integer_add_overflow_does_not_panic() {
     let src = r#"
 fn main() {
-  let x = 9223372036854775807L + 1L;
-  print(x);
+  let x = 9223372036854775807L + 1L
+  print(x)
 }
 
-main();
+main()
 "#;
     let code = compile_o2_gradual_no_panic("sccp_add_overflow_regression.rr", src);
     assert!(
@@ -67,12 +67,12 @@ main();
 fn sccp_integer_div_overflow_does_not_panic() {
     let src = r#"
 fn main() {
-  let min_i64 = (0L - 9223372036854775807L) - 1L;
-  let x = min_i64 / -1L;
-  print(x);
+  let min_i64 = (0L - 9223372036854775807L) - 1L
+  let x = min_i64 / -1L
+  print(x)
 }
 
-main();
+main()
 "#;
     let _ = compile_o2_gradual_no_panic("sccp_div_overflow_regression.rr", src);
 }

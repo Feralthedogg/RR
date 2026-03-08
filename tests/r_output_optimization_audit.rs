@@ -54,22 +54,28 @@ fn typed_condition_elides_truthy_wrapper_and_preserves_output() {
     let typed_src = r#"
 fn choose(flag: bool, a: int, b: int) -> int {
   if (flag) {
-    return a;
+    return a
+
   } else {
-    return b;
+    return b
+
   }
 }
-print(choose(TRUE, 11L, 7L));
+print(choose(TRUE, 11L, 7L))
+
 "#;
     let untyped_src = r#"
 fn choose(flag, a, b) {
   if (flag) {
-    return a;
+    return a
+
   } else {
-    return b;
+    return b
+
   }
 }
-print(choose(TRUE, 11L, 7L));
+print(choose(TRUE, 11L, 7L))
+
 "#;
     let ref_r = r#"
 choose <- function(flag, a, b) {
@@ -151,14 +157,19 @@ fn intrinsic_emission_and_optional_native_fallback_are_verified() {
 
     let rr_src = r#"
 fn call_abs(n: int) {
-  let x = seq_len(n) - 4;
-  let y = seq_len(n);
+  let x = seq_len(n) - 4
+
+  let y = seq_len(n)
+
   for (i in 1..length(x)) {
-    y[i] = abs(x[i]);
+    y[i] = abs(x[i])
+
   }
-  return y;
+  return y
+
 }
-print(call_abs(5L));
+print(call_abs(5L))
+
 "#;
     let ref_r = r#"
 call_abs <- function(n) {
@@ -257,15 +268,21 @@ fn o2_reduces_index_guard_calls_and_matches_reference_semantics() {
 
     let rr_src = r#"
 fn map_err(n: int) {
-  let x = seq_len(n);
-  let y = seq_len(n);
+  let x = seq_len(n)
+
+  let y = seq_len(n)
+
   for (i in 1L..length(x)) {
-    y[i] = (x[i] * 2L) + 1L;
+    y[i] = (x[i] * 2L) + 1L
+
   }
-  let target = (x * 2L) + 1L;
-  return sum(abs(y - target));
+  let target = (x * 2L) + 1L
+
+  return sum(abs(y - target))
+
 }
-print(map_err(30L));
+print(map_err(30L))
+
 "#;
     let ref_r = r#"
 map_err <- function(n) {
@@ -355,17 +372,23 @@ fn nested_generic_type_hint_program_matches_reference_r() {
 
     let rr_src = r#"
 fn count_nested(xs: list<vector<float>>) -> int {
-  return length(xs);
+  return length(xs)
+
 }
 
 fn main() -> int {
-  let xs = list(c(1.0, 2.0, 3.0), c(4.0));
-  let n = count_nested(xs);
-  print(n);
-  return n;
+  let xs = list(c(1.0, 2.0, 3.0), c(4.0))
+
+  let n = count_nested(xs)
+
+  print(n)
+
+  return n
+
 }
 
-print(main());
+print(main())
+
 "#;
     let ref_r = r#"
 count_nested <- function(xs) {

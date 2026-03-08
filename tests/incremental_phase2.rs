@@ -32,18 +32,18 @@ fn incremental_phase2_reuses_function_emit_cache() {
     let source = format!(
         r#"
 fn {square_name}(x) {{
-  return x * x;
+  return x * x
 }}
 
 fn {bump_name}(x) {{
-  return x + 1L;
+  return x + 1L
 }}
 
 fn main() {{
-  let a = {square_name}(3L);
-  print({bump_name}(a));
+  let a = {square_name}(3L)
+  print({bump_name}(a))
 }}
-main();
+main()
 "#
     );
     fs::write(&main_path, &source).expect("failed to write main.rr");

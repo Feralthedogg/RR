@@ -60,34 +60,50 @@ fn branch_vec_fold_case(idx: usize, rng: &mut Lcg) -> GeneratedCase {
         r#"
 fn adjust(v, k, bias) {{
   if ((v % k) == 0L) {{
-    return v + bias;
+    return v + bias
+
   }} else {{
-    return v - bias;
+    return v - bias
+
   }}
 }}
 
 fn kernel(n, scale, shift, bias, cutoff) {{
-  let xs = seq_len(n);
-  let ys = seq_len(n);
-  let i = 1L;
-  let acc = 0L;
+  let xs = seq_len(n)
+
+  let ys = seq_len(n)
+
+  let i = 1L
+
+  let acc = 0L
+
   while (i <= length(xs)) {{
-    let base = (xs[i] * scale) + shift;
+    let base = (xs[i] * scale) + shift
+
     if (base > cutoff) {{
-      ys[i] = adjust(base, bias, i);
+      ys[i] = adjust(base, bias, i)
+
     }} else {{
-      ys[i] = adjust(base + bias, bias, i);
+      ys[i] = adjust(base + bias, bias, i)
+
     }}
-    acc = acc + ys[i];
-    i = i + 1L;
+    acc = acc + ys[i]
+
+    i = i + 1L
+
   }}
-  print(acc);
-  print(sum(ys));
-  print(ys[length(ys)]);
-  return acc + sum(ys) + ys[length(ys)];
+  print(acc)
+
+  print(sum(ys))
+
+  print(ys[length(ys)])
+
+  return acc + sum(ys) + ys[length(ys)]
+
 }}
 
-print(kernel({n}L, {scale}L, {shift}L, {bias}L, {cutoff}L));
+print(kernel({n}L, {scale}L, {shift}L, {bias}L, {cutoff}L))
+
 "#
     );
     let ref_r_src = format!(
@@ -141,22 +157,34 @@ fn recurrence_case(idx: usize, rng: &mut Lcg) -> GeneratedCase {
     let rr_src = format!(
         r#"
 fn main() {{
-  let n = {n}L;
-  let xs = seq_len(n);
-  let acc = seq_len(n);
-  acc[1L] = {seed}L;
-  let i = 2L;
+  let n = {n}L
+
+  let xs = seq_len(n)
+
+  let acc = seq_len(n)
+
+  acc[1L] = {seed}L
+
+  let i = 2L
+
   while (i <= n) {{
-    let step = ((xs[i] * {a}L) + {b}L) % {modulo}L;
-    acc[i] = acc[i - 1L] + step;
-    i = i + 1L;
+    let step = ((xs[i] * {a}L) + {b}L) % {modulo}L
+
+    acc[i] = acc[i - 1L] + step
+
+    i = i + 1L
+
   }}
-  print(acc[n]);
-  print(sum(acc));
-  return acc[n] + sum(acc);
+  print(acc[n])
+
+  print(sum(acc))
+
+  return acc[n] + sum(acc)
+
 }}
 
-print(main());
+print(main())
+
 "#
     );
     let ref_r_src = format!(
@@ -198,36 +226,55 @@ fn matrix_fold_case(idx: usize, rng: &mut Lcg) -> GeneratedCase {
         r#"
 fn mix(v, tweak) {{
   if ((v % 2L) == 0L) {{
-    return v + tweak;
+    return v + tweak
+
   }} else {{
-    return v - tweak;
+    return v - tweak
+
   }}
 }}
 
 fn main() {{
-  let rows = {rows}L;
-  let cols = {cols}L;
-  let vals = seq_len(rows * cols);
-  let m = matrix(vals, rows, cols);
-  let rs = rowSums(m);
-  let cs = colSums(m);
-  let total = 0L;
-  let i = 1L;
+  let rows = {rows}L
+
+  let cols = {cols}L
+
+  let vals = seq_len(rows * cols)
+
+  let m = matrix(vals, rows, cols)
+
+  let rs = rowSums(m)
+
+  let cs = colSums(m)
+
+  let total = 0L
+
+  let i = 1L
+
   while (i <= length(rs)) {{
-    total = total + mix(rs[i], {tweak}L);
-    i = i + 1L;
+    total = total + mix(rs[i], {tweak}L)
+
+    i = i + 1L
+
   }}
-  let j = 1L;
+  let j = 1L
+
   while (j <= length(cs)) {{
-    total = total + mix(cs[j], {tweak}L + 1L);
-    j = j + 1L;
+    total = total + mix(cs[j], {tweak}L + 1L)
+
+    j = j + 1L
+
   }}
-  print(total);
-  print(m[{row_pick}L, {col_pick}L]);
-  return total + m[{row_pick}L, {col_pick}L];
+  print(total)
+
+  print(m[{row_pick}L, {col_pick}L])
+
+  return total + m[{row_pick}L, {col_pick}L]
+
 }}
 
-print(main());
+print(main())
+
 "#
     );
     let ref_r_src = format!(
@@ -282,38 +329,56 @@ fn nested_loop_case(idx: usize, rng: &mut Lcg) -> GeneratedCase {
     let rr_src = format!(
         r#"
 fn score(i, j, a, b) {{
-  let v = (i * a) - (j * b);
+  let v = (i * a) - (j * b)
+
   if (v > 0L) {{
-    return v;
+    return v
+
   }} else {{
-    return 0L - v;
+    return 0L - v
+
   }}
 }}
 
 fn main() {{
-  let outer = {outer}L;
-  let inner = {inner}L;
-  let acc = 0L;
-  let diag = 0L;
-  let i = 1L;
+  let outer = {outer}L
+
+  let inner = {inner}L
+
+  let acc = 0L
+
+  let diag = 0L
+
+  let i = 1L
+
   while (i <= outer) {{
-    let j = 1L;
+    let j = 1L
+
     while (j <= inner) {{
-      let s = score(i, j, {a}L, {b}L);
-      acc = acc + s;
+      let s = score(i, j, {a}L, {b}L)
+
+      acc = acc + s
+
       if (i == j) {{
-        diag = diag + s;
+        diag = diag + s
+
       }}
-      j = j + 1L;
+      j = j + 1L
+
     }}
-    i = i + 1L;
+    i = i + 1L
+
   }}
-  print(acc);
-  print(diag);
-  return acc + diag;
+  print(acc)
+
+  print(diag)
+
+  return acc + diag
+
 }}
 
-print(main());
+print(main())
+
 "#
     );
     let ref_r_src = format!(
@@ -368,33 +433,47 @@ fn call_chain_case(idx: usize, rng: &mut Lcg) -> GeneratedCase {
     let rr_src = format!(
         r#"
 fn tweak(x, k) {{
-  return (x * k) - (k - 1L);
+  return (x * k) - (k - 1L)
+
 }}
 
 fn project(v, a, b) {{
   if (v > b) {{
-    return tweak(v, a) - b;
+    return tweak(v, a) - b
+
   }} else {{
-    return tweak(v + b, a);
+    return tweak(v + b, a)
+
   }}
 }}
 
 fn main() {{
-  let n = {n}L;
-  let xs = seq_len(n);
-  let ys = seq_len(n);
-  let i = 1L;
+  let n = {n}L
+
+  let xs = seq_len(n)
+
+  let ys = seq_len(n)
+
+  let i = 1L
+
   while (i <= n) {{
-    ys[i] = project(xs[i], {a}L, {b}L);
-    i = i + 1L;
+    ys[i] = project(xs[i], {a}L, {b}L)
+
+    i = i + 1L
+
   }}
-  print(sum(ys));
-  print(ys[1L]);
-  print(ys[n]);
-  return sum(ys) + ys[1L] + ys[n];
+  print(sum(ys))
+
+  print(ys[1L])
+
+  print(ys[n])
+
+  return sum(ys) + ys[1L] + ys[n]
+
 }}
 
-print(main());
+print(main())
+
 "#
     );
     let ref_r_src = format!(
@@ -445,27 +524,35 @@ fn tail_recursion_case(idx: usize, rng: &mut Lcg) -> GeneratedCase {
         r#"
 fn step(n, k, bias) {{
   if ((n % 2L) == 0L) {{
-    return (n * k) + bias;
+    return (n * k) + bias
+
   }} else {{
-    return (n * k) - bias;
+    return (n * k) - bias
+
   }}
 }}
 
 fn recur(n, k, bias, acc) {{
   if (n <= 0L) {{
-    return acc;
+    return acc
+
   }} else {{
-    return recur(n - 1L, k, bias, acc + step(n, k, bias));
+    return recur(n - 1L, k, bias, acc + step(n, k, bias))
+
   }}
 }}
 
 fn main() {{
-  let out = recur({n}L, {k}L, {bias}L, 0L);
-  print(out);
-  return out;
+  let out = recur({n}L, {k}L, {bias}L, 0L)
+
+  print(out)
+
+  return out
+
 }}
 
-print(main());
+print(main())
+
 "#
     );
     let ref_r_src = format!(
@@ -510,29 +597,42 @@ fn record_state_case(idx: usize, rng: &mut Lcg) -> GeneratedCase {
     let rr_src = format!(
         r#"
 fn update_box(box, step, gain, shift) {{
-  box.total = box.total + ((step * gain) + shift);
+  box.total = box.total + ((step * gain) + shift)
+
   if ((step % 2L) == 0L) {{
-    box.evens = box.evens + step;
+    box.evens = box.evens + step
+
   }} else {{
-    box.odds = box.odds + step;
+    box.odds = box.odds + step
+
   }}
-  return box;
+  return box
+
 }}
 
 fn main() {{
-  let box = {{total: 0L, evens: 0L, odds: 0L}};
-  let i = 1L;
+  let box = {{total: 0L, evens: 0L, odds: 0L}}
+
+  let i = 1L
+
   while (i <= {n}L) {{
-    let box = update_box(box, i, {gain}L, {shift}L);
-    i = i + 1L;
+    let box = update_box(box, i, {gain}L, {shift}L)
+
+    i = i + 1L
+
   }}
-  print(box.total);
-  print(box.evens);
-  print(box.odds);
-  return box.total + box.evens + box.odds;
+  print(box.total)
+
+  print(box.evens)
+
+  print(box.odds)
+
+  return box.total + box.evens + box.odds
+
 }}
 
-print(main());
+print(main())
+
 "#
     );
     let ref_r_src = format!(
@@ -582,26 +682,40 @@ fn stats_namespace_case(idx: usize, rng: &mut Lcg) -> GeneratedCase {
     let name = format!("stats_namespace_{idx:02}");
     let rr_src = format!(
         r#"
-import r default from "stats";
+import r default from "stats"
+
 
 fn main() {{
-  let xs = seq_len({n}L);
-  let ys = seq_len({n}L);
-  let i = 1L;
+  let xs = seq_len({n}L)
+
+  let ys = seq_len({n}L)
+
+  let i = 1L
+
   while (i <= {n}L) {{
-    ys[i] = (xs[i] * {scale}L) + {shift}L;
-    i = i + 1L;
+    ys[i] = (xs[i] * {scale}L) + {shift}L
+
+    i = i + 1L
+
   }}
-  let center = stats.median(ys);
-  let spread = stats.sd(ys);
-  let qv = stats.quantile(ys, probs = c({q}));
-  print(center);
-  print(spread);
-  print(qv[1L]);
-  return center + qv[1L];
+  let center = stats.median(ys)
+
+  let spread = stats.sd(ys)
+
+  let qv = stats.quantile(ys, probs = c({q}))
+
+  print(center)
+
+  print(spread)
+
+  print(qv[1L])
+
+  return center + qv[1L]
+
 }}
 
-print(main());
+print(main())
+
 "#
     );
     let ref_r_src = format!(

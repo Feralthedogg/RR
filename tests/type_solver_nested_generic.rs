@@ -110,11 +110,13 @@ fn strict_rejects_nested_generic_call_mismatch() {
 fn strict_accepts_nested_generic_call_match() {
     let src = r#"
 fn inner(x: list<box<float>>) -> int {
-  return length(x);
+  return length(x)
+
 }
 
 fn outer(y: list<box<float>>) -> int {
-  return inner(y);
+  return inner(y)
+
 }
 "#;
 

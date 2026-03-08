@@ -1,4 +1,4 @@
-import "../common/sim_utils.rr";
+import "../common/sim_utils.rr"
 
 fn main() {
     x1 = 0.2
@@ -27,4 +27,4 @@ fn main() {
     print_metric("spring_velocity_mass", abs1(v1) + abs1(v2) + abs1(v3))
 }
 
-main();
+main()

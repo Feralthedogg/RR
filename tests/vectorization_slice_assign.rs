@@ -10,12 +10,16 @@ fn partial_range_map_vectorizes_with_slice_assign() {
 
     let rr_src = r#"
 fn slice_map(n) {
-  let x = seq_len(n);
-  let y = seq_len(n);
+  let x = seq_len(n)
+
+  let y = seq_len(n)
+
   for (i in 2..n) {
-    y[i] = x[i] + 1;
+    y[i] = x[i] + 1
+
   }
-  return y;
+  return y
+
 }
 "#;
 

@@ -12,32 +12,32 @@ fn build_perf_program() -> String {
 
     for f in 0..40 {
         src.push_str(&format!("fn h{}(x) {{\n", f));
-        src.push_str("  let t = x;\n");
+        src.push_str("  let t = x\n");
         for i in 0..10 {
-            src.push_str(&format!("  let v{} = (t + {}L) * 2L;\n", i, (i + f) % 9));
+            src.push_str(&format!("  let v{} = (t + {}L) * 2L\n", i, (i + f) % 9));
         }
-        src.push_str("  return t + 1L;\n");
+        src.push_str("  return t + 1L\n");
         src.push_str("}\n\n");
     }
 
     src.push_str("fn giant(n) {\n");
-    src.push_str("  let acc = 0L;\n");
-    src.push_str("  let i = 1L;\n");
+    src.push_str("  let acc = 0L\n");
+    src.push_str("  let i = 1L\n");
     src.push_str("  while (i <= n) {\n");
-    src.push_str("    let t0 = i;\n");
+    src.push_str("    let t0 = i\n");
     for f in 0..40 {
-        src.push_str(&format!("    let t{} = h{}(t{});\n", f + 1, f, f));
+        src.push_str(&format!("    let t{} = h{}(t{})\n", f + 1, f, f));
     }
-    src.push_str("    acc = acc + t40;\n");
-    src.push_str("    i = i + 1L;\n");
+    src.push_str("    acc = acc + t40\n");
+    src.push_str("    i = i + 1L\n");
     src.push_str("  }\n");
-    src.push_str("  return acc;\n");
+    src.push_str("  return acc\n");
     src.push_str("}\n\n");
 
     src.push_str("fn main() {\n");
-    src.push_str("  print(giant(64L));\n");
+    src.push_str("  print(giant(64L))\n");
     src.push_str("}\n\n");
-    src.push_str("main();\n");
+    src.push_str("main()\n");
 
     src
 }

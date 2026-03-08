@@ -23,7 +23,7 @@ fn cli_parallel_flags_are_injected_into_runtime_prelude() {
     let tmp = unique_tmp_dir("proj");
     let rr_path = tmp.join("main.rr");
     let out_path = tmp.join("out.R");
-    fs::write(&rr_path, "print(1L);\n").expect("write rr source");
+    fs::write(&rr_path, "print(1L)\n").expect("write rr source");
 
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let output = Command::new(&rr_bin)

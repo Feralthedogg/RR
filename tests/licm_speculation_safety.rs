@@ -26,15 +26,15 @@ fn licm_does_not_speculate_potentially_failing_call_from_zero_iter_loop() {
 
     let rr_src = r#"
 fn main() {
-  let i = 0;
+  let i = 0
   while (i < 0) {
-    let t = rr_bool(NA);
-    i = i + 1;
+    let t = rr_bool(NA)
+    i = i + 1
   }
-  print(42);
-  return 0;
+  print(42)
+  return 0
 }
-main();
+main()
 "#;
 
     let rr_path = proj_dir.join("licm_speculation.rr");

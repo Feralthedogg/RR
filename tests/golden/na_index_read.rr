@@ -1,8 +1,8 @@
 fn main() {
-  let x = c(10L, 20L);
-  let i = NA;
-  print(x[i]);
-  return 0L;
+  let x = c(10L, 20L)
+  let i = NA
+  print(x[i])
+  return 0L
 }
 
-print(main());
+print(main())

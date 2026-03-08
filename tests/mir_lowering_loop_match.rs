@@ -24,17 +24,17 @@ fn break_next_and_list_pattern_match_lower_to_mir() {
 
     let rr_src = r#"
 fn loop_ops(n) {
-    let s = 0;
+    let s = 0
     for (i in 1..n) {
         if (i == 3) {
-            next;
+            next
         }
         if (i == 6) {
-            break;
+            break
         }
-        s = s + i;
+        s = s + i
     }
-    return s;
+    return s
 }
 
 fn match_list(v) {
@@ -42,7 +42,7 @@ fn match_list(v) {
         [a, b, ..rest] => a + b + length(rest),
         [x] => x,
         _ => 0
-    };
+    }
 }
 
 fn match_record(v) {
@@ -50,16 +50,16 @@ fn match_record(v) {
         {a: x, b: y} => x + y,
         {a: x} => x,
         _ => 0
-    };
+    }
 }
 
-print(loop_ops(10));
-print(match_list([10, 20, 30, 40]));
-print(match_list([7]));
-print(match_list(NULL));
-print(match_record({a: 3, b: 4}));
-print(match_record({a: 9}));
-print(match_record({c: 1}));
+print(loop_ops(10))
+print(match_list([10, 20, 30, 40]))
+print(match_list([7]))
+print(match_list(NULL))
+print(match_record({a: 3, b: 4}))
+print(match_record({a: 9}))
+print(match_record({c: 1}))
 "#;
 
     let rr_path = out_dir.join("mir_lowering_loop_match.rr");

@@ -14,6 +14,7 @@ The docs are organized for three audiences:
 If you are using RR:
 
 - [Getting Started](getting-started.md): build RR, compile a file, run a project
+- [Writing RR for Performance and Safety](writing-rr.md): user-facing guide for optimization-friendly and safe `.rr` code
 - [CLI Reference](cli.md): command forms, options, watch/build behavior
 - [Configuration](configuration.md): environment variables and optimizer/runtime knobs
 - [Language Reference](language.md): syntax and supported forms
@@ -27,6 +28,8 @@ If you are working on the compiler:
 - [Runtime and Errors](runtime-and-errors.md): emitted runtime helpers and diagnostics model
 - [Testing and Quality Gates](testing.md): integration, perf, and fuzz coverage
 - [Contributing Audit Checklist](contributing-audit.md): final manual and command-based verification pass
+  - includes `scripts/contributing_audit.sh` for baseline command + static rule checks
+  - includes `scripts/verify_cleanroom.sh` for strict clean-worktree verification of a scoped patch
 
 If you need behavior limits:
 
@@ -36,6 +39,8 @@ If you need behavior limits:
 
 - `getting-started.md`
   - minimal setup and first successful compile/run flow
+- `writing-rr.md`
+  - how to structure `.rr` programs so current RR optimization and safety checks work well
 - `cli.md`
   - command-line surface and execution modes
 - `language.md`

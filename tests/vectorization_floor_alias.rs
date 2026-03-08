@@ -10,15 +10,22 @@ fn floor_alias_loop_vectorizes_map_body() {
 
     let rr_src = r#"
 fn floor_alias_map(n) {
-  let x = seq_len(n);
-  let y = seq_len(n);
-  let i = 1.0;
+  let x = seq_len(n)
+
+  let y = seq_len(n)
+
+  let i = 1.0
+
   while (i <= length(x)) {
-    let ii = floor(i);
-    y[ii] = x[ii] + x[ii];
-    i = i + 1.0;
+    let ii = floor(i)
+
+    y[ii] = x[ii] + x[ii]
+
+    i = i + 1.0
+
   }
-  return y;
+  return y
+
 }
 "#;
 
