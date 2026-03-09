@@ -107,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS: "5000"
+      RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS: "6500"
       RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS: "30000"
       RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
     steps:

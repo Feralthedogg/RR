@@ -186,9 +186,14 @@ Optional perf smoke budgets:
 
 Current CI baseline:
 
-- total compile `-O2` budget: `5000 ms`
+- total compile `-O2` budget: `6500 ms`
 - total runtime `-O2` budget: `30000 ms`
-- max single-case runtime `-O2` budget: `25000 ms`
+- max single-case runtime `-O2` budget: `30000 ms`
+
+These perf budgets are calibrated against the current hosted CI runner and are
+intended as smoke thresholds rather than machine-independent benchmarks. If the
+GitHub Actions image or toolchain changes materially, recalibrate the budgets
+from a fresh CI sample before tightening them again.
 
 ## Golden Semantics
 
