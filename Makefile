@@ -6,7 +6,6 @@ clean: clean-target clean-fuzz clean-native clean-artifacts clean-r
 clean-target:
 	@echo "[clean] removing Rust build artifacts"
 	@cargo clean
-	@rm -rf target
 
 clean-fuzz:
 	@echo "[clean] removing fuzz artifacts"
