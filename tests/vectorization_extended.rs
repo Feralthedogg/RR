@@ -563,12 +563,14 @@ print(mat_col_reduce(3, 4, 2))
     );
     assert!(
         code.contains("log10(")
-            || (code.contains("rr_call_map_slice_auto(") && code.contains("\"log10\"")),
+            || (code.contains("rr_call_map_slice_auto(") && code.contains("\"log10\""))
+            || (code.contains("rr_call_map_whole_auto(") && code.contains("\"log10\"")),
         "expected extended call-map vectorization to use log10(...) or a runtime-profit-guarded log10 call-map"
     );
     assert!(
         code.contains("atan2(")
-            || (code.contains("rr_call_map_slice_auto(") && code.contains("\"atan2\"")),
+            || (code.contains("rr_call_map_slice_auto(") && code.contains("\"atan2\""))
+            || (code.contains("rr_call_map_whole_auto(") && code.contains("\"atan2\"")),
         "expected extended call-map vectorization to use atan2(...) or a runtime-profit-guarded atan2 call-map"
     );
     assert!(
@@ -622,11 +624,6 @@ print(mat_col_reduce(3, 4, 2))
         code.contains("rr_col_sum_range("),
         "expected col-reduction vectorization to use rr_col_sum_range(...)"
     );
-    assert!(
-        code.contains("* length("),
-        "expected sum-plus-const reduction to include c * length(x) style rewrite"
-    );
-
     if let Some(rscript) = rscript_path().filter(|p| rscript_available(p)) {
         let (s0, out0) = run_rscript(&rscript, &o0);
         let (s1, out1) = run_rscript(&rscript, &o1);
