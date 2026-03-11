@@ -198,25 +198,21 @@ print(call_abs(5L))
         NativeBackend::Optional,
     );
 
-    for code in [&off_code, &opt_code] {
-        assert!(
-            code.contains("rr_intrinsic_vec_abs_f64("),
-            "expected intrinsic abs call in generated code"
-        );
-        assert!(
-            code.contains("rr_intrinsic_vec_abs_f64(")
-                || code.contains("rr_intrinsic_vec_sum_f64(")
-                || code.contains("rr_intrinsic_vec_mean_f64("),
-            "expected intrinsic helper call in generated code"
-        );
-    }
     assert!(
-        off_code.contains("rr_set_native_backend(\"off\");"),
-        "missing native backend off marker"
+        off_code.contains("y <- abs(x)"),
+        "expected off-mode output to fold intrinsic abs to direct builtin call"
     );
     assert!(
-        opt_code.contains("rr_set_native_backend(\"optional\");"),
+        opt_code.contains("rr_intrinsic_vec_abs_f64("),
+        "expected optional native mode to keep intrinsic abs helper in generated code"
+    );
+    assert!(
+        opt_code.contains(".rr_env$native_backend <- \"optional\";"),
         "missing native backend optional marker"
+    );
+    assert!(
+        !off_code.contains(".rr_env$native_backend <- \"optional\";"),
+        "off-mode output must not be stamped with optional native backend policy"
     );
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
