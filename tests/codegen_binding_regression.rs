@@ -287,3 +287,37 @@ let sample <- function(px, py, p, N) {
         "found stale bug pattern: gy was replaced by N"
     );
 }
+
+#[test]
+fn call_expression_is_not_rewritten_to_later_alias_name() {
+    let out_dir = test_out_dir();
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let rr_path = out_dir.join("call_alias_order.rr");
+    let r_path = out_dir.join("call_alias_order.R");
+
+    let src = r#"
+fn main(n) {
+  let x = seq_len(n) - 4L
+  let y = seq_len(n)
+  let i = 1L
+  while (i <= length(x)) {
+    y[i] = abs(x[i])
+    i = i + 1L
+  }
+  y
+}
+"#;
+    fs::write(&rr_path, src).expect("failed to write source");
+    compile_rr(&rr_bin, &rr_path, &r_path);
+
+    let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
+    assert!(
+        generated.contains("x <- (seq_len(.arg_n) - 4L)")
+            || generated.contains("x <- (seq_len(n) - 4L)"),
+        "expected call expression to stay explicit in earlier assignment"
+    );
+    assert!(
+        !generated.contains("x <- (y - 4L)"),
+        "found stale bug pattern: earlier call expression rewritten to later alias"
+    );
+}

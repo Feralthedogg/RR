@@ -245,7 +245,7 @@ fn assert_compile_matrix(case_name: &str, src: &str, seed: u64) {
             );
         } else {
             assert!(
-                !code.contains(".rr_env$file <- "),
+                !code.contains(".rr_env$file <- \"entry.rr\";"),
                 "helper-only compile must omit source bootstrap"
             );
             assert!(

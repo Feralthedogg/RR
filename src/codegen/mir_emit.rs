@@ -1149,7 +1149,7 @@ impl RBackend {
             && val.origin_var.is_some()
             && matches!(
                 val.kind,
-                ValueKind::Load { .. } | ValueKind::Param { .. } | ValueKind::Call { .. }
+                ValueKind::Load { .. } | ValueKind::Param { .. }
             );
         if should_use_name && let Some(origin_var) = &val.origin_var {
             return origin_var.clone();

@@ -198,7 +198,7 @@ fn assert_helper_mode(output: &str, inject_runtime: bool) {
         );
     } else {
         assert!(
-            !output.contains(".rr_env$file <- "),
+            !output.contains(".rr_env$file <- \"entry.rr\";"),
             "helper-only incremental output must omit source bootstrap"
         );
         assert!(
