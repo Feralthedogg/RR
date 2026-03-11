@@ -1207,6 +1207,7 @@ fn roots_need_native_parallel_config(roots: &FxHashSet<String>) -> bool {
     roots.iter().any(|name| {
         name.starts_with("rr_parallel_")
             || name.starts_with("rr_native_")
+            || name.starts_with("rr_intrinsic_")
             || name.starts_with("rr_call_map_")
             || matches!(
                 name.as_str(),
