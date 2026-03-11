@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
+pub mod random_error_cases;
 pub mod random_rr;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug)]
@@ -24,6 +26,11 @@ pub fn unique_dir(root: &Path, name: &str) -> PathBuf {
         .unwrap_or_default()
         .as_nanos();
     root.join(format!("{}_{}_{}", name, std::process::id(), ts))
+}
+
+pub fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 pub fn rscript_path() -> Option<String> {

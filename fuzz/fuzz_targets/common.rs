@@ -11,6 +11,9 @@ use RR::syntax::parse::Parser;
 use RR::typeck::TypeConfig;
 use RR::typeck::solver::analyze_program;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 
 pub const MAX_INPUT_BYTES: usize = 16 * 1024;
 
@@ -35,6 +38,52 @@ pub fn source_variants(src: &str) -> Vec<String> {
     let mut seen = FxHashSet::default();
     out.retain(|s| seen.insert(s.clone()));
     out
+}
+
+pub fn stable_hash<T: Hash>(value: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+pub fn temp_case_root(namespace: &str, seed: u64) -> PathBuf {
+    std::env::temp_dir()
+        .join("rr-fuzz")
+        .join(namespace)
+        .join(format!("{seed:016x}"))
+}
+
+pub struct ScopedEnvVar {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl ScopedEnvVar {
+    pub fn set(key: &'static str, value: Option<&str>) -> Self {
+        let prev = std::env::var(key).ok();
+        // SAFETY: libFuzzer runs each target in a single process/threaded loop
+        // here, and these guards restore the previous environment before exit.
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        Self { key, prev }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        // SAFETY: restores the previous process environment for the same
+        // single-threaded fuzz execution described above.
+        unsafe {
+            match &self.prev {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 }
 
 pub fn build_mir(src: &str) -> Option<FxHashMap<String, FnIR>> {

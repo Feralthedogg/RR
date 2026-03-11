@@ -33,18 +33,23 @@ fn optional_parallel_openmp_falls_back_without_semantic_change() {
     }
 
     let rr_src = r#"
-print(0L)
+fn addv(x: vector<float>, y: vector<float>) -> vector<float> {
+  return x + y
+
+}
+
+print(addv(c(1.0, 2.0, 3.0), c(2.0, 4.0, 8.0)))
+print(sum(addv(c(1.0, 2.0, 3.0), c(2.0, 4.0, 8.0))))
 
 "#;
 
     let ref_src = r#"
-print(0L)
 z <- c(1.0, 2.0, 3.0) + c(2.0, 4.0, 8.0)
 print(z)
 print(sum(z))
 "#;
 
-    let (mut compiled, _map) = compile_with_configs(
+    let (compiled, _map) = compile_with_configs(
         "parallel_optional_fallback.rr",
         rr_src,
         OptLevel::O2,
@@ -65,10 +70,6 @@ print(sum(z))
         compiled.contains("rr_parallel_vec_add_f64 <- function"),
         "runtime must define parallel wrapper helper"
     );
-    compiled.push('\n');
-    compiled.push_str("z <- rr_parallel_vec_add_f64(c(1.0, 2.0, 3.0), c(2.0, 4.0, 8.0))\n");
-    compiled.push_str("print(z)\n");
-    compiled.push_str("print(sum(z))\n");
 
     let tmp = unique_tmp_dir("proj");
     let compiled_path = tmp.join("compiled.R");

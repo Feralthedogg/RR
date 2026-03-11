@@ -1,4 +1,5 @@
 use crate::codegen::mir_emit::MapEntry;
+use crate::error::{InternalCompilerError, Stage};
 use crate::syntax::parse::Parser;
 use crate::typeck::{NativeBackend, TypeConfig, TypeMode};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -523,10 +524,15 @@ fn stable_hash_bytes(bytes: &[u8]) -> u64 {
 pub(crate) fn fn_emit_cache_salt() -> u64 {
     stable_hash_bytes(include_str!("pipeline.rs").as_bytes())
         ^ stable_hash_bytes(include_str!("../codegen/mir_emit.rs").as_bytes())
+        ^ stable_hash_bytes(env!("RR_COMPILER_BUILD_HASH").as_bytes())
 }
 
 pub(crate) fn compile_output_cache_salt() -> u64 {
-    fn_emit_cache_salt() ^ stable_hash_bytes(crate::runtime::R_RUNTIME.as_bytes())
+    fn_emit_cache_salt()
+        ^ stable_hash_bytes(crate::runtime::R_RUNTIME.as_bytes())
+        ^ stable_hash_bytes(include_str!("../runtime/subset.rs").as_bytes())
+        ^ stable_hash_bytes(include_str!("../runtime/source.rs").as_bytes())
+        ^ stable_hash_bytes(include_str!("r_peephole.rs").as_bytes())
 }
 
 fn fn_emit_cache_key(
@@ -558,7 +564,78 @@ pub(crate) struct SourceAnalysisOutput {
 pub(crate) struct MirSynthesisOutput {
     all_fns: FxHashMap<String, crate::mir::def::FnIR>,
     emit_order: Vec<String>,
+    emit_roots: Vec<String>,
     top_level_calls: Vec<String>,
+}
+
+fn called_user_fns(
+    fn_ir: &crate::mir::def::FnIR,
+    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+) -> FxHashSet<String> {
+    let mut out = FxHashSet::default();
+    for value in &fn_ir.values {
+        match &value.kind {
+            crate::mir::def::ValueKind::Call { callee, .. } => {
+                let canonical = callee.strip_suffix("_fresh").unwrap_or(callee);
+                if all_fns.contains_key(canonical) {
+                    out.insert(canonical.to_string());
+                }
+            }
+            crate::mir::def::ValueKind::Load { var } => {
+                if all_fns.contains_key(var) {
+                    out.insert(var.clone());
+                }
+            }
+            crate::mir::def::ValueKind::RSymbol { name } => {
+                if all_fns.contains_key(name) {
+                    out.insert(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn reachable_emit_order(
+    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+    emit_order: &[String],
+    emit_roots: &[String],
+) -> Vec<String> {
+    if emit_roots.is_empty() {
+        return emit_order.to_vec();
+    }
+
+    let mut reachable = FxHashSet::default();
+    let mut worklist: Vec<String> = emit_roots
+        .iter()
+        .filter(|name| all_fns.contains_key(name.as_str()))
+        .cloned()
+        .collect();
+
+    while let Some(name) = worklist.pop() {
+        if !reachable.insert(name.clone()) {
+            continue;
+        }
+        let Some(fn_ir) = all_fns.get(&name) else {
+            continue;
+        };
+        for callee in called_user_fns(fn_ir, all_fns) {
+            if !reachable.contains(&callee) {
+                worklist.push(callee);
+            }
+        }
+    }
+
+    if reachable.iter().all(|name| name.starts_with("Sym_top_")) {
+        return emit_order.to_vec();
+    }
+
+    emit_order
+        .iter()
+        .filter(|name| reachable.contains(name.as_str()))
+        .cloned()
+        .collect()
 }
 
 pub(crate) fn run_source_analysis_and_canonicalization(
@@ -771,6 +848,12 @@ pub(crate) fn emit_r_functions_cached(
         format_duration(step_emit.elapsed())
     ));
 
+    let direct_builtin_call_map =
+        matches!(type_cfg.native_backend, crate::typeck::NativeBackend::Off)
+            && matches!(parallel_cfg.mode, ParallelMode::Off);
+    let final_output =
+        crate::compiler::r_peephole::optimize_emitted_r(&final_output, direct_builtin_call_map);
+
     Ok((final_output, final_source_map, cache_hits, cache_misses))
 }
 
@@ -789,6 +872,7 @@ pub(crate) fn run_mir_synthesis(
     );
     let mut all_fns = FxHashMap::default();
     let mut emit_order: Vec<String> = Vec::new();
+    let mut emit_roots: Vec<String> = Vec::new();
     let mut top_level_calls: Vec<String> = Vec::new();
     let mut known_fn_arities: FxHashMap<String, usize> = FxHashMap::default();
 
@@ -809,11 +893,21 @@ pub(crate) fn run_mir_synthesis(
             match item {
                 crate::hir::def::HirItem::Fn(f) => {
                     let fn_name = format!("Sym_{}", f.name.0);
-                    let params: Vec<String> = f
-                        .params
-                        .iter()
-                        .map(|p| global_symbols[&p.name].clone())
-                        .collect();
+                    let is_public = f.public;
+                    let mut params = Vec::with_capacity(f.params.len());
+                    for p in &f.params {
+                        let Some(name) = global_symbols.get(&p.name).cloned() else {
+                            return Err(InternalCompilerError::new(
+                                Stage::Mir,
+                                format!(
+                                    "missing parameter symbol during MIR lowering pipeline: {:?}",
+                                    p.name
+                                ),
+                            )
+                            .into_exception());
+                        };
+                        params.push(name);
+                    }
                     let var_names = f.local_names.clone().into_iter().collect();
 
                     let lowerer = crate::mir::lower_hir::MirLowerer::new(
@@ -825,6 +919,9 @@ pub(crate) fn run_mir_synthesis(
                     );
                     let fn_ir = lowerer.lower_fn(f)?;
                     all_fns.insert(fn_name.clone(), fn_ir);
+                    if is_public {
+                        emit_roots.push(fn_name.clone());
+                    }
                     emit_order.push(fn_name);
                 }
                 crate::hir::def::HirItem::Stmt(s) => top_level_stmts.push(s),
@@ -862,6 +959,7 @@ pub(crate) fn run_mir_synthesis(
             let fn_ir = lowerer.lower_fn(top_fn)?;
             all_fns.insert(top_fn_name.clone(), fn_ir);
             emit_order.push(top_fn_name.clone());
+            emit_roots.push(top_fn_name.clone());
             top_level_calls.push(top_fn_name);
         }
     }
@@ -878,6 +976,7 @@ pub(crate) fn run_mir_synthesis(
     Ok(MirSynthesisOutput {
         all_fns,
         emit_order,
+        emit_roots,
         top_level_calls,
     })
 }
@@ -1065,13 +1164,55 @@ pub(crate) fn inject_runtime_prelude(
 
     // Prepend runtime so generated .R is self-contained.
     let mut with_runtime = String::new();
-    with_runtime.push_str(crate::runtime::R_RUNTIME);
+    let runtime_roots = runtime_roots_for_output(&final_output, true);
+    with_runtime.push_str(&crate::runtime::render_runtime_subset(&runtime_roots));
     if !with_runtime.ends_with('\n') {
         with_runtime.push('\n');
     }
-    append_runtime_configuration(&mut with_runtime, entry_path, type_cfg, parallel_cfg, true);
+    append_runtime_configuration(
+        &mut with_runtime,
+        entry_path,
+        type_cfg,
+        parallel_cfg,
+        true,
+        &runtime_roots,
+    );
     with_runtime.push_str(&final_output);
     with_runtime
+}
+
+fn runtime_roots_for_output(
+    final_output: &str,
+    include_source_bootstrap: bool,
+) -> FxHashSet<String> {
+    let _ = include_source_bootstrap;
+    crate::runtime::referenced_runtime_symbols(final_output)
+}
+
+fn roots_need_strict_index_config(roots: &FxHashSet<String>) -> bool {
+    roots.iter().any(|name| {
+        matches!(
+            name.as_str(),
+            "rr_index1_read"
+                | "rr_index1_read_strict"
+                | "rr_index1_read_vec"
+                | "rr_index1_read_idx"
+                | "rr_index_vec_floor"
+                | "rr_gather"
+        )
+    })
+}
+
+fn roots_need_native_parallel_config(roots: &FxHashSet<String>) -> bool {
+    roots.iter().any(|name| {
+        name.starts_with("rr_parallel_")
+            || name.starts_with("rr_native_")
+            || name.starts_with("rr_call_map_")
+            || matches!(
+                name.as_str(),
+                "rr_parallel_typed_vec_call" | "rr_vector_scalar_fallback_enabled"
+            )
+    })
 }
 
 fn append_runtime_configuration(
@@ -1080,6 +1221,7 @@ fn append_runtime_configuration(
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
     include_source_bootstrap: bool,
+    runtime_roots: &FxHashSet<String>,
 ) {
     if include_source_bootstrap {
         let source_label = Path::new(entry_path)
@@ -1087,12 +1229,12 @@ fn append_runtime_configuration(
             .and_then(|s| s.to_str())
             .unwrap_or(entry_path);
         out.push_str(&format!(
-            "rr_set_source(\"{}\");\n",
+            ".rr_env$file <- \"{}\";\n",
             escape_r_string(source_label)
         ));
         let native_roots = compile_time_native_roots(entry_path);
         if !native_roots.is_empty() {
-            out.push_str("rr_set_native_roots(c(");
+            out.push_str(".rr_env$native_anchor_roots <- unique(vapply(c(");
             for (idx, root) in native_roots.iter().enumerate() {
                 if idx > 0 {
                     out.push_str(", ");
@@ -1101,33 +1243,58 @@ fn append_runtime_configuration(
                 out.push_str(&escape_r_string(root));
                 out.push('"');
             }
-            out.push_str("));\n");
+            out.push_str(
+                "), function(p) normalizePath(as.character(p), winslash = \"/\", mustWork = FALSE), character(1)));\n",
+            );
         }
     }
-    out.push_str(&format!(
-        "rr_set_type_mode(\"{}\");\n",
-        type_cfg.mode.as_str()
-    ));
-    out.push_str(&format!(
-        "rr_set_native_backend(\"{}\");\n",
-        type_cfg.native_backend.as_str()
-    ));
-    out.push_str(&format!(
-        "rr_set_parallel_mode(\"{}\");\n",
-        parallel_cfg.mode.as_str()
-    ));
-    out.push_str(&format!(
-        "rr_set_parallel_backend(\"{}\");\n",
-        parallel_cfg.backend.as_str()
-    ));
-    out.push_str(&format!(
-        "rr_set_parallel_threads({});\n",
-        parallel_cfg.threads
-    ));
-    out.push_str(&format!(
-        "rr_set_parallel_min_trip({});\n",
-        parallel_cfg.min_trip
-    ));
+    if roots_need_strict_index_config(runtime_roots) {
+        out.push_str(
+            ".rr_env$strict_index_read <- identical(Sys.getenv(\"RR_STRICT_INDEX_READ\", \"0\"), \"1\");\n",
+        );
+    }
+    if roots_need_native_parallel_config(runtime_roots) {
+        out.push_str(&format!(
+            ".rr_env$native_backend <- \"{}\";\n",
+            type_cfg.native_backend.as_str()
+        ));
+        out.push_str(&format!(
+            ".rr_env$parallel_mode <- \"{}\";\n",
+            parallel_cfg.mode.as_str()
+        ));
+        out.push_str(&format!(
+            ".rr_env$parallel_backend <- \"{}\";\n",
+            parallel_cfg.backend.as_str()
+        ));
+        out.push_str(&format!(
+            ".rr_env$parallel_threads <- as.integer({});\n",
+            parallel_cfg.threads
+        ));
+        out.push_str(&format!(
+            ".rr_env$parallel_min_trip <- as.integer({});\n",
+            parallel_cfg.min_trip
+        ));
+        out.push_str(
+            ".rr_env$vector_fallback_base_trip <- suppressWarnings(as.integer(Sys.getenv(\"RR_VECTOR_FALLBACK_BASE_TRIP\", \"12\")));\n",
+        );
+        out.push_str(
+            "if (is.na(.rr_env$vector_fallback_base_trip) || .rr_env$vector_fallback_base_trip < 0L) .rr_env$vector_fallback_base_trip <- 12L;\n",
+        );
+        out.push_str(
+            ".rr_env$vector_fallback_helper_scale <- suppressWarnings(as.integer(Sys.getenv(\"RR_VECTOR_FALLBACK_HELPER_SCALE\", \"4\")));\n",
+        );
+        out.push_str(
+            "if (is.na(.rr_env$vector_fallback_helper_scale) || .rr_env$vector_fallback_helper_scale < 0L) .rr_env$vector_fallback_helper_scale <- 4L;\n",
+        );
+        out.push_str(
+            ".rr_env$native_autobuild <- tolower(Sys.getenv(\"RR_NATIVE_AUTOBUILD\", \"1\")) %in% c(\"1\", \"true\", \"yes\", \"on\");\n",
+        );
+        out.push_str(".rr_env$native_lib <- \"\";\n");
+        out.push_str(".rr_env$native_loaded <- FALSE;\n");
+        if !include_source_bootstrap {
+            out.push_str(".rr_env$native_anchor_roots <- character(0);\n");
+        }
+    }
 }
 
 fn compile_time_native_roots(entry_path: &str) -> Vec<String> {
@@ -1246,11 +1413,13 @@ pub(crate) fn compile_with_configs_using_emit_cache(
     let MirSynthesisOutput {
         mut all_fns,
         emit_order,
+        emit_roots,
         top_level_calls,
     } = run_mir_synthesis(&ui, TOTAL_STEPS, desugared_hir, &global_symbols, type_cfg)?;
 
     run_tachyon_phase(&ui, TOTAL_STEPS, optimize, &mut all_fns)?;
     verify_emittable_program(&all_fns)?;
+    let emit_order = reachable_emit_order(&all_fns, &emit_order, &emit_roots);
 
     let (final_output, final_source_map, emit_cache_hits, emit_cache_misses) =
         emit_r_functions_cached(
@@ -1292,7 +1461,8 @@ pub(crate) fn compile_with_configs_using_emit_cache(
             "helper-only (--no-runtime)",
         );
         let mut without_runtime = String::new();
-        without_runtime.push_str(crate::runtime::R_RUNTIME);
+        let runtime_roots = runtime_roots_for_output(&final_output, false);
+        without_runtime.push_str(&crate::runtime::render_runtime_subset(&runtime_roots));
         if !without_runtime.ends_with('\n') {
             without_runtime.push('\n');
         }
@@ -1302,6 +1472,7 @@ pub(crate) fn compile_with_configs_using_emit_cache(
             type_cfg,
             parallel_cfg,
             false,
+            &runtime_roots,
         );
         without_runtime.push_str(&final_output);
         for call in &top_level_calls {

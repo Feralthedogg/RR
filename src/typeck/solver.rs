@@ -10,6 +10,11 @@ use super::constraints::{ConstraintSet, TypeConstraint};
 use super::lattice::{LenSym, NaTy, PrimTy, ShapeTy, TypeState};
 use super::term::{TypeTerm, from_hir_ty as term_from_hir_ty, from_lit as lit_term};
 
+#[path = "solver/index_demands.rs"]
+mod index_demands;
+#[path = "solver/terms.rs"]
+mod terms;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeMode {
     Strict,
@@ -598,6 +603,22 @@ fn collect_var_types(fn_ir: &FnIR) -> FxHashMap<String, TypeState> {
                         .and_modify(|acc| *acc = acc.join(container_ty))
                         .or_insert(container_ty);
                 }
+                Instr::StoreIndex3D { base, val, .. } => {
+                    let Some(base_var) = value_base_var_name(fn_ir, *base) else {
+                        continue;
+                    };
+                    let elem_ty = fn_ir.values[*val].value_ty;
+                    let mut container_ty =
+                        TypeState::matrix(elem_ty.prim, elem_ty.na == NaTy::Never);
+                    let len_sym = out
+                        .get(&base_var)
+                        .and_then(|ty| ty.len_sym)
+                        .or(fn_ir.values[*base].value_ty.len_sym);
+                    container_ty = container_ty.with_len(len_sym);
+                    out.entry(base_var)
+                        .and_modify(|acc| *acc = acc.join(container_ty))
+                        .or_insert(container_ty);
+                }
                 Instr::Eval { .. } => {}
             }
         }
@@ -775,170 +796,18 @@ fn collect_index_vector_param_slots(fn_ir: &FnIR) -> FxHashSet<usize> {
 fn collect_index_vector_param_slots_by_function(
     all_fns: &FxHashMap<String, FnIR>,
 ) -> FxHashMap<String, FxHashSet<usize>> {
-    let mut out: FxHashMap<String, FxHashSet<usize>> = FxHashMap::default();
-    let mut names: Vec<String> = all_fns.keys().cloned().collect();
-    names.sort();
-    for name in names {
-        let Some(fn_ir) = all_fns.get(&name) else {
-            continue;
-        };
-        let slots = collect_index_vector_param_slots(fn_ir);
-        if !slots.is_empty() {
-            out.insert(name, slots);
-        }
-    }
-    out
-}
-
-fn symbol_callee_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
-    fn resolve_var(
-        fn_ir: &FnIR,
-        var: &str,
-        seen_vals: &mut FxHashSet<ValueId>,
-        seen_vars: &mut FxHashSet<String>,
-    ) -> Option<String> {
-        if !seen_vars.insert(var.to_string()) {
-            return None;
-        }
-        let mut out: Option<String> = None;
-        let mut found = false;
-        for bb in &fn_ir.blocks {
-            for ins in &bb.instrs {
-                let Instr::Assign { dst, src, .. } = ins else {
-                    continue;
-                };
-                if dst != var {
-                    continue;
-                }
-                found = true;
-                let sym = resolve_value(fn_ir, *src, seen_vals, seen_vars)?;
-                match &out {
-                    None => out = Some(sym),
-                    Some(prev) if prev == &sym => {}
-                    Some(_) => return None,
-                }
-            }
-        }
-        if found { out } else { None }
-    }
-
-    fn resolve_value(
-        fn_ir: &FnIR,
-        vid: ValueId,
-        seen_vals: &mut FxHashSet<ValueId>,
-        seen_vars: &mut FxHashSet<String>,
-    ) -> Option<String> {
-        if !seen_vals.insert(vid) {
-            return None;
-        }
-        match &fn_ir.values.get(vid)?.kind {
-            ValueKind::Call { callee, .. } if callee.starts_with("Sym_") => Some(callee.clone()),
-            ValueKind::Load { var } => resolve_var(fn_ir, var, seen_vals, seen_vars),
-            ValueKind::Phi { args } => {
-                let mut out: Option<String> = None;
-                let mut saw = false;
-                for (a, _) in args {
-                    if *a == vid {
-                        continue;
-                    }
-                    let sym = resolve_value(fn_ir, *a, seen_vals, seen_vars)?;
-                    saw = true;
-                    match &out {
-                        None => out = Some(sym),
-                        Some(prev) if prev == &sym => {}
-                        Some(_) => return None,
-                    }
-                }
-                if saw { out } else { None }
-            }
-            _ => None,
-        }
-    }
-
-    resolve_value(
-        fn_ir,
-        vid,
-        &mut FxHashSet::default(),
-        &mut FxHashSet::default(),
-    )
+    index_demands::collect_index_vector_param_slots_by_function(all_fns)
 }
 
 fn collect_scalar_index_return_demands(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
-    let mut out = FxHashSet::default();
-    let mut names: Vec<String> = all_fns.keys().cloned().collect();
-    names.sort();
-    for name in names {
-        let Some(fn_ir) = all_fns.get(&name) else {
-            continue;
-        };
-        let mut scalar_indices = FxHashSet::default();
-        for v in &fn_ir.values {
-            match &v.kind {
-                ValueKind::Index1D { idx, .. } => {
-                    scalar_indices.insert(*idx);
-                }
-                ValueKind::Call { callee, args, .. } if callee == "rr_index1_read_idx" => {
-                    if args.len() >= 2 {
-                        scalar_indices.insert(args[1]);
-                    }
-                }
-                _ => {}
-            }
-        }
-        for bb in &fn_ir.blocks {
-            for ins in &bb.instrs {
-                match ins {
-                    Instr::StoreIndex1D { idx, .. } => {
-                        scalar_indices.insert(*idx);
-                    }
-                    Instr::StoreIndex2D { r, c, .. } => {
-                        scalar_indices.insert(*r);
-                        scalar_indices.insert(*c);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        for idx in scalar_indices {
-            if let Some(sym) = symbol_callee_for_value(fn_ir, idx) {
-                out.insert(sym);
-            }
-        }
-    }
-    out
+    index_demands::collect_scalar_index_return_demands(all_fns)
 }
 
 fn collect_vector_index_return_demands(
     all_fns: &FxHashMap<String, FnIR>,
     index_param_slots: &FxHashMap<String, FxHashSet<usize>>,
 ) -> FxHashSet<String> {
-    let mut out = FxHashSet::default();
-    let mut names: Vec<String> = all_fns.keys().cloned().collect();
-    names.sort();
-    for name in names {
-        let Some(fn_ir) = all_fns.get(&name) else {
-            continue;
-        };
-        for v in &fn_ir.values {
-            let ValueKind::Call { callee, args, .. } = &v.kind else {
-                continue;
-            };
-            let Some(slots) = index_param_slots.get(callee) else {
-                continue;
-            };
-            let mut ordered_slots: Vec<usize> = slots.iter().copied().collect();
-            ordered_slots.sort_unstable();
-            for slot in ordered_slots {
-                let Some(arg) = args.get(slot).copied() else {
-                    continue;
-                };
-                if let Some(sym) = symbol_callee_for_value(fn_ir, arg) {
-                    out.insert(sym);
-                }
-            }
-        }
-    }
-    out
+    index_demands::collect_vector_index_return_demands(all_fns, index_param_slots)
 }
 
 fn can_apply_index_return_override(
@@ -947,49 +816,15 @@ fn can_apply_index_return_override(
     demanded_shape: ShapeTy,
     demanded_term: &TypeTerm,
 ) -> bool {
-    let Some(fn_ir) = all_fns.get(fname) else {
-        return false;
-    };
-    if let Some(hint) = fn_ir.ret_ty_hint
-        && hint != TypeState::unknown()
-    {
-        if hint.shape != ShapeTy::Unknown && hint.shape != demanded_shape {
-            return false;
-        }
-        if hint.prim != PrimTy::Any && hint.prim != PrimTy::Int {
-            return false;
-        }
-    }
-    if let Some(term_hint) = &fn_ir.ret_term_hint
-        && !term_hint.is_any()
-        && !term_hint.compatible_with(demanded_term)
-    {
-        return false;
-    }
-    true
+    index_demands::can_apply_index_return_override(all_fns, fname, demanded_shape, demanded_term)
 }
 
 fn coerce_index_scalar_return(ty: TypeState) -> TypeState {
-    let mut out = if ty == TypeState::unknown() {
-        TypeState::scalar(PrimTy::Int, false)
-    } else {
-        ty
-    };
-    out.prim = PrimTy::Int;
-    out.shape = ShapeTy::Scalar;
-    out.len_sym = None;
-    out
+    index_demands::coerce_index_scalar_return(ty)
 }
 
 fn coerce_index_vector_return(ty: TypeState) -> TypeState {
-    let mut out = if ty == TypeState::unknown() {
-        TypeState::vector(PrimTy::Int, false)
-    } else {
-        ty
-    };
-    out.prim = PrimTy::Int;
-    out.shape = ShapeTy::Vector;
-    out
+    index_demands::coerce_index_vector_return(ty)
 }
 
 fn apply_index_return_demands(
@@ -999,210 +834,21 @@ fn apply_index_return_demands(
     scalar_demands: &FxHashSet<String>,
     vector_demands: &FxHashSet<String>,
 ) -> bool {
-    let mut changed = false;
-
-    let mut scalar_names: Vec<String> = scalar_demands.iter().cloned().collect();
-    scalar_names.sort();
-    for name in scalar_names {
-        if !can_apply_index_return_override(all_fns, &name, ShapeTy::Scalar, &TypeTerm::Int) {
-            continue;
-        }
-        if let Some(slot) = fn_ret.get_mut(&name) {
-            let next = coerce_index_scalar_return(*slot);
-            if *slot != next {
-                *slot = next;
-                changed = true;
-            }
-        }
-        if let Some(slot) = fn_ret_term.get_mut(&name)
-            && *slot != TypeTerm::Int
-        {
-            *slot = TypeTerm::Int;
-            changed = true;
-        }
-    }
-
-    let vec_term = TypeTerm::Vector(Box::new(TypeTerm::Int));
-    let mut vector_names: Vec<String> = vector_demands.iter().cloned().collect();
-    vector_names.sort();
-    for name in vector_names {
-        if !can_apply_index_return_override(all_fns, &name, ShapeTy::Vector, &vec_term) {
-            continue;
-        }
-        if let Some(slot) = fn_ret.get_mut(&name) {
-            let next = coerce_index_vector_return(*slot);
-            if *slot != next {
-                *slot = next;
-                changed = true;
-            }
-        }
-        if let Some(slot) = fn_ret_term.get_mut(&name)
-            && *slot != vec_term
-        {
-            *slot = vec_term.clone();
-            changed = true;
-        }
-    }
-
-    changed
+    index_demands::apply_index_return_demands(
+        all_fns,
+        fn_ret,
+        fn_ret_term,
+        scalar_demands,
+        vector_demands,
+    )
 }
 
 fn analyze_function_terms(fn_ir: &mut FnIR, fn_ret: &FxHashMap<String, TypeTerm>) -> TypeTerm {
-    let mut changed = true;
-    let mut guard = 0usize;
-
-    while changed && guard < 32 {
-        guard += 1;
-        changed = false;
-        for vid in 0..fn_ir.values.len() {
-            let old = fn_ir.values[vid].value_term.clone();
-            let new = infer_value_term(fn_ir, vid, fn_ret);
-            let joined = old.join(&new);
-            if joined != old {
-                fn_ir.values[vid].value_term = joined;
-                changed = true;
-            }
-        }
-    }
-
-    // Projection constraints sharpen nested container terms (e.g. List<Box<T>> indexing).
-    let mut cs = ConstraintSet::default();
-    let vars: Vec<_> = (0..fn_ir.values.len()).map(|_| cs.fresh_var()).collect();
-    for (vid, v) in fn_ir.values.iter().enumerate() {
-        cs.add(TypeConstraint::Bind(vars[vid], v.value_term.clone()));
-        match &v.kind {
-            ValueKind::Phi { args } => {
-                for (arg, _) in args {
-                    cs.add(TypeConstraint::Eq(vars[vid], vars[*arg]));
-                }
-            }
-            ValueKind::Index1D { base, .. } => {
-                cs.add(TypeConstraint::ElementOf {
-                    container: vars[*base],
-                    element: vars[vid],
-                });
-            }
-            ValueKind::Call { callee, args, .. } if callee == "unbox" && !args.is_empty() => {
-                cs.add(TypeConstraint::Unbox {
-                    boxed: vars[args[0]],
-                    value: vars[vid],
-                });
-            }
-            _ => {}
-        }
-    }
-    cs.solve();
-    for (vid, slot) in fn_ir.values.iter_mut().enumerate() {
-        let resolved = cs.resolve(vars[vid]);
-        slot.value_term = slot.value_term.join(&resolved);
-    }
-
-    let mut ret_term = TypeTerm::Any;
-    let reachable = compute_reachable(fn_ir);
-    for (bid, bb) in fn_ir.blocks.iter().enumerate() {
-        if !reachable.get(bid).copied().unwrap_or(false) {
-            continue;
-        }
-        if let Terminator::Return(Some(v)) = bb.term {
-            ret_term = ret_term.join(&fn_ir.values[v].value_term);
-        }
-    }
-
-    if ret_term.is_any()
-        && let Some(h) = &fn_ir.ret_term_hint
-    {
-        ret_term = h.clone();
-    }
-
-    ret_term
+    terms::analyze_function_terms(fn_ir, fn_ret)
 }
 
 fn infer_value_term(fn_ir: &FnIR, vid: ValueId, fn_ret: &FxHashMap<String, TypeTerm>) -> TypeTerm {
-    let val = &fn_ir.values[vid];
-    match &val.kind {
-        ValueKind::Const(l) => lit_term(l),
-        ValueKind::Param { index } => fn_ir
-            .param_term_hints
-            .get(*index)
-            .cloned()
-            .unwrap_or(TypeTerm::Any),
-        ValueKind::Len { .. } => TypeTerm::Int,
-        ValueKind::Indices { .. } | ValueKind::Range { .. } => {
-            TypeTerm::Vector(Box::new(TypeTerm::Int))
-        }
-        ValueKind::Unary { rhs, .. } => {
-            let r = fn_ir.values[*rhs].value_term.clone();
-            match r {
-                TypeTerm::Int | TypeTerm::Double => r,
-                TypeTerm::Vector(inner) => TypeTerm::Vector(inner),
-                _ => TypeTerm::Any,
-            }
-        }
-        ValueKind::Binary { op, lhs, rhs } => {
-            use crate::syntax::ast::BinOp;
-            let l = fn_ir.values[*lhs].value_term.clone();
-            let r = fn_ir.values[*rhs].value_term.clone();
-            match op {
-                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                    TypeTerm::Logical
-                }
-                BinOp::And | BinOp::Or => TypeTerm::Logical,
-                _ => match (l, r) {
-                    (TypeTerm::Double, TypeTerm::Int)
-                    | (TypeTerm::Int, TypeTerm::Double)
-                    | (TypeTerm::Double, TypeTerm::Double) => TypeTerm::Double,
-                    (TypeTerm::Int, TypeTerm::Int) => TypeTerm::Int,
-                    (TypeTerm::Vector(a), TypeTerm::Vector(b)) => {
-                        TypeTerm::Vector(Box::new(a.join(&b)))
-                    }
-                    (TypeTerm::Vector(a), b) | (b, TypeTerm::Vector(a)) => {
-                        TypeTerm::Vector(Box::new(a.join(&b)))
-                    }
-                    (TypeTerm::Matrix(a), TypeTerm::Matrix(b)) => {
-                        TypeTerm::Matrix(Box::new(a.join(&b)))
-                    }
-                    _ => TypeTerm::Any,
-                },
-            }
-        }
-        ValueKind::Phi { args } => {
-            let mut out = TypeTerm::Any;
-            for (a, _) in args {
-                out = out.join(&fn_ir.values[*a].value_term);
-            }
-            out
-        }
-        ValueKind::Call { callee, args, .. } => {
-            let arg_terms: Vec<TypeTerm> = args
-                .iter()
-                .map(|a| fn_ir.values[*a].value_term.clone())
-                .collect();
-            if let Some(t) = infer_builtin_term(callee, &arg_terms) {
-                return t;
-            }
-            if callee.starts_with("Sym_") {
-                return fn_ret.get(callee).cloned().unwrap_or(TypeTerm::Any);
-            }
-            TypeTerm::Any
-        }
-        ValueKind::Index1D { base, .. } | ValueKind::Index2D { base, .. } => {
-            fn_ir.values[*base].value_term.index_element()
-        }
-        ValueKind::Load { .. } | ValueKind::RSymbol { .. } => TypeTerm::Any,
-        ValueKind::Intrinsic { op, args } => {
-            use crate::mir::IntrinsicOp;
-            match op {
-                IntrinsicOp::VecSumF64 | IntrinsicOp::VecMeanF64 => TypeTerm::Double,
-                _ => {
-                    if args.is_empty() {
-                        TypeTerm::Any
-                    } else {
-                        TypeTerm::Vector(Box::new(TypeTerm::Double))
-                    }
-                }
-            }
-        }
-    }
+    terms::infer_value_term(fn_ir, vid, fn_ret)
 }
 
 fn infer_value_type(
@@ -1247,7 +893,11 @@ fn infer_value_type(
                     TypeState {
                         prim: PrimTy::Logical,
                         shape: normalize_call_numeric_shape(&[l, r]),
-                        na: NaTy::Maybe,
+                        na: if l.na == NaTy::Never && r.na == NaTy::Never {
+                            NaTy::Never
+                        } else {
+                            NaTy::Maybe
+                        },
                         len_sym: if l.len_sym.is_some() && l.len_sym == r.len_sym {
                             l.len_sym
                         } else {
@@ -1328,6 +978,15 @@ fn infer_value_type(
             }
         }
         ValueKind::Index2D { base, .. } => {
+            let b = fn_ir.values[*base].value_ty;
+            TypeState {
+                prim: b.prim,
+                shape: ShapeTy::Scalar,
+                na: NaTy::Maybe,
+                len_sym: None,
+            }
+        }
+        ValueKind::Index3D { base, .. } => {
             let b = fn_ir.values[*base].value_ty;
             TypeState {
                 prim: b.prim,

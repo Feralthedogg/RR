@@ -45,7 +45,11 @@ print(vec_map(8))
         "expected lowered function in output"
     );
     assert!(
-        code.contains("y <- (x + x)") || code.contains("y <- rr_intrinsic_vec_add_f64(x, x)"),
-        "expected vectorized map body (direct add or intrinsic add helper)"
+        code.contains("y <- (x + x)")
+            || code.contains("y <- (y + y)")
+            || code.contains("y <- rr_intrinsic_vec_add_f64(x, x)")
+            || code.contains("y <- rr_intrinsic_vec_add_f64(y, y)")
+            || code.contains("rr_assign_slice(y, i, length(x), rr_intrinsic_vec_add_f64(x, x))"),
+        "expected vectorized map body (direct add, intrinsic add helper, or slice assign form)"
     );
 }

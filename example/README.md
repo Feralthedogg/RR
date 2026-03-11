@@ -53,7 +53,7 @@ Example:
 import r { plot as draw_plot, lines } from "graphics";
 import r default from "grDevices";
 
-main <- function() {
+let main <- function() {
   grDevices.png(filename = "plot.png", width = 640, height = 360);
   draw_plot(c(1, 2, 3), c(1, 4, 9), type = "l");
   lines(c(1, 2, 3), c(1, 2, 3), col = "tomato");
@@ -80,7 +80,7 @@ Modern RR-style visualization variants:
 - [example/visualization/stats_glm_predict_plot_modern.rr](/Users/feral/Desktop/Programming/RR/example/visualization/stats_glm_predict_plot_modern.rr)
 - [example/visualization/readr_dplyr_tidyr_ggplot2_workflow_modern.rr](/Users/feral/Desktop/Programming/RR/example/visualization/readr_dplyr_tidyr_ggplot2_workflow_modern.rr)
 
-These keep the same R interop calls but use `fn main() { ... }` and RR-style assignment instead of `main <- function() { ... }`.
+These keep the same R interop calls but use `fn main() { ... }` and RR-style assignment instead of `let main <- function() { ... }`.
 
 `dplyr + ggplot2` pipeline example:
 
@@ -92,12 +92,12 @@ Rscript --vanilla /tmp/dplyr_ggplot2_pipeline_modern.R
 That example now uses direct tidy-eval lowering, so the RR source can write:
 
 ```rr
-series = raw |> dplyr.mutate(
+let series = raw |> dplyr.mutate(
     trend = x * 0.18 + 0.35,
     smooth = signal * 0.8 + 0.1
 )
 
-p = ggplot2.ggplot(series, ggplot2.aes(x = x)) +
+let p = ggplot2.ggplot(series, ggplot2.aes(x = x)) +
     ggplot2.geom_line(ggplot2.aes(y = signal), color = "steelblue") +
     ggplot2.geom_line(ggplot2.aes(y = trend), color = "tomato", linetype = 2) +
     ggplot2.geom_point(ggplot2.aes(y = smooth), color = "darkgreen")

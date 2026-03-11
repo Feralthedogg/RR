@@ -92,8 +92,9 @@ fn print_usage() {
     eprintln!("  --parallel-backend <auto|r|openmp>        Parallel backend selection");
     eprintln!("  --parallel-threads <N>                    Parallel worker threads (0=auto)");
     eprintln!("  --parallel-min-trip <N>                   Minimum trip-count for parallel path");
-    eprintln!("  --incremental[=off|1|1,2|1,2,3|all]      Enable incremental compile phases");
+    eprintln!("  --incremental[=auto|off|1|1,2|1,2,3|all] Enable incremental compile phases");
     eprintln!("  --incremental-phases <...>                Same as above (separate arg form)");
+    eprintln!("  --no-incremental                          Disable automatic incremental compile");
     eprintln!(
         "  --strict-incremental-verify               Extra validation gate for incremental mode"
     );
@@ -321,7 +322,7 @@ impl CommonOpts {
             opt_level: OptLevel::O1,
             type_cfg: type_config_from_env(),
             parallel_cfg: parallel_config_from_env(),
-            incremental: IncrementalOptions::default(),
+            incremental: IncrementalOptions::auto(),
             watch_poll_ms: 500,
             watch_once: false,
         }
@@ -330,8 +331,11 @@ impl CommonOpts {
 
 fn parse_incremental_phases(raw: &str) -> Option<IncrementalOptions> {
     let normalized = raw.trim().to_ascii_lowercase();
-    if normalized.is_empty() || matches!(normalized.as_str(), "off" | "0" | "false" | "none") {
-        return Some(IncrementalOptions::default());
+    if normalized.is_empty() || matches!(normalized.as_str(), "auto" | "on" | "true") {
+        return Some(IncrementalOptions::auto());
+    }
+    if matches!(normalized.as_str(), "off" | "0" | "false" | "none") {
+        return Some(IncrementalOptions::disabled());
     }
     if matches!(normalized.as_str(), "all" | "3") {
         return Some(IncrementalOptions::all_phases());
@@ -342,6 +346,7 @@ fn parse_incremental_phases(raw: &str) -> Option<IncrementalOptions> {
 
     let mut options = IncrementalOptions {
         enabled: true,
+        auto: false,
         phase1: false,
         phase2: false,
         phase3: false,
@@ -399,12 +404,14 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
                         opts.keep_r = true;
                     } else if mode.allow_no_runtime() && arg == "--no-runtime" {
                         opts.no_runtime = true;
+                    } else if arg == "--no-incremental" {
+                        opts.incremental = IncrementalOptions::disabled();
                     } else if arg == "--incremental" {
-                        opts.incremental = IncrementalOptions::phase1_only();
+                        opts.incremental = IncrementalOptions::auto();
                     } else if let Some(raw) = arg.strip_prefix("--incremental=") {
                         let Some(parsed) = parse_incremental_phases(raw) else {
                             ui.error(
-                                "Invalid --incremental value. Use off|1|1,2|1,2,3|all|phase1,phase2,phase3",
+                                "Invalid --incremental value. Use auto|off|1|1,2|1,2,3|all|phase1,phase2,phase3",
                             );
                             return Err(1);
                         };
@@ -418,13 +425,20 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
                         }
                         i += 1;
                         let Some(parsed) = parse_incremental_phases(&args[i]) else {
-                            ui.error("Invalid --incremental-phases value. Use off|1|1,2|1,2,3|all");
+                            ui.error(
+                                "Invalid --incremental-phases value. Use auto|off|1|1,2|1,2,3|all",
+                            );
                             return Err(1);
                         };
                         opts.incremental = parsed;
                     } else if arg == "--strict-incremental-verify" {
-                        opts.incremental.enabled = true;
-                        if !opts.incremental.phase1
+                        if !opts.incremental.enabled {
+                            opts.incremental = IncrementalOptions::auto();
+                        } else {
+                            opts.incremental.enabled = true;
+                        }
+                        if !opts.incremental.auto
+                            && !opts.incremental.phase1
                             && !opts.incremental.phase2
                             && !opts.incremental.phase3
                         {
@@ -798,9 +812,7 @@ fn cmd_watch(args: &[String]) -> i32 {
         Err(code) => return code,
     };
 
-    if !opts.incremental.enabled {
-        opts.incremental = IncrementalOptions::all_phases();
-    } else {
+    if opts.incremental.enabled && !opts.incremental.auto {
         opts.incremental.phase3 = true;
     }
 

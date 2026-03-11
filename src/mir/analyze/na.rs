@@ -68,7 +68,9 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
                     }
                     acc
                 }
-                ValueKind::Index1D { .. } | ValueKind::Index2D { .. } => {
+                ValueKind::Index1D { .. }
+                | ValueKind::Index2D { .. }
+                | ValueKind::Index3D { .. } => {
                     // Indexing can always produce NA depending on contents.
                     NaState::Maybe
                 }
@@ -112,8 +114,31 @@ fn call_na_behavior(callee: &str, args: &[ValueId], states: &[NaState]) -> NaSta
             }
             return acc;
         }
-        "c" | "sum" | "mean" | "var" | "sd" | "min" | "max" | "prod" | "rr_row_sum_range"
-        | "rr_col_sum_range" | "colSums" | "rowSums" | "%*%" | "crossprod" | "tcrossprod" => {
+        "c"
+        | "sum"
+        | "mean"
+        | "var"
+        | "sd"
+        | "min"
+        | "max"
+        | "prod"
+        | "rr_row_sum_range"
+        | "rr_col_sum_range"
+        | "rr_dim1_sum_range"
+        | "rr_dim2_sum_range"
+        | "rr_dim3_sum_range"
+        | "rr_dim1_reduce_range"
+        | "rr_dim2_reduce_range"
+        | "rr_dim3_reduce_range"
+        | "rr_dim1_read_values"
+        | "rr_dim2_read_values"
+        | "rr_dim3_read_values"
+        | "rr_array3_gather_values"
+        | "colSums"
+        | "rowSums"
+        | "%*%"
+        | "crossprod"
+        | "tcrossprod" => {
             let mut acc = NaState::Never;
             for a in args {
                 acc = NaState::propagate(acc, states[*a]);

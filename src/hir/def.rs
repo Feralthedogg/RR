@@ -186,7 +186,7 @@ pub enum HirLValue {
 #[derive(Clone, Debug)]
 pub enum HirExpr {
     Local(LocalId),
-    Global(SymbolId),
+    Global(SymbolId, Span),
     Lit(HirLit),
 
     Call(HirCall),         // normal call

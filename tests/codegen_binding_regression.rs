@@ -36,10 +36,10 @@ fn assign_then_use_does_not_recompute_rng_expression() {
     let r_path = out_dir.join("rng_recompute.R");
 
     let src = r#"
-alloc_particles <- function(n) {
-  p <- seq_len(n)
-  i <- 1L
-  seed <- 12345L
+let alloc_particles <- function(n) {
+  let p <- seq_len(n)
+  let i <- 1L
+  let seed <- 12345L
   while (i <= n) {
     seed = (seed * 1103515245L + 12345L) % 2147483648L
     p[i] = seed / 2147483648L
@@ -70,8 +70,9 @@ fn assign_then_print_uses_updated_variable_not_reexpanded_expr() {
     let r_path = out_dir.join("print_off_by_one.R");
 
     let src = r#"
-main <- function() {
-  t <- 0L
+let main <- function() {
+  let t <- 0L
+  let u <- 0L
   while (t < 3L) {
     t = t + 1L
     u = t
@@ -101,7 +102,7 @@ fn if_else_codegen_does_not_reexpand_pre_if_assignment_on_else_path() {
     let r_path = out_dir.join("if_else_reexpand.R");
 
     let src = r#"
-step <- function(x, dx) {
+let step <- function(x, dx) {
   x = x + dx
   if (x > 1L) {
     x = x - 1L
@@ -113,7 +114,8 @@ step <- function(x, dx) {
     compile_rr(&rr_bin, &rr_path, &r_path);
 
     let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
-    let count = generated.matches("(.arg_x + .arg_dx)").count();
+    let count =
+        generated.matches("(.arg_x + .arg_dx)").count() + generated.matches("(x + dx)").count();
     assert_eq!(
         count, 1,
         "expected exactly one x <- x + dx evaluation; found {}",
@@ -129,12 +131,13 @@ fn loop_tail_eval_statement_is_not_dropped() {
     let r_path = out_dir.join("loop_tail_eval.R");
 
     let src = r#"
-main <- function() {
-  B <- seq_len(10L)
-  t <- 0L
+let main <- function() {
+  let B <- seq_len(10L)
+  let t <- 0L
+  let side_idx <- 0L
   while (t < 3L) {
     t = t + 1L
-    side_idx <- 3L
+    side_idx = 3L
     print("Wave")
     print(B[side_idx])
   }
@@ -152,5 +155,135 @@ main <- function() {
         generated.contains("print(rr_index1_read(B, side_idx, \"index\"))")
             || generated.contains("print(B[side_idx])"),
         "missing tail print statement in loop body (guarded or direct index form)"
+    );
+}
+
+#[test]
+fn swap_assign_preserves_temporary_source() {
+    let out_dir = test_out_dir();
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let rr_path = out_dir.join("swap_assign.rr");
+    let r_path = out_dir.join("swap_assign.R");
+
+    let src = r#"
+let main <- function() {
+  let u = 1.0
+  let u_new = 2.0
+  let tmp_u = u
+  u = u_new
+  u_new = tmp_u
+  print(u)
+  print(u_new)
+}
+"#;
+    fs::write(&rr_path, src).expect("failed to write source");
+    compile_rr(&rr_bin, &rr_path, &r_path);
+
+    let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
+    assert!(
+        generated.contains("tmp_u <- u"),
+        "expected temporary copy to preserve original source"
+    );
+    assert!(
+        generated.contains("u <- u_new"),
+        "expected swap first half to assign new buffer"
+    );
+    assert!(
+        generated.contains("u_new <- tmp_u"),
+        "expected swap second half to use temporary source"
+    );
+    assert!(
+        !generated.contains("u_new <- u_new"),
+        "found stale bug pattern: swap collapsed into self-assignment"
+    );
+}
+
+#[test]
+fn branch_carried_scalar_update_uses_merged_value() {
+    let out_dir = test_out_dir();
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let rr_path = out_dir.join("branch_carried_scalar.rr");
+    let r_path = out_dir.join("branch_carried_scalar.R");
+
+    let src = r#"
+fn dot2(a, b) {
+  return a + b
+}
+
+let main <- function() {
+  let rs_old = 1.0
+  let rs_new = 0.0
+  let beta = 0.0
+  rs_new = dot2(2.0, 3.0)
+  if (is.na(rs_new) || !is.finite(rs_new)) {
+    rs_new = rs_old
+  }
+  beta = rs_new / rs_old
+  rs_old = rs_new
+  print(beta)
+  print(rs_old)
+}
+"#;
+    fs::write(&rr_path, src).expect("failed to write source");
+    compile_rr(&rr_bin, &rr_path, &r_path);
+
+    let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
+    assert!(
+        generated.contains("beta <- (rs_new / rs_old)"),
+        "expected post-branch recurrence to use merged rs_new value"
+    );
+    assert!(
+        generated.contains("rs_old <- rs_new"),
+        "expected old residual to update from new residual"
+    );
+    assert!(
+        !generated.contains("beta <- rs_old"),
+        "found stale bug pattern: beta collapsed to wrong source"
+    );
+    assert!(
+        !generated.contains("beta <- (rs_old / rs_old)"),
+        "found stale bug pattern: beta lost merged rs_new source"
+    );
+    assert!(
+        !generated.contains("rs_old <- rs_old"),
+        "found stale bug pattern: loop-carried update collapsed to self-assignment"
+    );
+}
+
+#[test]
+fn floor_index_substitution_keeps_position_variables() {
+    let out_dir = test_out_dir();
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let rr_path = out_dir.join("floor_index_substitution.rr");
+    let r_path = out_dir.join("floor_index_substitution.R");
+
+    let src = r#"
+let sample <- function(px, py, p, N) {
+  let gx = px[p] * N
+  let gy = py[p] * N
+  let ix = floor(gx)
+  let iy = floor(gy)
+  print(ix)
+  print(iy)
+}
+"#;
+    fs::write(&rr_path, src).expect("failed to write source");
+    compile_rr(&rr_bin, &rr_path, &r_path);
+
+    let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
+    assert!(
+        generated.contains("gx <-")
+            && generated.contains("gy <-")
+            && generated.contains("ix <- floor(gx)")
+            && generated.contains("iy <- floor(gy)"),
+        "expected floor index substitution to preserve gx/gy intermediates"
+    );
+    assert!(
+        !generated.contains("ix <- floor(N)"),
+        "found stale bug pattern: gx was replaced by N"
+    );
+    assert!(
+        !generated.contains("iy <- floor(N)"),
+        "found stale bug pattern: gy was replaced by N"
     );
 }

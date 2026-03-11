@@ -12,8 +12,8 @@ fn dotted_builtin_names_compile_in_call_position() {
     fs::create_dir_all(&out_dir).expect("failed to create target/tests/dotted_builtin_calls");
 
     let rr_src = r#"
-main <- function() {
-  x <- c(1L, NA, 3L)
+let main <- function() {
+  let x <- c(1L, NA, 3L)
   print(is.na(x[2L]))
   print(is.finite(3.14))
   0L

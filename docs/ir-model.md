@@ -42,13 +42,13 @@ Core:
   - SSA primitives: `Const`, `Phi`, `Param`, `Load`
   - structural primitives: `Len`, `Indices`, `Range`
   - compute: `Binary`, `Unary`, `Call`, `Intrinsic`
-  - memory-like access: `Index1D`, `Index2D`
+  - memory-like access: `Index1D`, `Index2D`, `Index3D`
 - `Value` carries static analysis metadata used by optimizer/codegen:
   - `value_ty` (type lattice state)
   - `value_term` (structural generic term)
 - `Instr`:
   - `Assign`, `Eval`
-  - `StoreIndex1D`, `StoreIndex2D`
+  - `StoreIndex1D`, `StoreIndex2D`, `StoreIndex3D`
 - `Terminator`:
   - `Goto`, `If`, `Return`, `Unreachable`
 

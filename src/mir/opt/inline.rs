@@ -944,6 +944,25 @@ impl MirInliner {
                     *val = n;
                 }
             }
+            Instr::StoreIndex3D {
+                base, i, j, k, val, ..
+            } => {
+                if let Some(&n) = map.v.get(base) {
+                    *base = n;
+                }
+                if let Some(&n) = map.v.get(i) {
+                    *i = n;
+                }
+                if let Some(&n) = map.v.get(j) {
+                    *j = n;
+                }
+                if let Some(&n) = map.v.get(k) {
+                    *k = n;
+                }
+                if let Some(&n) = map.v.get(val) {
+                    *val = n;
+                }
+            }
         }
     }
 
@@ -1079,6 +1098,25 @@ impl MirInliner {
                         }
                         if *c == old {
                             *c = new;
+                        }
+                        if *val == old {
+                            *val = new;
+                        }
+                    }
+                    Instr::StoreIndex3D {
+                        base, i, j, k, val, ..
+                    } => {
+                        if *base == old {
+                            *base = new;
+                        }
+                        if *i == old {
+                            *i = new;
+                        }
+                        if *j == old {
+                            *j = new;
+                        }
+                        if *k == old {
+                            *k = new;
                         }
                         if *val == old {
                             *val = new;

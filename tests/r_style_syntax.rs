@@ -20,13 +20,13 @@ fn r_style_function_assignment_and_operator_aliases_work() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-add <- function(a, b) {
+let add <- function(a, b) {
   a + b
 }
 
-main <- function() {
-  x <- add(1L, 2L)
-  y = add(3L, 4L)
+let main <- function() {
+  let x <- add(1L, 2L)
+  let y = add(3L, 4L)
   print(x)
   print(y)
   y

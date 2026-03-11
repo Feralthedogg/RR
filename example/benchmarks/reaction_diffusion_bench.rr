@@ -1,29 +1,29 @@
 import "../common/sim_utils.rr"
 
 fn main() {
-    n = 192.0
-    a = rep.int(1.0, n)
-    b = rep.int(0.0, n)
-    i = 88.0
+    let n = 192.0
+    let a = rep.int(1.0, n)
+    let b = rep.int(0.0, n)
+    let i = 88.0
     while (i <= 104.0) {
         b[i] = 1.0
         i += 1.0
     }
-    da = 1.0
-    db = 0.5
-    feed = 0.055
-    kill = 0.062
-    step = 1.0
+    let da = 1.0
+    let db = 0.5
+    let feed = 0.055
+    let kill = 0.062
+    let step = 1.0
     while (step <= 90.0) {
-        next_a = copy_vec(a)
-        next_b = copy_vec(b)
+        let next_a = copy_vec(a)
+        let next_b = copy_vec(b)
         i = 2.0
         while (i < n) {
-            lap_a = a[i - 1.0] - 2.0 * a[i] + a[i + 1.0]
-            lap_b = b[i - 1.0] - 2.0 * b[i] + b[i + 1.0]
-            react = a[i] * b[i] * b[i]
-            next_a_cell = a[i] + (da * lap_a - react + feed * (1.0 - a[i])) * 0.2
-            next_b_cell = b[i] + (db * lap_b + react - (kill + feed) * b[i]) * 0.2
+            let lap_a = a[i - 1.0] - 2.0 * a[i] + a[i + 1.0]
+            let lap_b = b[i - 1.0] - 2.0 * b[i] + b[i + 1.0]
+            let react = a[i] * b[i] * b[i]
+            let next_a_cell = a[i] + (da * lap_a - react + feed * (1.0 - a[i])) * 0.2
+            let next_b_cell = b[i] + (db * lap_b + react - (kill + feed) * b[i]) * 0.2
             next_a[i] = clamp1(next_a_cell, 0.0, 1.0)
             next_b[i] = clamp1(next_b_cell, 0.0, 1.0)
             i += 1.0

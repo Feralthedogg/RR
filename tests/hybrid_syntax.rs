@@ -100,9 +100,9 @@ fn hybrid_surface_syntax_compiles_and_runs() {
     let src = r#"
 fn add(a: float, b: float) -> float = a + b
 
-main <- function() {
+let main <- function() {
   x: int = 10L
-  y = add(1.0, x)
+  let y = add(1.0, x)
   print(y)
   y
 }
@@ -173,7 +173,7 @@ fn main(n) {
             assert!(matches!(start, RR::hir::def::HirExpr::Lit(_)));
             assert!(matches!(
                 end,
-                RR::hir::def::HirExpr::Local(_) | RR::hir::def::HirExpr::Global(_)
+                RR::hir::def::HirExpr::Local(_) | RR::hir::def::HirExpr::Global(..)
             ));
         }
         _ => panic!("expected canonical range iterator"),

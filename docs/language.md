@@ -1,7 +1,46 @@
 ﻿# Language Reference
 
-This page documents RR language behavior from implementation code, not aspirational design.
-Primary sources: `src/syntax/{token,lex,parse,ast}.rs`, `src/hir/lower.rs`, `src/mir/lower_hir.rs`, and syntax-focused tests.
+This page is the surface-language reference for RR.
+
+It documents behavior as implemented today, not as an aspirational future
+language design.
+
+Primary implementation sources:
+
+- `src/syntax/{token,lex,parse,ast}.rs`
+- `src/hir/lower.rs`
+- `src/mir/lower_hir.rs`
+- syntax/lowering tests
+
+## Scope of This Reference
+
+This page answers:
+
+- which tokens and keywords exist
+- which statement and expression forms are accepted
+- how RR resolves ambiguous surface forms
+- what the current parser/lowering limits are
+
+It does not try to explain optimization strategy. For that, see
+[Writing RR for Performance and Safety](writing-rr.md) and
+[Tachyon Engine](optimization.md).
+
+## Reading Notes
+
+- If syntax and implementation disagree, implementation wins.
+- If a form is parsed but lowered conservatively, that is part of the current language contract.
+- When a feature is accepted only in a restricted form, that restriction is part of the language.
+
+## Language Summary
+
+RR currently provides:
+
+- R-style assignment and function forms
+- native-style `fn` and expression-bodied functions
+- scalar, vector, matrix, and selected 3D indexing
+- records, lists, closures, and pattern matching
+- import/export and direct R package interop
+- strict declaration by default
 
 ## Keywords
 
@@ -25,11 +64,14 @@ RR allows developers to write in a modern, Rust-like syntax while still supporti
 many traditional R-style surface forms. You can mix and match these styles within
 the subset RR currently implements.
 
+With the default strict declaration rules, the first assignment to a name still
+needs `let`, even when you use traditional R-style `<-` syntax.
+
 ### 1. Assignment and Declarations
 **Traditional R:**
 ```R
-x <- 10L
-y <- "hello"
+let x <- 10L
+let y <- "hello"
 ```
 **Modern RR:**
 ```rust
@@ -43,7 +85,7 @@ x: int = 10L
 ### 2. Function Definitions
 **Traditional R:**
 ```R
-add <- function(a, b) {
+let add <- function(a, b) {
   return(a + b)
 }
 ```
@@ -57,9 +99,20 @@ fn add(a, b) {
 fn add(a: float, b: float) -> float = a + b
 ```
 
+When a function has vector slice parameters RR can prove from explicit hints or
+flow-typed straight-line bindings, and it lowers to a slice-stable vector return
+expression, RR may emit it as:
+
+- an internal implementation helper
+- a public parallel wrapper that can dispatch through the runtime parallel path
+
+This is automatic at codegen time; you do not need a separate parallel annotation.
+
 ### 3. Control Flow (Loops and Ifs)
 **Traditional R:**
 ```R
+let x <- 0L
+let n <- 4L
 if (x > 0) {
   for (i in seq_len(n)) {
     x <- x + i
@@ -78,8 +131,8 @@ if x > 0 {
 ### 4. Data Structures
 **Traditional R:**
 ```R
-vec <- c(1, 2, 3)
-lst <- list(name = "rr", ver = 1.0)
+let vec <- c(1, 2, 3)
+let lst <- list(name = "rr", ver = 1.0)
 ```
 **Modern RR:**
 ```rust
@@ -213,7 +266,7 @@ Example:
 import r { plot as draw_plot, lines } from "graphics"
 import r default from "grDevices"
 
-main <- function() {
+let main <- function() {
   grDevices.png(filename = "plot.png", width = 640, height = 360)
   draw_plot(c(1, 2, 3), c(1, 4, 9), type = "l")
   lines(c(1, 2, 3), c(1, 2, 3), col = "tomato")
@@ -230,12 +283,12 @@ import r default from "dplyr"
 import r * as base from "base"
 
 fn main() {
-    raw = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
-    series = raw |> dplyr.mutate(
+    let raw = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
+    let series = raw |> dplyr.mutate(
         trend = x * 0.5 + 0.2,
         smooth = signal * 0.8 + 0.1
     )
-    p = ggplot2.ggplot(series, ggplot2.aes(x = x, y = trend)) +
+    let p = ggplot2.ggplot(series, ggplot2.aes(x = x, y = trend)) +
         ggplot2.geom_line(color = "steelblue") +
         ggplot2.geom_point(ggplot2.aes(y = smooth), color = "tomato") +
         ggplot2.theme_minimal()
@@ -294,7 +347,7 @@ Note: `export` is parsed as `export` + function declaration, not as general expo
 - Range: `a .. b`
 - Call: `f(x, y)`
 - Named call args: `f(x = 1, y = 2)`
-- Index: `x[i]`, `m[i, j]`
+- Index: `x[i]`, `m[i, j]`, `a[i, j, k]`
 - Field: `rec.a`
 - Vector literal: `[1, 2, 3]`
 - Record literal: `{a: 1, b: 2}`
@@ -374,9 +427,9 @@ Important newline rule:
 
 From `src/hir/lower.rs`:
 
-- default: assignment to undeclared name implicitly declares it
-- strict mode: `RR_STRICT_LET=1` or `RR_STRICT_ASSIGN=1` makes it a compile error
-- warning mode: `RR_WARN_IMPLICIT_DECL=1` emits implicit-declaration warnings
+- default: assignment to undeclared name is a compile error
+- legacy relaxed mode: `RR_STRICT_LET=0` or `RR_STRICT_ASSIGN=0` allows implicit declaration
+- warning mode: `RR_WARN_IMPLICIT_DECL=1` emits implicit-declaration warnings when relaxed mode is enabled
 
 ## Function and Closure Semantics
 

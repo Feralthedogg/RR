@@ -6,30 +6,30 @@ import r default from "stats"
 import r * as base from "base"
 
 fn main() {
-    csvfile = "rr_readr_dplyr_tidyr_ggplot2_workflow_modern.csv"
-    outfile = "rr_readr_dplyr_tidyr_ggplot2_workflow_modern.png"
+    let csvfile = "rr_readr_dplyr_tidyr_ggplot2_workflow_modern.csv"
+    let outfile = "rr_readr_dplyr_tidyr_ggplot2_workflow_modern.png"
 
-    raw = base.data.frame(
+    let raw = base.data.frame(
         step = c(0, 1, 2, 3, 4),
         sensor_a = c(0.3, 0.8, 1.1, 0.9, 0.4),
         sensor_b = c(0.2, 0.6, 0.9, 1.3, 1.0)
     )
 
     readr.write_csv(raw, csvfile)
-    loaded = readr.read_csv(csvfile, show_col_types = FALSE)
-    long = tidyr.pivot_longer(
+    let loaded = readr.read_csv(csvfile, show_col_types = FALSE)
+    let long = tidyr.pivot_longer(
         loaded,
         cols = c(@sensor_a, @sensor_b),
         names_to = "sensor",
         values_to = "reading"
     )
 
-    enriched = long |> dplyr.mutate(
+    let enriched = long |> dplyr.mutate(
         centered = reading - stats.median(reading),
         scaled = reading / (stats.sd(reading) + 0.0001)
     )
 
-    p = ggplot2.ggplot(enriched, ggplot2.aes(x = step, y = scaled, color = sensor)) +
+    let p = ggplot2.ggplot(enriched, ggplot2.aes(x = step, y = scaled, color = sensor)) +
         ggplot2.geom_line(linewidth = 1.15) +
         ggplot2.geom_point(size = 2.1) +
         ggplot2.ggtitle("RR modern + readr + dplyr + tidyr + ggplot2") +

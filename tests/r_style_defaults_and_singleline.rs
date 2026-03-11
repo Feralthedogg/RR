@@ -39,7 +39,7 @@ fn run_rscript(path: &str, script: &Path) -> (i32, String, String) {
 #[test]
 fn default_params_are_preserved_in_hir_and_typed() {
     let src = r#"
-f <- function(a = 0.0, b = 0L, c = TRUE, d = "x") {
+let f = function(a = 0.0, b = 0L, c = TRUE, d = "x") {
   a + b
 }
 "#;
@@ -88,12 +88,12 @@ fn single_line_control_forms_compile_and_run() {
     let out_r = out_dir.join("singleline_o2.R");
 
     let src = r#"
-main <- function() {
-  s <- 0L
-  i <- 0L
-  while (i < 5L) i <- i + 1L
-  for (k in 1L..5L) s <- s + k
-  if (i == 5L) s <- s + 100L else s <- 0L
+let main <- function() {
+  let s <- 0L
+  let i <- 0L
+  while (i < 5L) i = i + 1L
+  for (k in 1L..5L) s = s + k
+  if (i == 5L) s = s + 100L else s = 0L
   print(s)
   s
 }
@@ -137,9 +137,9 @@ fn single_line_if_newline_followup_stmt_is_not_postfix_chained() {
     let out_r = out_dir.join("singleline_if_newline_o1.R");
 
     let src = r#"
-idx.cube <- function(f, x, y, size) {
-  ff <- round(f)
-  if (ff < 1L) ff <- 1L
+let idx.cube <- function(f, x, y, size) {
+  let ff <- round(f)
+  if (ff < 1L) ff = 1L
   (ff - 1L) * size * size + y
 }
 
@@ -182,16 +182,16 @@ fn no_paren_if_while_forms_compile_and_run() {
     let out_r = out_dir.join("no_paren_if_while_o2.R");
 
     let src = r#"
-main <- function() {
-  i <- 0L
-  s <- 0L
+let main <- function() {
+  let i <- 0L
+  let s <- 0L
   while i < 4L {
-    i <- i + 1L
+    i = i + 1L
   }
   if i == 4L {
-    s <- 42L
+    s = 42L
   } else {
-    s <- -1L
+    s = -1L
   }
   print(s)
   s

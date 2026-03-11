@@ -8,16 +8,11 @@ use RR::compiler::{
 use common::unique_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
-
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
 
 fn strict_opts() -> IncrementalOptions {
     IncrementalOptions {
         enabled: true,
+        auto: false,
         phase1: true,
         phase2: true,
         phase3: true,
@@ -28,6 +23,7 @@ fn strict_opts() -> IncrementalOptions {
 fn phase1_only_opts() -> IncrementalOptions {
     IncrementalOptions {
         enabled: true,
+        auto: false,
         phase1: true,
         phase2: false,
         phase3: false,
@@ -39,8 +35,8 @@ fn write_basic_project(root: &Path) -> (PathBuf, &'static str) {
     let main_path = root.join("main.rr");
     let source = r#"
 fn main() {
-  x = c(1L, 2L, 3L)
-  i = 1L
+  let x = c(1L, 2L, 3L)
+  let i = 1L
   while (i <= 3L) {
     print(x[i])
     i = i + 1L
@@ -70,7 +66,7 @@ fn map_artifacts(cache_dir: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn strict_incremental_verify_checks_cached_outputs() {
-    let _guard = env_lock()
+    let _guard = common::env_lock()
         .lock()
         .expect("failed to lock incremental strict verify env guard");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -148,7 +144,7 @@ fn strict_incremental_verify_checks_cached_outputs() {
 
 #[test]
 fn strict_incremental_verify_rejects_source_map_drift() {
-    let _guard = env_lock()
+    let _guard = common::env_lock()
         .lock()
         .expect("failed to lock incremental strict verify env guard");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -210,7 +206,7 @@ fn strict_incremental_verify_rejects_source_map_drift() {
 
 #[test]
 fn incremental_cache_separates_runtime_injection_mode() {
-    let _guard = env_lock()
+    let _guard = common::env_lock()
         .lock()
         .expect("failed to lock incremental strict verify env guard");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

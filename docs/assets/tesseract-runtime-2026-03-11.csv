@@ -1,0 +1,6 @@
+id,label,kind,engine,artifact,runs_ms,mean_ms,stdev_ms,min_ms,max_ms,notes
+direct_r_gnur,Direct base R,runtime,GNU R 4.5.2,Direct R transcription of example/tesseract.rr,2611.6;2608.5;2593.2;2680.1;2594.2,2617.5,36.0,2593.2,2680.1,stdout matched RR O2 helper-only exactly
+rr_o2_gnur_helper_only,RR O2 emitted R,runtime,GNU R 4.5.2,RR O2 helper-only emitted R,1463.1;1458.7;1450.9;1450.4;1450.7,1454.7,5.8,1450.4,1463.1,-O2 --no-incremental --no-runtime
+rr_o2_gnur_runtime,RR O2 emitted R (default runtime),runtime,GNU R 4.5.2,RR O2 runtime-injected emitted R,1473.9;1462.8;1454.9;1462.1;1464.4,1463.6,6.8,1454.9,1473.9,-O2 --no-incremental
+rr_compile_o2_release,RR compile only,compile,RR 5.0.0 release,Compiler front-to-back O2 emit,113.2;114.0;113.4;113.9;113.8,113.7,0.3,113.2,114.0,-O2 --no-incremental --no-runtime
+rr_o2_renjin_helper_only,RR O2 emitted R,runtime,Renjin 3.5-beta76,RR O2 helper-only emitted R,4671.4;4664.8;4748.3;4720.3;4799.4,4720.8,55.9,4664.8,4799.4,OpenJDK 25.0.2

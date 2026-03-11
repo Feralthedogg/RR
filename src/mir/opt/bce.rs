@@ -216,6 +216,28 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         visit_limit,
                     );
                 }
+                Instr::StoreIndex3D {
+                    base, i, j, k, val, ..
+                } => {
+                    let mut seen = FxHashSet::default();
+                    for value in [*base, *i, *j, *k, *val] {
+                        collect_index_safety(
+                            value,
+                            bid,
+                            &mut cur_facts,
+                            fn_ir,
+                            &canonical_ivs,
+                            &one_based_ivs,
+                            &na_states,
+                            &mut safe_values,
+                            &mut non_na_values,
+                            &mut one_based_indices,
+                            &mut seen,
+                            &mut node_visits,
+                            visit_limit,
+                        );
+                    }
+                }
             }
             transfer_instr(instr, &fn_ir.values, &mut cur_facts);
         }
@@ -909,6 +931,25 @@ fn collect_index_safety(
                 node_visits,
                 visit_limit,
             );
+        }
+        ValueKind::Index3D { base, i, j, k } => {
+            for value in [*base, *i, *j, *k] {
+                collect_index_safety(
+                    value,
+                    bid,
+                    facts,
+                    fn_ir,
+                    canonical_ivs,
+                    one_based_ivs,
+                    na_states,
+                    safe_values,
+                    non_na_values,
+                    one_based_values,
+                    seen,
+                    node_visits,
+                    visit_limit,
+                );
+            }
         }
         ValueKind::Const(_)
         | ValueKind::Param { .. }

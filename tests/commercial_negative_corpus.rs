@@ -145,8 +145,8 @@ main()
             r#"
 fn main() {
   let x = c(1L, 2L)
-  y <- x[0L]
-  z <- 1L / 0L
+  let y = x[0L]
+  let z = 1L / 0L
   if (NA) {
     return 1L
   }
@@ -182,9 +182,9 @@ main()
 fn aggregate_diagnostics_report_all_relevant_findings() {
     let src = r#"
 fn main() {
-  x <- c(1L, 2L)
-  y <- x[0L]
-  z <- 1L / 0L
+  let x = c(1L, 2L)
+  let y = x[0L]
+  let z = 1L / 0L
   if (NA) { return 1L }
   return y + z
 }

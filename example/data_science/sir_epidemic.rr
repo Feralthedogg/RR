@@ -1,17 +1,17 @@
 import "../common/sim_utils.rr"
 
 fn main() {
-    s = 999.0
-    i = 1.0
-    r = 0.0
-    beta = 0.30
-    gamma = 0.08
-    n = 1000.0
-    peak_i = i
-    step = 1.0
+    let s = 999.0
+    let i = 1.0
+    let r = 0.0
+    let beta = 0.30
+    let gamma = 0.08
+    let n = 1000.0
+    let peak_i = i
+    let step = 1.0
     while (step <= 40.0) {
-        new_inf = beta * s * i / n
-        new_rec = gamma * i
+        let new_inf = beta * s * i / n
+        let new_rec = gamma * i
         s = s - new_inf
         i = i + new_inf - new_rec
         r = r + new_rec

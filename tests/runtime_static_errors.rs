@@ -64,7 +64,7 @@ main()
 fn static_invalid_write_index_must_fail() {
     let src = r#"
 fn main() {
-  x <- c(1L, 2L, 3L)
+  let x = c(1L, 2L, 3L)
   x[0L] <- 10L
   return x
 }
@@ -85,12 +85,39 @@ main()
 }
 
 #[test]
+fn static_invalid_read_index_above_length_must_fail() {
+    let src = r#"
+fn main() {
+  let x = c(1L, 2L, 3L)
+  let i = length(x) + 1L
+  return x[i]
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "bad_read_upper_index.rr");
+    assert!(
+        !ok,
+        "compile must fail for guaranteed upper out-of-bounds read"
+    );
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("> length(base)"),
+        "missing upper-bound detail:\n{}",
+        stdout
+    );
+}
+
+#[test]
 fn multiple_static_runtime_errors_are_reported_together() {
     let src = r#"
 fn main() {
-  x <- c(1L, 2L)
-  y <- x[0L]
-  z <- 1L / 0L
+  let x = c(1L, 2L)
+  let y = x[0L]
+  let z = 1L / 0L
   if (NA) { return 1L }
   return z + y
 }

@@ -1,0 +1,1088 @@
+use super::TachyonEngine;
+use super::types::{ClampBound, CubeIndexReturnVars};
+use crate::mir::*;
+use crate::syntax::ast::BinOp;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+impl TachyonEngine {
+    pub(super) fn collect_wrap_index_helpers(
+        all_fns: &FxHashMap<String, FnIR>,
+    ) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        let ordered = Self::sorted_fn_names(all_fns);
+        for name in ordered {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_wrap_index_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    pub(super) fn rewrite_wrap_index_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            for v in &mut fn_ir.values {
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &mut v.kind
+                else {
+                    continue;
+                };
+                if !helpers.contains(callee.as_str()) || args.len() != 4 {
+                    continue;
+                }
+                *callee = "rr_wrap_index_vec_i".to_string();
+                *names = vec![None, None, None, None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    pub(super) fn is_wrap_index_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [wrap-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 4 {
+            return false;
+        }
+
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let mut rules: Vec<(String, bool, usize)> = Vec::new();
+        for bb in &fn_ir.blocks {
+            let Terminator::If {
+                cond,
+                then_bb,
+                else_bb,
+            } = bb.term
+            else {
+                continue;
+            };
+            let Some((var, is_lt, bound_param)) =
+                Self::parse_wrap_if_rule(fn_ir, cond, then_bb, else_bb)
+            else {
+                fail!("if rule parse failed");
+            };
+            rules.push((var, is_lt, bound_param));
+        }
+
+        if rules.len() != 4 {
+            fail!("if rule count != 4");
+        }
+
+        let mut by_var: FxHashMap<String, Vec<(bool, usize)>> = FxHashMap::default();
+        for (var, is_lt, bound) in rules {
+            by_var.entry(var).or_default().push((is_lt, bound));
+        }
+        if by_var.len() != 2 {
+            fail!("rule vars != 2");
+        }
+
+        let mut x_var: Option<String> = None;
+        let mut y_var: Option<String> = None;
+        for (var, rs) in &by_var {
+            if rs.len() != 2 {
+                fail!("rules per var != 2");
+            }
+            let mut saw_lt = None;
+            let mut saw_gt = None;
+            for (is_lt, bound) in rs {
+                if *is_lt {
+                    saw_lt = Some(*bound);
+                } else {
+                    saw_gt = Some(*bound);
+                }
+            }
+            let Some(lt_bound) = saw_lt else {
+                fail!("missing lt bound");
+            };
+            let Some(gt_bound) = saw_gt else {
+                fail!("missing gt bound");
+            };
+            if lt_bound != gt_bound {
+                fail!("lt/gt bound mismatch");
+            }
+            match lt_bound {
+                2 => x_var = Some(var.clone()),
+                3 => y_var = Some(var.clone()),
+                _ => fail!("bound param not 2/3"),
+            }
+        }
+
+        let Some(x_var) = x_var else {
+            fail!("missing x var");
+        };
+        let Some(y_var) = y_var else {
+            fail!("missing y var");
+        };
+
+        if !Self::assignments_match_wrap_sources(fn_ir, &x_var, 0, 2)
+            || !Self::assignments_match_wrap_sources(fn_ir, &y_var, 1, 3)
+        {
+            fail!("assignment source mismatch");
+        }
+
+        if !Self::return_matches_wrap_expr(fn_ir, &x_var, &y_var) {
+            fail!("return expression mismatch");
+        }
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [wrap-detect] {}: matched", fn_ir.name);
+        }
+        true
+    }
+
+    pub(super) fn parse_wrap_if_rule(
+        fn_ir: &FnIR,
+        cond: ValueId,
+        then_bb: BlockId,
+        else_bb: BlockId,
+    ) -> Option<(String, bool, usize)> {
+        let then_assign = Self::single_assign_block(fn_ir, then_bb);
+        if Self::wrap_trace_enabled() && then_assign.is_none() {
+            eprintln!(
+                "   [wrap-rule] {}: then_bb {} is not single-assign",
+                fn_ir.name, then_bb
+            );
+        }
+        let (then_assign_var, then_assign_src) = then_assign?;
+        let else_assign = Self::single_assign_block(fn_ir, else_bb);
+        if else_assign.is_some() {
+            if Self::wrap_trace_enabled() {
+                eprintln!(
+                    "   [wrap-rule] {}: else_bb {} has assign",
+                    fn_ir.name, else_bb
+                );
+            }
+            return None;
+        }
+
+        let (cond_var, op_is_lt, cond_bound_param, cond_bound_is_one) =
+            match Self::parse_wrap_cond(fn_ir, cond) {
+                Some(v) => v,
+                None => {
+                    if Self::wrap_trace_enabled() {
+                        eprintln!(
+                            "   [wrap-rule] {}: cond {} parse failed kind={:?}",
+                            fn_ir.name, cond, fn_ir.values[cond].kind
+                        );
+                    }
+                    return None;
+                }
+            };
+        if then_assign_var != cond_var {
+            if Self::wrap_trace_enabled() {
+                eprintln!(
+                    "   [wrap-rule] {}: then dst {} != cond var {}",
+                    fn_ir.name, then_assign_var, cond_var
+                );
+            }
+            return None;
+        }
+
+        let assign_src_param = Self::value_param_index(fn_ir, then_assign_src);
+        let assign_src_is_one = Self::value_is_const_one(fn_ir, then_assign_src);
+        if op_is_lt && cond_bound_is_one {
+            let Some(p) = assign_src_param else {
+                if Self::wrap_trace_enabled() {
+                    eprintln!(
+                        "   [wrap-rule] {}: lt rule src is not param (src={} kind={:?} origin={:?})",
+                        fn_ir.name,
+                        then_assign_src,
+                        fn_ir.values[then_assign_src].kind,
+                        fn_ir.values[then_assign_src].origin_var
+                    );
+                }
+                return None;
+            };
+            if p >= 2 {
+                return Some((cond_var, true, p));
+            }
+            if Self::wrap_trace_enabled() {
+                eprintln!(
+                    "   [wrap-rule] {}: lt rule bound param {} < 2",
+                    fn_ir.name, p
+                );
+            }
+            return None;
+        }
+        if !op_is_lt && assign_src_is_one {
+            let Some(p) = cond_bound_param else {
+                if Self::wrap_trace_enabled() {
+                    eprintln!(
+                        "   [wrap-rule] {}: gt rule bound is not param (cond={})",
+                        fn_ir.name, cond
+                    );
+                }
+                return None;
+            };
+            if p >= 2 {
+                return Some((cond_var, false, p));
+            }
+            if Self::wrap_trace_enabled() {
+                eprintln!(
+                    "   [wrap-rule] {}: gt rule bound param {} < 2",
+                    fn_ir.name, p
+                );
+            }
+            return None;
+        }
+        if Self::wrap_trace_enabled() {
+            eprintln!(
+                "   [wrap-rule] {}: no matching lt/gt rewrite case (op_is_lt={}, bound_is_one={}, src_param={:?}, src_one={}, cond_param={:?})",
+                fn_ir.name,
+                op_is_lt,
+                cond_bound_is_one,
+                assign_src_param,
+                assign_src_is_one,
+                cond_bound_param
+            );
+        }
+        None
+    }
+
+    pub(super) fn single_assign_block(fn_ir: &FnIR, bid: BlockId) -> Option<(String, ValueId)> {
+        let mut out: Option<(String, ValueId)> = None;
+        for ins in &fn_ir.blocks[bid].instrs {
+            let Instr::Assign { dst, src, .. } = ins else {
+                return None;
+            };
+            if out.is_some() {
+                return None;
+            }
+            out = Some((dst.clone(), *src));
+        }
+        out
+    }
+
+    pub(super) fn parse_wrap_cond(
+        fn_ir: &FnIR,
+        cond: ValueId,
+    ) -> Option<(String, bool, Option<usize>, bool)> {
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            return None;
+        };
+        let lhs_var = Self::value_non_param_var_name(fn_ir, *lhs);
+        let rhs_var = Self::value_non_param_var_name(fn_ir, *rhs);
+        let lhs_is_one = Self::value_is_const_one(fn_ir, *lhs);
+        let rhs_is_one = Self::value_is_const_one(fn_ir, *rhs);
+        let lhs_param = Self::value_param_index(fn_ir, *lhs);
+        let rhs_param = Self::value_param_index(fn_ir, *rhs);
+
+        let out = match op {
+            BinOp::Lt | BinOp::Gt => {
+                if let Some(var) = lhs_var {
+                    let is_lt = matches!(op, BinOp::Lt);
+                    Some((var, is_lt, rhs_param, rhs_is_one))
+                } else if let Some(var) = rhs_var {
+                    let is_lt = matches!(op, BinOp::Gt);
+                    Some((var, is_lt, lhs_param, lhs_is_one))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if out.is_none() && Self::wrap_trace_enabled() {
+            eprintln!(
+                "   [wrap-cond] {} cond={} op={:?} lhs={} kind={:?} origin={:?} rhs={} kind={:?} origin={:?}",
+                fn_ir.name,
+                cond,
+                op,
+                lhs,
+                fn_ir.values[*lhs].kind,
+                fn_ir.values[*lhs].origin_var,
+                rhs,
+                fn_ir.values[*rhs].kind,
+                fn_ir.values[*rhs].origin_var
+            );
+        }
+        out
+    }
+
+    pub(super) fn assignments_match_wrap_sources(
+        fn_ir: &FnIR,
+        var: &str,
+        seed_param: usize,
+        bound_param: usize,
+    ) -> bool {
+        let mut saw_seed = false;
+        let mut saw_bound = false;
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                if dst != var {
+                    continue;
+                }
+                if let Some(p) = Self::value_param_index(fn_ir, *src) {
+                    if p == seed_param {
+                        saw_seed = true;
+                        continue;
+                    }
+                    if p == bound_param {
+                        saw_bound = true;
+                        continue;
+                    }
+                    return false;
+                }
+                if Self::value_is_const_one(fn_ir, *src) {
+                    continue;
+                }
+                return false;
+            }
+        }
+        saw_seed && saw_bound
+    }
+
+    pub(super) fn return_matches_wrap_expr(fn_ir: &FnIR, x_var: &str, y_var: &str) -> bool {
+        let reachable = Self::reachable_blocks(fn_ir);
+        let mut return_vals = Vec::new();
+        for bb in &fn_ir.blocks {
+            if !reachable.contains(&bb.id) {
+                continue;
+            }
+            if let Terminator::Return(Some(v)) = bb.term {
+                let v = Self::resolve_load_alias_value(fn_ir, v);
+                if matches!(fn_ir.values[v].kind, ValueKind::Const(Lit::Null)) {
+                    continue;
+                }
+                return_vals.push(v);
+            }
+        }
+        if return_vals.len() != 1 {
+            return false;
+        }
+        Self::is_wrap_return_expr(fn_ir, return_vals[0], x_var, y_var)
+    }
+
+    pub(super) fn is_wrap_return_expr(
+        fn_ir: &FnIR,
+        ret: ValueId,
+        x_var: &str,
+        y_var: &str,
+    ) -> bool {
+        let ValueKind::Binary {
+            op: BinOp::Add,
+            lhs,
+            rhs,
+        } = &fn_ir.values[ret].kind
+        else {
+            return false;
+        };
+        Self::is_wrap_return_form(fn_ir, *lhs, *rhs, x_var, y_var)
+            || Self::is_wrap_return_form(fn_ir, *rhs, *lhs, x_var, y_var)
+    }
+
+    pub(super) fn is_wrap_return_form(
+        fn_ir: &FnIR,
+        mul_side: ValueId,
+        x_side: ValueId,
+        x_var: &str,
+        y_var: &str,
+    ) -> bool {
+        if Self::value_var_name(fn_ir, x_side).as_deref() != Some(x_var) {
+            return false;
+        }
+        let ValueKind::Binary {
+            op: BinOp::Mul,
+            lhs,
+            rhs,
+        } = &fn_ir.values[Self::resolve_load_alias_value(fn_ir, mul_side)].kind
+        else {
+            return false;
+        };
+
+        let lhs_is_y = Self::is_y_minus_one(fn_ir, *lhs, y_var);
+        let rhs_is_y = Self::is_y_minus_one(fn_ir, *rhs, y_var);
+        let lhs_is_w = Self::value_param_index(fn_ir, *lhs) == Some(2);
+        let rhs_is_w = Self::value_param_index(fn_ir, *rhs) == Some(2);
+
+        (lhs_is_y && rhs_is_w) || (rhs_is_y && lhs_is_w)
+    }
+
+    pub(super) fn is_y_minus_one(fn_ir: &FnIR, vid: ValueId, y_var: &str) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return false;
+        };
+        Self::value_var_name(fn_ir, *lhs).as_deref() == Some(y_var)
+            && Self::value_is_const_one(fn_ir, *rhs)
+    }
+
+    pub(super) fn collect_cube_index_helpers(
+        all_fns: &FxHashMap<String, FnIR>,
+    ) -> FxHashSet<String> {
+        let round_helpers = Self::collect_round_helpers(all_fns);
+        let mut helpers = FxHashSet::default();
+        let ordered = Self::sorted_fn_names(all_fns);
+        for name in ordered {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_cube_index_helper_fn(fn_ir, &round_helpers) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    pub(super) fn collect_floor_helpers(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        for name in Self::sorted_fn_names(all_fns) {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_rr_floor_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    pub(super) fn rewrite_floor_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            for v in &mut fn_ir.values {
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &mut v.kind
+                else {
+                    continue;
+                };
+                if !helpers.contains(callee.as_str()) || args.len() != 1 {
+                    continue;
+                }
+                *callee = "floor".to_string();
+                *names = vec![None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    pub(super) fn collect_round_helpers(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        for name in Self::sorted_fn_names(all_fns) {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_rr_round_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    pub(super) fn rewrite_cube_index_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            for v in &mut fn_ir.values {
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &mut v.kind
+                else {
+                    continue;
+                };
+                if !helpers.contains(callee.as_str()) || args.len() != 4 {
+                    continue;
+                }
+                *callee = "rr_idx_cube_vec_i".to_string();
+                *names = vec![None, None, None, None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    pub(super) fn is_cube_index_helper_fn(fn_ir: &FnIR, round_helpers: &FxHashSet<String>) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [cube-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 4 {
+            return false;
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let Some(vars) = Self::cube_index_return_vars(fn_ir) else {
+            fail!("return expression mismatch");
+        };
+        if !Self::assignments_match_cube_seed_source(fn_ir, round_helpers, &vars.face_var, 0)
+            || !Self::assignments_match_cube_seed_source(fn_ir, round_helpers, &vars.x_var, 1)
+            || !Self::assignments_match_cube_seed_source(fn_ir, round_helpers, &vars.y_var, 2)
+            || !Self::assignments_match_cube_seed_source(fn_ir, round_helpers, &vars.size_var, 3)
+        {
+            fail!("seed assignment mismatch");
+        }
+
+        let mut rules: Vec<(String, bool, ClampBound)> = Vec::new();
+        for bb in &fn_ir.blocks {
+            let Terminator::If {
+                cond,
+                then_bb,
+                else_bb,
+            } = bb.term
+            else {
+                continue;
+            };
+            let Some(rule) = Self::parse_cube_if_rule(fn_ir, cond, then_bb, else_bb) else {
+                fail!("if rule parse failed");
+            };
+            rules.push(rule);
+        }
+        if rules.len() != 6 {
+            fail!("if rule count != 6");
+        }
+
+        let expected = [
+            (
+                vars.face_var.clone(),
+                vec![(true, ClampBound::ConstOne), (false, ClampBound::ConstSix)],
+            ),
+            (
+                vars.x_var.clone(),
+                vec![
+                    (true, ClampBound::ConstOne),
+                    (false, ClampBound::Var(vars.size_var.clone())),
+                ],
+            ),
+            (
+                vars.y_var.clone(),
+                vec![
+                    (true, ClampBound::ConstOne),
+                    (false, ClampBound::Var(vars.size_var.clone())),
+                ],
+            ),
+        ];
+        for (var, wanted) in expected {
+            let seen: Vec<(bool, ClampBound)> = rules
+                .iter()
+                .filter(|(rule_var, _, _)| rule_var == &var)
+                .map(|(_, is_lt, bound)| (*is_lt, bound.clone()))
+                .collect();
+            if seen.len() != wanted.len() {
+                fail!("rule multiplicity mismatch");
+            }
+            for need in wanted {
+                if !seen.contains(&need) {
+                    fail!("missing clamp rule");
+                }
+            }
+        }
+
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [cube-detect] {}: matched", fn_ir.name);
+        }
+        true
+    }
+
+    pub(super) fn cube_index_return_vars(fn_ir: &FnIR) -> Option<CubeIndexReturnVars> {
+        let reachable = Self::reachable_blocks(fn_ir);
+        let mut returns = Vec::new();
+        for bb in &fn_ir.blocks {
+            if !reachable.contains(&bb.id) {
+                continue;
+            }
+            if let Terminator::Return(Some(v)) = bb.term {
+                let v = Self::resolve_load_alias_value(fn_ir, v);
+                if matches!(fn_ir.values[v].kind, ValueKind::Const(Lit::Null)) {
+                    continue;
+                }
+                returns.push(v);
+            }
+        }
+        if returns.len() != 1 {
+            return None;
+        }
+        let ret = returns[0];
+        let mut terms = Vec::new();
+        Self::flatten_assoc_binop(fn_ir, ret, BinOp::Add, &mut terms);
+        if terms.len() != 3 {
+            return None;
+        }
+
+        let mut face_var: Option<String> = None;
+        let mut x_var: Option<String> = None;
+        let mut y_var: Option<String> = None;
+        let mut size_var: Option<String> = None;
+
+        for term in terms {
+            if let Some(var) = Self::value_var_name(fn_ir, term) {
+                if y_var.is_some() {
+                    return None;
+                }
+                y_var = Some(var);
+                continue;
+            }
+
+            let mut factors = Vec::new();
+            Self::flatten_assoc_binop(fn_ir, term, BinOp::Mul, &mut factors);
+            let sub_vars: Vec<String> = factors
+                .iter()
+                .filter_map(|f| Self::parse_var_minus_one(fn_ir, *f))
+                .collect();
+            let plain_vars: Vec<String> = factors
+                .iter()
+                .filter_map(|f| Self::value_var_name(fn_ir, *f))
+                .collect();
+
+            match (sub_vars.as_slice(), plain_vars.as_slice()) {
+                ([sub], [size]) => {
+                    if x_var.is_some() {
+                        return None;
+                    }
+                    x_var = Some(sub.clone());
+                    match &size_var {
+                        None => size_var = Some(size.clone()),
+                        Some(prev) if prev == size => {}
+                        Some(_) => return None,
+                    }
+                }
+                ([sub], [size_a, size_b]) if size_a == size_b => {
+                    if face_var.is_some() {
+                        return None;
+                    }
+                    face_var = Some(sub.clone());
+                    match &size_var {
+                        None => size_var = Some(size_a.clone()),
+                        Some(prev) if prev == size_a => {}
+                        Some(_) => return None,
+                    }
+                }
+                _ => return None,
+            }
+        }
+
+        Some(CubeIndexReturnVars {
+            face_var: face_var?,
+            x_var: x_var?,
+            y_var: y_var?,
+            size_var: size_var?,
+        })
+    }
+
+    pub(super) fn parse_cube_bound(fn_ir: &FnIR, vid: ValueId) -> Option<ClampBound> {
+        if Self::value_is_const_one(fn_ir, vid) {
+            return Some(ClampBound::ConstOne);
+        }
+        if Self::value_is_const_six(fn_ir, vid) {
+            return Some(ClampBound::ConstSix);
+        }
+        Self::value_var_name(fn_ir, vid).map(ClampBound::Var)
+    }
+
+    pub(super) fn parse_cube_cond(
+        fn_ir: &FnIR,
+        cond: ValueId,
+    ) -> Option<(String, bool, ClampBound)> {
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            return None;
+        };
+        match op {
+            BinOp::Lt | BinOp::Gt => {
+                if let Some(var) = Self::value_non_param_var_name(fn_ir, *lhs) {
+                    Some((
+                        var,
+                        matches!(op, BinOp::Lt),
+                        Self::parse_cube_bound(fn_ir, *rhs)?,
+                    ))
+                } else if let Some(var) = Self::value_non_param_var_name(fn_ir, *rhs) {
+                    Some((
+                        var,
+                        matches!(op, BinOp::Gt),
+                        Self::parse_cube_bound(fn_ir, *lhs)?,
+                    ))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn cube_bound_matches_value(fn_ir: &FnIR, bound: &ClampBound, vid: ValueId) -> bool {
+        match bound {
+            ClampBound::ConstOne => Self::value_is_const_one(fn_ir, vid),
+            ClampBound::ConstSix => Self::value_is_const_six(fn_ir, vid),
+            ClampBound::Var(var) => {
+                Self::value_var_name(fn_ir, vid).as_deref() == Some(var.as_str())
+            }
+        }
+    }
+
+    pub(super) fn is_benign_cube_aux_assignment(
+        fn_ir: &FnIR,
+        dst: &str,
+        src: ValueId,
+        cond_var: &str,
+        bound: &ClampBound,
+    ) -> bool {
+        match bound {
+            ClampBound::Var(bound_var) if dst == bound_var => {
+                let src_var = Self::value_var_name(fn_ir, src);
+                src_var.as_deref() == Some(cond_var)
+                    || src_var.as_deref() == Some(bound_var.as_str())
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn parse_cube_if_rule(
+        fn_ir: &FnIR,
+        cond: ValueId,
+        then_bb: BlockId,
+        else_bb: BlockId,
+    ) -> Option<(String, bool, ClampBound)> {
+        let then_assigns = Self::block_assignments(fn_ir, then_bb)?;
+        if then_assigns.is_empty() {
+            return None;
+        }
+        let else_assigns = Self::block_assignments(fn_ir, else_bb)?;
+        if !else_assigns.is_empty() {
+            return None;
+        }
+        let (cond_var, is_lt, bound) = Self::parse_cube_cond(fn_ir, cond)?;
+        let mut saw_primary = false;
+        for (dst, src) in then_assigns {
+            if dst == cond_var && Self::cube_bound_matches_value(fn_ir, &bound, src) {
+                saw_primary = true;
+                continue;
+            }
+            if !Self::is_benign_cube_aux_assignment(fn_ir, &dst, src, &cond_var, &bound) {
+                return None;
+            }
+        }
+        if !saw_primary {
+            return None;
+        }
+        Some((cond_var, is_lt, bound))
+    }
+
+    pub(super) fn assignments_match_cube_seed_source(
+        fn_ir: &FnIR,
+        round_helpers: &FxHashSet<String>,
+        var: &str,
+        param_idx: usize,
+    ) -> bool {
+        let mut saw_seed = false;
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                if dst != var {
+                    continue;
+                }
+                if Self::value_param_index(fn_ir, *src) == Some(param_idx)
+                    || Self::is_round_call_of_param(fn_ir, round_helpers, *src, param_idx)
+                {
+                    saw_seed = true;
+                }
+            }
+        }
+        saw_seed
+    }
+
+    pub(super) fn is_round_call_of_param(
+        fn_ir: &FnIR,
+        round_helpers: &FxHashSet<String>,
+        vid: ValueId,
+        param_idx: usize,
+    ) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Call { callee, args, .. } = &fn_ir.values[v].kind else {
+            return false;
+        };
+        args.len() == 1
+            && Self::value_param_index(fn_ir, args[0]) == Some(param_idx)
+            && (callee == "round" || round_helpers.contains(callee))
+    }
+
+    pub(super) fn is_rr_floor_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [floor-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 1 {
+            fail!("conservative interop or arity != 1");
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let reachable = Self::reachable_blocks(fn_ir);
+        let mut returns = Vec::new();
+        for bb in &fn_ir.blocks {
+            if !reachable.contains(&bb.id) {
+                continue;
+            }
+            if let Terminator::Return(Some(v)) = bb.term {
+                returns.push(v);
+            }
+        }
+        if returns.is_empty() {
+            fail!("missing return");
+        }
+        let mut saw_real_return = false;
+        for ret in returns {
+            let ret = Self::resolve_load_alias_value(fn_ir, ret);
+            if matches!(fn_ir.values[ret].kind, ValueKind::Const(Lit::Null)) {
+                continue;
+            }
+            saw_real_return = true;
+            let ValueKind::Binary {
+                op: BinOp::Sub,
+                lhs,
+                rhs,
+            } = &fn_ir.values[ret].kind
+            else {
+                if Self::wrap_trace_enabled() {
+                    eprintln!(
+                        "   [floor-detect] {}: return kind {:?}",
+                        fn_ir.name, fn_ir.values[ret].kind
+                    );
+                }
+                fail!("return is not subtraction");
+            };
+            if Self::value_param_index(fn_ir, *lhs) != Some(0) {
+                fail!("sub lhs is not param");
+            }
+            let rhs = Self::resolve_load_alias_value(fn_ir, *rhs);
+            let ValueKind::Binary {
+                op: BinOp::Mod,
+                lhs: mod_lhs,
+                rhs: mod_rhs,
+            } = &fn_ir.values[rhs].kind
+            else {
+                fail!("sub rhs is not modulo");
+            };
+            if Self::value_param_index(fn_ir, *mod_lhs) != Some(0)
+                || !Self::value_is_const_one(fn_ir, *mod_rhs)
+            {
+                fail!("modulo operands do not match floor pattern");
+            }
+        }
+        if !saw_real_return {
+            fail!("missing non-null return");
+        }
+        true
+    }
+
+    pub(super) fn is_rr_round_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [round-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 1 {
+            fail!("conservative interop or arity != 1");
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let mut saw_mod_seed = false;
+        let mut rem_var: Option<String> = None;
+        let mut branch_term: Option<(BlockId, BlockId, ValueId)> = None;
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                let v = Self::resolve_load_alias_value(fn_ir, *src);
+                let ValueKind::Binary {
+                    op: BinOp::Mod,
+                    lhs,
+                    rhs,
+                } = &fn_ir.values[v].kind
+                else {
+                    continue;
+                };
+                if Self::value_param_index(fn_ir, *lhs) == Some(0)
+                    && Self::value_is_const_one(fn_ir, *rhs)
+                {
+                    saw_mod_seed = true;
+                    rem_var = Some(dst.clone());
+                }
+            }
+            if let Terminator::If {
+                cond,
+                then_bb,
+                else_bb,
+            } = bb.term
+            {
+                branch_term = Some((then_bb, else_bb, cond));
+            }
+        }
+        let Some(rem_var) = rem_var else {
+            fail!("missing rem seed");
+        };
+        if !saw_mod_seed {
+            fail!("mod seed not seen");
+        }
+        let Some((_, _, cond)) = branch_term else {
+            fail!("missing branch");
+        };
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary {
+            op: BinOp::Ge,
+            lhs,
+            rhs,
+        } = &fn_ir.values[cond].kind
+        else {
+            fail!("cond is not >= binary");
+        };
+        if Self::value_var_name(fn_ir, *lhs).as_deref() != Some(rem_var.as_str())
+            || !Self::value_is_const_half(fn_ir, *rhs)
+        {
+            fail!("cond does not compare rem >= 0.5");
+        }
+        let mut saw_minus_rem = false;
+        let mut saw_minus_rem_plus_one = false;
+        for bb in &fn_ir.blocks {
+            let Terminator::Return(Some(ret)) = bb.term else {
+                continue;
+            };
+            let ret = Self::resolve_load_alias_value(fn_ir, ret);
+            if matches!(fn_ir.values[ret].kind, ValueKind::Const(Lit::Null)) {
+                continue;
+            }
+            if Self::returns_param_minus_rem_expr(fn_ir, ret, 0, &rem_var) {
+                saw_minus_rem = true;
+                continue;
+            }
+            if Self::returns_param_minus_rem_plus_one_expr(fn_ir, ret, 0, &rem_var) {
+                saw_minus_rem_plus_one = true;
+                continue;
+            }
+            fail!("return is neither x - r nor (x - r) + 1");
+        }
+        if !saw_minus_rem {
+            fail!("missing x - r return");
+        }
+        if !saw_minus_rem_plus_one {
+            fail!("missing (x - r) + 1 return");
+        }
+        true
+    }
+
+    pub(super) fn returns_param_minus_rem_plus_one_expr(
+        fn_ir: &FnIR,
+        vid: ValueId,
+        param_idx: usize,
+        rem_var: &str,
+    ) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary {
+            op: BinOp::Add,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return false;
+        };
+        (Self::returns_param_minus_rem_expr(fn_ir, *lhs, param_idx, rem_var)
+            && Self::value_is_const_one(fn_ir, *rhs))
+            || (Self::returns_param_minus_rem_expr(fn_ir, *rhs, param_idx, rem_var)
+                && Self::value_is_const_one(fn_ir, *lhs))
+    }
+
+    pub(super) fn returns_param_minus_rem_expr(
+        fn_ir: &FnIR,
+        vid: ValueId,
+        param_idx: usize,
+        rem_var: &str,
+    ) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return false;
+        };
+        Self::value_param_index(fn_ir, *lhs) == Some(param_idx)
+            && Self::value_var_name(fn_ir, *rhs).as_deref() == Some(rem_var)
+    }
+}

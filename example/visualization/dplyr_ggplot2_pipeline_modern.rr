@@ -3,16 +3,16 @@ import r default from "dplyr"
 import r * as base from "base"
 
 fn main() {
-    outfile = "rr_dplyr_ggplot2_pipeline_modern.png"
-    x = c(0, 1, 2, 3, 4, 5, 6)
-    signal = c(0.2, 0.9, 1.6, 1.4, 0.8, 0.1, -0.4)
-    raw = base.data.frame(x = x, signal = signal)
-    series = raw |> dplyr.mutate(
+    let outfile = "rr_dplyr_ggplot2_pipeline_modern.png"
+    let x = c(0, 1, 2, 3, 4, 5, 6)
+    let signal = c(0.2, 0.9, 1.6, 1.4, 0.8, 0.1, -0.4)
+    let raw = base.data.frame(x = x, signal = signal)
+    let series = raw |> dplyr.mutate(
         trend = x * 0.18 + 0.35,
         smooth = signal * 0.8 + 0.1
     )
 
-    p = ggplot2.ggplot(series, ggplot2.aes(x = x)) +
+    let p = ggplot2.ggplot(series, ggplot2.aes(x = x)) +
         ggplot2.geom_line(ggplot2.aes(y = signal), color = "steelblue", linewidth = 1.2) +
         ggplot2.geom_line(ggplot2.aes(y = trend), color = "tomato", linewidth = 1.0, linetype = 2) +
         ggplot2.geom_point(ggplot2.aes(y = smooth), color = "darkgreen", size = 2.2) +

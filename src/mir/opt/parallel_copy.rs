@@ -132,6 +132,12 @@ fn value_reads_var(fn_ir: &FnIR, src: ValueId, var: &VarId) -> bool {
                 || value_reads_var(fn_ir, *r, var)
                 || value_reads_var(fn_ir, *c, var)
         }
+        ValueKind::Index3D { base, i, j, k } => {
+            value_reads_var(fn_ir, *base, var)
+                || value_reads_var(fn_ir, *i, var)
+                || value_reads_var(fn_ir, *j, var)
+                || value_reads_var(fn_ir, *k, var)
+        }
         ValueKind::Len { base } | ValueKind::Indices { base } => value_reads_var(fn_ir, *base, var),
         ValueKind::Range { start, end } => {
             value_reads_var(fn_ir, *start, var) || value_reads_var(fn_ir, *end, var)
@@ -235,6 +241,13 @@ fn replace_var_read(fn_ir: &mut FnIR, src: ValueId, old_var: &VarId, new_var: &V
             let r = replace_var_read(fn_ir, r, old_var, new_var);
             let c = replace_var_read(fn_ir, c, old_var, new_var);
             ValueKind::Index2D { base: b, r, c }
+        }
+        ValueKind::Index3D { base, i, j, k } => {
+            let base = replace_var_read(fn_ir, base, old_var, new_var);
+            let i = replace_var_read(fn_ir, i, old_var, new_var);
+            let j = replace_var_read(fn_ir, j, old_var, new_var);
+            let k = replace_var_read(fn_ir, k, old_var, new_var);
+            ValueKind::Index3D { base, i, j, k }
         }
         ValueKind::Len { base } => {
             let b = replace_var_read(fn_ir, base, old_var, new_var);

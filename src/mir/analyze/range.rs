@@ -250,6 +250,15 @@ pub fn transfer_instr(instr: &Instr, values: &[Value], facts: &mut RangeFacts) {
             ensure_value_range(*c, values, facts);
             ensure_value_range(*val, values, facts);
         }
+        Instr::StoreIndex3D {
+            base, i, j, k, val, ..
+        } => {
+            ensure_value_range(*base, values, facts);
+            ensure_value_range(*i, values, facts);
+            ensure_value_range(*j, values, facts);
+            ensure_value_range(*k, values, facts);
+            ensure_value_range(*val, values, facts);
+        }
     }
 }
 
@@ -309,6 +318,7 @@ fn ensure_value_range_inner(
         | ValueKind::Intrinsic { .. }
         | ValueKind::Index1D { .. }
         | ValueKind::Index2D { .. }
+        | ValueKind::Index3D { .. }
         | ValueKind::Load { .. }
         | ValueKind::RSymbol { .. }
         | ValueKind::Const(_) => RangeInterval::top(),

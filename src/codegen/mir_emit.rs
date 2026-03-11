@@ -4,7 +4,7 @@ use crate::mir::def::{
 };
 use crate::mir::flow::Facts;
 use crate::mir::structurizer::{StructuredBlock, Structurizer};
-use crate::typeck::{PrimTy, ShapeTy};
+use crate::typeck::{PrimTy, ShapeTy, TypeTerm};
 use crate::utils::Span;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -52,6 +52,12 @@ struct VarVersionUndo {
 struct BranchSnapshot {
     value_binding_log_len: usize,
     var_version_log_len: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TypedParallelWrapperPlan {
+    impl_name: String,
+    slice_param_slots: Vec<usize>,
 }
 
 pub struct RBackend {
@@ -121,8 +127,40 @@ impl RBackend {
         self.expr_use_counts_scratch.clear();
         self.expr_path_scratch.clear();
         self.emitted_ids_scratch.clear();
+        self.emitted_temp_names_scratch.clear();
 
-        self.write(fn_ir.name.as_str());
+        let wrapper_plan = Self::typed_parallel_wrapper_plan(fn_ir);
+        if let Some(plan) = wrapper_plan.as_ref() {
+            self.emit_function_named(fn_ir, &plan.impl_name)?;
+            self.newline();
+            self.emit_typed_parallel_wrapper(fn_ir, plan);
+        } else {
+            self.emit_function_named(fn_ir, fn_ir.name.as_str())?;
+        }
+        Self::prune_dead_cse_temps(&mut self.output);
+
+        Ok((
+            std::mem::take(&mut self.output),
+            std::mem::take(&mut self.source_map),
+        ))
+    }
+
+    fn emit_function_named(
+        &mut self,
+        fn_ir: &FnIR,
+        emitted_name: &str,
+    ) -> Result<(), crate::error::RRException> {
+        self.value_bindings.clear();
+        self.var_versions.clear();
+        self.value_binding_log.clear();
+        self.var_version_log.clear();
+        self.branch_snapshot_depth = 0;
+        self.expr_use_counts_scratch.clear();
+        self.expr_path_scratch.clear();
+        self.emitted_ids_scratch.clear();
+        self.emitted_temp_names_scratch.clear();
+
+        self.write(emitted_name);
         self.write(" <- function(");
         for (idx, param) in fn_ir.params.iter().enumerate() {
             if idx > 0 {
@@ -133,7 +171,8 @@ impl RBackend {
         self.write(") ");
         self.newline();
         self.write_indent();
-        self.write("{\n");
+        self.write("{");
+        self.newline();
         self.indent += 1;
 
         if fn_ir.unsupported_dynamic {
@@ -162,13 +201,295 @@ impl RBackend {
 
         self.indent -= 1;
         self.write_indent();
-        self.write("}\n");
-        Self::prune_dead_cse_temps(&mut self.output);
+        self.write("}");
+        self.newline();
+        Ok(())
+    }
 
-        Ok((
-            std::mem::take(&mut self.output),
-            std::mem::take(&mut self.source_map),
-        ))
+    fn emit_typed_parallel_wrapper(&mut self, fn_ir: &FnIR, plan: &TypedParallelWrapperPlan) {
+        self.write_stmt("# rr-typed-parallel-wrapper");
+        self.write(fn_ir.name.as_str());
+        self.write(" <- function(");
+        for (idx, param) in fn_ir.params.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write(param);
+        }
+        self.write(") ");
+        self.newline();
+        self.write_indent();
+        self.write("{");
+        self.newline();
+        self.indent += 1;
+
+        let slice_slots = plan
+            .slice_param_slots
+            .iter()
+            .map(|slot| format!("{}L", slot + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arg_list = if fn_ir.params.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", fn_ir.params.join(", "))
+        };
+        self.write_stmt(&format!(
+            "return(rr_parallel_typed_vec_call(\"{}\", {}, c({}){}))",
+            fn_ir.name, plan.impl_name, slice_slots, arg_list
+        ));
+
+        self.indent -= 1;
+        self.write_indent();
+        self.write("}");
+        self.newline();
+    }
+
+    fn typed_parallel_wrapper_plan(fn_ir: &FnIR) -> Option<TypedParallelWrapperPlan> {
+        if fn_ir.unsupported_dynamic || fn_ir.opaque_interop {
+            return None;
+        }
+        if !Self::typed_parallel_returns_vector(fn_ir) {
+            return None;
+        }
+        if !Self::typed_parallel_cfg_is_straight_line(fn_ir) {
+            return None;
+        }
+
+        let bindings = Self::collect_typed_parallel_local_bindings(fn_ir)?;
+        let slice_param_slots = Self::typed_parallel_slice_param_slots(fn_ir, &bindings);
+        if slice_param_slots.is_empty() {
+            return None;
+        }
+
+        let ret = Self::typed_parallel_return_value(fn_ir)?;
+        if !Self::is_typed_parallel_safe_value(fn_ir, ret, &bindings, &mut FxHashSet::default()) {
+            return None;
+        }
+
+        Some(TypedParallelWrapperPlan {
+            impl_name: format!("{}__typed_impl", fn_ir.name),
+            slice_param_slots,
+        })
+    }
+
+    fn typed_parallel_returns_vector(fn_ir: &FnIR) -> bool {
+        matches!(fn_ir.ret_term_hint.as_ref(), Some(TypeTerm::Vector(_)))
+            || matches!(fn_ir.inferred_ret_term, TypeTerm::Vector(_))
+    }
+
+    fn typed_parallel_slice_param_slots(
+        fn_ir: &FnIR,
+        bindings: &FxHashMap<String, usize>,
+    ) -> Vec<usize> {
+        let mut slots = Vec::new();
+        for idx in 0..fn_ir.params.len() {
+            if Self::typed_parallel_param_is_vector(fn_ir, idx, bindings) {
+                slots.push(idx);
+            }
+        }
+        slots
+    }
+
+    fn typed_parallel_param_is_vector(
+        fn_ir: &FnIR,
+        idx: usize,
+        bindings: &FxHashMap<String, usize>,
+    ) -> bool {
+        if fn_ir
+            .param_ty_hints
+            .get(idx)
+            .is_some_and(|ty| ty.shape == ShapeTy::Vector)
+        {
+            return true;
+        }
+        if matches!(fn_ir.param_term_hints.get(idx), Some(TypeTerm::Vector(_))) {
+            return true;
+        }
+        fn_ir.values.iter().any(|value| {
+            matches!(value.kind, ValueKind::Param { index } if index == idx)
+                && (value.value_ty.shape == ShapeTy::Vector
+                    || matches!(value.value_term, TypeTerm::Vector(_)))
+        }) || fn_ir.values.iter().any(|value| {
+            (value.value_ty.shape == ShapeTy::Vector
+                || matches!(value.value_term, TypeTerm::Vector(_)))
+                && Self::typed_parallel_value_param_slot(
+                    fn_ir,
+                    value.id,
+                    bindings,
+                    &mut FxHashSet::default(),
+                ) == Some(idx)
+        })
+    }
+
+    fn typed_parallel_value_param_slot(
+        fn_ir: &FnIR,
+        vid: usize,
+        bindings: &FxHashMap<String, usize>,
+        seen: &mut FxHashSet<usize>,
+    ) -> Option<usize> {
+        if !seen.insert(vid) {
+            return None;
+        }
+        match &fn_ir.values[vid].kind {
+            ValueKind::Param { index } => Some(*index),
+            ValueKind::Load { var } => bindings
+                .get(var)
+                .copied()
+                .and_then(|src| Self::typed_parallel_value_param_slot(fn_ir, src, bindings, seen)),
+            _ => None,
+        }
+    }
+
+    fn typed_parallel_cfg_is_straight_line(fn_ir: &FnIR) -> bool {
+        let mut returns = 0usize;
+        for bb in &fn_ir.blocks {
+            if bb
+                .instrs
+                .iter()
+                .any(|ins| !matches!(ins, Instr::Assign { .. }))
+            {
+                return false;
+            }
+            match bb.term {
+                Terminator::Goto(target) => {
+                    if target <= bb.id {
+                        return false;
+                    }
+                }
+                Terminator::Return(Some(_)) => returns += 1,
+                Terminator::Unreachable => {}
+                _ => return false,
+            }
+        }
+        returns == 1
+    }
+
+    fn collect_typed_parallel_local_bindings(fn_ir: &FnIR) -> Option<FxHashMap<String, usize>> {
+        let mut bindings = FxHashMap::default();
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    return None;
+                };
+                if let Some(prev) = bindings.insert(dst.clone(), *src)
+                    && prev != *src
+                {
+                    return None;
+                }
+            }
+        }
+        Some(bindings)
+    }
+
+    fn typed_parallel_return_value(fn_ir: &FnIR) -> Option<usize> {
+        let mut ret = None;
+        for bb in &fn_ir.blocks {
+            let Terminator::Return(Some(value)) = bb.term else {
+                continue;
+            };
+            if ret.replace(value).is_some() {
+                return None;
+            }
+        }
+        ret
+    }
+
+    fn is_typed_parallel_safe_value(
+        fn_ir: &FnIR,
+        vid: usize,
+        bindings: &FxHashMap<String, usize>,
+        seen: &mut FxHashSet<usize>,
+    ) -> bool {
+        if !seen.insert(vid) {
+            return false;
+        }
+        let safe = match &fn_ir.values[vid].kind {
+            ValueKind::Const(_) | ValueKind::Param { .. } => true,
+            ValueKind::Load { var } => {
+                Self::is_typed_parallel_safe_load(fn_ir, var, bindings, seen)
+            }
+            ValueKind::Unary { rhs, .. } => {
+                Self::is_typed_parallel_safe_value(fn_ir, *rhs, bindings, seen)
+            }
+            ValueKind::Binary { op, lhs, rhs } => {
+                Self::is_typed_parallel_safe_binop(*op)
+                    && Self::is_typed_parallel_safe_value(fn_ir, *lhs, bindings, seen)
+                    && Self::is_typed_parallel_safe_value(fn_ir, *rhs, bindings, seen)
+            }
+            ValueKind::Intrinsic { op, args } => {
+                Self::is_typed_parallel_safe_intrinsic(*op)
+                    && args
+                        .iter()
+                        .all(|arg| Self::is_typed_parallel_safe_value(fn_ir, *arg, bindings, seen))
+            }
+            ValueKind::Call {
+                callee,
+                args,
+                names,
+            } => Self::is_typed_parallel_safe_call(fn_ir, callee, args, names, bindings, seen),
+            ValueKind::Phi { .. }
+            | ValueKind::Len { .. }
+            | ValueKind::Indices { .. }
+            | ValueKind::Range { .. }
+            | ValueKind::Index1D { .. }
+            | ValueKind::Index2D { .. }
+            | ValueKind::Index3D { .. }
+            | ValueKind::RSymbol { .. } => false,
+        };
+        seen.remove(&vid);
+        safe
+    }
+
+    fn is_typed_parallel_safe_load(
+        fn_ir: &FnIR,
+        var: &str,
+        bindings: &FxHashMap<String, usize>,
+        seen: &mut FxHashSet<usize>,
+    ) -> bool {
+        if fn_ir.params.iter().any(|param| param == var) {
+            return true;
+        }
+        bindings
+            .get(var)
+            .is_some_and(|src| Self::is_typed_parallel_safe_value(fn_ir, *src, bindings, seen))
+    }
+
+    fn is_typed_parallel_safe_binop(op: BinOp) -> bool {
+        !matches!(op, BinOp::MatMul)
+    }
+
+    fn is_typed_parallel_safe_intrinsic(op: IntrinsicOp) -> bool {
+        matches!(
+            op,
+            IntrinsicOp::VecAddF64
+                | IntrinsicOp::VecSubF64
+                | IntrinsicOp::VecMulF64
+                | IntrinsicOp::VecDivF64
+                | IntrinsicOp::VecAbsF64
+                | IntrinsicOp::VecLogF64
+                | IntrinsicOp::VecSqrtF64
+                | IntrinsicOp::VecPmaxF64
+                | IntrinsicOp::VecPminF64
+        )
+    }
+
+    fn is_typed_parallel_safe_call(
+        fn_ir: &FnIR,
+        callee: &str,
+        args: &[usize],
+        names: &[Option<String>],
+        bindings: &FxHashMap<String, usize>,
+        seen: &mut FxHashSet<usize>,
+    ) -> bool {
+        if names.iter().any(|name| name.is_some()) {
+            return false;
+        }
+        if !matches!(callee, "abs" | "log" | "sqrt" | "pmax" | "pmin") {
+            return false;
+        }
+        args.iter()
+            .all(|arg| Self::is_typed_parallel_safe_value(fn_ir, *arg, bindings, seen))
     }
 
     fn record_span(&mut self, span: Span) {
@@ -208,7 +529,9 @@ impl RBackend {
                     self.record_span(*span);
                     self.write_stmt(&format!("{} <- {}", dst, v));
                     self.note_var_write(dst);
-                    self.bind_value_to_var(*src, dst);
+                    if !matches!(&values[*src].kind, ValueKind::Load { var } if var != dst) {
+                        self.bind_value_to_var(*src, dst);
+                    }
                 }
                 self.invalidate_emitted_cse_temps();
             }
@@ -274,6 +597,42 @@ impl RBackend {
                 self.write_stmt(&format!(
                     "{}[{}, {}] <- {}",
                     base_val, r_idx, c_idx, src_val
+                ));
+                self.bump_base_version_if_named(*base, values);
+            }
+            Instr::StoreIndex3D {
+                base,
+                i,
+                j,
+                k,
+                val,
+                span,
+            } => {
+                self.emit_mark(*span, Some("store3d"));
+                self.record_span(*span);
+                let base_val = self.resolve_val(*base, values, params, false);
+                let i_val = self.resolve_val(*i, values, params, false);
+                let j_val = self.resolve_val(*j, values, params, false);
+                let k_val = self.resolve_val(*k, values, params, false);
+                let src_val = self.resolve_val(*val, values, params, false);
+                let i_idx = if Self::can_elide_index_wrapper(*i, values) {
+                    i_val
+                } else {
+                    format!("rr_index1_write({}, \"dim1\")", i_val)
+                };
+                let j_idx = if Self::can_elide_index_wrapper(*j, values) {
+                    j_val
+                } else {
+                    format!("rr_index1_write({}, \"dim2\")", j_val)
+                };
+                let k_idx = if Self::can_elide_index_wrapper(*k, values) {
+                    k_val
+                } else {
+                    format!("rr_index1_write({}, \"dim3\")", k_val)
+                };
+                self.write_stmt(&format!(
+                    "{}[{}, {}, {}] <- {}",
+                    base_val, i_idx, j_idx, k_idx, src_val
                 ));
                 self.bump_base_version_if_named(*base, values);
             }
@@ -502,6 +861,12 @@ impl RBackend {
                 visit(*r);
                 visit(*c);
             }
+            ValueKind::Index3D { base, i, j, k } => {
+                visit(*base);
+                visit(*i);
+                visit(*j);
+                visit(*k);
+            }
             ValueKind::Phi { args } => {
                 for (value, _) in args {
                     visit(*value);
@@ -605,6 +970,7 @@ impl RBackend {
                 | ValueKind::Intrinsic { .. }
                 | ValueKind::Index1D { .. }
                 | ValueKind::Index2D { .. }
+                | ValueKind::Index3D { .. }
                 | ValueKind::Range { .. }
                 | ValueKind::Len { .. }
                 | ValueKind::Indices { .. }
@@ -667,9 +1033,6 @@ impl RBackend {
                 }
             }
             StructuredBlock::BasicBlock(bid) => {
-                self.write_indent();
-                self.write(&format!("# Block {}\n", bid));
-                self.newline();
                 let blk = &fn_ir.blocks[*bid];
                 for instr in &blk.instrs {
                     self.emit_instr(instr, &fn_ir.values, &fn_ir.params)?;
@@ -720,9 +1083,6 @@ impl RBackend {
                 self.write_stmt("repeat {");
                 self.indent += 1;
 
-                self.write_indent();
-                self.write(&format!("# LoopHeader {}\n", header));
-                self.newline();
                 let blk = &fn_ir.blocks[*header];
                 for instr in &blk.instrs {
                     self.emit_instr(instr, &fn_ir.values, &fn_ir.params)?;
@@ -839,6 +1199,9 @@ impl RBackend {
             } => self.resolve_index1d_expr(*base, *idx, *is_safe, *is_na_safe, values, params),
             ValueKind::Index2D { base, r, c } => {
                 self.resolve_index2d_expr(*base, *r, *c, values, params)
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                self.resolve_index3d_expr(*base, *i, *j, *k, values, params)
             }
             ValueKind::Load { var } => var.clone(),
             ValueKind::RSymbol { name } => name.clone(),
@@ -965,6 +1328,37 @@ impl RBackend {
             format!("rr_index1_write({}, \"col\")", cc)
         };
         format!("{}[{}, {}]", b, r_idx, c_idx)
+    }
+
+    fn resolve_index3d_expr(
+        &self,
+        base: usize,
+        i: usize,
+        j: usize,
+        k: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        let b = self.resolve_val(base, values, params, false);
+        let i_val = self.resolve_val(i, values, params, false);
+        let j_val = self.resolve_val(j, values, params, false);
+        let k_val = self.resolve_val(k, values, params, false);
+        let i_idx = if Self::can_elide_index_wrapper(i, values) {
+            i_val
+        } else {
+            format!("rr_index1_write({}, \"dim1\")", i_val)
+        };
+        let j_idx = if Self::can_elide_index_wrapper(j, values) {
+            j_val
+        } else {
+            format!("rr_index1_write({}, \"dim2\")", j_val)
+        };
+        let k_idx = if Self::can_elide_index_wrapper(k, values) {
+            k_val
+        } else {
+            format!("rr_index1_write({}, \"dim3\")", k_val)
+        };
+        format!("{}[{}, {}, {}]", b, i_idx, j_idx, k_idx)
     }
 
     fn build_named_arg_list(
@@ -1187,18 +1581,11 @@ impl RBackend {
             return;
         }
         self.write_indent();
+        let _ = label;
         self.write(&format!(
             "rr_mark({}, {});",
             span.start_line, span.start_col
         ));
-        if let Some(lbl) = label {
-            self.write(&format!(
-                " # rr:{}:{} {}",
-                span.start_line, span.start_col, lbl
-            ));
-        } else {
-            self.write(&format!(" # rr:{}:{}", span.start_line, span.start_col));
-        }
         self.newline();
     }
 }
@@ -1206,6 +1593,10 @@ impl RBackend {
 #[cfg(test)]
 mod tests {
     use super::RBackend;
+    use crate::mir::def::{FnIR, Instr, Terminator, ValueKind};
+    use crate::mir::flow::Facts;
+    use crate::typeck::{NaTy, PrimTy, ShapeTy, TypeState, TypeTerm};
+    use crate::utils::Span;
 
     #[test]
     fn prune_dead_cse_temps_removes_unused_chain() {
@@ -1259,5 +1650,47 @@ mod tests {
 
         assert!(backend.resolve_bound_value(7).is_none());
         assert!(backend.emitted_temp_names_scratch.is_empty());
+    }
+
+    #[test]
+    fn typed_parallel_wrapper_tracks_vector_local_back_to_param_slot() {
+        let mut fn_ir = FnIR::new("scale".to_string(), vec!["a".to_string()]);
+        fn_ir.ret_term_hint = Some(TypeTerm::Vector(Box::new(TypeTerm::Double)));
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let param = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::dummy(),
+            Facts::empty(),
+            Some("a".to_string()),
+        );
+        let load_v = fn_ir.add_value(
+            ValueKind::Load {
+                var: "v".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            Some("v".to_string()),
+        );
+        fn_ir.values[load_v].value_ty = TypeState {
+            prim: PrimTy::Double,
+            shape: ShapeTy::Vector,
+            na: NaTy::Maybe,
+            len_sym: None,
+        };
+        fn_ir.values[load_v].value_term = TypeTerm::Vector(Box::new(TypeTerm::Double));
+
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: "v".to_string(),
+            src: param,
+            span: Span::dummy(),
+        });
+        fn_ir.blocks[entry].term = Terminator::Return(Some(load_v));
+
+        let plan =
+            RBackend::typed_parallel_wrapper_plan(&fn_ir).expect("wrapper plan should exist");
+        assert_eq!(plan.slice_param_slots, vec![0]);
     }
 }

@@ -46,7 +46,9 @@ fn gather_map(n) {
 
     let code = fs::read_to_string(&out_path).expect("failed to read compiled R");
     assert!(
-        code.contains("rr_index1_read_vec(") || code.contains("out <- src[idx]"),
+        code.contains("rr_gather(")
+            || code.contains("rr_index1_read_vec(")
+            || code.contains("out <- src[idx]"),
         "expected gather-style vectorized body"
     );
 }

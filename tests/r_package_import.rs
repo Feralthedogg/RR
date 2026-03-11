@@ -24,7 +24,7 @@ fn import_r_package_lowers_to_package_name_namespace_alias() {
 import r "graphics"
 
 
-main <- function() {
+let main <- function() {
   graphics.plot(c(1, 2, 3), c(1, 4, 9), type = "l")
   print("graphics_loaded")
   return 0L
@@ -79,8 +79,8 @@ import r { plot as draw_plot } from "graphics"
 import r default from "grDevices"
 
 
-main <- function() {
-  outfile <- "named_import_plot.png"
+let main <- function() {
+  let outfile <- "named_import_plot.png"
   grDevices.png(filename = outfile, width = 320, height = 240)
   draw_plot(c(1, 2, 3), c(1, 4, 9), type = "l")
   grDevices.dev.off()
@@ -154,8 +154,8 @@ import r * as graphics from "graphics"
 import r * as grDevices from "grDevices"
 
 
-main <- function() {
-  outfile <- "namespace_import_plot.png"
+let main <- function() {
+  let outfile <- "namespace_import_plot.png"
   grDevices.png(filename = outfile, width = 320, height = 240)
   graphics.plot(c(1, 2, 3), c(1, 4, 9), type = "l")
   grDevices.dev.off()
@@ -228,10 +228,10 @@ import r default from "tidyr"
 
 
 fn main() {
-    raw = base.data.frame(name = c("a", "b"), value_a = c(1.0, 3.0), value_b = c(2.0, 4.0))
-    long = tidyr.pivot_longer(raw, cols = value_a)
-    m = stats.median(c(1.0, 2.0, 3.0))
-    s = stats.sd(c(1.0, 2.0, 3.0))
+    let raw = base.data.frame(name = c("a", "b"), value_a = c(1.0, 3.0), value_b = c(2.0, 4.0))
+    let long = tidyr.pivot_longer(raw, cols = value_a)
+    let m = stats.median(c(1.0, 2.0, 3.0))
+    let s = stats.sd(c(1.0, 2.0, 3.0))
     readr.write_csv(long, "direct_surface.csv")
     print(m)
     print(s)
@@ -281,7 +281,7 @@ fn unsupported_namespaced_r_call_uses_opaque_interop_not_hybrid_fallback() {
 	import r * as utils from "utils"
 
 
-	main <- function() {
+	let main <- function() {
 	  print(utils.head(c(1, 2, 3), 2))
 	  return 0L
 	}

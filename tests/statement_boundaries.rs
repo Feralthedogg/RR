@@ -98,8 +98,8 @@ good()
 fn postfix_try_can_end_before_next_line_statement() {
     let src = r#"
 fn main() {
-  x <- (1L)?
-  y <- 2L
+  let x = (1L)?
+  let y = 2L
   return y
 }
 main()
@@ -116,8 +116,8 @@ main()
 fn newline_separator_without_semicolon_is_allowed() {
     let src = r#"
 fn main() {
-  x <- 1L
-  y <- 2L
+  let x = 1L
+  let y = 2L
   return x + y
 }
 main()

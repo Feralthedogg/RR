@@ -24,7 +24,7 @@ fn expects_int(x: int) -> int {
 }
 
 fn main() -> int {
-  y <- expects_int("bad")
+  let y = expects_int("bad")
   return bad_ret() + y
 }
 

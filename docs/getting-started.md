@@ -1,47 +1,56 @@
 # Getting Started
 
-This page walks through the shortest path to a working RR compile and run.
+This page is the shortest path to a working RR compile and run.
 
-## Prerequisites
+## Audience
+
+Read this page if you want to:
+
+- build RR locally
+- compile one `.rr` file into `.R`
+- run a small RR program end to end
+- understand which command to use next
+
+If you already know the driver shape, jump to [CLI Reference](cli.md).
+
+## Requirements
 
 - Rust toolchain with `cargo`
-- `Rscript` in `PATH` if you want to execute generated programs
+- `Rscript` in `PATH` if you want to execute generated `.R`
 
-## Build RR
+## Fast Path
+
+Build the compiler:
 
 ```bash
 cargo build
 ```
 
-Confirm the installed compiler line:
+Check the compiler line:
 
 ```bash
 target/debug/RR --version
 ```
 
-You can invoke RR either way:
+Compile one file:
 
 ```bash
-target/debug/RR --help
+target/debug/RR main.rr -o main.R -O2
 ```
+
+Run the generated artifact:
 
 ```bash
-cargo run -- --help
-```
-
-Current expected output:
-
-```text
-RR Tachyon v4.0.0
+Rscript --vanilla main.R
 ```
 
 ## First Program
 
 Create `main.rr`:
 
-```r
-main <- function() {
-  x <- 1 + 2
+```rr
+let main <- function() {
+  let x <- 1 + 2
   print(x)
   x
 }
@@ -49,94 +58,98 @@ main <- function() {
 print(main())
 ```
 
-Run it from the current directory:
+Compile and run:
 
 ```bash
-cargo run -- run . -O1
+target/debug/RR main.rr -o main.R -O1
+Rscript --vanilla main.R
+```
+
+Expected output:
+
+```text
+[1] 3
+[1] 3
+```
+
+## Driver Forms
+
+RR supports three common workflows:
+
+### Compile One File
+
+```bash
+RR input.rr -o out.R -O2
+```
+
+Use this when you want one emitted artifact.
+
+### Run a Project Entry
+
+```bash
+RR run . -O2
 ```
 
 `run .` resolves the current directory to `main.rr`.
 
-## Compile to R
-
-Compile one file into a standalone `.R` script:
+### Build a Tree
 
 ```bash
-cargo run -- main.rr -o main.R -O2
+RR build . --out-dir build -O2
 ```
 
-Compile helper-only output without source/native bootstrap:
+Use this when you want every `.rr` file under a directory compiled into a
+mirrored output tree.
+
+## What RR Emits
+
+RR emits ordinary `.R` files.
+
+Normal output:
+
+- includes the runtime helper subset actually referenced by the emitted code
+- includes runtime bootstrap and compile-time policy assignments
+- is intended to run directly under `Rscript`
+
+Helper-only output:
 
 ```bash
-cargo run -- main.rr -o main.R --no-runtime -O2
+RR main.rr -o main.R --no-runtime -O2
 ```
 
-Use `--no-runtime` when you want helper-only emission for inspection or testing. It keeps helper definitions and runtime settings, but omits source/native bootstrap.
+Helper-only output:
 
-## Build a Directory
+- omits source/native bootstrap
+- still injects the helper subset needed by the emitted program
+- is useful for inspection, tests, and backend debugging
 
-Compile all `.rr` files under a directory:
+## Watch and Incremental Compile
 
-```bash
-cargo run -- build . --out-dir build -O2
-```
-
-Behavior:
-
-- recursively scans for `.rr` files
-- skips `build/`, `target/`, and `.git/`
-- writes mirrored output paths under the output directory
-
-## Watch Mode
-
-Recompile on changes:
+Watch mode:
 
 ```bash
-cargo run -- watch . -O2
+RR watch . -O2
 ```
 
 Useful flags:
 
-- `--once`: run a single watch tick and exit
-- `--poll-ms <N>`: control polling interval
-- `--incremental=all`: enable all incremental compile phases
+- `--once`
+- `--poll-ms <N>`
+- `--no-incremental`
+- `--incremental=auto|off|1|1,2|1,2,3|all`
 
-## Syntax Snapshot
+RR defaults to incremental `auto`, so normal compiles already reuse phase 1 and
+phase 2 caches when possible.
 
-RR accepts both R-style and native-style surface forms.
+## Recommended Reading Order
 
-- assignment:
-  - `x <- 1`
-  - `x = 1`
-- functions:
-  - `name <- function(a, b) { a + b }`
-  - `fn add(a, b) = a + b`
-- loops:
-  - `for (i in 1..n) s <- s + i`
-  - `for i in 1..n { s += i }`
-- type hints:
-  - `fn add(a: float, b: int) -> float = a + b`
-  - `x: int = 10L`
-  - `vector<float>`, `matrix<float>`, `option<int>`
+1. [CLI Reference](cli.md)
+2. [Language Reference](language.md)
+3. [Writing RR for Performance and Safety](writing-rr.md)
+4. [Configuration](configuration.md)
 
-Recommended user-facing style is the R-like form unless you have a project reason to prefer the native style.
+If you want to understand emission and optimization next:
 
-Builtin naming rule:
-
-- use distinct helper names such as `demo_abs` or `my_sqrt` for user-defined math helpers
-- only `length`, `floor`, `round`, `ceiling`, and `trunc` are intended to shadow builtin names
-
-R package interop rule:
-
-- `import r "graphics"` is namespace sugar, not `library("graphics")`
-- write `graphics.plot(...)` in RR and RR lowers it to `graphics::plot(...)`
-- use `import r { plot as draw_plot } from "graphics"` when you want a short local alias
-- supported `graphics`, `grDevices`, `ggplot2`, selected `dplyr`, and selected `stats/readr/tidyr` calls lower as direct interop instead of hybrid fallback
-
-## Next Reading
-
-- [CLI Reference](cli.md)
-- [Configuration](configuration.md)
-- [Language Reference](language.md)
-- [R Interop](r-interop.md)
-- [Compiler Pipeline](compiler-pipeline.md)
+1. [Compiler Pipeline](compiler-pipeline.md)
+2. [Tachyon Engine](optimization.md)
+3. [Runtime and Error Model](runtime-and-errors.md)

@@ -48,3 +48,10 @@ path = "fuzz_targets/generated_pipeline.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "error_diagnostics"
+path = "fuzz_targets/error_diagnostics.rs"
+test = false
+doc = false
+bench = false

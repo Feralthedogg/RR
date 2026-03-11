@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 #[test]
 fn incremental_phase3_reuses_in_memory_session_cache() {
+    let _env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("incremental_phase3");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
@@ -35,6 +36,7 @@ main()
     let parallel_cfg = parallel_config_from_env();
     let opts = IncrementalOptions {
         enabled: true,
+        auto: false,
         phase1: false,
         phase2: false,
         phase3: true,

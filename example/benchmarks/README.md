@@ -9,10 +9,17 @@ Workloads are chosen to cover:
 - stencil-style physics updates
 - iterative orbital integration
 - reaction-diffusion style state evolution
+- cross-language comparison kernels that are easy to map to C, NumPy, Julia, and base R
 
 All benchmark programs are expected to both compile and execute.
 Benchmarks that need pseudo-random input should size their generated draw buffers
 from the same loop bounds they consume, rather than hard-coding shorter buffers.
+
+Highlighted current cross-language workload:
+
+- `signal_pipeline_bench.rr`: 250k-sample preprocessing kernel with map, conditional
+  map, call-map, and state update passes; used by `scripts/bench_signal_pipeline.py`
+  for RR/base R/C/NumPy/Julia/Renjin comparison.
 
 Suggested runner:
 

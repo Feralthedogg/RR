@@ -87,3 +87,35 @@ fn benchmark_examples_run_at_o2() {
         );
     }
 }
+
+#[test]
+fn signal_pipeline_emits_only_reachable_helpers() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let rr_path = root
+        .join("example")
+        .join("benchmarks")
+        .join("signal_pipeline_bench.rr");
+    let out_dir = root.join("target").join("benchmark_examples_reachable");
+    fs::create_dir_all(&out_dir).expect("failed to create target/benchmark_examples_reachable");
+    let out_path = out_dir.join("signal_pipeline_bench_o2.R");
+
+    compile_rr(&rr_bin, &rr_path, &out_path, "-O2");
+    let code = fs::read_to_string(&out_path).expect("failed to read compiled signal pipeline R");
+
+    let fn_count = code
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("Sym_") && trimmed.contains("<- function")
+        })
+        .count();
+    assert!(
+        fn_count <= 6,
+        "expected signal_pipeline to emit only reachable helpers, saw {fn_count} functions"
+    );
+    assert!(
+        !code.contains("1103515245") && !code.contains("2147483648"),
+        "unexpected unused RNG helper body remained in signal pipeline output"
+    );
+}

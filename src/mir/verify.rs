@@ -154,6 +154,12 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
                 check_val(fn_ir, *r)?;
                 check_val(fn_ir, *c)?;
             }
+            ValueKind::Index3D { base, i, j, k } => {
+                check_val(fn_ir, *base)?;
+                check_val(fn_ir, *i)?;
+                check_val(fn_ir, *j)?;
+                check_val(fn_ir, *k)?;
+            }
             ValueKind::RSymbol { .. } => {}
             ValueKind::Len { base } | ValueKind::Indices { base } => check_val(fn_ir, *base)?,
             ValueKind::Range { start, end } => {
@@ -216,6 +222,15 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
                     check_val(fn_ir, *base)?;
                     check_val(fn_ir, *r)?;
                     check_val(fn_ir, *c)?;
+                    check_val(fn_ir, *val)?;
+                }
+                Instr::StoreIndex3D {
+                    base, i, j, k, val, ..
+                } => {
+                    check_val(fn_ir, *base)?;
+                    check_val(fn_ir, *i)?;
+                    check_val(fn_ir, *j)?;
+                    check_val(fn_ir, *k)?;
                     check_val(fn_ir, *val)?;
                 }
             }
@@ -348,6 +363,15 @@ fn collect_used_values(fn_ir: &FnIR, reachable: &FxHashSet<BlockId>) -> FxHashSe
                         }
                     }
                 }
+                Instr::StoreIndex3D {
+                    base, i, j, k, val, ..
+                } => {
+                    for v in [*base, *i, *j, *k, *val] {
+                        if used.insert(v) {
+                            worklist.push(v);
+                        }
+                    }
+                }
             }
         }
 
@@ -413,6 +437,20 @@ fn collect_used_values(fn_ir: &FnIR, reachable: &FxHashSet<BlockId>) -> FxHashSe
                 }
                 if used.insert(*c) {
                     worklist.push(*c);
+                }
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                if used.insert(*base) {
+                    worklist.push(*base);
+                }
+                if used.insert(*i) {
+                    worklist.push(*i);
+                }
+                if used.insert(*j) {
+                    worklist.push(*j);
+                }
+                if used.insert(*k) {
+                    worklist.push(*k);
                 }
             }
             ValueKind::Len { base } | ValueKind::Indices { base } => {

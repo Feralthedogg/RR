@@ -1,21 +1,21 @@
 import "../common/sim_utils.rr"
 
 fn main() {
-    orbit = 1.0
-    radius_acc = 0.0
-    speed_acc = 0.0
+    let orbit = 1.0
+    let radius_acc = 0.0
+    let speed_acc = 0.0
     while (orbit <= 24.0) {
-        x = 1.0 + orbit * 0.01
-        y = 0.0
-        vx = 0.0
-        vy = 1.0 + orbit * 0.001
-        dt = 0.01
-        step = 1.0
+        let x = 1.0 + orbit * 0.01
+        let y = 0.0
+        let vx = 0.0
+        let vy = 1.0 + orbit * 0.001
+        let dt = 0.01
+        let step = 1.0
         while (step <= 240.0) {
-            r2 = x * x + y * y
-            denom = r2 * sqrt1(r2) + 0.0001
-            ax = 0.0 - x / denom
-            ay = 0.0 - y / denom
+            let r2 = x * x + y * y
+            let denom = r2 * sqrt1(r2) + 0.0001
+            let ax = 0.0 - x / denom
+            let ay = 0.0 - y / denom
             vx = vx + dt * ax
             vy = vy + dt * ay
             x = x + dt * vx

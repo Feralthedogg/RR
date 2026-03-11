@@ -24,7 +24,7 @@ fn min1(a, b) {
 }
 
 fn clamp1(x, lo, hi) {
-    y = x
+    let y = x
     if (y < lo) {
         y = lo
     }
@@ -38,8 +38,8 @@ fn sqrt1(x) {
     if (x <= 0.0) {
         return 0.0
     }
-    g = x * 0.5 + 0.5
-    i = 0.0
+    let g = x * 0.5 + 0.5
+    let i = 0.0
     while (i < 8.0) {
         g = 0.5 * (g + x / g)
         i += 1.0
@@ -62,9 +62,9 @@ fn periodic_right(i, n) {
 }
 
 fn copy_vec(xs) {
-    n = length(xs)
-    out = rep.int(0.0, n)
-    i = 1.0
+    let n = length(xs)
+    let out = rep.int(0.0, n)
+    let i = 1.0
     while (i <= n) {
         out[i] = xs[i]
         i += 1.0
@@ -73,9 +73,9 @@ fn copy_vec(xs) {
 }
 
 fn vector_sum(xs) {
-    s = 0.0
-    i = 1.0
-    n = length(xs)
+    let s = 0.0
+    let i = 1.0
+    let n = length(xs)
     while (i <= n) {
         s += xs[i]
         i += 1.0
@@ -88,9 +88,9 @@ fn vector_mean(xs) {
 }
 
 fn vector_abs_sum(xs) {
-    s = 0.0
-    i = 1.0
-    n = length(xs)
+    let s = 0.0
+    let i = 1.0
+    let n = length(xs)
     while (i <= n) {
         s += abs1(xs[i])
         i += 1.0
@@ -99,9 +99,9 @@ fn vector_abs_sum(xs) {
 }
 
 fn lcg_uniform(n, seed) {
-    out = rep.int(0.0, n)
-    s = seed
-    i = 1.0
+    let out = rep.int(0.0, n)
+    let s = seed
+    let i = 1.0
     while (i <= n) {
         s = (s * 1103515245.0 + 12345.0) % 2147483648.0
         out[i] = s / 2147483648.0
@@ -111,7 +111,7 @@ fn lcg_uniform(n, seed) {
 }
 
 fn unit_index(u, n) {
-    idx = 1.0 + floor1(u * n)
+    let idx = 1.0 + floor1(u * n)
     if (idx < 1.0) {
         idx = 1.0
     }

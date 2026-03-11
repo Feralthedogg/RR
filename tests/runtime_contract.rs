@@ -43,3 +43,19 @@ fn runtime_mode_fast_path_switches_exist() {
         "rr_mark should support fast no-op mode"
     );
 }
+
+#[test]
+fn call_map_profit_runtime_guards_exist() {
+    assert!(
+        R_RUNTIME.contains("rr_call_map_whole_auto <- function"),
+        "whole-destination call-map runtime guard helper should exist"
+    );
+    assert!(
+        R_RUNTIME.contains("rr_call_map_slice_auto <- function"),
+        "slice call-map runtime guard helper should exist"
+    );
+    assert!(
+        R_RUNTIME.contains(".rr_env$vector_fallback_base_trip <-"),
+        "vector fallback trip threshold should be configurable in the runtime"
+    );
+}

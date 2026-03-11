@@ -71,9 +71,9 @@ pub fn optimize_with_stats_with_whitelist(
         }
         let mut reduction_candidates =
             collect_reduction_candidates(fn_ir, &lp, user_call_whitelist);
-        rank_vector_plans(&mut reduction_candidates);
+        rank_vector_plans_for_loop(fn_ir, &mut reduction_candidates);
         let mut vector_candidates = collect_vector_candidates(fn_ir, &lp, user_call_whitelist);
-        rank_vector_plans(&mut vector_candidates);
+        rank_vector_plans_for_loop(fn_ir, &mut vector_candidates);
 
         if let Some(plan) = reduction_candidates
             .into_iter()
@@ -176,6 +176,33 @@ fn collect_vector_candidates(
 
 fn rank_vector_plans(plans: &mut [VectorPlan]) {
     plans.sort_by_key(|plan| std::cmp::Reverse(vector_plan_score(plan)));
+}
+
+const CALL_MAP_AUTO_HELPER_COST_THRESHOLD: u32 = 6;
+
+fn rank_vector_plans_for_loop(fn_ir: &FnIR, plans: &mut [VectorPlan]) {
+    plans.sort_by_key(|plan| {
+        std::cmp::Reverse((
+            vector_plan_profit_tier(fn_ir, plan),
+            vector_plan_score(plan),
+        ))
+    });
+}
+
+fn vector_plan_profit_tier(fn_ir: &FnIR, plan: &VectorPlan) -> u8 {
+    match plan {
+        VectorPlan::CallMap {
+            callee,
+            args,
+            whole_dest,
+            shadow_vars,
+            ..
+        } => match choose_call_map_lowering(fn_ir, callee, args, *whole_dest, shadow_vars) {
+            CallMapLoweringMode::DirectVector => 2,
+            CallMapLoweringMode::RuntimeAuto { .. } => 1,
+        },
+        _ => 2,
+    }
 }
 
 fn vector_plan_score(plan: &VectorPlan) -> (u8, u8, u8) {
@@ -359,6 +386,7 @@ pub enum VectorPlan {
         src: ValueId,
         op: crate::syntax::ast::BinOp,
         other: ValueId,
+        shadow_vars: Vec<VarId>,
     },
     CondMap {
         dest: ValueId,
@@ -366,6 +394,10 @@ pub enum VectorPlan {
         then_val: ValueId,
         else_val: ValueId,
         iv_phi: ValueId,
+        start: ValueId,
+        end: ValueId,
+        whole_dest: bool,
+        shadow_vars: Vec<VarId>,
     },
     RecurrenceAddConst {
         base: ValueId,
@@ -386,6 +418,10 @@ pub enum VectorPlan {
         callee: String,
         args: Vec<CallMapArg>,
         iv_phi: ValueId,
+        start: ValueId,
+        end: ValueId,
+        whole_dest: bool,
+        shadow_vars: Vec<VarId>,
     },
     CubeSliceExprMap {
         dest: ValueId,
@@ -397,6 +433,7 @@ pub enum VectorPlan {
         ctx: Option<ValueId>,
         start: ValueId,
         end: ValueId,
+        shadow_vars: Vec<VarId>,
     },
     ExprMap {
         dest: ValueId,
@@ -405,6 +442,7 @@ pub enum VectorPlan {
         start: ValueId,
         end: ValueId,
         whole_dest: bool,
+        shadow_vars: Vec<VarId>,
     },
     MultiExprMap {
         entries: Vec<ExprMapEntry>,
@@ -444,11 +482,18 @@ pub struct CallMapArg {
     vectorized: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ExprMapEntry {
     dest: ValueId,
     expr: ValueId,
     whole_dest: bool,
+    shadow_vars: Vec<VarId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallMapLoweringMode {
+    DirectVector,
+    RuntimeAuto { helper_cost: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -702,6 +747,7 @@ fn match_2d_col_reduction_sum(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan>
 fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
+    let whole_dest = |dest: ValueId| loop_covers_whole_destination(lp, fn_ir, dest, iv.init_val);
 
     for &bid in &lp.body {
         for instr in &fn_ir.blocks[bid].instrs {
@@ -727,51 +773,78 @@ fn match_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
                     if let (Some(lbase), Some(rbase)) = (lhs_idx, rhs_idx)
                         && lbase == rbase
                         && loop_matches_vec(lp, fn_ir, lbase)
+                        && whole_dest(*base)
+                        && whole_dest(lbase)
                     {
                         let allowed_dests: Vec<VarId> =
                             resolve_base_var(fn_ir, *base).into_iter().collect();
-                        if loop_has_non_iv_loop_carried_state_except(fn_ir, lp, &allowed_dests) {
+                        let Some(shadow_vars) = collect_loop_shadow_vars_for_dest(
+                            fn_ir,
+                            lp,
+                            &allowed_dests,
+                            *base,
+                            iv_phi,
+                        ) else {
                             continue;
-                        }
+                        };
                         return Some(VectorPlan::Map {
                             dest: *base,
                             src: lbase,
                             op: *op,
                             other: rbase,
+                            shadow_vars,
                         });
                     }
 
                     // x[i] OP k  ->  x OP k
                     if let Some(x_base) = lhs_idx
                         && loop_matches_vec(lp, fn_ir, x_base)
+                        && whole_dest(*base)
+                        && whole_dest(x_base)
                     {
                         let allowed_dests: Vec<VarId> =
                             resolve_base_var(fn_ir, *base).into_iter().collect();
-                        if loop_has_non_iv_loop_carried_state_except(fn_ir, lp, &allowed_dests) {
+                        let Some(shadow_vars) = collect_loop_shadow_vars_for_dest(
+                            fn_ir,
+                            lp,
+                            &allowed_dests,
+                            *base,
+                            iv_phi,
+                        ) else {
                             continue;
-                        }
+                        };
                         return Some(VectorPlan::Map {
                             dest: *base,
                             src: x_base,
                             op: *op,
                             other: *rhs,
+                            shadow_vars,
                         });
                     }
 
                     // k OP x[i]  ->  k OP x
                     if let Some(x_base) = rhs_idx
                         && loop_matches_vec(lp, fn_ir, x_base)
+                        && whole_dest(*base)
+                        && whole_dest(x_base)
                     {
                         let allowed_dests: Vec<VarId> =
                             resolve_base_var(fn_ir, *base).into_iter().collect();
-                        if loop_has_non_iv_loop_carried_state_except(fn_ir, lp, &allowed_dests) {
+                        let Some(shadow_vars) = collect_loop_shadow_vars_for_dest(
+                            fn_ir,
+                            lp,
+                            &allowed_dests,
+                            *base,
+                            iv_phi,
+                        ) else {
                             continue;
-                        }
+                        };
                         return Some(VectorPlan::Map {
                             dest: *base,
                             src: *lhs,
                             op: *op,
                             other: x_base,
+                            shadow_vars,
                         });
                     }
                 }
@@ -788,6 +861,8 @@ fn match_conditional_map(
 ) -> Option<VectorPlan> {
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
+    let start = iv.init_val;
+    let end = lp.limit?;
     let trace_enabled = vectorize_trace_enabled();
 
     for &bid in &lp.body {
@@ -886,7 +961,9 @@ fn match_conditional_map(
             };
             let allowed_dests: Vec<VarId> =
                 resolve_base_var(fn_ir, dest_base).into_iter().collect();
-            if loop_has_non_iv_loop_carried_state_except(fn_ir, lp, &allowed_dests) {
+            let Some(shadow_vars) =
+                collect_loop_shadow_vars_for_dest(fn_ir, lp, &allowed_dests, dest_base, iv_phi)
+            else {
                 if trace_enabled {
                     eprintln!(
                         "   [vec-cond-map] {} skip: loop carries non-destination state",
@@ -894,16 +971,7 @@ fn match_conditional_map(
                     );
                 }
                 continue;
-            }
-            if !is_const_one(fn_ir, iv.init_val) {
-                if trace_enabled {
-                    eprintln!(
-                        "   [vec-cond-map] {} skip: non-unit start index for conditional map",
-                        fn_ir.name
-                    );
-                }
-                continue;
-            }
+            };
             if !is_vectorizable_expr(fn_ir, then_val, iv_phi, lp, true, false) {
                 if trace_enabled {
                     eprintln!(
@@ -928,6 +996,10 @@ fn match_conditional_map(
                 then_val,
                 else_val,
                 iv_phi,
+                start,
+                end,
+                whole_dest: loop_covers_whole_destination(lp, fn_ir, dest_base, start),
+                shadow_vars,
             });
         }
     }
@@ -1043,8 +1115,9 @@ fn match_shifted_map(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorPlan> {
 
             let d = canonical_value(fn_ir, dest_base);
             let s = canonical_value(fn_ir, src_base);
-            if d == s {
-                // Potential loop-carried dependence (recurrence-like); keep scalar semantics.
+            if d == s && offset < 0 {
+                // x[i+1] = x[i] is loop-carried: slice assignment would read the original RHS
+                // instead of the progressively updated scalar state.
                 continue;
             }
             return Some(VectorPlan::ShiftedMap {
@@ -1066,6 +1139,8 @@ fn match_call_map(
 ) -> Option<VectorPlan> {
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
+    let start = iv.init_val;
+    let end = lp.limit?;
 
     for &bid in &lp.body {
         for instr in &fn_ir.blocks[bid].instrs {
@@ -1121,15 +1196,288 @@ fn match_call_map(
             if mapped_args.is_empty() || !has_vector_arg {
                 continue;
             }
+            let allowed_dests: Vec<VarId> =
+                resolve_base_var(fn_ir, canonical_value(fn_ir, dest_base))
+                    .into_iter()
+                    .collect();
+            let Some(shadow_vars) = collect_loop_shadow_vars_for_dest(
+                fn_ir,
+                lp,
+                &allowed_dests,
+                canonical_value(fn_ir, dest_base),
+                iv_phi,
+            ) else {
+                continue;
+            };
             return Some(VectorPlan::CallMap {
                 dest: canonical_value(fn_ir, dest_base),
                 callee: callee.clone(),
                 args: mapped_args,
                 iv_phi,
+                start,
+                end,
+                whole_dest: loop_covers_whole_destination(
+                    lp,
+                    fn_ir,
+                    canonical_value(fn_ir, dest_base),
+                    start,
+                ),
+                shadow_vars,
             });
         }
     }
     None
+}
+
+#[derive(Clone, Copy)]
+enum ExprMapStoreCandidate {
+    Standard {
+        dest: ValueId,
+        expr: ValueId,
+    },
+    Cube {
+        dest: ValueId,
+        expr: ValueId,
+        cube: CubeSliceIndexInfo,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct ExprMapStoreSpec {
+    base: ValueId,
+    idx: ValueId,
+    expr: ValueId,
+    is_vector: bool,
+}
+
+fn is_canonical_expr_map_store_index(fn_ir: &FnIR, idx: ValueId, iv_phi: ValueId) -> bool {
+    if is_iv_equivalent(fn_ir, idx, iv_phi) {
+        return true;
+    }
+    is_floor_like_iv_expr(
+        fn_ir,
+        idx,
+        iv_phi,
+        &mut FxHashSet::default(),
+        &mut FxHashSet::default(),
+    )
+}
+
+fn trace_expr_map_non_canonical_store_reject(
+    fn_ir: &FnIR,
+    idx: ValueId,
+    idx_ok: bool,
+    iv_phi: ValueId,
+) {
+    if !vectorize_trace_enabled() {
+        return;
+    }
+    let phi_detail = match &fn_ir.values[idx].kind {
+        ValueKind::Phi { args } => {
+            let parts: Vec<String> = args
+                .iter()
+                .map(|(v, b)| format!("b{}:{:?}", b, fn_ir.values[*v].kind))
+                .collect();
+            format!(" phi_args=[{}]", parts.join(" | "))
+        }
+        ValueKind::Load { var } => {
+            let unique_src = unique_assign_source(fn_ir, var)
+                .map(|src| format!("{:?}", fn_ir.values[src].kind))
+                .unwrap_or_else(|| "none".to_string());
+            format!(
+                " load_var='{}' iv_origin={:?} unique_src={}",
+                var,
+                induction_origin_var(fn_ir, iv_phi),
+                unique_src
+            )
+        }
+        _ => String::new(),
+    };
+    eprintln!(
+        "   [vec-expr-map] reject: non-canonical store index (fn={}, idx_ok={}, idx={:?}{})",
+        fn_ir.name, idx_ok, fn_ir.values[idx].kind, phi_detail
+    );
+}
+
+fn trace_expr_map_duplicate_store_reject() {
+    if vectorize_trace_enabled() {
+        eprintln!("   [vec-expr-map] reject: duplicate StoreIndex1D destination");
+    }
+}
+
+fn validate_expr_map_rhs(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    user_call_whitelist: &FxHashSet<String>,
+    dest: ValueId,
+    expr: ValueId,
+    iv_phi: ValueId,
+) -> bool {
+    let expr_iv_dependent = expr_has_iv_dependency(fn_ir, expr, iv_phi);
+    let expr_ok = if expr_iv_dependent {
+        is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false)
+    } else {
+        is_loop_invariant_scalar_expr(fn_ir, expr, iv_phi, user_call_whitelist)
+    };
+    if !expr_ok {
+        if vectorize_trace_enabled() {
+            eprintln!(
+                "   [vec-expr-map] reject: rhs is neither vectorizable nor loop-invariant scalar"
+            );
+        }
+        return false;
+    }
+    if expr_has_non_vector_safe_call_in_vector_context(
+        fn_ir,
+        expr,
+        iv_phi,
+        user_call_whitelist,
+        &mut FxHashSet::default(),
+    ) {
+        if vectorize_trace_enabled() {
+            let rhs_detail = match &fn_ir.values[expr].kind {
+                ValueKind::Binary { lhs, rhs, .. } => format!(
+                    "lhs={:?} rhs={:?}",
+                    fn_ir.values[*lhs].kind, fn_ir.values[*rhs].kind
+                ),
+                other => format!("{:?}", other),
+            };
+            eprintln!(
+                "   [vec-expr-map] reject: rhs contains non-vector-safe call; rhs={:?}; detail={}",
+                fn_ir.values[expr].kind, rhs_detail
+            );
+        }
+        return false;
+    }
+    if expr_reads_base_non_iv(fn_ir, expr, dest, iv_phi) {
+        if vectorize_trace_enabled() {
+            eprintln!("   [vec-expr-map] reject: loop-carried dependence on destination");
+        }
+        return false;
+    }
+    true
+}
+
+fn classify_expr_map_store_candidate(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    user_call_whitelist: &FxHashSet<String>,
+    store: ExprMapStoreSpec,
+    iv_phi: ValueId,
+) -> Option<ExprMapStoreCandidate> {
+    let idx_ok = is_canonical_expr_map_store_index(fn_ir, store.idx, iv_phi);
+    if store.is_vector {
+        if vectorize_trace_enabled() {
+            eprintln!(
+                "   [vec-expr-map] reject: non-canonical store index (fn={}, idx_ok={}, idx={:?})",
+                fn_ir.name, idx_ok, fn_ir.values[store.idx].kind
+            );
+        }
+        return None;
+    }
+
+    let dest = canonical_value(fn_ir, store.base);
+    if !idx_ok {
+        let Some(cube) =
+            match_cube_slice_index_info(fn_ir, lp, user_call_whitelist, store.idx, iv_phi)
+        else {
+            trace_expr_map_non_canonical_store_reject(fn_ir, store.idx, idx_ok, iv_phi);
+            return None;
+        };
+        if !validate_expr_map_rhs(fn_ir, lp, user_call_whitelist, dest, store.expr, iv_phi) {
+            return None;
+        }
+        return Some(ExprMapStoreCandidate::Cube {
+            dest,
+            expr: store.expr,
+            cube,
+        });
+    }
+
+    if !validate_expr_map_rhs(fn_ir, lp, user_call_whitelist, dest, store.expr, iv_phi) {
+        return None;
+    }
+    Some(ExprMapStoreCandidate::Standard {
+        dest,
+        expr: store.expr,
+    })
+}
+
+fn build_expr_map_entries(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    iv_phi: ValueId,
+    start: ValueId,
+    pending_entries: Vec<(ValueId, ValueId)>,
+) -> Option<Vec<ExprMapEntry>> {
+    let allowed_dests: Vec<VarId> = pending_entries
+        .iter()
+        .filter_map(|(dest, _)| resolve_base_var(fn_ir, *dest))
+        .collect();
+    let mut entries = Vec::with_capacity(pending_entries.len());
+    for (dest, expr) in pending_entries {
+        let shadow_vars =
+            collect_loop_shadow_vars_for_dest(fn_ir, lp, &allowed_dests, dest, iv_phi)?;
+        entries.push(ExprMapEntry {
+            dest,
+            expr,
+            whole_dest: loop_covers_whole_destination(lp, fn_ir, dest, start),
+            shadow_vars,
+        });
+    }
+    Some(entries)
+}
+
+fn finalize_expr_map_plan(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    iv_phi: ValueId,
+    start: ValueId,
+    end: ValueId,
+    found: Vec<(ValueId, ValueId)>,
+    cube_candidate: Option<(ValueId, ValueId, CubeSliceIndexInfo)>,
+) -> Option<VectorPlan> {
+    if found.is_empty() {
+        let (dest, expr, cube) = cube_candidate?;
+        let allowed_dests: Vec<VarId> = resolve_base_var(fn_ir, dest).into_iter().collect();
+        let shadow_vars =
+            collect_loop_shadow_vars_for_dest(fn_ir, lp, &allowed_dests, dest, iv_phi)?;
+        return Some(VectorPlan::CubeSliceExprMap {
+            dest,
+            expr,
+            iv_phi,
+            face: cube.face,
+            row: cube.row,
+            size: cube.size,
+            ctx: cube.ctx,
+            start,
+            end,
+            shadow_vars,
+        });
+    }
+    if cube_candidate.is_some() {
+        return None;
+    }
+
+    let mut entries = build_expr_map_entries(fn_ir, lp, iv_phi, start, found)?;
+    if entries.len() == 1 {
+        let entry = entries.remove(0);
+        return Some(VectorPlan::ExprMap {
+            dest: entry.dest,
+            expr: entry.expr,
+            iv_phi,
+            start,
+            end,
+            whole_dest: entry.whole_dest,
+            shadow_vars: entry.shadow_vars,
+        });
+    }
+    Some(VectorPlan::MultiExprMap {
+        entries,
+        iv_phi,
+        start,
+        end,
+    })
 }
 
 fn match_expr_map(
@@ -1137,19 +1485,6 @@ fn match_expr_map(
     lp: &LoopInfo,
     user_call_whitelist: &FxHashSet<String>,
 ) -> Option<VectorPlan> {
-    fn is_canonical_store_index(fn_ir: &FnIR, idx: ValueId, iv_phi: ValueId) -> bool {
-        if is_iv_equivalent(fn_ir, idx, iv_phi) {
-            return true;
-        }
-        is_floor_like_iv_expr(
-            fn_ir,
-            idx,
-            iv_phi,
-            &mut FxHashSet::default(),
-            &mut FxHashSet::default(),
-        )
-    }
-
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
     let start = iv.init_val;
@@ -1169,222 +1504,45 @@ fn match_expr_map(
                     is_vector,
                     ..
                 } => {
-                    let idx_ok = is_canonical_store_index(fn_ir, *idx, iv_phi);
-                    if *is_vector {
-                        if vectorize_trace_enabled() {
-                            eprintln!(
-                                "   [vec-expr-map] reject: non-canonical store index (fn={}, idx_ok={}, idx={:?})",
-                                fn_ir.name, idx_ok, fn_ir.values[*idx].kind
-                            );
-                        }
-                        return None;
-                    }
-                    let dest = canonical_value(fn_ir, *base);
-                    if !idx_ok {
-                        let Some(cube) = match_cube_slice_index_info(
-                            fn_ir,
-                            lp,
-                            user_call_whitelist,
-                            *idx,
-                            iv_phi,
-                        ) else {
-                            if vectorize_trace_enabled() {
-                                let phi_detail = match &fn_ir.values[*idx].kind {
-                                    ValueKind::Phi { args } => {
-                                        let parts: Vec<String> = args
-                                            .iter()
-                                            .map(|(v, b)| {
-                                                format!("b{}:{:?}", b, fn_ir.values[*v].kind)
-                                            })
-                                            .collect();
-                                        format!(" phi_args=[{}]", parts.join(" | "))
-                                    }
-                                    ValueKind::Load { var } => {
-                                        let unique_src = unique_assign_source(fn_ir, var)
-                                            .map(|src| format!("{:?}", fn_ir.values[src].kind))
-                                            .unwrap_or_else(|| "none".to_string());
-                                        format!(
-                                            " load_var='{}' iv_origin={:?} unique_src={}",
-                                            var,
-                                            induction_origin_var(fn_ir, iv_phi),
-                                            unique_src
-                                        )
-                                    }
-                                    _ => String::new(),
-                                };
-                                eprintln!(
-                                    "   [vec-expr-map] reject: non-canonical store index (fn={}, idx_ok={}, idx={:?}{})",
-                                    fn_ir.name, idx_ok, fn_ir.values[*idx].kind, phi_detail
-                                );
-                            }
-                            return None;
-                        };
-                        if !found.is_empty() || cube_candidate.is_some() {
-                            if vectorize_trace_enabled() {
-                                eprintln!(
-                                    "   [vec-expr-map] reject: duplicate StoreIndex1D destination"
-                                );
-                            }
-                            return None;
-                        }
-                        let expr_iv_dependent = expr_has_iv_dependency(fn_ir, *val, iv_phi);
-                        let expr_ok = if expr_iv_dependent {
-                            is_vectorizable_expr(fn_ir, *val, iv_phi, lp, true, false)
-                        } else {
-                            is_loop_invariant_scalar_expr(fn_ir, *val, iv_phi, user_call_whitelist)
-                        };
-                        if !expr_ok {
-                            if vectorize_trace_enabled() {
-                                eprintln!(
-                                    "   [vec-expr-map] reject: rhs is neither vectorizable nor loop-invariant scalar"
-                                );
-                            }
-                            return None;
-                        }
-                        if expr_has_non_vector_safe_call_in_vector_context(
-                            fn_ir,
-                            *val,
-                            iv_phi,
-                            user_call_whitelist,
-                            &mut FxHashSet::default(),
-                        ) {
-                            if vectorize_trace_enabled() {
-                                let rhs_detail = match &fn_ir.values[*val].kind {
-                                    ValueKind::Binary { lhs, rhs, .. } => format!(
-                                        "lhs={:?} rhs={:?}",
-                                        fn_ir.values[*lhs].kind, fn_ir.values[*rhs].kind
-                                    ),
-                                    other => format!("{:?}", other),
-                                };
-                                eprintln!(
-                                    "   [vec-expr-map] reject: rhs contains non-vector-safe call; rhs={:?}; detail={}",
-                                    fn_ir.values[*val].kind, rhs_detail
-                                );
-                            }
-                            return None;
-                        }
-                        if expr_reads_base_non_iv(fn_ir, *val, dest, iv_phi) {
-                            if vectorize_trace_enabled() {
-                                eprintln!(
-                                    "   [vec-expr-map] reject: loop-carried dependence on destination"
-                                );
-                            }
-                            return None;
-                        }
-                        cube_candidate = Some((dest, *val, cube));
-                        continue;
-                    }
-                    if cube_candidate.is_some() {
-                        if vectorize_trace_enabled() {
-                            eprintln!(
-                                "   [vec-expr-map] reject: duplicate StoreIndex1D destination"
-                            );
-                        }
-                        return None;
-                    }
-                    if found
-                        .iter()
-                        .any(|(existing_dest, _)| same_base_value(fn_ir, *existing_dest, dest))
-                    {
-                        if vectorize_trace_enabled() {
-                            eprintln!(
-                                "   [vec-expr-map] reject: duplicate StoreIndex1D destination"
-                            );
-                        }
-                        return None;
-                    }
-                    if !expr_has_iv_dependency(fn_ir, *val, iv_phi) {
-                        if vectorize_trace_enabled() {
-                            eprintln!("   [vec-expr-map] reject: rhs has no IV dependency");
-                        }
-                        return None;
-                    }
-                    if !is_vectorizable_expr(fn_ir, *val, iv_phi, lp, true, false) {
-                        if vectorize_trace_enabled() {
-                            eprintln!("   [vec-expr-map] reject: rhs not vectorizable");
-                        }
-                        return None;
-                    }
-                    if expr_has_non_vector_safe_call_in_vector_context(
+                    let candidate = classify_expr_map_store_candidate(
                         fn_ir,
-                        *val,
-                        iv_phi,
+                        lp,
                         user_call_whitelist,
-                        &mut FxHashSet::default(),
-                    ) {
-                        if vectorize_trace_enabled() {
-                            let rhs_detail = match &fn_ir.values[*val].kind {
-                                ValueKind::Binary { lhs, rhs, .. } => format!(
-                                    "lhs={:?} rhs={:?}",
-                                    fn_ir.values[*lhs].kind, fn_ir.values[*rhs].kind
-                                ),
-                                other => format!("{:?}", other),
-                            };
-                            eprintln!(
-                                "   [vec-expr-map] reject: rhs contains non-vector-safe call; rhs={:?}; detail={}",
-                                fn_ir.values[*val].kind, rhs_detail
-                            );
+                        ExprMapStoreSpec {
+                            base: *base,
+                            idx: *idx,
+                            expr: *val,
+                            is_vector: *is_vector,
+                        },
+                        iv_phi,
+                    )?;
+
+                    match candidate {
+                        ExprMapStoreCandidate::Standard { dest, expr } => {
+                            if cube_candidate.is_some()
+                                || found.iter().any(|(existing_dest, _)| {
+                                    same_base_value(fn_ir, *existing_dest, dest)
+                                })
+                            {
+                                trace_expr_map_duplicate_store_reject();
+                                return None;
+                            }
+                            found.push((dest, expr));
                         }
-                        return None;
-                    }
-                    if expr_reads_base_non_iv(fn_ir, *val, dest, iv_phi) {
-                        if vectorize_trace_enabled() {
-                            eprintln!(
-                                "   [vec-expr-map] reject: loop-carried dependence on destination"
-                            );
+                        ExprMapStoreCandidate::Cube { dest, expr, cube } => {
+                            if !found.is_empty() || cube_candidate.is_some() {
+                                trace_expr_map_duplicate_store_reject();
+                                return None;
+                            }
+                            cube_candidate = Some((dest, expr, cube));
                         }
-                        return None;
                     }
-                    found.push((dest, *val));
                 }
             }
         }
     }
 
-    if found.is_empty() {
-        if let Some((dest, expr, cube)) = cube_candidate {
-            return Some(VectorPlan::CubeSliceExprMap {
-                dest,
-                expr,
-                iv_phi,
-                face: cube.face,
-                row: cube.row,
-                size: cube.size,
-                ctx: cube.ctx,
-                start,
-                end,
-            });
-        }
-        return None;
-    }
-    if cube_candidate.is_some() {
-        return None;
-    }
-    let entries: Vec<ExprMapEntry> = found
-        .into_iter()
-        .map(|(dest, expr)| ExprMapEntry {
-            dest,
-            expr,
-            whole_dest: is_loop_compatible_base(lp, fn_ir, dest) && is_const_one(fn_ir, start),
-        })
-        .collect();
-    if entries.len() == 1 {
-        let entry = entries[0];
-        return Some(VectorPlan::ExprMap {
-            dest: entry.dest,
-            expr: entry.expr,
-            iv_phi,
-            start,
-            end,
-            whole_dest: entry.whole_dest,
-        });
-    }
-    Some(VectorPlan::MultiExprMap {
-        entries,
-        iv_phi,
-        start,
-        end,
-    })
+    finalize_expr_map_plan(fn_ir, lp, iv_phi, start, end, found, cube_candidate)
 }
 
 fn match_scatter_expr_map(
@@ -1435,7 +1593,7 @@ fn match_scatter_expr_map(
     }
 
     let (store_bid, dest, idx, expr) = found?;
-    let idx_root = canonical_value(fn_ir, idx);
+    let idx_root = resolve_match_alias_value(fn_ir, idx);
     let is_cube_scatter = matches!(
         &fn_ir.values[idx_root].kind,
         ValueKind::Call { callee, args, names }
@@ -1522,10 +1680,30 @@ fn match_scatter_expr_map(
         }
         return None;
     }
+    if expr_has_unstable_loop_local_load(fn_ir, lp, idx)
+        || expr_has_unstable_loop_local_load(fn_ir, lp, expr)
+    {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: idx/expr depends on unstable loop-local state",
+                fn_ir.name
+            );
+        }
+        return None;
+    }
     if expr_reads_base_non_iv(fn_ir, expr, dest, iv_phi) {
         if trace_enabled {
             eprintln!(
                 "   [vec-scatter] {} reject: expr reads destination via non-IV access",
+                fn_ir.name
+            );
+        }
+        return None;
+    }
+    if expr_reads_base(fn_ir, expr, dest) {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-scatter] {} reject: expr reads destination base",
                 fn_ir.name
             );
         }
@@ -1630,6 +1808,8 @@ fn match_cube_slice_expr_map(
         }
         return None;
     }
+    let allowed_dests: Vec<VarId> = resolve_base_var(fn_ir, dest).into_iter().collect();
+    let shadow_vars = collect_loop_shadow_vars_for_dest(fn_ir, lp, &allowed_dests, dest, iv_phi)?;
 
     Some(VectorPlan::CubeSliceExprMap {
         dest,
@@ -1641,6 +1821,7 @@ fn match_cube_slice_expr_map(
         ctx: cube.ctx,
         start,
         end,
+        shadow_vars,
     })
 }
 
@@ -1660,17 +1841,17 @@ fn match_cube_slice_index_info(
     iv_phi: ValueId,
 ) -> Option<CubeSliceIndexInfo> {
     let trace_enabled = vectorize_trace_enabled();
+    let idx_root = resolve_match_alias_value(fn_ir, idx);
     let ValueKind::Call {
         callee,
         args,
         names,
-    } = &fn_ir.values[canonical_value(fn_ir, idx)].kind
+    } = &fn_ir.values[idx_root].kind
     else {
         if trace_enabled {
             eprintln!(
                 "   [vec-cube-slice] {} reject: store index is not call ({:?})",
-                fn_ir.name,
-                fn_ir.values[canonical_value(fn_ir, idx)].kind
+                fn_ir.name, fn_ir.values[idx_root].kind
             );
         }
         return None;
@@ -1771,7 +1952,7 @@ pub(crate) fn is_builtin_vector_safe_call(callee: &str, arity: usize) -> bool {
         "rr_wrap_index_vec" | "rr_wrap_index_vec_i" => arity == 4 || arity == 5,
         "rr_idx_cube_vec_i" => arity == 4 || arity == 5,
         "rr_index_vec_floor" => arity == 1 || arity == 2,
-        "rr_index1_read_vec" | "rr_index1_read_vec_floor" => arity == 2 || arity == 3,
+        "rr_index1_read_vec" | "rr_index1_read_vec_floor" | "rr_gather" => arity == 2 || arity == 3,
         "atan2" => arity == 2,
         "round" => arity == 1 || arity == 2,
         "pmax" | "pmin" => arity >= 2,
@@ -2249,6 +2430,134 @@ fn intrinsic_for_call(callee: &str, arity: usize) -> Option<IntrinsicOp> {
         ("sum", 1) => Some(IntrinsicOp::VecSumF64),
         ("mean", 1) => Some(IntrinsicOp::VecMeanF64),
         _ => None,
+    }
+}
+
+fn call_map_profit_guard_supported(callee: &str, arity: usize) -> bool {
+    is_builtin_vector_safe_call(callee, arity) && !matches!(callee, "seq_len" | "sum" | "mean")
+}
+
+fn intrinsic_runtime_helper_cost(op: IntrinsicOp) -> u32 {
+    match op {
+        IntrinsicOp::VecAddF64
+        | IntrinsicOp::VecSubF64
+        | IntrinsicOp::VecMulF64
+        | IntrinsicOp::VecDivF64
+        | IntrinsicOp::VecAbsF64
+        | IntrinsicOp::VecLogF64
+        | IntrinsicOp::VecSqrtF64 => 1,
+        IntrinsicOp::VecPmaxF64 | IntrinsicOp::VecPminF64 => 2,
+        IntrinsicOp::VecSumF64 | IntrinsicOp::VecMeanF64 => 3,
+    }
+}
+
+fn call_runtime_helper_cost(callee: &str) -> u32 {
+    match callee {
+        "rr_idx_cube_vec_i" | "rr_wrap_index_vec" | "rr_wrap_index_vec_i" => 8,
+        "rr_gather" | "rr_index1_read_vec" | "rr_index1_read_vec_floor" => 7,
+        "rr_assign_index_vec" => 7,
+        "rr_assign_slice" | "rr_ifelse_strict" => 6,
+        "rr_same_len" | "rr_same_or_scalar" | "rr_index_vec_floor" => 4,
+        "pmax" | "pmin" | "atan2" | "round" => 3,
+        "abs" | "sqrt" | "exp" | "log" | "log10" | "log2" | "sin" | "cos" | "tan" | "asin"
+        | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "sign" | "floor" | "ceiling" | "trunc"
+        | "gamma" | "lgamma" | "is.na" | "is.finite" => 1,
+        _ => 5,
+    }
+}
+
+fn expr_runtime_helper_cost(fn_ir: &FnIR, value: ValueId, seen: &mut FxHashSet<ValueId>) -> u32 {
+    let root = canonical_value(fn_ir, value);
+    if !seen.insert(root) {
+        return 0;
+    }
+    let cost = match &fn_ir.values[root].kind {
+        ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } => 0,
+        ValueKind::RSymbol { .. } => 1,
+        ValueKind::Len { base } | ValueKind::Indices { base } => {
+            1 + expr_runtime_helper_cost(fn_ir, *base, seen)
+        }
+        ValueKind::Range { start, end } => {
+            1 + expr_runtime_helper_cost(fn_ir, *start, seen)
+                + expr_runtime_helper_cost(fn_ir, *end, seen)
+        }
+        ValueKind::Unary { rhs, .. } => 1 + expr_runtime_helper_cost(fn_ir, *rhs, seen),
+        ValueKind::Binary { lhs, rhs, .. } => {
+            1 + expr_runtime_helper_cost(fn_ir, *lhs, seen)
+                + expr_runtime_helper_cost(fn_ir, *rhs, seen)
+        }
+        ValueKind::Phi { args } => {
+            1 + args
+                .iter()
+                .map(|(arg, _)| expr_runtime_helper_cost(fn_ir, *arg, seen))
+                .max()
+                .unwrap_or(0)
+        }
+        ValueKind::Call { callee, args, .. } => {
+            call_runtime_helper_cost(callee)
+                + args
+                    .iter()
+                    .map(|arg| expr_runtime_helper_cost(fn_ir, *arg, seen))
+                    .sum::<u32>()
+        }
+        ValueKind::Intrinsic { op, args } => {
+            intrinsic_runtime_helper_cost(*op)
+                + args
+                    .iter()
+                    .map(|arg| expr_runtime_helper_cost(fn_ir, *arg, seen))
+                    .sum::<u32>()
+        }
+        ValueKind::Index1D { base, idx, .. } => {
+            4 + expr_runtime_helper_cost(fn_ir, *base, seen)
+                + expr_runtime_helper_cost(fn_ir, *idx, seen)
+        }
+        ValueKind::Index2D { base, r, c } => {
+            6 + expr_runtime_helper_cost(fn_ir, *base, seen)
+                + expr_runtime_helper_cost(fn_ir, *r, seen)
+                + expr_runtime_helper_cost(fn_ir, *c, seen)
+        }
+    };
+    seen.remove(&root);
+    cost
+}
+
+fn estimate_call_map_helper_cost(
+    fn_ir: &FnIR,
+    callee: &str,
+    args: &[CallMapArg],
+    whole_dest: bool,
+    shadow_vars: &[VarId],
+) -> u32 {
+    let arg_cost = args
+        .iter()
+        .filter(|arg| arg.vectorized)
+        .map(|arg| expr_runtime_helper_cost(fn_ir, arg.value, &mut FxHashSet::default()))
+        .sum::<u32>();
+    let vector_arg_count = args.iter().filter(|arg| arg.vectorized).count() as u32;
+    let partial_penalty = if whole_dest { 0 } else { 2 };
+    let shadow_penalty = shadow_vars.len().min(u8::MAX as usize) as u32;
+    call_runtime_helper_cost(callee)
+        + arg_cost
+        + vector_arg_count
+        + partial_penalty
+        + shadow_penalty
+}
+
+fn choose_call_map_lowering(
+    fn_ir: &FnIR,
+    callee: &str,
+    args: &[CallMapArg],
+    whole_dest: bool,
+    shadow_vars: &[VarId],
+) -> CallMapLoweringMode {
+    if !call_map_profit_guard_supported(callee, args.len()) {
+        return CallMapLoweringMode::DirectVector;
+    }
+    let helper_cost = estimate_call_map_helper_cost(fn_ir, callee, args, whole_dest, shadow_vars);
+    if helper_cost >= CALL_MAP_AUTO_HELPER_COST_THRESHOLD {
+        CallMapLoweringMode::RuntimeAuto { helper_cost }
+    } else {
+        CallMapLoweringMode::DirectVector
     }
 }
 
@@ -2810,6 +3119,14 @@ struct VectorLoopRange {
     end: ValueId,
 }
 
+#[derive(Debug)]
+struct PreparedVectorAssignment {
+    dest_var: VarId,
+    out_val: ValueId,
+    shadow_vars: Vec<VarId>,
+    shadow_idx: Option<ValueId>,
+}
+
 #[derive(Clone, Copy)]
 struct Reduce2DApplyPlan {
     acc_phi: ValueId,
@@ -2873,14 +3190,165 @@ fn finish_vector_assignment(
     dest_var: VarId,
     out_val: ValueId,
 ) -> bool {
-    fn_ir.blocks[site.preheader].instrs.push(Instr::Assign {
-        dst: dest_var.clone(),
-        src: out_val,
+    finish_vector_assignment_with_shadow_states(fn_ir, site, dest_var, out_val, &[], None)
+}
+
+fn build_shadow_state_read(fn_ir: &mut FnIR, out_val: ValueId, idx: ValueId) -> ValueId {
+    let out_val = resolve_materialized_value(fn_ir, out_val);
+    let idx = resolve_materialized_value(fn_ir, idx);
+    let ctx = fn_ir.add_value(
+        ValueKind::Const(Lit::Str("index".to_string())),
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    fn_ir.add_value(
+        ValueKind::Call {
+            callee: "rr_index1_read".to_string(),
+            args: vec![out_val, idx, ctx],
+            names: vec![None, None, None],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    )
+}
+
+fn emit_vector_preheader_eval(fn_ir: &mut FnIR, preheader: BlockId, val: ValueId) {
+    fn_ir.blocks[preheader].instrs.push(Instr::Eval {
+        val,
         span: crate::utils::Span::dummy(),
     });
+}
+
+fn emit_same_len_guard(fn_ir: &mut FnIR, preheader: BlockId, lhs: ValueId, rhs: ValueId) {
+    let check_val = fn_ir.add_value(
+        ValueKind::Call {
+            callee: "rr_same_len".to_string(),
+            args: vec![lhs, rhs],
+            names: vec![None, None],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    emit_vector_preheader_eval(fn_ir, preheader, check_val);
+}
+
+fn emit_same_or_scalar_guard(fn_ir: &mut FnIR, preheader: BlockId, lhs: ValueId, rhs: ValueId) {
+    let check_val = fn_ir.add_value(
+        ValueKind::Call {
+            callee: "rr_same_or_scalar".to_string(),
+            args: vec![lhs, rhs],
+            names: vec![None, None],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    emit_vector_preheader_eval(fn_ir, preheader, check_val);
+}
+
+fn build_slice_assignment_value(
+    fn_ir: &mut FnIR,
+    dest: ValueId,
+    start: ValueId,
+    end: ValueId,
+    value: ValueId,
+) -> ValueId {
+    fn_ir.add_value(
+        ValueKind::Call {
+            callee: "rr_assign_slice".to_string(),
+            args: vec![dest, start, end, value],
+            names: vec![None, None, None, None],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_cond_map_operands(
+    fn_ir: &mut FnIR,
+    preheader: BlockId,
+    dest_ref: ValueId,
+    cond_vec: ValueId,
+    then_vec: ValueId,
+    else_vec: ValueId,
+    start: ValueId,
+    end: ValueId,
+    whole_dest: bool,
+) -> (ValueId, ValueId, ValueId) {
+    if whole_dest {
+        if !same_length_proven(fn_ir, dest_ref, cond_vec) {
+            emit_same_len_guard(fn_ir, preheader, dest_ref, cond_vec);
+        }
+        for branch_vec in [then_vec, else_vec] {
+            if is_const_number(fn_ir, branch_vec) || same_length_proven(fn_ir, dest_ref, branch_vec)
+            {
+                continue;
+            }
+            emit_same_or_scalar_guard(fn_ir, preheader, dest_ref, branch_vec);
+        }
+        return (cond_vec, then_vec, else_vec);
+    }
+
+    (
+        prepare_partial_slice_value(fn_ir, dest_ref, cond_vec, start, end),
+        prepare_partial_slice_value(fn_ir, dest_ref, then_vec, start, end),
+        prepare_partial_slice_value(fn_ir, dest_ref, else_vec, start, end),
+    )
+}
+
+fn emit_prepared_vector_assignments(
+    fn_ir: &mut FnIR,
+    site: VectorApplySite,
+    assignments: Vec<PreparedVectorAssignment>,
+) -> bool {
+    for assignment in assignments {
+        fn_ir.blocks[site.preheader].instrs.push(Instr::Assign {
+            dst: assignment.dest_var.clone(),
+            src: assignment.out_val,
+            span: crate::utils::Span::dummy(),
+        });
+        if let Some(shadow_idx) = assignment.shadow_idx
+            && !assignment.shadow_vars.is_empty()
+        {
+            let shadow_val = build_shadow_state_read(fn_ir, assignment.out_val, shadow_idx);
+            for shadow_var in &assignment.shadow_vars {
+                fn_ir.blocks[site.preheader].instrs.push(Instr::Assign {
+                    dst: shadow_var.clone(),
+                    src: shadow_val,
+                    span: crate::utils::Span::dummy(),
+                });
+                rewrite_returns_for_var(fn_ir, shadow_var, shadow_val);
+            }
+        }
+        rewrite_returns_for_var(fn_ir, &assignment.dest_var, assignment.out_val);
+    }
     fn_ir.blocks[site.preheader].term = Terminator::Goto(site.exit_bb);
-    rewrite_returns_for_var(fn_ir, &dest_var, out_val);
     true
+}
+
+fn finish_vector_assignment_with_shadow_states(
+    fn_ir: &mut FnIR,
+    site: VectorApplySite,
+    dest_var: VarId,
+    out_val: ValueId,
+    shadow_vars: &[VarId],
+    shadow_idx: Option<ValueId>,
+) -> bool {
+    emit_prepared_vector_assignments(
+        fn_ir,
+        site,
+        vec![PreparedVectorAssignment {
+            dest_var,
+            out_val,
+            shadow_vars: shadow_vars.to_vec(),
+            shadow_idx,
+        }],
+    )
 }
 
 fn finish_vector_phi_assignment(
@@ -3027,6 +3495,7 @@ fn apply_map_plan(
     src: ValueId,
     op: BinOp,
     other: ValueId,
+    shadow_vars: Vec<VarId>,
 ) -> bool {
     let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
         return false;
@@ -3041,7 +3510,20 @@ fn apply_map_plan(
         crate::mir::def::Facts::empty(),
         None,
     );
-    finish_vector_assignment(fn_ir, site, dest_var, map_val)
+    let shadow_idx = fn_ir.add_value(
+        ValueKind::Len { base: map_val },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    finish_vector_assignment_with_shadow_states(
+        fn_ir,
+        site,
+        dest_var,
+        map_val,
+        &shadow_vars,
+        Some(shadow_idx),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3054,7 +3536,12 @@ fn apply_cond_map_plan(
     then_val: ValueId,
     else_val: ValueId,
     iv_phi: ValueId,
+    start: ValueId,
+    end: ValueId,
+    whole_dest: bool,
+    shadow_vars: Vec<VarId>,
 ) -> bool {
+    let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
     let idx_vec = match build_loop_index_vector(fn_ir, lp) {
         Some(v) => v,
         None => return false,
@@ -3108,42 +3595,17 @@ fn apply_cond_map_plan(
         None => return false,
     };
 
-    if !same_length_proven(fn_ir, dest_ref, cond_vec) {
-        let check_val = fn_ir.add_value(
-            ValueKind::Call {
-                callee: "rr_same_len".to_string(),
-                args: vec![dest_ref, cond_vec],
-                names: vec![None, None],
-            },
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        );
-        fn_ir.blocks[site.preheader].instrs.push(Instr::Eval {
-            val: check_val,
-            span: crate::utils::Span::dummy(),
-        });
-    }
-
-    for branch_vec in [then_vec, else_vec] {
-        if is_const_number(fn_ir, branch_vec) || same_length_proven(fn_ir, dest_ref, branch_vec) {
-            continue;
-        }
-        let check_val = fn_ir.add_value(
-            ValueKind::Call {
-                callee: "rr_same_or_scalar".to_string(),
-                args: vec![dest_ref, branch_vec],
-                names: vec![None, None],
-            },
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        );
-        fn_ir.blocks[site.preheader].instrs.push(Instr::Eval {
-            val: check_val,
-            span: crate::utils::Span::dummy(),
-        });
-    }
+    let (cond_vec, then_vec, else_vec) = prepare_cond_map_operands(
+        fn_ir,
+        site.preheader,
+        dest_ref,
+        cond_vec,
+        then_vec,
+        else_vec,
+        start,
+        end,
+        whole_dest,
+    );
 
     let ifelse_val = fn_ir.add_value(
         ValueKind::Call {
@@ -3155,7 +3617,19 @@ fn apply_cond_map_plan(
         crate::mir::def::Facts::empty(),
         None,
     );
-    finish_vector_assignment(fn_ir, site, dest_var, ifelse_val)
+    let out_val = if whole_dest {
+        ifelse_val
+    } else {
+        build_slice_assignment_value(fn_ir, dest, start, end, ifelse_val)
+    };
+    finish_vector_assignment_with_shadow_states(
+        fn_ir,
+        site,
+        dest_var,
+        out_val,
+        &shadow_vars,
+        Some(end),
+    )
 }
 
 fn apply_recurrence_add_const_plan(
@@ -3226,6 +3700,156 @@ fn apply_shifted_map_plan(
     finish_vector_assignment(fn_ir, site, dest_var, shifted_val)
 }
 
+fn emit_call_map_argument_guards(
+    fn_ir: &mut FnIR,
+    preheader: BlockId,
+    dest: ValueId,
+    whole_dest: bool,
+    mapped_args: &[(ValueId, bool)],
+    vector_args: &[ValueId],
+) {
+    for (arg, is_vec) in mapped_args {
+        let check_val = if whole_dest && *is_vec && !same_length_proven(fn_ir, dest, *arg) {
+            Some(fn_ir.add_value(
+                ValueKind::Call {
+                    callee: "rr_same_len".to_string(),
+                    args: vec![dest, *arg],
+                    names: vec![None, None],
+                },
+                crate::utils::Span::dummy(),
+                crate::mir::def::Facts::empty(),
+                None,
+            ))
+        } else if !*is_vec && !is_const_number(fn_ir, *arg) {
+            Some(fn_ir.add_value(
+                ValueKind::Call {
+                    callee: "rr_same_or_scalar".to_string(),
+                    args: vec![dest, *arg],
+                    names: vec![None, None],
+                },
+                crate::utils::Span::dummy(),
+                crate::mir::def::Facts::empty(),
+                None,
+            ))
+        } else {
+            None
+        };
+        if let Some(val) = check_val {
+            fn_ir.blocks[preheader].instrs.push(Instr::Eval {
+                val,
+                span: crate::utils::Span::dummy(),
+            });
+        }
+    }
+
+    for i in 0..vector_args.len() {
+        for j in (i + 1)..vector_args.len() {
+            let a = vector_args[i];
+            let b = vector_args[j];
+            if same_length_proven(fn_ir, a, b) {
+                continue;
+            }
+            let check_val = fn_ir.add_value(
+                ValueKind::Call {
+                    callee: "rr_same_len".to_string(),
+                    args: vec![a, b],
+                    names: vec![None, None],
+                },
+                crate::utils::Span::dummy(),
+                crate::mir::def::Facts::empty(),
+                None,
+            );
+            fn_ir.blocks[preheader].instrs.push(Instr::Eval {
+                val: check_val,
+                span: crate::utils::Span::dummy(),
+            });
+        }
+    }
+}
+
+fn build_int_vector_literal(fn_ir: &mut FnIR, items: &[i64]) -> ValueId {
+    let args: Vec<ValueId> = items
+        .iter()
+        .map(|item| {
+            fn_ir.add_value(
+                ValueKind::Const(Lit::Int(*item)),
+                crate::utils::Span::dummy(),
+                crate::mir::def::Facts::empty(),
+                None,
+            )
+        })
+        .collect();
+    fn_ir.add_value(
+        ValueKind::Call {
+            callee: "c".to_string(),
+            args,
+            names: vec![None; items.len()],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_call_map_auto_value(
+    fn_ir: &mut FnIR,
+    dest: ValueId,
+    start: ValueId,
+    end: ValueId,
+    callee: &str,
+    helper_cost: u32,
+    mapped_args: &[(ValueId, bool)],
+    whole_dest: bool,
+) -> ValueId {
+    let callee_val = fn_ir.add_value(
+        ValueKind::Const(Lit::Str(callee.to_string())),
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    let helper_cost_val = fn_ir.add_value(
+        ValueKind::Const(Lit::Int(helper_cost as i64)),
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    let vector_slots: Vec<i64> = mapped_args
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, is_vec))| is_vec.then_some((index + 1) as i64))
+        .collect();
+    let vector_slots_val = build_int_vector_literal(fn_ir, &vector_slots);
+    let mut args = if whole_dest {
+        vec![dest, callee_val, helper_cost_val, vector_slots_val]
+    } else {
+        vec![
+            dest,
+            start,
+            end,
+            callee_val,
+            helper_cost_val,
+            vector_slots_val,
+        ]
+    };
+    args.extend(mapped_args.iter().map(|(arg, _)| *arg));
+    let callee_name = if whole_dest {
+        "rr_call_map_whole_auto"
+    } else {
+        "rr_call_map_slice_auto"
+    };
+    fn_ir.add_value(
+        ValueKind::Call {
+            callee: callee_name.to_string(),
+            args,
+            names: vec![None; mapped_args.len() + if whole_dest { 4 } else { 6 }],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_call_map_plan(
     fn_ir: &mut FnIR,
@@ -3235,7 +3859,14 @@ fn apply_call_map_plan(
     callee: String,
     args: Vec<CallMapArg>,
     iv_phi: ValueId,
+    start: ValueId,
+    end: ValueId,
+    whole_dest: bool,
+    shadow_vars: Vec<VarId>,
 ) -> bool {
+    let trace_enabled = vectorize_trace_enabled();
+    let lowering_mode = choose_call_map_lowering(fn_ir, &callee, &args, whole_dest, &shadow_vars);
+    let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
     let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
         return false;
     };
@@ -3277,83 +3908,78 @@ fn apply_call_map_plan(
         mapped_args.push((out, arg.vectorized));
     }
 
-    for (arg, is_vec) in &mapped_args {
-        let check_val = if *is_vec && !same_length_proven(fn_ir, dest, *arg) {
-            Some(fn_ir.add_value(
-                ValueKind::Call {
-                    callee: "rr_same_len".to_string(),
-                    args: vec![dest, *arg],
-                    names: vec![None, None],
-                },
-                crate::utils::Span::dummy(),
-                crate::mir::def::Facts::empty(),
-                None,
-            ))
-        } else if !*is_vec && !is_const_number(fn_ir, *arg) {
-            Some(fn_ir.add_value(
-                ValueKind::Call {
-                    callee: "rr_same_or_scalar".to_string(),
-                    args: vec![dest, *arg],
-                    names: vec![None, None],
-                },
-                crate::utils::Span::dummy(),
-                crate::mir::def::Facts::empty(),
-                None,
-            ))
-        } else {
-            None
-        };
-        if let Some(val) = check_val {
-            fn_ir.blocks[site.preheader].instrs.push(Instr::Eval {
-                val,
-                span: crate::utils::Span::dummy(),
-            });
-        }
-    }
+    emit_call_map_argument_guards(
+        fn_ir,
+        site.preheader,
+        dest,
+        whole_dest,
+        &mapped_args,
+        &vector_args,
+    );
 
-    for i in 0..vector_args.len() {
-        for j in (i + 1)..vector_args.len() {
-            let a = vector_args[i];
-            let b = vector_args[j];
-            if same_length_proven(fn_ir, a, b) {
-                continue;
+    let out_val = match lowering_mode {
+        CallMapLoweringMode::RuntimeAuto { helper_cost } => {
+            if trace_enabled {
+                eprintln!(
+                    "   [vec-profit] {} call_map runtime-auto callee={} helper_cost={} whole_dest={}",
+                    fn_ir.name, callee, helper_cost, whole_dest
+                );
             }
-            let check_val = fn_ir.add_value(
-                ValueKind::Call {
-                    callee: "rr_same_len".to_string(),
-                    args: vec![a, b],
-                    names: vec![None, None],
+            build_call_map_auto_value(
+                fn_ir,
+                dest,
+                start,
+                end,
+                &callee,
+                helper_cost,
+                &mapped_args,
+                whole_dest,
+            )
+        }
+        CallMapLoweringMode::DirectVector => {
+            let mapped_args_vals: Vec<ValueId> = mapped_args.iter().map(|(arg, _)| *arg).collect();
+            let mapped_val = fn_ir.add_value(
+                if let Some(op) = intrinsic_for_call(&callee, mapped_args_vals.len()) {
+                    ValueKind::Intrinsic {
+                        op,
+                        args: mapped_args_vals,
+                    }
+                } else {
+                    ValueKind::Call {
+                        callee,
+                        args: mapped_args_vals,
+                        names: vec![None; mapped_args.len()],
+                    }
                 },
                 crate::utils::Span::dummy(),
                 crate::mir::def::Facts::empty(),
                 None,
             );
-            fn_ir.blocks[site.preheader].instrs.push(Instr::Eval {
-                val: check_val,
-                span: crate::utils::Span::dummy(),
-            });
+            if whole_dest {
+                mapped_val
+            } else {
+                let mapped_val = prepare_partial_slice_value(fn_ir, dest, mapped_val, start, end);
+                fn_ir.add_value(
+                    ValueKind::Call {
+                        callee: "rr_assign_slice".to_string(),
+                        args: vec![dest, start, end, mapped_val],
+                        names: vec![None, None, None, None],
+                    },
+                    crate::utils::Span::dummy(),
+                    crate::mir::def::Facts::empty(),
+                    None,
+                )
+            }
         }
-    }
-
-    let mapped_args_vals: Vec<ValueId> = mapped_args.iter().map(|(arg, _)| *arg).collect();
-    let mapped_val = fn_ir.add_value(
-        if let Some(op) = intrinsic_for_call(&callee, mapped_args_vals.len()) {
-            ValueKind::Intrinsic {
-                op,
-                args: mapped_args_vals,
-            }
-        } else {
-            ValueKind::Call {
-                callee,
-                args: mapped_args_vals,
-                names: vec![None; mapped_args.len()],
-            }
-        },
-        crate::utils::Span::dummy(),
-        crate::mir::def::Facts::empty(),
-        None,
-    );
-    finish_vector_assignment(fn_ir, site, dest_var, mapped_val)
+    };
+    finish_vector_assignment_with_shadow_states(
+        fn_ir,
+        site,
+        dest_var,
+        out_val,
+        &shadow_vars,
+        Some(end),
+    )
 }
 
 fn same_load_leaf_var_in_phi_tree(
@@ -3389,6 +4015,8 @@ fn recover_cube_slice_snapshot_scalar(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     value: ValueId,
+    iv_phi: ValueId,
+    memo: &mut FxHashMap<ValueId, ValueId>,
     interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
 ) -> Option<ValueId> {
     let root = canonical_value(fn_ir, value);
@@ -3401,14 +4029,33 @@ fn recover_cube_slice_snapshot_scalar(
         .or_else(|| induction_origin_var(fn_ir, root))?;
     let candidate = target_bb
         .and_then(|bb| unique_assign_source_reaching_block_in_loop(fn_ir, lp, &snapshot_var, bb))
+        .or_else(|| loop_entry_seed_source_in_loop(fn_ir, lp, &snapshot_var))
         .or_else(|| unique_assign_source_in_loop(fn_ir, lp, &snapshot_var))
         .map(|src| canonical_value(fn_ir, src))
         .filter(|src| {
             *src != root && !value_depends_on(fn_ir, *src, root, &mut FxHashSet::default())
         })
         .unwrap_or(root);
+    if candidate != root
+        && let Some(v) =
+            materialize_loop_invariant_scalar_expr(fn_ir, candidate, iv_phi, lp, memo, interner)
+    {
+        return Some(resolve_materialized_value(fn_ir, v));
+    }
+    if let Some(var) = fn_ir.values[candidate].origin_var.clone()
+        && !has_non_passthrough_assignment_in_loop(fn_ir, lp, &var)
+    {
+        let load = intern_materialized_value(
+            fn_ir,
+            interner,
+            ValueKind::Load { var },
+            fn_ir.values[candidate].span,
+            fn_ir.values[candidate].facts,
+        );
+        return Some(resolve_materialized_value(fn_ir, load));
+    }
     let leaf_var = same_load_leaf_var_in_phi_tree(fn_ir, candidate, &mut FxHashSet::default())?;
-    if has_assignment_in_loop(fn_ir, lp, &leaf_var) {
+    if has_non_passthrough_assignment_in_loop(fn_ir, lp, &leaf_var) {
         return None;
     }
     let load = intern_materialized_value(
@@ -3419,6 +4066,39 @@ fn recover_cube_slice_snapshot_scalar(
         fn_ir.values[root].facts,
     );
     Some(resolve_materialized_value(fn_ir, load))
+}
+
+fn cube_slice_expr_has_complex_loop_local_axes(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    expr: ValueId,
+    iv_phi: ValueId,
+) -> bool {
+    let expr = canonical_value(fn_ir, expr);
+    let ValueKind::Call { callee, args, .. } = &fn_ir.values[expr].kind else {
+        return false;
+    };
+    if callee != "rr_idx_cube_vec_i" || args.len() < 4 {
+        return false;
+    }
+    for arg in [args[1], args[2]] {
+        let arg = canonical_value(fn_ir, arg);
+        if is_iv_equivalent(fn_ir, arg, iv_phi) {
+            continue;
+        }
+        if let ValueKind::Load { var } = &fn_ir.values[arg].kind
+            && has_assignment_in_loop(fn_ir, lp, var)
+        {
+            return true;
+        }
+        if let Some(var) = fn_ir.values[arg].origin_var.as_deref()
+            && has_assignment_in_loop(fn_ir, lp, var)
+            && !is_loop_invariant_scalar_expr(fn_ir, arg, iv_phi, &FxHashSet::default())
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3435,6 +4115,7 @@ fn apply_cube_slice_expr_map_plan(
     ctx: Option<ValueId>,
     start: ValueId,
     end: ValueId,
+    shadow_vars: Vec<VarId>,
 ) -> bool {
     let trace_enabled = vectorize_trace_enabled();
     let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
@@ -3471,7 +4152,8 @@ fn apply_cube_slice_expr_map_plan(
             match materialize_loop_invariant_scalar_expr(fn_ir, value, iv_phi, lp, memo, interner) {
                 Some(v) => Some(resolve_materialized_value(fn_ir, v)),
                 None => {
-                    if let Some(v) = recover_cube_slice_snapshot_scalar(fn_ir, lp, value, interner)
+                    if let Some(v) =
+                        recover_cube_slice_snapshot_scalar(fn_ir, lp, value, iv_phi, memo, interner)
                     {
                         return Some(v);
                     }
@@ -3504,6 +4186,17 @@ fn apply_cube_slice_expr_map_plan(
         }
         None => None,
     };
+
+    if cube_slice_expr_has_complex_loop_local_axes(fn_ir, lp, expr, iv_phi) {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-apply-expr] {} fail: cube-slice rhs has complex loop-local axes ({:?})",
+                fn_ir.name,
+                fn_ir.values[canonical_value(fn_ir, expr)].kind
+            );
+        }
+        return false;
+    }
 
     let expr_vec = if expr_has_iv_dependency(fn_ir, expr, iv_phi) {
         match materialize_vector_expr(
@@ -3539,13 +4232,27 @@ fn apply_cube_slice_expr_map_plan(
         ) {
             Some(v) => v,
             None => {
-                if trace_enabled {
-                    eprintln!(
-                        "   [vec-apply-expr] {} fail: invariant scalar expr materialization ({:?})",
-                        fn_ir.name, fn_ir.values[expr].kind
-                    );
+                if let Some(v) = materialize_vector_expr(
+                    fn_ir,
+                    expr,
+                    iv_phi,
+                    idx_vec,
+                    lp,
+                    &mut memo,
+                    &mut interner,
+                    true,
+                    false,
+                ) {
+                    v
+                } else {
+                    if trace_enabled {
+                        eprintln!(
+                            "   [vec-apply-expr] {} fail: invariant scalar expr materialization ({:?})",
+                            fn_ir.name, fn_ir.values[expr].kind
+                        );
+                    }
+                    return false;
                 }
-                return false;
             }
         }
     };
@@ -3590,7 +4297,134 @@ fn apply_cube_slice_expr_map_plan(
         crate::mir::def::Facts::empty(),
         None,
     );
-    finish_vector_assignment(fn_ir, site, dest_var, out_val)
+    finish_vector_assignment_with_shadow_states(
+        fn_ir,
+        site,
+        dest_var,
+        out_val,
+        &shadow_vars,
+        Some(slice_end),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_apply_expr_call_map_auto(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    site: VectorApplySite,
+    dest: ValueId,
+    expr: ValueId,
+    iv_phi: ValueId,
+    start: ValueId,
+    end: ValueId,
+    whole_dest: bool,
+    shadow_vars: &[VarId],
+) -> Option<bool> {
+    let root = canonical_value(fn_ir, expr);
+    let (callee, args) = match &fn_ir.values[root].kind {
+        ValueKind::Call {
+            callee,
+            args,
+            names,
+        } => {
+            if names.iter().any(Option::is_some) {
+                return None;
+            }
+            (callee.clone(), args.clone())
+        }
+        _ => return None,
+    };
+
+    let call_args: Vec<CallMapArg> = args
+        .iter()
+        .map(|arg| CallMapArg {
+            value: *arg,
+            vectorized: expr_has_iv_dependency(fn_ir, *arg, iv_phi),
+        })
+        .collect();
+    let CallMapLoweringMode::RuntimeAuto { helper_cost } =
+        choose_call_map_lowering(fn_ir, &callee, &call_args, whole_dest, shadow_vars)
+    else {
+        return None;
+    };
+
+    let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
+    let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
+        return Some(false);
+    };
+    let idx_vec = build_loop_index_vector(fn_ir, lp)?;
+    let mut memo = FxHashMap::default();
+    let mut interner = FxHashMap::default();
+    let mut mapped_args = Vec::with_capacity(call_args.len());
+    let mut vector_args = Vec::new();
+
+    for (arg_i, arg) in call_args.iter().enumerate() {
+        let out = if arg.vectorized {
+            materialize_vector_expr(
+                fn_ir,
+                arg.value,
+                iv_phi,
+                idx_vec,
+                lp,
+                &mut memo,
+                &mut interner,
+                true,
+                false,
+            )?
+        } else {
+            materialize_loop_invariant_scalar_expr(
+                fn_ir,
+                arg.value,
+                iv_phi,
+                lp,
+                &mut memo,
+                &mut interner,
+            )
+            .unwrap_or_else(|| resolve_materialized_value(fn_ir, arg.value))
+        };
+        let out = if arg.vectorized {
+            maybe_hoist_callmap_arg_expr(fn_ir, site.preheader, out, arg_i)
+        } else {
+            out
+        };
+        if arg.vectorized {
+            vector_args.push(out);
+        }
+        mapped_args.push((out, arg.vectorized));
+    }
+
+    emit_call_map_argument_guards(
+        fn_ir,
+        site.preheader,
+        dest,
+        whole_dest,
+        &mapped_args,
+        &vector_args,
+    );
+    if vectorize_trace_enabled() {
+        eprintln!(
+            "   [vec-profit] {} expr_map runtime-auto callee={} helper_cost={} whole_dest={}",
+            fn_ir.name, callee, helper_cost, whole_dest
+        );
+    }
+    let out_val = build_call_map_auto_value(
+        fn_ir,
+        dest,
+        start,
+        end,
+        &callee,
+        helper_cost,
+        &mapped_args,
+        whole_dest,
+    );
+    Some(finish_vector_assignment_with_shadow_states(
+        fn_ir,
+        site,
+        dest_var,
+        out_val,
+        shadow_vars,
+        Some(end),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3604,7 +4438,23 @@ fn apply_expr_map_plan(
     start: ValueId,
     end: ValueId,
     whole_dest: bool,
+    shadow_vars: Vec<VarId>,
 ) -> bool {
+    if let Some(applied) = try_apply_expr_call_map_auto(
+        fn_ir,
+        lp,
+        site,
+        dest,
+        expr,
+        iv_phi,
+        start,
+        end,
+        whole_dest,
+        &shadow_vars,
+    ) {
+        return applied;
+    }
+
     let trace_enabled = vectorize_trace_enabled();
     let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
     let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
@@ -3653,43 +4503,121 @@ fn apply_expr_map_plan(
         }
     };
 
-    let expr_vec = if whole_dest {
+    let out_val = build_expr_map_output_value(
+        fn_ir,
+        site.preheader,
+        dest,
+        expr_vec,
+        start,
+        end,
+        whole_dest,
+    );
+    finish_vector_assignment_with_shadow_states(
+        fn_ir,
+        site,
+        dest_var,
+        out_val,
+        &shadow_vars,
+        Some(end),
+    )
+}
+
+fn build_expr_map_output_value(
+    fn_ir: &mut FnIR,
+    preheader: BlockId,
+    dest: ValueId,
+    expr_vec: ValueId,
+    start: ValueId,
+    end: ValueId,
+    whole_dest: bool,
+) -> ValueId {
+    let expr_is_scalar = is_scalar_broadcast_value(fn_ir, expr_vec);
+    let expr_vec = if expr_is_scalar {
+        broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, start, end)
+    } else if whole_dest {
         expr_vec
     } else {
-        broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, start, end)
+        prepare_partial_slice_value(fn_ir, dest, expr_vec, start, end)
     };
 
-    let out_val = if whole_dest {
-        if !same_length_proven(fn_ir, dest, expr_vec) {
-            let check_val = fn_ir.add_value(
-                ValueKind::Call {
-                    callee: "rr_same_len".to_string(),
-                    args: vec![dest, expr_vec],
-                    names: vec![None, None],
-                },
-                crate::utils::Span::dummy(),
-                crate::mir::def::Facts::empty(),
-                None,
-            );
-            fn_ir.blocks[site.preheader].instrs.push(Instr::Eval {
-                val: check_val,
-                span: crate::utils::Span::dummy(),
-            });
+    if whole_dest {
+        if !expr_is_scalar && !same_length_proven(fn_ir, dest, expr_vec) {
+            emit_same_len_guard(fn_ir, preheader, dest, expr_vec);
         }
         expr_vec
     } else {
-        fn_ir.add_value(
-            ValueKind::Call {
-                callee: "rr_assign_slice".to_string(),
-                args: vec![dest, start, end, expr_vec],
-                names: vec![None, None, None, None],
-            },
+        build_slice_assignment_value(fn_ir, dest, start, end, expr_vec)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_multi_expr_map_entry(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    site: VectorApplySite,
+    entry_index: usize,
+    entry: &ExprMapEntry,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    start: ValueId,
+    end: ValueId,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    trace_enabled: bool,
+) -> Option<PreparedVectorAssignment> {
+    let dest_var = resolve_base_var(fn_ir, entry.dest).or_else(|| {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-apply-expr] {} fail: destination has no base var",
+                fn_ir.name
+            );
+        }
+        None
+    })?;
+    let expr_vec = materialize_vector_expr(
+        fn_ir, entry.expr, iv_phi, idx_vec, lp, memo, interner, true, false,
+    )
+    .or_else(|| {
+        if trace_enabled {
+            eprintln!(
+                "   [vec-apply-expr] {} fail: materialize_vector_expr({:?})",
+                fn_ir.name, fn_ir.values[entry.expr].kind
+            );
+        }
+        None
+    })?;
+    let expr_vec = hoist_vector_expr_temp(
+        fn_ir,
+        site.preheader,
+        expr_vec,
+        &format!("exprmap{}", entry_index),
+    );
+    let out_val = build_expr_map_output_value(
+        fn_ir,
+        site.preheader,
+        entry.dest,
+        expr_vec,
+        start,
+        end,
+        entry.whole_dest,
+    );
+    let shadow_idx = if entry.whole_dest {
+        Some(fn_ir.add_value(
+            ValueKind::Len { base: out_val },
             crate::utils::Span::dummy(),
             crate::mir::def::Facts::empty(),
             None,
-        )
+        ))
+    } else {
+        Some(end)
     };
-    finish_vector_assignment(fn_ir, site, dest_var, out_val)
+
+    Some(PreparedVectorAssignment {
+        dest_var,
+        out_val,
+        shadow_vars: entry.shadow_vars.clone(),
+        shadow_idx,
+    })
 }
 
 fn apply_multi_expr_map_plan(
@@ -3719,92 +4647,26 @@ fn apply_multi_expr_map_plan(
     let mut interner = FxHashMap::default();
     let mut staged = Vec::with_capacity(entries.len());
 
-    for (entry_index, entry) in entries.iter().copied().enumerate() {
-        let Some(dest_var) = resolve_base_var(fn_ir, entry.dest) else {
-            if trace_enabled {
-                eprintln!(
-                    "   [vec-apply-expr] {} fail: destination has no base var",
-                    fn_ir.name
-                );
-            }
-            return false;
-        };
-        let expr_vec = match materialize_vector_expr(
+    for (entry_index, entry) in entries.iter().enumerate() {
+        let Some(assignment) = stage_multi_expr_map_entry(
             fn_ir,
-            entry.expr,
+            lp,
+            site,
+            entry_index,
+            entry,
             iv_phi,
             idx_vec,
-            lp,
+            start,
+            end,
             &mut memo,
             &mut interner,
-            true,
-            false,
-        ) {
-            Some(v) => v,
-            None => {
-                if trace_enabled {
-                    eprintln!(
-                        "   [vec-apply-expr] {} fail: materialize_vector_expr({:?})",
-                        fn_ir.name, fn_ir.values[entry.expr].kind
-                    );
-                }
-                return false;
-            }
+            trace_enabled,
+        ) else {
+            return false;
         };
-        let expr_vec = hoist_vector_expr_temp(
-            fn_ir,
-            site.preheader,
-            expr_vec,
-            &format!("exprmap{}", entry_index),
-        );
-        let expr_vec = if entry.whole_dest {
-            expr_vec
-        } else {
-            broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, start, end)
-        };
-        let out_val = if entry.whole_dest {
-            if !same_length_proven(fn_ir, entry.dest, expr_vec) {
-                let check_val = fn_ir.add_value(
-                    ValueKind::Call {
-                        callee: "rr_same_len".to_string(),
-                        args: vec![entry.dest, expr_vec],
-                        names: vec![None, None],
-                    },
-                    crate::utils::Span::dummy(),
-                    crate::mir::def::Facts::empty(),
-                    None,
-                );
-                fn_ir.blocks[site.preheader].instrs.push(Instr::Eval {
-                    val: check_val,
-                    span: crate::utils::Span::dummy(),
-                });
-            }
-            expr_vec
-        } else {
-            fn_ir.add_value(
-                ValueKind::Call {
-                    callee: "rr_assign_slice".to_string(),
-                    args: vec![entry.dest, start, end, expr_vec],
-                    names: vec![None, None, None, None],
-                },
-                crate::utils::Span::dummy(),
-                crate::mir::def::Facts::empty(),
-                None,
-            )
-        };
-        staged.push((dest_var, out_val));
+        staged.push(assignment);
     }
-
-    for (dest_var, out_val) in staged {
-        fn_ir.blocks[site.preheader].instrs.push(Instr::Assign {
-            dst: dest_var.clone(),
-            src: out_val,
-            span: crate::utils::Span::dummy(),
-        });
-        rewrite_returns_for_var(fn_ir, &dest_var, out_val);
-    }
-    fn_ir.blocks[site.preheader].term = Terminator::Goto(site.exit_bb);
-    true
+    emit_prepared_vector_assignments(fn_ir, site, staged)
 }
 
 fn apply_scatter_expr_map_plan(
@@ -3916,6 +4778,46 @@ fn broadcast_scalar_expr_to_slice_len(
     )
 }
 
+fn narrow_vector_expr_to_slice_range(
+    fn_ir: &mut FnIR,
+    expr_vec: ValueId,
+    start: ValueId,
+    end: ValueId,
+) -> ValueId {
+    let idx_range = fn_ir.add_value(
+        ValueKind::Range { start, end },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    fn_ir.add_value(
+        ValueKind::Call {
+            callee: "rr_index1_read_vec".to_string(),
+            args: vec![expr_vec, idx_range],
+            names: vec![None, None],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    )
+}
+
+fn prepare_partial_slice_value(
+    fn_ir: &mut FnIR,
+    dest: ValueId,
+    expr_vec: ValueId,
+    start: ValueId,
+    end: ValueId,
+) -> ValueId {
+    if is_scalar_broadcast_value(fn_ir, expr_vec) {
+        return broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, start, end);
+    }
+    if same_length_proven(fn_ir, dest, expr_vec) {
+        return narrow_vector_expr_to_slice_range(fn_ir, expr_vec, start, end);
+    }
+    expr_vec
+}
+
 fn apply_map_2d_row_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
@@ -4008,11 +4910,12 @@ fn apply_map_2d_col_plan(
     finish_vector_assignment(fn_ir, site, dest_var, col_map_val)
 }
 
-fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> bool {
-    let Some(site) = vector_apply_site(fn_ir, lp) else {
-        return false;
-    };
-
+fn apply_reduce_vector_plan(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    site: VectorApplySite,
+    plan: VectorPlan,
+) -> bool {
     match plan {
         VectorPlan::Reduce {
             kind,
@@ -4054,19 +4957,48 @@ fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> boo
                 range: VectorLoopRange { start, end },
             },
         ),
+        _ => false,
+    }
+}
+
+fn apply_linear_vector_plan(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    site: VectorApplySite,
+    plan: VectorPlan,
+) -> bool {
+    match plan {
         VectorPlan::Map {
             dest,
             src,
             op,
             other,
-        } => apply_map_plan(fn_ir, site, dest, src, op, other),
+            shadow_vars,
+        } => apply_map_plan(fn_ir, site, dest, src, op, other, shadow_vars),
         VectorPlan::CondMap {
             dest,
             cond,
             then_val,
             else_val,
             iv_phi,
-        } => apply_cond_map_plan(fn_ir, lp, site, dest, cond, then_val, else_val, iv_phi),
+            start,
+            end,
+            whole_dest,
+            shadow_vars,
+        } => apply_cond_map_plan(
+            fn_ir,
+            lp,
+            site,
+            dest,
+            cond,
+            then_val,
+            else_val,
+            iv_phi,
+            start,
+            end,
+            whole_dest,
+            shadow_vars,
+        ),
         VectorPlan::RecurrenceAddConst {
             base,
             start,
@@ -4106,7 +5038,34 @@ fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> boo
             callee,
             args,
             iv_phi,
-        } => apply_call_map_plan(fn_ir, lp, site, dest, callee, args, iv_phi),
+            start,
+            end,
+            whole_dest,
+            shadow_vars,
+        } => apply_call_map_plan(
+            fn_ir,
+            lp,
+            site,
+            dest,
+            callee,
+            args,
+            iv_phi,
+            start,
+            end,
+            whole_dest,
+            shadow_vars,
+        ),
+        _ => false,
+    }
+}
+
+fn apply_expr_vector_plan(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    site: VectorApplySite,
+    plan: VectorPlan,
+) -> bool {
+    match plan {
         VectorPlan::CubeSliceExprMap {
             dest,
             expr,
@@ -4117,8 +5076,21 @@ fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> boo
             ctx,
             start,
             end,
+            shadow_vars,
         } => apply_cube_slice_expr_map_plan(
-            fn_ir, lp, site, dest, expr, iv_phi, face, row, size, ctx, start, end,
+            fn_ir,
+            lp,
+            site,
+            dest,
+            expr,
+            iv_phi,
+            face,
+            row,
+            size,
+            ctx,
+            start,
+            end,
+            shadow_vars,
         ),
         VectorPlan::ExprMap {
             dest,
@@ -4127,7 +5099,19 @@ fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> boo
             start,
             end,
             whole_dest,
-        } => apply_expr_map_plan(fn_ir, lp, site, dest, expr, iv_phi, start, end, whole_dest),
+            shadow_vars,
+        } => apply_expr_map_plan(
+            fn_ir,
+            lp,
+            site,
+            dest,
+            expr,
+            iv_phi,
+            start,
+            end,
+            whole_dest,
+            shadow_vars,
+        ),
         VectorPlan::MultiExprMap {
             entries,
             iv_phi,
@@ -4140,6 +5124,17 @@ fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> boo
             expr,
             iv_phi,
         } => apply_scatter_expr_map_plan(fn_ir, lp, site, dest, idx, expr, iv_phi),
+        _ => false,
+    }
+}
+
+fn apply_2d_vector_plan(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    site: VectorApplySite,
+    plan: VectorPlan,
+) -> bool {
+    match plan {
         VectorPlan::Map2DRow {
             dest,
             row,
@@ -4182,8 +5177,36 @@ fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> boo
                 op,
             },
         ),
+        _ => false,
     }
 }
+
+fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> bool {
+    let Some(site) = vector_apply_site(fn_ir, lp) else {
+        return false;
+    };
+
+    match plan {
+        plan @ VectorPlan::Reduce { .. }
+        | plan @ VectorPlan::Reduce2DRowSum { .. }
+        | plan @ VectorPlan::Reduce2DColSum { .. } => {
+            apply_reduce_vector_plan(fn_ir, lp, site, plan)
+        }
+        plan @ VectorPlan::Map { .. }
+        | plan @ VectorPlan::CondMap { .. }
+        | plan @ VectorPlan::RecurrenceAddConst { .. }
+        | plan @ VectorPlan::ShiftedMap { .. }
+        | plan @ VectorPlan::CallMap { .. } => apply_linear_vector_plan(fn_ir, lp, site, plan),
+        plan @ VectorPlan::CubeSliceExprMap { .. }
+        | plan @ VectorPlan::ExprMap { .. }
+        | plan @ VectorPlan::MultiExprMap { .. }
+        | plan @ VectorPlan::ScatterExprMap { .. } => apply_expr_vector_plan(fn_ir, lp, site, plan),
+        plan @ VectorPlan::Map2DRow { .. } | plan @ VectorPlan::Map2DCol { .. } => {
+            apply_2d_vector_plan(fn_ir, lp, site, plan)
+        }
+    }
+}
+
 fn rewrite_sum_add_const(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
@@ -4335,6 +5358,48 @@ fn adjusted_loop_limit(fn_ir: &mut FnIR, limit: ValueId, adjust: i64) -> ValueId
     }
 }
 
+fn loop_matches_full_base(lp: &LoopInfo, fn_ir: &FnIR, base: ValueId) -> bool {
+    if lp.limit_adjust != 0 {
+        return false;
+    }
+
+    let base = canonical_value(fn_ir, base);
+    if lp.is_seq_along.map(|b| canonical_value(fn_ir, b)) == Some(base) {
+        return true;
+    }
+    if let Some(loop_base) = lp.is_seq_along
+        && let (Some(a), Some(b)) = (
+            resolve_base_var(fn_ir, base),
+            resolve_base_var(fn_ir, loop_base),
+        )
+        && a == b
+    {
+        return true;
+    }
+
+    let Some(limit) = lp
+        .is_seq_len
+        .map(|limit| resolve_load_alias_value(fn_ir, limit))
+    else {
+        return false;
+    };
+    if let ValueKind::Len { base: len_base } = fn_ir.values[limit].kind {
+        if canonical_value(fn_ir, len_base) == base {
+            return true;
+        }
+        if let (Some(a), Some(b)) = (
+            resolve_base_var(fn_ir, base),
+            resolve_base_var(fn_ir, len_base),
+        ) && a == b
+        {
+            return true;
+        }
+    }
+
+    vector_length_key(fn_ir, base)
+        .is_some_and(|base_key| canonical_value(fn_ir, base_key) == canonical_value(fn_ir, limit))
+}
+
 fn loop_matches_vec(lp: &LoopInfo, fn_ir: &FnIR, base: ValueId) -> bool {
     let base = canonical_value(fn_ir, base);
     if lp.is_seq_along.map(|b| canonical_value(fn_ir, b)) == Some(base) {
@@ -4380,6 +5445,155 @@ fn loop_has_store_effect(fn_ir: &FnIR, lp: &LoopInfo) -> bool {
     false
 }
 
+fn collect_loop_shadow_vars_for_dest(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    allowed_vars: &[VarId],
+    dest_base: ValueId,
+    iv_phi: ValueId,
+) -> Option<Vec<VarId>> {
+    let Some(_) = lp.iv.as_ref() else {
+        return Some(Vec::new());
+    };
+    let mut shadow_vars = Vec::new();
+    for value in &fn_ir.values {
+        let ValueKind::Phi { args } = &value.kind else {
+            continue;
+        };
+        let Some(phi_bb) = value.phi_block else {
+            continue;
+        };
+        if !lp.body.contains(&phi_bb) {
+            continue;
+        }
+        let has_loop_pred = args.iter().any(|(_, pred)| lp.body.contains(pred));
+        let has_outer_pred = args.iter().any(|(_, pred)| !lp.body.contains(pred));
+        if !has_loop_pred || !has_outer_pred {
+            continue;
+        }
+        if is_iv_equivalent(fn_ir, value.id, iv_phi)
+            || is_origin_var_iv_alias_in_loop(fn_ir, lp, value.id, iv_phi)
+        {
+            continue;
+        }
+        if loop_carried_phi_is_unmodified(fn_ir, value.id) {
+            continue;
+        }
+        if loop_carried_phi_is_invariant_passthrough(fn_ir, lp, value.id, iv_phi) {
+            continue;
+        }
+        let Some(origin_var) = value.origin_var.as_deref() else {
+            continue;
+        };
+        if allowed_vars
+            .iter()
+            .any(|allowed| origin_var == allowed.as_str())
+        {
+            continue;
+        }
+        if let Some(shadow_base) =
+            loop_carried_phi_last_value_shadow_base(fn_ir, lp, value.id, iv_phi)
+        {
+            if same_base_value(
+                fn_ir,
+                canonical_value(fn_ir, shadow_base),
+                canonical_value(fn_ir, dest_base),
+            ) {
+                shadow_vars.push(origin_var.to_string());
+                continue;
+            }
+            if resolve_base_var(fn_ir, shadow_base)
+                .is_some_and(|var| allowed_vars.iter().any(|allowed| allowed == &var))
+            {
+                continue;
+            }
+        }
+        if vectorize_trace_enabled() {
+            let phi_args = match &value.kind {
+                ValueKind::Phi { args } => args
+                    .iter()
+                    .map(|(arg, pred)| {
+                        let arg = canonical_value(fn_ir, *arg);
+                        format!(
+                            "{}@{} kind={:?} origin={:?}",
+                            arg, pred, fn_ir.values[arg].kind, fn_ir.values[arg].origin_var
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                _ => String::new(),
+            };
+            eprintln!(
+                "   [vec-loop-state] {} reject: phi={} var={} bb={} non-destination-loop-state kind={:?} args=[{}]",
+                fn_ir.name, value.id, origin_var, phi_bb, value.kind, phi_args
+            );
+        }
+        return None;
+    }
+    shadow_vars.sort_unstable();
+    shadow_vars.dedup();
+    Some(shadow_vars)
+}
+
+fn loop_carried_phi_is_dest_last_value_shadow(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    phi_vid: ValueId,
+    dest_base: ValueId,
+    iv_phi: ValueId,
+) -> bool {
+    loop_carried_phi_last_value_shadow_base(fn_ir, lp, phi_vid, iv_phi).is_some_and(|shadow_base| {
+        same_base_value(
+            fn_ir,
+            canonical_value(fn_ir, shadow_base),
+            canonical_value(fn_ir, dest_base),
+        )
+    })
+}
+
+fn loop_carried_phi_last_value_shadow_base(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    phi_vid: ValueId,
+    iv_phi: ValueId,
+) -> Option<ValueId> {
+    let phi_vid = preserve_phi_value(fn_ir, phi_vid);
+    let ValueKind::Phi { args } = &fn_ir.values[phi_vid].kind else {
+        return None;
+    };
+    let mut loop_arg: Option<ValueId> = None;
+    for (arg, pred) in args {
+        if !lp.body.contains(pred) {
+            continue;
+        }
+        let arg = resolve_load_alias_value(fn_ir, *arg);
+        match loop_arg {
+            None => loop_arg = Some(arg),
+            Some(prev) if canonical_value(fn_ir, prev) == canonical_value(fn_ir, arg) => {}
+            Some(_) => return None,
+        }
+    }
+    let loop_arg = loop_arg?;
+    match &fn_ir.values[canonical_value(fn_ir, loop_arg)].kind {
+        ValueKind::Index1D { base, idx, .. } => {
+            if is_iv_equivalent(fn_ir, *idx, iv_phi)
+                || is_floor_like_iv_expr(
+                    fn_ir,
+                    *idx,
+                    iv_phi,
+                    &mut FxHashSet::default(),
+                    &mut FxHashSet::default(),
+                )
+            {
+                Some(canonical_value(fn_ir, *base))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn loop_has_non_iv_loop_carried_state_except(
     fn_ir: &FnIR,
     lp: &LoopInfo,
@@ -4409,6 +5623,9 @@ fn loop_has_non_iv_loop_carried_state_except(
         {
             continue;
         }
+        if loop_carried_phi_is_unmodified(fn_ir, value.id) {
+            continue;
+        }
         if loop_carried_phi_is_invariant_passthrough(fn_ir, lp, value.id, iv_phi) {
             continue;
         }
@@ -4419,9 +5636,6 @@ fn loop_has_non_iv_loop_carried_state_except(
             .iter()
             .any(|allowed| origin_var == allowed.as_str())
         {
-            continue;
-        }
-        if !var_observed_outside_loop(fn_ir, lp, origin_var) {
             continue;
         }
         if vectorize_trace_enabled() {
@@ -4440,7 +5654,7 @@ fn loop_has_non_iv_loop_carried_state_except(
                 _ => String::new(),
             };
             eprintln!(
-                "   [vec-loop-state] {} reject: phi={} var={} bb={} observed_outside_loop kind={:?} args=[{}]",
+                "   [vec-loop-state] {} reject: phi={} var={} bb={} non-destination-loop-state kind={:?} args=[{}]",
                 fn_ir.name, value.id, origin_var, phi_bb, value.kind, phi_args
             );
         }
@@ -4449,12 +5663,48 @@ fn loop_has_non_iv_loop_carried_state_except(
     false
 }
 
+fn preserve_phi_value(fn_ir: &FnIR, vid: ValueId) -> ValueId {
+    if matches!(&fn_ir.values[vid].kind, ValueKind::Phi { .. }) {
+        vid
+    } else {
+        canonical_value(fn_ir, vid)
+    }
+}
+
+fn loop_carried_phi_is_unmodified(fn_ir: &FnIR, phi_vid: ValueId) -> bool {
+    let phi_vid = preserve_phi_value(fn_ir, phi_vid);
+    let ValueKind::Phi { args } = &fn_ir.values[phi_vid].kind else {
+        return false;
+    };
+    let mut found: Option<ValueId> = None;
+    for (arg, _) in args {
+        let arg = canonical_value(fn_ir, *arg);
+        if arg == phi_vid {
+            continue;
+        }
+        match found {
+            None => found = Some(arg),
+            Some(prev) if canonical_value(fn_ir, prev) == arg => {}
+            Some(_) => return false,
+        }
+    }
+    found.is_some()
+}
+
 fn loop_carried_phi_is_invariant_passthrough(
     fn_ir: &FnIR,
     lp: &LoopInfo,
     phi_vid: ValueId,
     iv_phi: ValueId,
 ) -> bool {
+    let phi_vid = preserve_phi_value(fn_ir, phi_vid);
+    if let Some(var) = fn_ir.values[phi_vid].origin_var.as_deref()
+        && var.starts_with(".arg_")
+        && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var)
+    {
+        return true;
+    }
+
     fn invariant_passthrough_key(
         fn_ir: &FnIR,
         lp: &LoopInfo,
@@ -4462,31 +5712,30 @@ fn loop_carried_phi_is_invariant_passthrough(
         iv_phi: ValueId,
         seen: &mut FxHashSet<ValueId>,
     ) -> Option<String> {
-        let root = canonical_value(fn_ir, root);
+        let root = preserve_phi_value(fn_ir, root);
         if !seen.insert(root) {
-            return None;
-        }
-        if is_iv_equivalent(fn_ir, root, iv_phi) || expr_has_iv_dependency(fn_ir, root, iv_phi) {
+            if let Some(var) = fn_ir.values[root].origin_var.as_deref()
+                && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var)
+            {
+                return Some(format!("origin:{var}"));
+            }
             return None;
         }
         let out = match &fn_ir.values[root].kind {
-            ValueKind::Const(lit) => Some(format!("const:{lit:?}")),
-            ValueKind::Param { index } => Some(format!("param:{index}")),
-            ValueKind::Load { var } => Some(format!("load:{var}")),
             ValueKind::Phi { args }
                 if fn_ir.values[root]
                     .phi_block
                     .is_some_and(|bb| lp.body.contains(&bb)) =>
             {
                 if let Some(var) = fn_ir.values[root].origin_var.as_deref()
-                    && has_assignment_in_loop(fn_ir, lp, var)
+                    && has_non_passthrough_assignment_in_loop(fn_ir, lp, var)
                 {
                     return None;
                 }
                 let mut found: Option<String> = None;
                 let mut saw_non_self = false;
                 for (arg, _) in args {
-                    let arg = canonical_value(fn_ir, *arg);
+                    let arg = preserve_phi_value(fn_ir, *arg);
                     if arg == root {
                         continue;
                     }
@@ -4500,13 +5749,21 @@ fn loop_carried_phi_is_invariant_passthrough(
                 }
                 if saw_non_self { found } else { None }
             }
+            ValueKind::Const(lit) => Some(format!("const:{lit:?}")),
+            ValueKind::Param { index } => Some(format!("param:{index}")),
+            ValueKind::Load { var } => Some(format!("load:{var}")),
+            _ if is_iv_equivalent(fn_ir, root, iv_phi)
+                || expr_has_iv_dependency(fn_ir, root, iv_phi) =>
+            {
+                None
+            }
             _ => None,
         };
         seen.remove(&root);
         out
     }
 
-    let phi_vid = canonical_value(fn_ir, phi_vid);
+    let phi_vid = preserve_phi_value(fn_ir, phi_vid);
     let ValueKind::Phi { args } = &fn_ir.values[phi_vid].kind else {
         return false;
     };
@@ -4530,112 +5787,6 @@ fn loop_carried_phi_is_invariant_passthrough(
         }
     }
     found.is_some()
-}
-
-fn var_observed_outside_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> bool {
-    let mut reachable_post_loop = FxHashSet::default();
-    let mut stack: Vec<BlockId> = lp.exits.clone();
-    while let Some(bid) = stack.pop() {
-        if lp.body.contains(&bid) || !reachable_post_loop.insert(bid) {
-            continue;
-        }
-        for succ in block_successors(fn_ir, bid).into_iter().flatten() {
-            if !lp.body.contains(&succ) {
-                stack.push(succ);
-            }
-        }
-    }
-
-    for bid in reachable_post_loop {
-        let block = &fn_ir.blocks[bid];
-        for instr in &block.instrs {
-            let observed = match instr {
-                Instr::Assign { src, .. } => {
-                    value_depends_on_origin_var(fn_ir, *src, var, &mut FxHashSet::default())
-                }
-                Instr::Eval { val, .. } => {
-                    value_depends_on_origin_var(fn_ir, *val, var, &mut FxHashSet::default())
-                }
-                Instr::StoreIndex1D { base, idx, val, .. } => {
-                    value_depends_on_origin_var(fn_ir, *base, var, &mut FxHashSet::default())
-                        || value_depends_on_origin_var(fn_ir, *idx, var, &mut FxHashSet::default())
-                        || value_depends_on_origin_var(fn_ir, *val, var, &mut FxHashSet::default())
-                }
-                Instr::StoreIndex2D {
-                    base, r, c, val, ..
-                } => {
-                    value_depends_on_origin_var(fn_ir, *base, var, &mut FxHashSet::default())
-                        || value_depends_on_origin_var(fn_ir, *r, var, &mut FxHashSet::default())
-                        || value_depends_on_origin_var(fn_ir, *c, var, &mut FxHashSet::default())
-                        || value_depends_on_origin_var(fn_ir, *val, var, &mut FxHashSet::default())
-                }
-            };
-            if observed {
-                return true;
-            }
-        }
-        let observed = match &block.term {
-            Terminator::If { cond, .. } => {
-                value_depends_on_origin_var(fn_ir, *cond, var, &mut FxHashSet::default())
-            }
-            Terminator::Return(Some(val)) => {
-                value_depends_on_origin_var(fn_ir, *val, var, &mut FxHashSet::default())
-            }
-            Terminator::Goto(_) | Terminator::Return(None) | Terminator::Unreachable => false,
-        };
-        if observed {
-            return true;
-        }
-    }
-    false
-}
-
-fn value_depends_on_origin_var(
-    fn_ir: &FnIR,
-    root: ValueId,
-    var: &str,
-    visited: &mut FxHashSet<ValueId>,
-) -> bool {
-    if !visited.insert(root) {
-        return false;
-    }
-    let value = &fn_ir.values[root];
-    if value.origin_var.as_deref() == Some(var) {
-        return true;
-    }
-    match &value.kind {
-        ValueKind::Load { var: load_var } => load_var == var,
-        ValueKind::Phi { args } => args
-            .iter()
-            .any(|(src, _)| value_depends_on_origin_var(fn_ir, *src, var, visited)),
-        ValueKind::Len { base }
-        | ValueKind::Indices { base }
-        | ValueKind::Unary { rhs: base, .. } => {
-            value_depends_on_origin_var(fn_ir, *base, var, visited)
-        }
-        ValueKind::Range { start, end }
-        | ValueKind::Binary {
-            lhs: start,
-            rhs: end,
-            ..
-        } => {
-            value_depends_on_origin_var(fn_ir, *start, var, visited)
-                || value_depends_on_origin_var(fn_ir, *end, var, visited)
-        }
-        ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args
-            .iter()
-            .any(|arg| value_depends_on_origin_var(fn_ir, *arg, var, visited)),
-        ValueKind::Index1D { base, idx, .. } => {
-            value_depends_on_origin_var(fn_ir, *base, var, visited)
-                || value_depends_on_origin_var(fn_ir, *idx, var, visited)
-        }
-        ValueKind::Index2D { base, r, c } => {
-            value_depends_on_origin_var(fn_ir, *base, var, visited)
-                || value_depends_on_origin_var(fn_ir, *r, var, visited)
-                || value_depends_on_origin_var(fn_ir, *c, var, visited)
-        }
-        ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::RSymbol { .. } => false,
-    }
 }
 
 fn loop_vectorize_skip_reason(fn_ir: &FnIR, lp: &LoopInfo) -> VectorizeSkipReason {
@@ -5644,6 +6795,145 @@ fn intern_materialized_value(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn recurse_materialized_load_source(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    src: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    if canonical_value(fn_ir, src) == root {
+        return Some(root);
+    }
+    recurse(
+        fn_ir,
+        src,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+    )
+}
+
+fn select_origin_phi_load_source(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    var: &str,
+    use_bb: Option<BlockId>,
+    visiting: &FxHashSet<ValueId>,
+) -> Option<(ValueId, &'static str)> {
+    if let Some(use_bb) = use_bb
+        && let Some(src) = unique_origin_phi_value_in_loop(fn_ir, lp, var)
+            .filter(|src| {
+                let src = canonical_value(fn_ir, *src);
+                !visiting.contains(&src)
+                    && fn_ir.values[src]
+                        .phi_block
+                        .is_some_and(|phi_bb| phi_bb < use_bb)
+            })
+            .or_else(|| {
+                nearest_origin_phi_value_in_loop(fn_ir, lp, var, use_bb)
+                    .filter(|src| !visiting.contains(&canonical_value(fn_ir, *src)))
+            })
+    {
+        return Some((src, "prior-origin-phi"));
+    }
+
+    unique_origin_phi_value_in_loop(fn_ir, lp, var)
+        .filter(|src| !visiting.contains(&canonical_value(fn_ir, *src)))
+        .map(|src| (src, "fallback-origin-phi"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_passthrough_origin_phi_for_load(
+    fn_ir: &mut FnIR,
+    var: &str,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    use_bb: BlockId,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+) -> Option<(ValueId, ValueId)> {
+    let nearest_phi = nearest_origin_phi_value_in_loop(fn_ir, lp, var, use_bb)?;
+    if !visiting.contains(&canonical_value(fn_ir, nearest_phi)) {
+        return None;
+    }
+    let phi_src = materialize_passthrough_origin_phi_state(
+        fn_ir,
+        nearest_phi,
+        var,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        allow_any_base,
+        require_safe_index,
+    )?;
+    Some((nearest_phi, phi_src))
+}
+
+fn reject_unmaterialized_loop_load(
+    fn_ir: &FnIR,
+    root: ValueId,
+    lp: &LoopInfo,
+    var: &str,
+    use_bb: Option<BlockId>,
+    visiting: &FxHashSet<ValueId>,
+) -> Option<ValueId> {
+    if !has_non_passthrough_assignment_in_loop(fn_ir, lp, var) {
+        return Some(root);
+    }
+
+    let detail = if let Some(use_bb) = use_bb {
+        let unique_assign = unique_assign_source_in_loop(fn_ir, lp, var);
+        let merged_assign = merged_assign_source_in_loop(fn_ir, lp, var);
+        let unique_phi = unique_origin_phi_value_in_loop(fn_ir, lp, var);
+        let nearest_phi = nearest_origin_phi_value_in_loop(fn_ir, lp, var, use_bb);
+        let nearest_phi_block = nearest_phi.and_then(|src| fn_ir.values[src].phi_block);
+        let nearest_phi_visiting =
+            nearest_phi.is_some_and(|src| visiting.contains(&canonical_value(fn_ir, src)));
+        let nearest_phi_kind = nearest_phi
+            .map(|src| format!("{:?}", fn_ir.values[src].kind))
+            .unwrap_or_else(|| "None".to_string());
+        format!(
+            "loop-local load without unique materializable source (var={}, use_bb={}, unique_assign={:?}, merged_assign={:?}, unique_phi={:?}, nearest_phi={:?}, nearest_phi_block={:?}, nearest_phi_visiting={}, nearest_phi_kind={})",
+            var,
+            use_bb,
+            unique_assign,
+            merged_assign,
+            unique_phi,
+            nearest_phi,
+            nearest_phi_block,
+            nearest_phi_visiting,
+            nearest_phi_kind
+        )
+    } else {
+        format!(
+            "loop-local load without unique materializable source (var={}, use_bb=none)",
+            var
+        )
+    };
+    trace_materialize_reject(fn_ir, root, &detail);
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
 fn materialize_vector_load(
     fn_ir: &mut FnIR,
     root: ValueId,
@@ -5666,11 +6956,9 @@ fn materialize_vector_load(
                 fn_ir.name, var, src
             );
         }
-        if canonical_value(fn_ir, src) == root {
-            return Some(root);
-        }
-        return recurse(
+        return recurse_materialized_load_source(
             fn_ir,
+            root,
             src,
             iv_phi,
             idx_vec,
@@ -5680,6 +6968,7 @@ fn materialize_vector_load(
             visiting,
             allow_any_base,
             require_safe_index,
+            recurse,
         );
     }
 
@@ -5690,8 +6979,9 @@ fn materialize_vector_load(
                 fn_ir.name, var, src
             );
         }
-        return recurse(
+        return recurse_materialized_load_source(
             fn_ir,
+            root,
             src,
             iv_phi,
             idx_vec,
@@ -5701,31 +6991,20 @@ fn materialize_vector_load(
             visiting,
             allow_any_base,
             require_safe_index,
+            recurse,
         );
     }
 
-    if let Some(use_bb) = use_bb
-        && let Some(src) = unique_origin_phi_value_in_loop(fn_ir, lp, var)
-            .filter(|src| {
-                let src = canonical_value(fn_ir, *src);
-                !visiting.contains(&src)
-                    && fn_ir.values[src]
-                        .phi_block
-                        .is_some_and(|phi_bb| phi_bb < use_bb)
-            })
-            .or_else(|| {
-                nearest_origin_phi_value_in_loop(fn_ir, lp, var, use_bb)
-                    .filter(|src| !visiting.contains(&canonical_value(fn_ir, *src)))
-            })
-    {
+    if let Some((src, label)) = select_origin_phi_load_source(fn_ir, lp, var, use_bb, visiting) {
         if vectorize_trace_enabled() {
             eprintln!(
-                "   [vec-materialize] {} load {} via prior-origin-phi {:?} before bb {}",
-                fn_ir.name, var, src, use_bb
+                "   [vec-materialize] {} load {} via {} {:?}",
+                fn_ir.name, var, label, src
             );
         }
-        return recurse(
+        return recurse_materialized_load_source(
             fn_ir,
+            root,
             src,
             iv_phi,
             idx_vec,
@@ -5735,55 +7014,30 @@ fn materialize_vector_load(
             visiting,
             allow_any_base,
             require_safe_index,
-        );
-    }
-
-    if let Some(src) = unique_origin_phi_value_in_loop(fn_ir, lp, var)
-        .filter(|src| !visiting.contains(&canonical_value(fn_ir, *src)))
-    {
-        if vectorize_trace_enabled() {
-            eprintln!(
-                "   [vec-materialize] {} load {} via fallback-origin-phi {:?}",
-                fn_ir.name, var, src
-            );
-        }
-        return recurse(
-            fn_ir,
-            src,
-            iv_phi,
-            idx_vec,
-            lp,
-            memo,
-            interner,
-            visiting,
-            allow_any_base,
-            require_safe_index,
+            recurse,
         );
     }
 
     if let Some(use_bb) = use_bb {
-        let nearest_phi = nearest_origin_phi_value_in_loop(fn_ir, lp, var, use_bb);
-        if let Some(phi_src) = nearest_phi
-            .filter(|src| visiting.contains(&canonical_value(fn_ir, *src)))
-            .and_then(|src| {
-                materialize_passthrough_origin_phi_state(
-                    fn_ir,
-                    src,
-                    var,
-                    iv_phi,
-                    idx_vec,
-                    lp,
-                    memo,
-                    interner,
-                    allow_any_base,
-                    require_safe_index,
-                )
-            })
-        {
+        if let Some((nearest_phi, phi_src)) = materialize_passthrough_origin_phi_for_load(
+            fn_ir,
+            var,
+            iv_phi,
+            idx_vec,
+            lp,
+            use_bb,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+        ) {
             if vectorize_trace_enabled() {
                 eprintln!(
                     "   [vec-materialize] {} load {} via passthrough-origin-phi {:?}",
-                    fn_ir.name, var, nearest_phi
+                    fn_ir.name,
+                    var,
+                    Some(nearest_phi)
                 );
             }
             return Some(phi_src);
@@ -5797,8 +7051,9 @@ fn materialize_vector_load(
                     fn_ir.name, var, src, use_bb
                 );
             }
-            return recurse(
+            return recurse_materialized_load_source(
                 fn_ir,
+                root,
                 src,
                 iv_phi,
                 idx_vec,
@@ -5808,56 +7063,53 @@ fn materialize_vector_load(
                 visiting,
                 allow_any_base,
                 require_safe_index,
+                recurse,
             );
         }
 
-        if has_assignment_in_loop(fn_ir, lp, var) {
-            let unique_assign = unique_assign_source_in_loop(fn_ir, lp, var);
-            let merged_assign = merged_assign_source_in_loop(fn_ir, lp, var);
-            let unique_phi = unique_origin_phi_value_in_loop(fn_ir, lp, var);
-            let nearest_phi = nearest_origin_phi_value_in_loop(fn_ir, lp, var, use_bb);
-            let nearest_phi_block = nearest_phi.and_then(|src| fn_ir.values[src].phi_block);
-            let nearest_phi_visiting =
-                nearest_phi.is_some_and(|src| visiting.contains(&canonical_value(fn_ir, src)));
-            let nearest_phi_kind = nearest_phi
-                .map(|src| format!("{:?}", fn_ir.values[src].kind))
-                .unwrap_or_else(|| "None".to_string());
-            let detail = format!(
-                "loop-local load without unique materializable source (var={}, use_bb={}, unique_assign={:?}, merged_assign={:?}, unique_phi={:?}, nearest_phi={:?}, nearest_phi_block={:?}, nearest_phi_visiting={}, nearest_phi_kind={})",
-                var,
-                use_bb,
-                unique_assign,
-                merged_assign,
-                unique_phi,
-                nearest_phi,
-                nearest_phi_block,
-                nearest_phi_visiting,
-                nearest_phi_kind
-            );
-            trace_materialize_reject(fn_ir, root, &detail);
-            return None;
-        }
-
-        return Some(root);
+        return reject_unmaterialized_loop_load(fn_ir, root, lp, var, Some(use_bb), visiting);
     }
 
-    if has_assignment_in_loop(fn_ir, lp, var) {
-        let detail = format!(
-            "loop-local load without unique materializable source (var={}, use_bb=none)",
-            var
-        );
-        trace_materialize_reject(fn_ir, root, &detail);
-        return None;
+    reject_unmaterialized_loop_load(fn_ir, root, lp, var, None, visiting)
+}
+
+fn fold_phi_seed_candidate(
+    fn_ir: &FnIR,
+    root: ValueId,
+    args: &[(ValueId, BlockId)],
+    lp: &LoopInfo,
+) -> Option<ValueId> {
+    if phi_loads_same_var(fn_ir, args) {
+        return Some(args[0].0);
     }
 
-    Some(root)
+    let folded_non_self_args: Vec<ValueId> = args
+        .iter()
+        .map(|(a, _)| canonical_value(fn_ir, *a))
+        .filter(|a| *a != root)
+        .collect();
+    if let Some(first) = folded_non_self_args.first().copied()
+        && folded_non_self_args.iter().all(|a| *a == first)
+    {
+        return Some(first);
+    }
+
+    let outside_args: Vec<ValueId> = args
+        .iter()
+        .filter_map(|(a, b)| if lp.body.contains(b) { None } else { Some(*a) })
+        .collect();
+    if outside_args.len() == 1 {
+        Some(outside_args[0])
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn materialize_vector_phi(
+fn materialize_conditional_phi_value(
     fn_ir: &mut FnIR,
     root: ValueId,
-    args: Vec<(ValueId, BlockId)>,
+    args: &[(ValueId, BlockId)],
     span: crate::utils::Span,
     facts: crate::mir::flow::Facts,
     iv_phi: ValueId,
@@ -5870,147 +7122,77 @@ fn materialize_vector_phi(
     require_safe_index: bool,
     recurse: MaterializeRecurseFn,
 ) -> Option<ValueId> {
-    if phi_loads_same_var(fn_ir, &args) {
-        let folded = recurse(
-            fn_ir,
-            args[0].0,
-            iv_phi,
-            idx_vec,
-            lp,
-            memo,
-            interner,
-            visiting,
-            allow_any_base,
-            require_safe_index,
-        )?;
-        memo.insert(root, folded);
-        visiting.remove(&root);
-        return Some(folded);
-    }
-
-    let folded_non_self_args: Vec<ValueId> = args
-        .iter()
-        .map(|(a, _)| canonical_value(fn_ir, *a))
-        .filter(|a| *a != root)
-        .collect();
-    if let Some(first) = folded_non_self_args.first().copied()
-        && folded_non_self_args.iter().all(|a| *a == first)
+    if fn_ir.values[root].phi_block == Some(lp.header)
+        || !args.iter().all(|(_, b)| lp.body.contains(b))
     {
-        let folded = recurse(
-            fn_ir,
-            first,
-            iv_phi,
-            idx_vec,
-            lp,
-            memo,
-            interner,
-            visiting,
-            allow_any_base,
-            require_safe_index,
-        )?;
-        memo.insert(root, folded);
-        visiting.remove(&root);
-        return Some(folded);
+        return None;
     }
-
-    let outside_args: Vec<ValueId> = args
-        .iter()
-        .filter_map(|(a, b)| if lp.body.contains(b) { None } else { Some(*a) })
-        .collect();
-    if outside_args.len() == 1 {
-        let seed = recurse(
-            fn_ir,
-            outside_args[0],
-            iv_phi,
-            idx_vec,
-            lp,
-            memo,
-            interner,
-            visiting,
-            allow_any_base,
-            require_safe_index,
-        )?;
-        memo.insert(root, seed);
-        visiting.remove(&root);
-        return Some(seed);
+    let (cond, then_val, else_val) = find_conditional_phi_shape(fn_ir, root, args)?;
+    if expr_has_non_vector_safe_call_in_vector_context(
+        fn_ir,
+        cond,
+        iv_phi,
+        &FxHashSet::default(),
+        &mut FxHashSet::default(),
+    ) {
+        trace_materialize_reject(fn_ir, root, "conditional phi has non-vector-safe condition");
+        return None;
     }
+    let cond_vec = recurse(
+        fn_ir, cond, iv_phi, idx_vec, lp, memo, interner, visiting, true, true,
+    )?;
+    let then_vec = recurse(
+        fn_ir,
+        then_val,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+    )?;
+    let else_vec = recurse(
+        fn_ir,
+        else_val,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+    )?;
+    Some(intern_materialized_value(
+        fn_ir,
+        interner,
+        ValueKind::Call {
+            callee: "rr_ifelse_strict".to_string(),
+            args: vec![cond_vec, then_vec, else_vec],
+            names: vec![None, None, None],
+        },
+        span,
+        facts,
+    ))
+}
 
-    if let Some(var) = fn_ir.values[root].origin_var.clone()
-        && let Some(phi_vec) = materialize_passthrough_origin_phi_state(
-            fn_ir,
-            root,
-            &var,
-            iv_phi,
-            idx_vec,
-            lp,
-            memo,
-            interner,
-            allow_any_base,
-            require_safe_index,
-        )
-    {
-        memo.insert(root, phi_vec);
-        visiting.remove(&root);
-        return Some(phi_vec);
-    }
-
-    if fn_ir.values[root].phi_block != Some(lp.header)
-        && args.iter().all(|(_, b)| lp.body.contains(b))
-        && let Some((cond, then_val, else_val)) = find_conditional_phi_shape(fn_ir, root, &args)
-    {
-        if expr_has_non_vector_safe_call_in_vector_context(
-            fn_ir,
-            cond,
-            iv_phi,
-            &FxHashSet::default(),
-            &mut FxHashSet::default(),
-        ) {
-            trace_materialize_reject(fn_ir, root, "conditional phi has non-vector-safe condition");
-            return None;
-        }
-        let cond_vec = recurse(
-            fn_ir, cond, iv_phi, idx_vec, lp, memo, interner, visiting, true, true,
-        )?;
-        let then_vec = recurse(
-            fn_ir,
-            then_val,
-            iv_phi,
-            idx_vec,
-            lp,
-            memo,
-            interner,
-            visiting,
-            allow_any_base,
-            require_safe_index,
-        )?;
-        let else_vec = recurse(
-            fn_ir,
-            else_val,
-            iv_phi,
-            idx_vec,
-            lp,
-            memo,
-            interner,
-            visiting,
-            allow_any_base,
-            require_safe_index,
-        )?;
-        let ifelse_val = intern_materialized_value(
-            fn_ir,
-            interner,
-            ValueKind::Call {
-                callee: "rr_ifelse_strict".to_string(),
-                args: vec![cond_vec, then_vec, else_vec],
-                names: vec![None, None, None],
-            },
-            span,
-            facts,
-        );
-        memo.insert(root, ifelse_val);
-        visiting.remove(&root);
-        return Some(ifelse_val);
-    }
-
+#[allow(clippy::too_many_arguments)]
+fn materialize_uniform_phi_value(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    args: Vec<(ValueId, BlockId)>,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
     let mut picked: Option<ValueId> = None;
     for (arg, _) in args {
         let materialized = recurse(
@@ -6041,11 +7223,128 @@ fn materialize_vector_phi(
     picked
 }
 
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_phi(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    args: Vec<(ValueId, BlockId)>,
+    span: crate::utils::Span,
+    facts: crate::mir::flow::Facts,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    if let Some(seed) = fold_phi_seed_candidate(fn_ir, root, &args, lp) {
+        let folded = recurse(
+            fn_ir,
+            seed,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+        )?;
+        memo.insert(root, folded);
+        visiting.remove(&root);
+        return Some(folded);
+    }
+
+    if let Some(var) = fn_ir.values[root].origin_var.clone()
+        && let Some(phi_vec) = materialize_passthrough_origin_phi_state(
+            fn_ir,
+            root,
+            &var,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            allow_any_base,
+            require_safe_index,
+        )
+    {
+        memo.insert(root, phi_vec);
+        visiting.remove(&root);
+        return Some(phi_vec);
+    }
+
+    if let Some(ifelse_val) = materialize_conditional_phi_value(
+        fn_ir,
+        root,
+        &args,
+        span,
+        facts,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+        recurse,
+    ) {
+        memo.insert(root, ifelse_val);
+        visiting.remove(&root);
+        return Some(ifelse_val);
+    }
+
+    materialize_uniform_phi_value(
+        fn_ir,
+        root,
+        args,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+        recurse,
+    )
+}
+
 fn is_int_index_vector_value(fn_ir: &FnIR, vid: ValueId) -> bool {
-    let v = &fn_ir.values[canonical_value(fn_ir, vid)];
-    (v.value_ty.shape == ShapeTy::Vector && v.value_ty.prim == PrimTy::Int)
-        || v.facts
-            .has(crate::mir::flow::Facts::IS_VECTOR | crate::mir::flow::Facts::INT_SCALAR)
+    fn rec(fn_ir: &FnIR, vid: ValueId, seen: &mut FxHashSet<ValueId>) -> bool {
+        let vid = canonical_value(fn_ir, vid);
+        if !seen.insert(vid) {
+            return false;
+        }
+        let v = &fn_ir.values[vid];
+        if (v.value_ty.shape == ShapeTy::Vector && v.value_ty.prim == PrimTy::Int)
+            || v.facts
+                .has(crate::mir::flow::Facts::IS_VECTOR | crate::mir::flow::Facts::INT_SCALAR)
+        {
+            return true;
+        }
+        match &v.kind {
+            ValueKind::Call { callee, args, .. } => match callee.as_str() {
+                "rr_index_vec_floor" => true,
+                "rr_index1_read_vec" | "rr_index1_read_vec_floor" | "rr_gather" => args
+                    .first()
+                    .copied()
+                    .is_some_and(|base| rec(fn_ir, base, seen)),
+                _ => false,
+            },
+            ValueKind::Index1D { base, .. } => rec(fn_ir, *base, seen),
+            ValueKind::Phi { args } if !args.is_empty() => {
+                args.iter().all(|(arg, _)| rec(fn_ir, *arg, seen))
+            }
+            _ => false,
+        }
+    }
+
+    rec(fn_ir, vid, &mut FxHashSet::default())
 }
 
 fn is_scalar_broadcast_value(fn_ir: &FnIR, vid: ValueId) -> bool {
@@ -6058,6 +7357,63 @@ fn has_assignment_in_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> bool {
         fn_ir.blocks[*bid].instrs.iter().any(|ins| match ins {
             Instr::Assign { dst, .. } => dst == var,
             _ => false,
+        })
+    })
+}
+
+fn expr_has_unstable_loop_local_load(fn_ir: &FnIR, lp: &LoopInfo, root: ValueId) -> bool {
+    fn rec(fn_ir: &FnIR, lp: &LoopInfo, root: ValueId, seen: &mut FxHashSet<ValueId>) -> bool {
+        let root = canonical_value(fn_ir, root);
+        if !seen.insert(root) {
+            return false;
+        }
+        match &fn_ir.values[root].kind {
+            ValueKind::Load { var } => has_non_passthrough_assignment_in_loop(fn_ir, lp, var),
+            ValueKind::Binary { lhs, rhs, .. } => {
+                rec(fn_ir, lp, *lhs, seen) || rec(fn_ir, lp, *rhs, seen)
+            }
+            ValueKind::Unary { rhs, .. } => rec(fn_ir, lp, *rhs, seen),
+            ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => {
+                args.iter().any(|arg| rec(fn_ir, lp, *arg, seen))
+            }
+            ValueKind::Phi { args } => args.iter().any(|(arg, _)| rec(fn_ir, lp, *arg, seen)),
+            ValueKind::Len { base } | ValueKind::Indices { base } => rec(fn_ir, lp, *base, seen),
+            ValueKind::Range { start, end } => {
+                rec(fn_ir, lp, *start, seen) || rec(fn_ir, lp, *end, seen)
+            }
+            ValueKind::Index1D { base, idx, .. } => {
+                rec(fn_ir, lp, *base, seen) || rec(fn_ir, lp, *idx, seen)
+            }
+            ValueKind::Index2D { base, r, c } => {
+                rec(fn_ir, lp, *base, seen) || rec(fn_ir, lp, *r, seen) || rec(fn_ir, lp, *c, seen)
+            }
+            ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::RSymbol { .. } => false,
+        }
+    }
+
+    rec(fn_ir, lp, root, &mut FxHashSet::default())
+}
+
+fn has_non_passthrough_assignment_in_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> bool {
+    lp.body.iter().any(|bid| {
+        fn_ir.blocks[*bid].instrs.iter().any(|ins| {
+            let Instr::Assign { dst, src, .. } = ins else {
+                return false;
+            };
+            if dst != var {
+                return false;
+            }
+            let src = preserve_phi_value(fn_ir, *src);
+            !matches!(
+                &fn_ir.values[src].kind,
+                ValueKind::Load { var: load_var } if load_var == var
+            ) && !matches!(&fn_ir.values[src].kind, ValueKind::Param { .. })
+                && !matches!(
+                    &fn_ir.values[src].kind,
+                    ValueKind::Phi { args }
+                        if !args.is_empty()
+                            && fn_ir.values[src].origin_var.as_deref() == Some(var)
+                )
         })
     })
 }
@@ -6560,6 +7916,18 @@ fn materialize_passthrough_origin_phi_state(
     allow_any_base: bool,
     require_safe_index: bool,
 ) -> Option<ValueId> {
+    if var.starts_with(".arg_") && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var) {
+        let load = intern_materialized_value(
+            fn_ir,
+            interner,
+            ValueKind::Load {
+                var: var.to_string(),
+            },
+            fn_ir.values[phi].span,
+            fn_ir.values[phi].facts,
+        );
+        return Some(load);
+    }
     let Some(step) = passthrough_origin_phi_step(fn_ir, phi) else {
         trace_materialize_reject(fn_ir, phi, "passthrough-origin-phi: root is not phi");
         return None;
@@ -7038,7 +8406,11 @@ fn materialize_vector_index1d(
             allow_any_base,
             require_safe_index,
         )?;
-        if is_safe && is_na_safe {
+        if is_safe
+            && is_na_safe
+            && let Some(iv) = lp.iv.as_ref()
+            && loop_covers_whole_destination(lp, fn_ir, base, iv.init_val)
+        {
             return Some(base_ref);
         }
 
@@ -7138,7 +8510,7 @@ fn materialize_vector_index1d(
         fn_ir,
         interner,
         ValueKind::Call {
-            callee: "rr_index1_read_vec".to_string(),
+            callee: "rr_gather".to_string(),
             args: vec![base_ref, materialized_idx_vec],
             names: vec![None, None],
         },
@@ -7287,6 +8659,375 @@ fn materialize_vector_indices(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn materialize_vector_leaf_or_access_node(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    let span = fn_ir.values[root].span;
+    let facts = fn_ir.values[root].facts;
+    match fn_ir.values[root].kind.clone() {
+        ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::RSymbol { .. } => Some(root),
+        ValueKind::Load { var } => materialize_vector_load(
+            fn_ir,
+            root,
+            &var,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        ValueKind::Index1D {
+            base,
+            idx,
+            is_safe,
+            is_na_safe,
+        } => materialize_vector_index1d(
+            fn_ir,
+            root,
+            base,
+            idx,
+            is_safe,
+            is_na_safe,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        ValueKind::Phi { args } => materialize_vector_phi(
+            fn_ir,
+            root,
+            args,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        ValueKind::Index2D { .. } => {
+            trace_materialize_reject(fn_ir, root, "Index2D is not vector-materializable");
+            None
+        }
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_invocation_node(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    let span = fn_ir.values[root].span;
+    let facts = fn_ir.values[root].facts;
+    match fn_ir.values[root].kind.clone() {
+        ValueKind::Call {
+            callee,
+            args,
+            names,
+        } => materialize_vector_call(
+            fn_ir,
+            root,
+            callee,
+            args,
+            names,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        ValueKind::Intrinsic { op, args } => materialize_vector_intrinsic(
+            fn_ir,
+            root,
+            op,
+            args,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_arithmetic_node(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    let span = fn_ir.values[root].span;
+    let facts = fn_ir.values[root].facts;
+    match fn_ir.values[root].kind.clone() {
+        ValueKind::Binary { op, lhs, rhs } => materialize_vector_binary(
+            fn_ir,
+            root,
+            op,
+            lhs,
+            rhs,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        ValueKind::Unary { op, rhs } => materialize_vector_unary(
+            fn_ir,
+            root,
+            op,
+            rhs,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_shape_node(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    let span = fn_ir.values[root].span;
+    let facts = fn_ir.values[root].facts;
+    match fn_ir.values[root].kind.clone() {
+        ValueKind::Len { base } => materialize_vector_len(
+            fn_ir,
+            root,
+            base,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        ValueKind::Range { start, end } => materialize_vector_range(
+            fn_ir,
+            root,
+            start,
+            end,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        ValueKind::Indices { base } => materialize_vector_indices(
+            fn_ir,
+            root,
+            base,
+            span,
+            facts,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        ),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_structural_node(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    materialize_vector_arithmetic_node(
+        fn_ir,
+        root,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+        recurse,
+    )
+    .or_else(|| {
+        materialize_vector_shape_node(
+            fn_ir,
+            root,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_vector_expr_node(
+    fn_ir: &mut FnIR,
+    root: ValueId,
+    iv_phi: ValueId,
+    idx_vec: ValueId,
+    lp: &LoopInfo,
+    memo: &mut FxHashMap<ValueId, ValueId>,
+    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    visiting: &mut FxHashSet<ValueId>,
+    allow_any_base: bool,
+    require_safe_index: bool,
+    recurse: MaterializeRecurseFn,
+) -> Option<ValueId> {
+    materialize_vector_leaf_or_access_node(
+        fn_ir,
+        root,
+        iv_phi,
+        idx_vec,
+        lp,
+        memo,
+        interner,
+        visiting,
+        allow_any_base,
+        require_safe_index,
+        recurse,
+    )
+    .or_else(|| {
+        materialize_vector_invocation_node(
+            fn_ir,
+            root,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        )
+    })
+    .or_else(|| {
+        materialize_vector_structural_node(
+            fn_ir,
+            root,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            recurse,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn materialize_vector_expr(
     fn_ir: &mut FnIR,
     root: ValueId,
@@ -7365,192 +9106,19 @@ fn materialize_vector_expr_impl(
             return Some(root);
         }
 
-        let span = fn_ir.values[root].span;
-        let facts = fn_ir.values[root].facts;
-        let out = match fn_ir.values[root].kind.clone() {
-            ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::RSymbol { .. } => root,
-            ValueKind::Load { var } => materialize_vector_load(
-                fn_ir,
-                root,
-                &var,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Binary { op, lhs, rhs } => materialize_vector_binary(
-                fn_ir,
-                root,
-                op,
-                lhs,
-                rhs,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Unary { op, rhs } => materialize_vector_unary(
-                fn_ir,
-                root,
-                op,
-                rhs,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Call {
-                callee,
-                args,
-                names,
-            } => materialize_vector_call(
-                fn_ir,
-                root,
-                callee,
-                args,
-                names,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Intrinsic { op, args } => materialize_vector_intrinsic(
-                fn_ir,
-                root,
-                op,
-                args,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Index1D {
-                base,
-                idx,
-                is_safe,
-                is_na_safe,
-            } => materialize_vector_index1d(
-                fn_ir,
-                root,
-                base,
-                idx,
-                is_safe,
-                is_na_safe,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Len { base } => materialize_vector_len(
-                fn_ir,
-                root,
-                base,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Range { start, end } => materialize_vector_range(
-                fn_ir,
-                root,
-                start,
-                end,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Indices { base } => materialize_vector_indices(
-                fn_ir,
-                root,
-                base,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Phi { args } => materialize_vector_phi(
-                fn_ir,
-                root,
-                args,
-                span,
-                facts,
-                iv_phi,
-                idx_vec,
-                lp,
-                memo,
-                interner,
-                visiting,
-                allow_any_base,
-                require_safe_index,
-                rec,
-            )?,
-            ValueKind::Index2D { .. } => {
-                trace_materialize_reject(fn_ir, root, "Index2D is not vector-materializable");
-                return None;
-            }
-        };
+        let out = materialize_vector_expr_node(
+            fn_ir,
+            root,
+            iv_phi,
+            idx_vec,
+            lp,
+            memo,
+            interner,
+            visiting,
+            allow_any_base,
+            require_safe_index,
+            rec,
+        )?;
 
         memo.insert(root, out);
         visiting.remove(&root);
@@ -7580,6 +9148,18 @@ fn materialize_passthrough_origin_phi_state_scalar(
     memo: &mut FxHashMap<ValueId, ValueId>,
     interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
 ) -> Option<ValueId> {
+    if var.starts_with(".arg_") && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var) {
+        let load = intern_materialized_value(
+            fn_ir,
+            interner,
+            ValueKind::Load {
+                var: var.to_string(),
+            },
+            fn_ir.values[phi].span,
+            fn_ir.values[phi].facts,
+        );
+        return Some(load);
+    }
     let trace_enabled = vectorize_trace_enabled();
     let step = passthrough_origin_phi_step(fn_ir, phi)?;
     let depends_on_phi = |vid: ValueId, fn_ir: &FnIR| {
@@ -7764,7 +9344,7 @@ fn materialize_loop_invariant_scalar_expr(
                     })
                 {
                     rec(fn_ir, src, iv_phi, lp, memo, interner, visiting)?
-                } else if has_assignment_in_loop(fn_ir, lp, &var) {
+                } else if has_non_passthrough_assignment_in_loop(fn_ir, lp, &var) {
                     return None;
                 } else {
                     root
@@ -7939,6 +9519,15 @@ fn is_loop_compatible_base(lp: &LoopInfo, fn_ir: &FnIR, base: ValueId) -> bool {
         Some(k) => canonical_value(fn_ir, k) == canonical_value(fn_ir, loop_key),
         None => false,
     }
+}
+
+fn loop_covers_whole_destination(
+    lp: &LoopInfo,
+    fn_ir: &FnIR,
+    base: ValueId,
+    start: ValueId,
+) -> bool {
+    is_const_one(fn_ir, start) && loop_matches_full_base(lp, fn_ir, base)
 }
 
 fn loop_length_key(lp: &LoopInfo, fn_ir: &FnIR) -> Option<ValueId> {
@@ -8475,6 +10064,59 @@ fn resolve_load_alias_value(fn_ir: &FnIR, vid: ValueId) -> ValueId {
     cur
 }
 
+fn resolve_match_alias_value(fn_ir: &FnIR, vid: ValueId) -> ValueId {
+    let mut cur = canonical_value(fn_ir, vid);
+    let mut seen = FxHashSet::default();
+    while seen.insert(cur) {
+        match &fn_ir.values[cur].kind {
+            ValueKind::Load { var } => {
+                let Some(src) = unique_assign_source(fn_ir, var) else {
+                    break;
+                };
+                let next = canonical_value(fn_ir, src);
+                if next == cur {
+                    break;
+                }
+                cur = next;
+            }
+            ValueKind::Phi { args } => {
+                let folded_non_self_args: Vec<ValueId> = args
+                    .iter()
+                    .map(|(arg, _)| canonical_value(fn_ir, *arg))
+                    .filter(|arg| *arg != cur)
+                    .collect();
+                if let Some(first) = folded_non_self_args.first().copied()
+                    && folded_non_self_args.iter().all(|arg| *arg == first)
+                {
+                    cur = first;
+                    continue;
+                }
+                if let Some(first) = folded_non_self_args.first().copied()
+                    && folded_non_self_args
+                        .iter()
+                        .all(|arg| fn_ir.values[*arg].kind == fn_ir.values[first].kind)
+                {
+                    cur = first;
+                    continue;
+                }
+                let Some(var) = fn_ir.values[cur].origin_var.as_deref() else {
+                    break;
+                };
+                let Some(src) = unique_assign_source(fn_ir, var) else {
+                    break;
+                };
+                let next = canonical_value(fn_ir, src);
+                if next == cur {
+                    break;
+                }
+                cur = next;
+            }
+            _ => break,
+        }
+    }
+    cur
+}
+
 fn unique_assign_source(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
     let mut src: Option<ValueId> = None;
     for bb in &fn_ir.blocks {
@@ -8508,6 +10150,7 @@ mod tests {
                 src: 2,
                 op: crate::syntax::ast::BinOp::Add,
                 other: 3,
+                shadow_vars: Vec::new(),
             },
             VectorPlan::CondMap {
                 dest: 1,
@@ -8515,6 +10158,10 @@ mod tests {
                 then_val: 5,
                 else_val: 6,
                 iv_phi: 7,
+                start: 8,
+                end: 9,
+                whole_dest: true,
+                shadow_vars: Vec::new(),
             },
         ];
         rank_vector_plans(&mut plans);
@@ -8531,6 +10178,7 @@ mod tests {
                 start: 4,
                 end: 5,
                 whole_dest: true,
+                shadow_vars: Vec::new(),
             },
             VectorPlan::MultiExprMap {
                 entries: vec![
@@ -8538,11 +10186,13 @@ mod tests {
                         dest: 1,
                         expr: 2,
                         whole_dest: true,
+                        shadow_vars: Vec::new(),
                     },
                     super::ExprMapEntry {
                         dest: 6,
                         expr: 7,
                         whole_dest: true,
+                        shadow_vars: Vec::new(),
                     },
                 ],
                 iv_phi: 3,

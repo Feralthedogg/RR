@@ -1,5 +1,6 @@
 pub mod incremental;
 pub mod pipeline;
+mod r_peephole;
 
 pub use incremental::{
     IncrementalCompileOutput, IncrementalOptions, IncrementalSession, IncrementalStats,

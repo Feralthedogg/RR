@@ -114,13 +114,19 @@ impl<'a> LoopAnalyzer<'a> {
             let init_is_1 = self.const_integral_value(iv_val.init_val) == Some(1);
 
             if init_is_1 && iv_val.step == 1 && iv_val.step_op == BinOp::Add {
-                // Check if condition is Le (<=)
+                // Treat 1..N and 1..<N as canonical ascending vector ranges.
                 if let Terminator::If { cond, .. } = &self.fn_ir.blocks[header].term
                     && let Some((op, lhs, rhs)) = self.resolve_condition_compare(*cond)
-                    && ((op == BinOp::Le && self.is_phi_equivalent(lhs, iv_val.phi_val))
-                        || (op == BinOp::Ge && self.is_phi_equivalent(rhs, iv_val.phi_val)))
+                    && (((op == BinOp::Le || op == BinOp::Lt)
+                        && self.is_phi_equivalent(lhs, iv_val.phi_val))
+                        || ((op == BinOp::Ge || op == BinOp::Gt)
+                            && self.is_phi_equivalent(rhs, iv_val.phi_val)))
                 {
-                    let cmp_limit = if op == BinOp::Le { rhs } else { lhs };
+                    let cmp_limit = if op == BinOp::Le || op == BinOp::Lt {
+                        rhs
+                    } else {
+                        lhs
+                    };
                     is_seq_len = Some(cmp_limit);
 
                     // Check if limit is length(X), including load aliases assigned from length(X).
@@ -564,6 +570,12 @@ impl<'a> LoopAnalyzer<'a> {
                     rec(analyzer, *base, phi_id, seen_vals)
                         || rec(analyzer, *r, phi_id, seen_vals)
                         || rec(analyzer, *c, phi_id, seen_vals)
+                }
+                ValueKind::Index3D { base, i, j, k } => {
+                    rec(analyzer, *base, phi_id, seen_vals)
+                        || rec(analyzer, *i, phi_id, seen_vals)
+                        || rec(analyzer, *j, phi_id, seen_vals)
+                        || rec(analyzer, *k, phi_id, seen_vals)
                 }
                 ValueKind::Const(_)
                 | ValueKind::Param { .. }

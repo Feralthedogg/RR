@@ -10,13 +10,13 @@ fn cube_index_helper_calls_rewrite_to_vector_builtin() {
 
     let rr_src = r#"
 fn idx_cube(f, x, y, size) {
-  ff = round(f)
+  let ff = round(f)
 
-  xx = round(x)
+  let xx = round(x)
 
-  yy = round(y)
+  let yy = round(y)
 
-  ss = round(size)
+  let ss = round(size)
 
   if (ff < 1) { ff = 1
  }

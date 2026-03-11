@@ -1,31 +1,44 @@
 # Testing and Quality Gates
 
-RR uses unit tests, integration tests, golden tests, performance gates, and fuzzing.
+This page is the verification manual for RR.
+
+RR uses:
+
+- unit tests
+- integration tests
+- emitted-artifact regressions
+- runtime parity tests
+- benchmark smoke tests
+- fuzzing
+- audit scripts
+
+The goal is not just “did it compile?” but:
+
+- did meaning stay the same?
+- did emitted R keep the expected shape?
+- did runtime helper policy stay intact?
+- did optimization stay within budget?
 
 ## Prerequisites
 
 Most Rust-only tests need only `cargo`.
 Tests that execute generated R require `Rscript` in `PATH`.
 
-## Common Commands
+## Primary Commands
 
-Run all tests:
+Run the standard local verification stack:
 
 ```bash
+cargo fmt --all --check
 cargo test -q
+cargo clippy --all-targets -- -D warnings
 ```
 
-Run one integration suite:
+Run one focused suite:
 
 ```bash
 cargo test -q --test vectorization_extended
 cargo test -q --test case_regressions
-```
-
-Run lints:
-
-```bash
-cargo clippy --all-targets -- -D warnings
 ```
 
 For the post-change audit pass used before merging compiler work, see
@@ -55,6 +68,19 @@ the contributing audit.
 
 GitHub Actions runs the diff-scoped `--scan-only` variant on each PR/push so
 new work cannot introduce fresh `CONTRIBUTING.md` rule violations unnoticed.
+
+## Test Taxonomy
+
+The test tree is intentionally layered like the manuals:
+
+- frontend and language acceptance
+- semantic/runtime rejection
+- optimizer and emitted-artifact regressions
+- runtime execution parity
+- example and benchmark coverage
+- fuzz and soak coverage
+
+Use the lightest layer that catches the bug you are fixing.
 
 ## Test Families
 
@@ -90,6 +116,7 @@ These cover parsing, error recovery, and syntax diagnostics.
 ### Semantic and Runtime Static Validation
 
 - `semantic_errors.rs`
+- `random_error_diagnostics.rs`
 - `runtime_static_errors.rs`
 - `multi_errors.rs`
 - `commercial_negative_corpus.rs`
@@ -108,6 +135,12 @@ These verify that accepted language forms lower correctly into MIR/codegen.
 
 - `vectorization_extended.rs`
 - `vectorization_phi_ifelse.rs`
+- `vectorization_lt_bound.rs`
+- `vectorization_callmap_slice.rs`
+- `vectorization_conditional_slice.rs`
+- `vectorization_invariant_fill.rs`
+- `vectorization_multi_shadow.rs`
+- `vectorization_shadow_last.rs`
 - `benchmark_vectorization.rs`
 - `bce_shifted_index.rs`
 - `sccp_overflow_regression.rs`
@@ -116,6 +149,21 @@ These verify that accepted language forms lower correctly into MIR/codegen.
 - `rr_logic_equivalence_matrix.rs`
 
 These guard optimizer semantics, emitted R shape, and no-panic behavior under aggressive optimization.
+Shape-sensitive optimizer suites usually compile with `--no-incremental` so the
+asserted emitted R reflects the current optimizer run instead of a reused cache
+artifact from the default incremental `auto` mode.
+
+### Incremental Compile and Cache Correctness
+
+- `incremental_phase1.rs`
+- `incremental_phase2.rs`
+- `incremental_phase3.rs`
+- `incremental_auto.rs`
+- `incremental_strict_verify.rs`
+- `cli_incremental_default.rs`
+
+These validate artifact cache invalidation, function emit reuse, in-memory watch
+session reuse, default `auto` phase selection, and strict cache verification.
 
 ### CLI and Execution Behavior
 
@@ -164,7 +212,8 @@ The perf smoke compiles the normal runtime-injected artifact; it does not use
 `--no-runtime`. Runtime timing is measured with `RR_RUNTIME_MODE=release` and
 `RR_ENABLE_MARKS=0` so the gate tracks the fast runtime path instead of debug
 marking overhead. Use `--no-runtime` only when the test is inspecting
-helper-only emitted R without source/native bootstrap.
+helper-only emitted R without source/native bootstrap; helper-only output now
+injects only the runtime helper subset actually referenced by the emitted code.
 
 Benchmark runner:
 
@@ -194,6 +243,131 @@ These perf budgets are calibrated against the current hosted CI runner and are
 intended as smoke thresholds rather than machine-independent benchmarks. If the
 GitHub Actions image or toolchain changes materially, recalibrate the budgets
 from a fresh CI sample before tightening them again.
+
+## Local Runtime Comparison Notes
+
+These notes preserve a small set of local runtime comparisons that were
+originally gathered for the paper draft. Treat them as workload-specific sanity
+checks, not as a general benchmark campaign.
+
+Measurement setup:
+
+- host: Apple M4 with 24 GiB RAM
+- GNU R path: `Rscript 4.5.2`
+- alternative runtime: Renjin `3.5-beta76` on OpenJDK `25.0.2`
+- repeated RR delta study: 5 runs per workload, median runtime with IQR in `()`
+- GNU R JIT / Renjin slices: mean runtime with standard deviation in `+-`
+- current cross-language slice refresh: GNU R, a local NumPy venv under
+  `target/tmp/bench-python`, Homebrew Julia `1.12.5`, and a local Renjin
+  `3.5-beta76` install under `target/tmp/renjin-dist`
+
+### Cross-Language Signal Pipeline Slice
+
+For a current end-to-end spot check, `scripts/bench_signal_pipeline.py` now:
+
+- compiles `example/benchmarks/signal_pipeline_bench.rr`
+  to RR O2 emitted R
+- benchmarks the same deterministic 250k-sample preprocessing kernel across
+  scalar base R on GNU R, vectorized base R on GNU R, RR O2 on GNU R, native C,
+  NumPy, Julia, vectorized base R on Renjin, and RR O2 on Renjin
+- validates that every engine agrees on the final tail value and mean within
+  tight floating-point tolerance before timing anything
+
+Reproduction command:
+
+```bash
+target/tmp/bench-python/bin/python3 scripts/bench_signal_pipeline.py \
+  --runs 5 \
+  --warmup 1
+```
+
+Artifacts:
+
+- raw data: [`signal-pipeline-runtime-2026-03-11.csv`](./assets/signal-pipeline-runtime-2026-03-11.csv)
+- chart:
+
+![Signal pipeline runtime comparison](./assets/signal-pipeline-runtime-2026-03-11.svg)
+
+This slice used `target/release/RR` with `-O2 --no-incremental`, one warmup
+run, then five timed wall-clock runs per command. All engines were pinned to a
+single thread with `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`,
+`VECLIB_MAXIMUM_THREADS=1`, and `JULIA_NUM_THREADS=1`.
+
+| Slice | Mean ms | Std ms | Notes |
+| --- | ---: | ---: | --- |
+| direct base R (scalar) on GNU R | `1065.1` | `11.0` | loop-based scalar base-R baseline |
+| direct base R (vectorized) on GNU R | `176.9` | `2.2` | idiomatic base-R vector baseline |
+| RR O2 emitted R on GNU R | `189.9` | `2.9` | same workload compiled from RR |
+| C O3 native | `10.0` | `0.2` | `clang -O3`, single-threaded |
+| NumPy | `77.4` | `1.0` | vectorized array math on CPython + NumPy `2.4.3` |
+| Julia | `262.0` | `41.7` | Julia `1.12.5`, base loops with `@inbounds` |
+| direct base R (vectorized) on Renjin | `907.2` | `12.7` | same idiomatic base-R script on Renjin `3.5-beta76` |
+| RR O2 on Renjin | `980.6` | `5.9` | RR-emitted R on Renjin `3.5-beta76` |
+
+Notes:
+
+- The benchmark is deliberately easier to explain than `tesseract`: it models a
+  common preprocessing kernel with clamp/threshold/nonlinear feature shaping
+  over `250,000` samples and `16` passes.
+- The GNU R baseline is now split in two on purpose:
+  a scalar loop version and an idiomatic vectorized version.
+  That makes the comparison easier to read.
+  RR O2 is faster than the scalar direct-R baseline on this workload
+  (`1065.1 ms -> 189.9 ms`, about `5.61x`) and now lands close to the
+  hand-vectorized base-R script (`176.9 ms`, about `1.07x` gap).
+- The fast direct-R row is not a naive translation.
+  It is already the shape GNU R likes best: `pmax(...)`, `ifelse(...)`,
+  whole-vector assignments, and `mean(...)` on full vectors.
+- Renjin handled the vectorized base-R script and the RR-emitted R script on
+  the same workload. On this machine RR O2 on Renjin (`980.6 ms`) now sits
+  close to vectorized base R on Renjin (`907.2 ms`), though GNU R remains the
+  faster host for this emitted program.
+- C stayed the native ceiling on this machine, and NumPy was the fastest of the
+  managed-language rows.
+
+RR optimization-level deltas on representative workloads:
+
+| Workload | O0 ms | O1 ms | O2 ms | O1/O0 | O2/O0 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `bootstrap` | `167 (2)` | `157 (4)` | `159 (1)` | `1.06x` | `1.05x` |
+| `heat` | `194 (3)` | `138 (3)` | `138 (7)` | `1.41x` | `1.41x` |
+| `orbital` | `172 (5)` | `165 (10)` | `169 (1)` | `1.04x` | `1.02x` |
+| `reaction` | `316 (17)` | `289 (12)` | `287 (9)` | `1.09x` | `1.10x` |
+| `vector` | `275 (8)` | `145 (4)` | `143 (6)` | `1.90x` | `1.92x` |
+| `tesseract` | `15147 (388)` | `2745 (136)` | `2753 (174)` | `5.52x` | `5.50x` |
+| `total` | `16366 (379)` | `3693 (200)` | `3700 (189)` | `4.43x` | `4.42x` |
+
+Notes:
+
+- `-O1` and `-O2` currently route through the same optimized pipeline, so the
+  small differences above are run-to-run variation rather than distinct
+  rewrite families.
+- The clearest wins come from workloads whose scalar loops are rewritten into
+  vector-style emitted R shapes.
+
+Small GNU R bytecode/JIT comparison on emitted RR programs:
+
+| Workload | O0 `Rscript` | O0 + JIT | O2 `Rscript` | O2 + JIT |
+| --- | ---: | ---: | ---: | ---: |
+| `vector` | `282.4 +- 3.0` | `239.2 +- 4.2` | `138.3 +- 1.4` | `116.6 +- 1.6` |
+| `tesseract` | `14733.3 +- 171.3` | `15252.3 +- 172.6` | `2786.6 +- 21.3` | `2649.9 +- 53.4` |
+
+Small Renjin comparison on the same emitted RR programs:
+
+| Workload | O0 Renjin | O2 Renjin | O2/O0 |
+| --- | ---: | ---: | ---: |
+| `vector` | `1256.3 +- 158.6` | `528.5 +- 6.1` | `2.38x` |
+| `tesseract` | `38830.6 +- 472.5` | `8259.9 +- 21.3` | `4.70x` |
+
+Takeaways:
+
+- GNU R's bytecode/JIT path helps on some emitted workloads, but the larger
+  effect still comes from RR changing the emitted program shape before GNU R
+  executes it.
+- Renjin is slower in absolute terms on these kernels, but RR's optimized
+  emitted output still moves in the same direction there.
+- Keep using `tests/example_perf_smoke.rs` and the CI perf gate as the primary
+  maintained signal; the tables here are versioned local notes only.
 
 ## Golden Semantics
 
@@ -342,6 +516,7 @@ Targets:
 - `fuzz/fuzz_targets/type_solver.rs`
 - `fuzz/fuzz_targets/incremental.rs` (`incremental_compile`)
 - `fuzz/fuzz_targets/generated_pipeline.rs` (`generated_pipeline`)
+- `fuzz/fuzz_targets/error_diagnostics.rs` (`error_diagnostics`)
 
 Dictionary:
 
@@ -356,6 +531,7 @@ cargo +nightly fuzz run pipeline fuzz/corpus/pipeline -- -dict=fuzz/dictionaries
 cargo +nightly fuzz run type_solver fuzz/corpus/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run incremental_compile fuzz/corpus/incremental_compile -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run generated_pipeline fuzz/corpus/generated_pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
+cargo +nightly fuzz run error_diagnostics fuzz/corpus/error_diagnostics -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 ```
 
 `generated_pipeline` differs from the raw parser/pipeline targets: it decodes
@@ -364,9 +540,10 @@ verifier, and codegen on those generated programs. Use it when you want
 valid-program stress instead of arbitrary malformed input stress.
 
 Longer soak coverage runs separately in
-[`nightly-soak.yml`](../.github/workflows/nightly-soak.yml):
+`.github/workflows/nightly-soak.yml`:
 
 - larger `random_differential` suites
+- longer `error_diagnostics` fuzz runs
 - longer `pipeline`, `incremental_compile`, and `generated_pipeline` fuzz runs
   at `-max_total_time=300`
 - uploaded differential soak logs

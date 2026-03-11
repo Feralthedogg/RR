@@ -1,139 +1,121 @@
 # Tachyon Engine
 
-`TachyonEngine` is the MIR optimizer (`src/mir/opt.rs`).
+This page is the optimizer manual for RR.
+
+Primary implementation entrypoint:
+
+- `src/mir/opt.rs`
+
+## Design Goals
+
+Tachyon is not a speculative “make R fast somehow” pass stack.
+
+Its goals are:
+
+- preserve RR program meaning
+- exploit proofs already available in MIR
+- emit simpler and more idiomatic R when safe
+- keep compile time bounded on large workloads
+
+## Safety Rules
+
+Tachyon prefers a clean skip to a risky rewrite.
+
+Important rules:
+
+- no guard elimination without proof
+- no phi-sensitive codegen paths after de-SSA
+- no vectorization when loop-carried state is ambiguous
+- no reduction when the loop carries extra non-accumulator state
+- no helper rewrite that changes scalar/vector semantics
 
 ## Optimization Levels
 
-- `-O0`: no aggressive optimization, but still runs mandatory codegen stabilization (including De-SSA)
-- `-O1`: optimized pipeline
-- `-O2`: same pipeline with stronger opportunities from analysis/rewrites
+- `-O0`
+  - stabilization only
+  - still performs mandatory helper canonicalization and de-SSA
+- `-O1`
+  - optimizing pipeline
+- `-O2`
+  - same optimizer family, more opportunity from accumulated rewrites and proofs
 
 ## Program-Level Strategy
 
-1. Tier A (always): run low-cost canonical passes on every safe function.
-2. Tier B (selective-heavy): run full per-function pipeline on budget-selected targets.
-3. Tier C (full-program): run bounded inter-procedural inlining only when heavy tier is enabled.
-4. Run De-SSA globally before emission.
-5. Cleanup after De-SSA.
+Tachyon uses a tiered budget model.
 
-Budget policy:
+### Tier A: Always
 
-- Adaptive IR budgeting is enabled by default.
-- RR first estimates a program-level and function-level budget from total IR, max function size, and operation density.
-- If the workload still exceeds the adaptive cap, Tier B falls back to deterministic selective mode.
-- `RR_HEAVY_PASS_FN_IR` is a soft threshold for compact heavy-tier candidates, not the global hard ceiling for the compilation unit.
+Run low-cost, safe canonical passes on every eligible function.
 
-## Function-Level Iterative Passes
+### Tier B: Selective Heavy
 
-Core loop (bounded by `RR_OPT_MAX_ITERS`):
+Run heavier per-function optimization only on budget-selected targets.
 
-1. Structural transforms
-- type-based specialization (`type_specialize`)
-- vectorization (`v_opt`)
-- tail-call optimization (`tco`)
-- immediate cleanup (`simplify_cfg` + `dce`) if changed
+### Tier C: Full-Program Inline
 
-2. Canonical optimization passes
-- `simplify_cfg`
-- SCCP (`sccp`)
-- intrinsics rewrite (`intrinsics`)
-- GVN/CSE (`gvn`)
-- simplify (`simplify`)
-- DCE (`dce`)
-- loop optimizer (`loop_opt`)
-- LICM (`licm`)
-- fresh allocation tuning (`fresh_alloc`)
-- bounds-check elimination (`bce`)
+Run bounded interprocedural inlining only when the heavy tier is active.
 
-GVN policy:
+## Core Pass Families
 
-- GVN is enabled by default.
-- It currently runs only on loop-free, store-free functions and skips known unsafe runtime helpers.
-- `RR_ENABLE_GVN=0` disables GVN globally.
+### Canonicalization
 
-LICM policy:
+- helper call rewrites
+- index-floor canonicalization
+- wrap/cube helper normalization
+- simplification after structural rewrites
 
-- LICM is enabled by default.
-- It only runs on compact loop-bearing functions.
-- Current guardrails skip very large functions/CFGs so compile time stays bounded on workloads such as `tesseract`.
-- `RR_ENABLE_LICM=0` disables LICM globally.
+### Scalar Analysis and Simplification
 
-3. Always verify MIR invariants at key boundaries.
+- SCCP
+- GVN/CSE
+- simplify
+- DCE
+- BCE
+- LICM
 
-Type-specialization policy:
+### Structural Transformations
 
-- Guard/intrinsic rewrites are proof-based only.
-- If static proof is missing, optimizer keeps the original safe runtime path.
+- inlining
+- TCO
+- de-SSA
 
-## SCCP Safety Contract
-
-SCCP constant folding is intentionally fail-safe:
-
-- integer folds (`+`, `-`, `*`, `/`, `%`) use checked arithmetic
-- overflow or invalid arithmetic (`div/mod by zero`, `i64::MIN / -1`) is treated as "not foldable"
-- range-length/index folds use checked length/index math and checked integer casts
-- float-to-int fold is accepted only when finite, integral, and within `i64` range
-
-If any proof step fails, SCCP preserves runtime evaluation instead of panicking or emitting an invalid constant.
-
-## Inlining Controls and Growth Safety
-
-Inlining is cost-model driven and constrained by environment policy.
-
-Defaults from `src/mir/opt/inline.rs`:
-
-- `RR_INLINE_MAX_BLOCKS=24`
-- `RR_INLINE_MAX_INSTRS=160`
-- `RR_INLINE_MAX_COST=220`
-- `RR_INLINE_MAX_CALLSITE_COST=240`
-- `RR_INLINE_MAX_CALLER_INSTRS=480`
-- `RR_INLINE_MAX_TOTAL_INSTRS=900`
-- `RR_INLINE_MAX_UNIT_GROWTH_PCT=25`
-- `RR_INLINE_MAX_FN_GROWTH_PCT=35`
-- `RR_INLINE_ALLOW_LOOPS=false`
-- `RR_DISABLE_INLINE=false` (set true-like value to disable)
-- `RR_INLINE_MAX_ROUNDS=3` (from `src/mir/opt.rs`)
-
-Growth limits are enforced both per function and per compilation unit; predicted overshoot skips the inline site.
-
-## Vectorization Coverage (current implementation)
+### Vectorization and Reduction
 
 Implemented pattern families include:
 
-- elementwise map
+- map
 - conditional map
-- expression map with staged temporaries
-- multi-destination slice map when stores are independent
+- expr-map
+- multi-output expr-map
+- call-map
+- scatter-map
 - shifted map
 - recurrence add-constant
-- reduction (sum/prod/min/max)
-- call-map with builtin/user whitelist
-- gather-style indirect index map
-- indirect scatter map via runtime helper lowering
-- cube-index helper rewrite/lowering (`rr_idx_cube_vec_i`)
-- selected 2D row/column map and reduction patterns
+- reduction (`sum/prod/min/max`)
+- selected 2D row/column map and reduction
+- selected 3D map/expr-map/call-map/scatter-map/reduction/shift forms
 
-Vectorization remains pattern-based, not arbitrary polyhedral scheduling.
+## What Tachyon Will Not Do
 
-Current lowering helpers commonly emitted by `v_opt` include:
+Tachyon remains conservative on:
 
-- `rr_assign_slice(...)`
-- `rr_assign_index_vec(...)`
-- `rr_index1_read_vec(...)`
-- `rr_wrap_index_vec_i(...)`
-- `rr_idx_cube_vec_i(...)`
-- `rr_ifelse_strict(...)`
+- arbitrary nested-loop scheduling
+- branch-merged indirect scatter with weak proof
+- non-canonical bound reconstruction
+- loop-carried state that cannot be reconstructed safely
+
+When in doubt, the pass should skip.
 
 ## Vectorization Diagnostics
 
-O1/O2 CLI output reports vectorization summary counters:
+CLI summary reports:
 
 - `Vectorized`
 - `Reduced`
 - `Simplified`
 - `VecSkip`
 
-`VecSkip` is broken down by dominant reject reason:
+`VecSkip` is grouped by dominant reject reason:
 
 - `no-iv`
 - `bound`
@@ -142,30 +124,65 @@ O1/O2 CLI output reports vectorization summary counters:
 - `store`
 - `no-pattern`
 
-This is intended to guide pass work. For example:
+Use `RR_VECTORIZE_TRACE=1` to see per-loop matcher decisions.
 
-- `no-iv`: induction variable recognition / floor-alias normalization is missing
-- `indirect`: gather/scatter pattern recognized structurally but not yet supported safely
-- `store`: loop has conflicting or non-canonical writes
+## Cost Model
 
-For per-loop tracing, enable `RR_VECTORIZE_TRACE=1`.
+Tachyon uses a cost model rather than blindly preferring helper-heavy lowering.
 
-## Current Limits
+Current inputs include:
 
-Known hard cases are still conservative:
+- loop trip count hints
+- helper count and helper family cost
+- whole-destination vs partial-range writes
+- shadow-state penalties
+- direct builtin vector-call opportunities
 
-- nested loops with branch-merged indirect scatter
-- outer-loop state carried through multiple origin-phi chains
-- loops whose safety proof depends on non-canonical bound/index reconstruction
+The main idea is simple:
 
-In those cases RR prefers a clean skip over speculative lowering.
+- prefer direct whole-vector R when it is provably available
+- prefer helper-based vector lowering when it reduces loop work and keeps meaning
+- prefer scalar fallback when helper overhead dominates
 
-## De-SSA and Parallel Copy
+## Runtime-Aware Lowering
 
-De-SSA is mandatory before codegen:
+Selected vector call paths lower through runtime helpers such as:
 
-- phi elimination via parallel copy
-- critical-edge handling
-- sequentialization with temporaries for cycles
+- `rr_call_map_whole_auto(...)`
+- `rr_call_map_slice_auto(...)`
 
-Codegen assumes phi-free MIR and will error on remaining phi nodes.
+These helpers may choose scalar fallback or vector evaluation at runtime based
+on trip count and helper cost.
+
+Related knobs:
+
+- `RR_VECTOR_FALLBACK_BASE_TRIP`
+- `RR_VECTOR_FALLBACK_HELPER_SCALE`
+
+## Reduction Rules
+
+Reductions are intentionally narrower than maps.
+
+A reduction candidate must not rely on:
+
+- ambiguous loop-local state
+- unstable loop-local state
+- extra non-accumulator loop state
+- accumulator self-reference hidden inside the candidate RHS
+
+This is the main barrier against “closed-form” miscompiles in stateful loops.
+
+## Debugging Tachyon
+
+Use:
+
+```bash
+RR_VECTORIZE_TRACE=1 target/debug/RR file.rr -o out.R -O2 --no-incremental
+RR_VERIFY_EACH_PASS=1 target/debug/RR file.rr -o out.R -O2 --no-incremental
+```
+
+Useful companion references:
+
+- [Compiler Pipeline](compiler-pipeline.md)
+- [Runtime and Error Model](runtime-and-errors.md)
+- [Testing and Quality Gates](testing.md)

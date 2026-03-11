@@ -1,7 +1,7 @@
 use crate::error::{RR, RRCode, RRException, Stage};
 use crate::hir::def::*;
 use crate::syntax::ast;
-use crate::utils::Span;
+use crate::utils::{Span, did_you_mean};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
 
@@ -45,8 +45,10 @@ impl Default for Lowerer {
 
 impl Lowerer {
     pub fn new() -> Self {
-        let strict_let = Self::env_truthy("RR_STRICT_LET") || Self::env_truthy("RR_STRICT_ASSIGN");
-        let warn_implicit_decl = Self::env_truthy("RR_WARN_IMPLICIT_DECL");
+        let strict_let = Self::env_bool("RR_STRICT_LET")
+            .or_else(|| Self::env_bool("RR_STRICT_ASSIGN"))
+            .unwrap_or(true);
+        let warn_implicit_decl = Self::env_bool("RR_WARN_IMPLICIT_DECL").unwrap_or(false);
         Self {
             scopes: vec![FxHashMap::default()], // Global scope?
             next_local_id: 0,
@@ -65,13 +67,14 @@ impl Lowerer {
         }
     }
 
-    fn env_truthy(key: &str) -> bool {
+    fn env_bool(key: &str) -> Option<bool> {
         match env::var(key) {
-            Ok(v) => matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            ),
-            Err(_) => false,
+            Ok(v) => match v.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => Some(true),
+                "0" | "false" | "no" | "off" => Some(false),
+                _ => None,
+            },
+            Err(_) => None,
         }
     }
 
@@ -196,19 +199,19 @@ impl Lowerer {
         self.lookup(root).is_none()
     }
 
-    fn lower_dotted_ref(&mut self, dotted: &str) -> HirExpr {
+    fn lower_dotted_ref(&mut self, dotted: &str, span: Span) -> HirExpr {
         if let Some(lid) = self.lookup(dotted) {
             HirExpr::Local(lid)
         } else if let Some(sym) = self.global_fn_aliases.get(dotted).copied() {
-            HirExpr::Global(sym)
+            HirExpr::Global(sym, span)
         } else if let Some(sym) = self.r_import_aliases.get(dotted).copied() {
-            HirExpr::Global(sym)
+            HirExpr::Global(sym, span)
         } else if let Some((root, rest)) = dotted.split_once('.')
             && let Some(pkg) = self.r_namespace_aliases.get(root)
         {
-            HirExpr::Global(self.intern_symbol(&format!("{}::{}", pkg, rest)))
+            HirExpr::Global(self.intern_symbol(&format!("{}::{}", pkg, rest)), span)
         } else {
-            HirExpr::Global(self.intern_symbol(dotted))
+            HirExpr::Global(self.intern_symbol(dotted), span)
         }
     }
 
@@ -217,14 +220,21 @@ impl Lowerer {
             return Ok(lid);
         }
         if self.strict_let {
-            return Err(RRException::new(
+            let mut err = RRException::new(
                 "RR.SemanticError",
                 RRCode::E1001,
                 Stage::Lower,
                 format!("assignment to undeclared variable '{}'", name),
             )
             .at(span)
-            .note("Declare it first with `let` before assignment."));
+            .note("Declare it first with `let` before assignment.");
+            if let Some(suggestion) = did_you_mean(
+                name,
+                self.scopes.iter().flat_map(|scope| scope.keys().cloned()),
+            ) {
+                err = err.help(suggestion);
+            }
+            return Err(err);
         }
         let lid = self.declare_local(name);
         if self.warn_implicit_decl {
@@ -234,7 +244,7 @@ impl Lowerer {
                 "unknown".to_string()
             };
             self.warnings.push(format!(
-                "implicit declaration via assignment: '{}' at {} (treated as `let {} = ...;`). Set RR_STRICT_LET=1 to forbid this.",
+                "implicit declaration via assignment: '{}' at {} (treated as `let {} = ...;`). Set RR_STRICT_LET=1 or unset RR_STRICT_LET to forbid this; set RR_STRICT_LET=0 to allow this legacy behavior.",
                 name, where_msg, name
             ));
         }
@@ -612,17 +622,17 @@ impl Lowerer {
         });
 
         if captures.is_empty() {
-            return Ok(HirExpr::Global(lambda_sym));
+            return Ok(HirExpr::Global(lambda_sym, span));
         }
 
         let make_sym = self.intern_symbol("rr_closure_make");
         let mut args = Vec::new();
-        args.push(HirArg::Pos(HirExpr::Global(lambda_sym)));
+        args.push(HirArg::Pos(HirExpr::Global(lambda_sym, span)));
         for (_, lid) in captures {
             args.push(HirArg::Pos(HirExpr::Local(lid)));
         }
         Ok(HirExpr::Call(HirCall {
-            callee: Box::new(HirExpr::Global(make_sym)),
+            callee: Box::new(HirExpr::Global(make_sym, span)),
             args,
             span,
         }))
@@ -923,7 +933,7 @@ impl Lowerer {
                 let lid = self.declare_local(&name);
                 let sym = self.intern_symbol(&name);
                 if self.scopes.len() == 1
-                    && let Some(HirExpr::Global(global_sym)) = &val
+                    && let Some(HirExpr::Global(global_sym, _)) = &val
                     && self
                         .symbols
                         .get(global_sym)
@@ -945,7 +955,7 @@ impl Lowerer {
                 let rhs = self.lower_expr(value)?;
                 if self.scopes.len() == 1
                     && let HirLValue::Local(_lid) = &lhs
-                    && let HirExpr::Global(global_sym) = &rhs
+                    && let HirExpr::Global(global_sym, _) = &rhs
                     && self
                         .symbols
                         .get(global_sym)
@@ -1012,7 +1022,7 @@ impl Lowerer {
                     HirExpr::Call(call) => {
                         let one_arg = call.args.len() == 1;
                         match (&*call.callee, one_arg) {
-                            (HirExpr::Global(sym), true) => {
+                            (HirExpr::Global(sym, _), true) => {
                                 let name = self.symbols.get(sym).cloned().unwrap_or_default();
                                 let arg_expr = match call.args[0].clone() {
                                     HirArg::Pos(e) => e,
@@ -1098,11 +1108,11 @@ impl Lowerer {
                 if let Some(lid) = self.lookup(&n) {
                     Ok(HirExpr::Local(lid))
                 } else if let Some(sym) = self.global_fn_aliases.get(&n).copied() {
-                    Ok(HirExpr::Global(sym))
+                    Ok(HirExpr::Global(sym, expr.span))
                 } else if let Some(sym) = self.r_import_aliases.get(&n).copied() {
-                    Ok(HirExpr::Global(sym))
+                    Ok(HirExpr::Global(sym, expr.span))
                 } else {
-                    Ok(HirExpr::Global(self.intern_symbol(&n)))
+                    Ok(HirExpr::Global(self.intern_symbol(&n), expr.span))
                 }
             }
             ast::ExprKind::Binary { op, lhs, rhs } => {
@@ -1144,11 +1154,12 @@ impl Lowerer {
                 body,
             } => self.lower_lambda_expr(params, ret_ty_hint, body, expr.span),
             ast::ExprKind::Call { callee, args } => {
+                let callee_span = callee.span;
                 let dotted_callee = Self::dotted_name_from_expr(&callee);
                 let c = if let Some(dotted) =
                     dotted_callee.filter(|d| self.root_is_unbound_for_dotted(d))
                 {
-                    self.lower_dotted_ref(&dotted)
+                    self.lower_dotted_ref(&dotted, callee_span)
                 } else {
                     self.lower_expr(*callee)?
                 };
@@ -1239,7 +1250,7 @@ impl Lowerer {
                 if let Some(dotted) = Self::dotted_name_from_field(&base, &name)
                     .filter(|d| self.root_is_unbound_for_dotted(d))
                 {
-                    return Ok(self.lower_dotted_ref(&dotted));
+                    return Ok(self.lower_dotted_ref(&dotted, expr.span));
                 }
                 let b = self.lower_expr(*base)?;
                 let sym = self.intern_symbol(&name);

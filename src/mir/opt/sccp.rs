@@ -159,6 +159,15 @@ impl MirSCCP {
                     self.visit_value(*c, fn_ir, lattice, executable_edges, ssa_worklist);
                     self.visit_value(*val, fn_ir, lattice, executable_edges, ssa_worklist);
                 }
+                Instr::StoreIndex3D {
+                    base, i, j, k, val, ..
+                } => {
+                    self.visit_value(*base, fn_ir, lattice, executable_edges, ssa_worklist);
+                    self.visit_value(*i, fn_ir, lattice, executable_edges, ssa_worklist);
+                    self.visit_value(*j, fn_ir, lattice, executable_edges, ssa_worklist);
+                    self.visit_value(*k, fn_ir, lattice, executable_edges, ssa_worklist);
+                    self.visit_value(*val, fn_ir, lattice, executable_edges, ssa_worklist);
+                }
             }
         }
 
@@ -838,6 +847,15 @@ impl MirSCCP {
                         users.entry(*c).or_default().push(User::Block(blk.id));
                         users.entry(*val).or_default().push(User::Block(blk.id));
                     }
+                    Instr::StoreIndex3D {
+                        base, i, j, k, val, ..
+                    } => {
+                        users.entry(*base).or_default().push(User::Block(blk.id));
+                        users.entry(*i).or_default().push(User::Block(blk.id));
+                        users.entry(*j).or_default().push(User::Block(blk.id));
+                        users.entry(*k).or_default().push(User::Block(blk.id));
+                        users.entry(*val).or_default().push(User::Block(blk.id));
+                    }
                 }
             }
         }
@@ -875,6 +893,12 @@ impl MirSCCP {
                     users.entry(*base).or_default().push(User::Value(id));
                     users.entry(*r).or_default().push(User::Value(id));
                     users.entry(*c).or_default().push(User::Value(id));
+                }
+                ValueKind::Index3D { base, i, j, k } => {
+                    users.entry(*base).or_default().push(User::Value(id));
+                    users.entry(*i).or_default().push(User::Value(id));
+                    users.entry(*j).or_default().push(User::Value(id));
+                    users.entry(*k).or_default().push(User::Value(id));
                 }
                 _ => {}
             }

@@ -47,6 +47,9 @@ impl MirLicm {
                     Instr::StoreIndex2D { val: src, .. } => {
                         val_to_bb.insert(*src, block.id);
                     }
+                    Instr::StoreIndex3D { val: src, .. } => {
+                        val_to_bb.insert(*src, block.id);
+                    }
                 }
             }
         }
@@ -57,7 +60,9 @@ impl MirLicm {
         for &bb in &loop_info.body {
             for instr in &fn_ir.blocks[bb].instrs {
                 match instr {
-                    Instr::StoreIndex1D { base, .. } | Instr::StoreIndex2D { base, .. } => {
+                    Instr::StoreIndex1D { base, .. }
+                    | Instr::StoreIndex2D { base, .. }
+                    | Instr::StoreIndex3D { base, .. } => {
                         let cls = alias::alias_class_for_base(fn_ir, *base);
                         if matches!(cls, alias::AliasClass::Unknown) {
                             loop_has_unknown_mutation = true;
@@ -100,7 +105,8 @@ impl MirLicm {
                     Instr::Assign { src, .. }
                     | Instr::Eval { val: src, .. }
                     | Instr::StoreIndex1D { val: src, .. }
-                    | Instr::StoreIndex2D { val: src, .. } => {
+                    | Instr::StoreIndex2D { val: src, .. }
+                    | Instr::StoreIndex3D { val: src, .. } => {
                         // Already hoisted?
                         if let Some(name) = &fn_ir.values[*src].origin_var
                             && name.starts_with("licm_")
@@ -327,6 +333,7 @@ impl MirLicm {
             ValueKind::Load { .. }
             | ValueKind::RSymbol { .. }
             | ValueKind::Index2D { .. }
+            | ValueKind::Index3D { .. }
             | ValueKind::Intrinsic { .. } => false,
         }
     }

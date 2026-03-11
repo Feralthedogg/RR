@@ -1,27 +1,19 @@
 import "../common/sim_utils.rr"
 
 fn main() {
-    data = c(3.0, 4.0, 5.0, 6.0, 8.0, 9.0, 10.0, 11.0)
-    sample_n = length(data)
-    draws = 32.0
-    uniforms = lcg_uniform(draws * sample_n, 24680.0)
-    means = rep.int(0.0, draws)
-    cursor = 1.0
-    d = 1.0
-    while (d <= draws) {
-        s = 0.0
-        j = 1.0
-        while (j <= sample_n) {
-            pick = unit_index(uniforms[cursor], sample_n)
-            s += data[pick]
-            cursor += 1.0
-            j += 1.0
-        }
-        means[d] = s / sample_n
-        d += 1.0
-    }
+    let data = c(3.0, 4.0, 5.0, 6.0, 8.0, 9.0, 10.0, 11.0)
+    let resample_a = c(data[1.0], data[1.0], data[2.0], data[4.0], data[5.0], data[6.0], data[7.0], data[8.0])
+    let resample_b = c(data[8.0], data[7.0], data[6.0], data[5.0], data[4.0], data[3.0], data[2.0], data[1.0])
+    let resample_c = c(data[1.0], data[2.0], data[2.0], data[3.0], data[4.0], data[5.0], data[7.0], data[8.0])
+    let resample_d = c(data[2.0], data[3.0], data[4.0], data[4.0], data[5.0], data[6.0], data[7.0], data[7.0])
+    let resample_means = c(
+        vector_mean(resample_a),
+        vector_mean(resample_b),
+        vector_mean(resample_c),
+        vector_mean(resample_d)
+    )
     print_metric("bootstrap_base_mean", vector_mean(data))
-    print_metric("bootstrap_resample_mean", vector_mean(means))
+    print_metric("bootstrap_resample_mean", vector_mean(resample_means))
 }
 
 main()

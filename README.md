@@ -3,7 +3,29 @@
 RR is an optimizing compiler for an R-oriented source language.
 It compiles `.rr` programs into self-contained `.R` output, using an SSA-like MIR pipeline,
 the `Tachyon` optimizer, and an embedded runtime for checks and helper operations.
-Current compiler line: `RR Tachyon v4.0.0`.
+Current compiler line: `RR Tachyon v5.0.0`.
+
+## Documentation Sets
+
+RR documentation is split into manual-style sets:
+
+- Guide
+  - [Getting Started](./docs/getting-started.md)
+  - [Writing RR for Performance and Safety](./docs/writing-rr.md)
+  - [CLI Reference](./docs/cli.md)
+- Reference
+  - [Language Reference](./docs/language.md)
+  - [Configuration](./docs/configuration.md)
+  - [R Interop](./docs/r-interop.md)
+  - [Compatibility and Limits](./docs/compatibility.md)
+- Internals
+  - [Compiler Pipeline](./docs/compiler-pipeline.md)
+  - [IR Model](./docs/ir-model.md)
+  - [Tachyon Engine](./docs/optimization.md)
+  - [Runtime and Error Model](./docs/runtime-and-errors.md)
+- Development
+  - [Testing and Quality Gates](./docs/testing.md)
+  - [Contributing Audit Checklist](./docs/contributing-audit.md)
 
 ## What RR Does
 
@@ -78,8 +100,8 @@ cargo run -- watch . -O2
 ## Minimal Example
 
 ```r
-main <- function() {
-  x <- 1 + 2
+let main <- function() {
+  let x <- 1 + 2
   print(x)
   x
 }
@@ -107,7 +129,8 @@ Common options:
 - `--native-backend off|optional|required`
 - `--parallel-mode off|optional|required`
 - `--parallel-backend auto|r|openmp`
-- `--incremental[=off|1|1,2|1,2,3|all]`
+- `--incremental[=auto|off|1|1,2|1,2,3|all]`
+- `--no-incremental`
 
 ## Project Layout
 
@@ -131,7 +154,9 @@ Representative coverage includes:
 
 - parser and syntax recovery
 - semantic/runtime static validation
+- generated invalid-program diagnostic validation
 - optimizer regressions
+- incremental auto/disk/session cache regressions
 - promoted golden semantics cases from `tests/golden/`
 - simulation catalog coverage in `example/data_science/` and `example/physics/`
 - benchmark workload smoke coverage in `example/benchmarks/`
@@ -140,7 +165,7 @@ Representative coverage includes:
 - per-pass MIR verification smoke with `RR_VERIFY_EACH_PASS=1`
 - generator-driven valid-program fuzzing for optimizer/codegen stability
 - compile-time performance gates
-- fuzz targets for parser, pipeline, type solver, and incremental compilation
+- fuzz targets for parser, pipeline, type solver, incremental compilation, generated valid-program pipelines, and error diagnostics
 
 If `Rscript` is unavailable, R-dependent integration tests skip automatically.
 
@@ -172,6 +197,7 @@ cargo +nightly fuzz run pipeline fuzz/corpus/pipeline -- -dict=fuzz/dictionaries
 cargo +nightly fuzz run type_solver fuzz/corpus/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run incremental_compile fuzz/corpus/incremental_compile -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 cargo +nightly fuzz run generated_pipeline fuzz/corpus/generated_pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
+cargo +nightly fuzz run error_diagnostics fuzz/corpus/error_diagnostics -- -dict=fuzz/dictionaries/rr.dict -max_total_time=60
 ```
 
 Smoke runner:

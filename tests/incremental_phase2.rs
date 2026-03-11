@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn incremental_phase2_reuses_function_emit_cache() {
+    let _env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("incremental_phase2");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
@@ -54,6 +55,7 @@ main()
 
     let opts = IncrementalOptions {
         enabled: true,
+        auto: false,
         phase1: false,
         phase2: true,
         phase3: false,

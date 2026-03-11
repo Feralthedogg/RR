@@ -1,24 +1,24 @@
 import "../common/sim_utils.rr"
 
 fn main() {
-    prev1 = 0.0
-    prev2 = 0.5
-    prev3 = 1.0
-    prev4 = 0.5
-    prev5 = 0.0
-    curr1 = prev1
-    curr2 = prev2
-    curr3 = prev3
-    curr4 = prev4
-    curr5 = prev5
-    c2 = 0.20
-    step = 1.0
+    let prev1 = 0.0
+    let prev2 = 0.5
+    let prev3 = 1.0
+    let prev4 = 0.5
+    let prev5 = 0.0
+    let curr1 = prev1
+    let curr2 = prev2
+    let curr3 = prev3
+    let curr4 = prev4
+    let curr5 = prev5
+    let c2 = 0.20
+    let step = 1.0
     while (step <= 35.0) {
-        next1 = 2.0 * curr1 - prev1 + c2 * (0.0 - 2.0 * curr1 + curr2)
-        next2 = 2.0 * curr2 - prev2 + c2 * (curr1 - 2.0 * curr2 + curr3)
-        next3 = 2.0 * curr3 - prev3 + c2 * (curr2 - 2.0 * curr3 + curr4)
-        next4 = 2.0 * curr4 - prev4 + c2 * (curr3 - 2.0 * curr4 + curr5)
-        next5 = 2.0 * curr5 - prev5 + c2 * (curr4 - 2.0 * curr5 + 0.0)
+        let next1 = 2.0 * curr1 - prev1 + c2 * (0.0 - 2.0 * curr1 + curr2)
+        let next2 = 2.0 * curr2 - prev2 + c2 * (curr1 - 2.0 * curr2 + curr3)
+        let next3 = 2.0 * curr3 - prev3 + c2 * (curr2 - 2.0 * curr3 + curr4)
+        let next4 = 2.0 * curr4 - prev4 + c2 * (curr3 - 2.0 * curr4 + curr5)
+        let next5 = 2.0 * curr5 - prev5 + c2 * (curr4 - 2.0 * curr5 + 0.0)
         prev1 = curr1
         prev2 = curr2
         prev3 = curr3

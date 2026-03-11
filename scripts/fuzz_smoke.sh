@@ -6,7 +6,7 @@ DICT="${FUZZ_DICT:-$ROOT/fuzz/dictionaries/rr.dict}"
 SECS="${FUZZ_SECONDS:-20}"
 TOOLCHAIN="${RUSTUP_TOOLCHAIN:-nightly}"
 CORPUS_ROOT="${FUZZ_CORPUS_ROOT:-$ROOT/fuzz/corpus_smoke}"
-TARGETS=(parser pipeline type_solver incremental_compile generated_pipeline)
+TARGETS=(parser pipeline type_solver incremental_compile generated_pipeline error_diagnostics)
 
 if ! cargo +"$TOOLCHAIN" fuzz --help >/dev/null 2>&1; then
   echo "cargo-fuzz is not installed for toolchain '$TOOLCHAIN'." >&2

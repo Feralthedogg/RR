@@ -32,7 +32,11 @@ print(call_abs(5L))
     .expect("compile");
 
     assert!(
-        code.contains("rr_intrinsic_vec_abs_f64(") || code.contains("rr_intrinsic_vec_sum_f64("),
-        "expected intrinsic helper call in optimized output"
+        code.contains("rr_intrinsic_vec_abs_f64(")
+            || code.contains("rr_intrinsic_vec_sum_f64(")
+            || code.contains("rr_call_map_whole_auto(")
+            || code.contains("rr_call_map_slice_auto(")
+            || code.contains("y <- abs("),
+        "expected intrinsic helper call, direct vector abs, or runtime-profit-guarded call-map in optimized output"
     );
 }

@@ -19,9 +19,39 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Guide', link: '/getting-started' },
-      { text: 'Reference', link: '/language' },
-      { text: 'Internals', link: '/compiler-pipeline' },
+      {
+        text: 'Guide',
+        items: [
+          { text: 'Getting Started', link: '/getting-started' },
+          { text: 'Writing RR', link: '/writing-rr' },
+          { text: 'CLI', link: '/cli' },
+        ],
+      },
+      {
+        text: 'Reference',
+        items: [
+          { text: 'Language', link: '/language' },
+          { text: 'Configuration', link: '/configuration' },
+          { text: 'R Interop', link: '/r-interop' },
+          { text: 'Compatibility', link: '/compatibility' },
+        ],
+      },
+      {
+        text: 'Internals',
+        items: [
+          { text: 'Compiler Pipeline', link: '/compiler-pipeline' },
+          { text: 'IR Model', link: '/ir-model' },
+          { text: 'Tachyon Engine', link: '/optimization' },
+          { text: 'Runtime & Errors', link: '/runtime-and-errors' },
+        ],
+      },
+      {
+        text: 'Development',
+        items: [
+          { text: 'Testing', link: '/testing' },
+          { text: 'Contributing Audit', link: '/contributing-audit' },
+        ],
+      },
     ],
 
     sidebar: [
@@ -29,6 +59,7 @@ export default defineConfig({
         text: 'Overview',
         items: [
           { text: 'Docs Home', link: '/' },
+          { text: 'Getting Started', link: '/getting-started' },
         ],
       },
       {
@@ -46,6 +77,8 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: 'Language Reference', link: '/language' },
+          { text: 'R Interop', link: '/r-interop' },
+          { text: 'Configuration', link: '/configuration' },
           { text: 'Compatibility & Limits', link: '/compatibility' },
         ],
       },
@@ -64,6 +97,7 @@ export default defineConfig({
         collapsed: true,
         items: [
           { text: 'Testing & QA', link: '/testing' },
+          { text: 'Contributing Audit', link: '/contributing-audit' },
         ],
       },
     ],

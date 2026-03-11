@@ -342,7 +342,10 @@ fn compile_case(case: &CaseSpec, forced_opt: Option<&str>) -> CompileResult {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let mut cmd = Command::new(rr_bin);
-    cmd.arg(&case.src_path).arg("-o").arg(&out_path);
+    cmd.arg(&case.src_path)
+        .arg("-o")
+        .arg(&out_path)
+        .arg("--no-incremental");
     for flag in &case.flags {
         cmd.arg(flag);
     }
@@ -350,6 +353,15 @@ fn compile_case(case: &CaseSpec, forced_opt: Option<&str>) -> CompileResult {
         cmd.arg(opt_flag);
     } else if !has_opt_flag(&case.flags) {
         cmd.arg("-O1");
+    }
+    let strict_let_overridden = case
+        .env
+        .iter()
+        .any(|(key, _)| key == "RR_STRICT_LET" || key == "RR_STRICT_ASSIGN");
+    if !strict_let_overridden {
+        // Most file-regression fixtures predate the strict-let default and are
+        // intended to exercise parser/typeck/optimizer behavior instead.
+        cmd.env("RR_STRICT_LET", "0");
     }
     for (key, value) in &case.env {
         cmd.env(key, value);

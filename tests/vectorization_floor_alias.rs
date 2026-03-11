@@ -50,7 +50,9 @@ fn floor_alias_map(n) {
 
     let code = fs::read_to_string(&out_path).expect("failed to read compiled R");
     assert!(
-        code.contains("y <- (x + x)") || code.contains("y <- rr_intrinsic_vec_add_f64(x, x)"),
+        code.contains("y <- (x + x)")
+            || code.contains("y <- rr_intrinsic_vec_add_f64(x, x)")
+            || code.contains("rr_assign_slice(y, i, length(x), rr_intrinsic_vec_add_f64(x, x))"),
         "expected vectorized map body for floor alias loop"
     );
 }

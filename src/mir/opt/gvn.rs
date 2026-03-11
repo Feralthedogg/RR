@@ -68,7 +68,9 @@ fn is_safe_gvn_candidate(fn_ir: &FnIR) -> bool {
         blk.instrs.iter().any(|instr| {
             matches!(
                 instr,
-                Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. }
+                Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. }
             )
         })
     })
@@ -207,6 +209,16 @@ fn value_reads_mutated_alias(
                 || value_reads_mutated_alias(fn_ir, *r, ctx, seen)
                 || value_reads_mutated_alias(fn_ir, *c, ctx, seen)
         }
+        ValueKind::Index3D { base, i, j, k } => {
+            let cls = alias::alias_class_for_base(fn_ir, *base);
+            if matches!(cls, alias::AliasClass::Unknown) || ctx.mutated_aliases.contains(&cls) {
+                return true;
+            }
+            value_reads_mutated_alias(fn_ir, *base, ctx, seen)
+                || value_reads_mutated_alias(fn_ir, *i, ctx, seen)
+                || value_reads_mutated_alias(fn_ir, *j, ctx, seen)
+                || value_reads_mutated_alias(fn_ir, *k, ctx, seen)
+        }
         ValueKind::Len { base } | ValueKind::Indices { base } => {
             let cls = alias::alias_class_for_base(fn_ir, *base);
             if matches!(cls, alias::AliasClass::Unknown) || ctx.mutated_aliases.contains(&cls) {
@@ -341,6 +353,25 @@ fn apply_replacements(fn_ir: &mut FnIR, replacements: &HashMap<ValueId, ValueId>
                         *val = n;
                     }
                 }
+                Instr::StoreIndex3D {
+                    base, i, j, k, val, ..
+                } => {
+                    if let Some(&n) = replacements.get(base) {
+                        *base = n;
+                    }
+                    if let Some(&n) = replacements.get(i) {
+                        *i = n;
+                    }
+                    if let Some(&n) = replacements.get(j) {
+                        *j = n;
+                    }
+                    if let Some(&n) = replacements.get(k) {
+                        *k = n;
+                    }
+                    if let Some(&n) = replacements.get(val) {
+                        *val = n;
+                    }
+                }
             }
         }
         match &mut b.term {
@@ -405,6 +436,20 @@ fn apply_replacements(fn_ir: &mut FnIR, replacements: &HashMap<ValueId, ValueId>
                 }
                 if let Some(&n) = replacements.get(c) {
                     *c = n;
+                }
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                if let Some(&n) = replacements.get(base) {
+                    *base = n;
+                }
+                if let Some(&n) = replacements.get(i) {
+                    *i = n;
+                }
+                if let Some(&n) = replacements.get(j) {
+                    *j = n;
+                }
+                if let Some(&n) = replacements.get(k) {
+                    *k = n;
                 }
             }
             _ => {}
@@ -549,6 +594,15 @@ fn compute_def_blocks(fn_ir: &FnIR, reachable: &HashSet<BlockId>) -> Vec<Option<
                     worklist.push_back((*c, bid));
                     worklist.push_back((*val, bid));
                 }
+                Instr::StoreIndex3D {
+                    base, i, j, k, val, ..
+                } => {
+                    worklist.push_back((*base, bid));
+                    worklist.push_back((*i, bid));
+                    worklist.push_back((*j, bid));
+                    worklist.push_back((*k, bid));
+                    worklist.push_back((*val, bid));
+                }
             }
         }
         match &blk.term {
@@ -593,6 +647,12 @@ fn compute_def_blocks(fn_ir: &FnIR, reachable: &HashSet<BlockId>) -> Vec<Option<
                 worklist.push_back((*base, bid));
                 worklist.push_back((*r, bid));
                 worklist.push_back((*c, bid));
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                worklist.push_back((*base, bid));
+                worklist.push_back((*i, bid));
+                worklist.push_back((*j, bid));
+                worklist.push_back((*k, bid));
             }
             ValueKind::Len { base } | ValueKind::Indices { base } => {
                 worklist.push_back((*base, bid));

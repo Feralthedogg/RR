@@ -125,7 +125,10 @@ pub struct DiagnosticFix {
 }
 
 #[derive(Debug, Clone)]
-pub struct RRException {
+pub struct RRException(Box<RRExceptionData>);
+
+#[derive(Debug, Clone)]
+pub struct RRExceptionData {
     pub module: &'static str,
     pub message: Box<str>,
     pub code: RRCode,
@@ -133,6 +136,7 @@ pub struct RRException {
     pub span: Option<Span>,
     pub stacktrace: Box<Vec<Frame>>,
     pub notes: Box<Vec<String>>,
+    pub helps: Box<Vec<String>>,
     pub labels: Box<Vec<DiagnosticLabel>>,
     pub fixes: Box<Vec<DiagnosticFix>>,
     pub related: Box<Vec<RRException>>,
@@ -186,7 +190,7 @@ impl From<InternalCompilerError> for RRException {
 
 impl RRException {
     pub fn new(module: &'static str, code: RRCode, stage: Stage, msg: impl Into<String>) -> Self {
-        Self {
+        Self(Box::new(RRExceptionData {
             module,
             message: msg.into().into_boxed_str(),
             code,
@@ -194,10 +198,11 @@ impl RRException {
             span: None,
             stacktrace: Box::new(Vec::new()),
             notes: Box::new(Vec::new()),
+            helps: Box::new(Vec::new()),
             labels: Box::new(Vec::new()),
             fixes: Box::new(Vec::new()),
             related: Box::new(Vec::new()),
-        }
+        }))
     }
 
     pub fn aggregate(
@@ -227,6 +232,11 @@ impl RRException {
 
     pub fn note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
+        self
+    }
+
+    pub fn help(mut self, help: impl Into<String>) -> Self {
+        self.helps.push(help.into());
         self
     }
 
@@ -398,6 +408,9 @@ impl RRException {
                 println!("{}", style(color, palette.hint, &format!("hint: {}", n)));
             }
         }
+        for h in self.helps.iter() {
+            println!("{}", style(color, "1;92", &format!("help: {}", h)));
+        }
         for fix in self.fixes.iter() {
             let mut line = format!("fix: {}", fix.message);
             if let Some(span) = fix.span {
@@ -450,6 +463,20 @@ impl RRException {
             };
             println!("{}", style(color, caret_color, &caret));
         }
+    }
+}
+
+impl std::ops::Deref for RRException {
+    type Target = RRExceptionData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for RRException {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 

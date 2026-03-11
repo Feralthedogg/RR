@@ -1,25 +1,25 @@
 import "../common/sim_utils.rr"
 
 fn main() {
-    n = 21.0
-    u = rep.int(1.0, n)
-    v = rep.int(0.0, n)
+    let n = 21.0
+    let u = rep.int(1.0, n)
+    let v = rep.int(0.0, n)
     v[11.0] = 1.0
     v[10.0] = 0.5
     v[12.0] = 0.5
-    du = 0.16
-    dv = 0.08
-    feed = 0.035
-    kill = 0.060
-    step = 1.0
+    let du = 0.16
+    let dv = 0.08
+    let feed = 0.035
+    let kill = 0.060
+    let step = 1.0
     while (step <= 18.0) {
-        next_u = copy_vec(u)
-        next_v = copy_vec(v)
-        i = 2.0
+        let next_u = copy_vec(u)
+        let next_v = copy_vec(v)
+        let i = 2.0
         while (i < n) {
-            lap_u = u[i - 1.0] - 2.0 * u[i] + u[i + 1.0]
-            lap_v = v[i - 1.0] - 2.0 * v[i] + v[i + 1.0]
-            uvv = u[i] * v[i] * v[i]
+            let lap_u = u[i - 1.0] - 2.0 * u[i] + u[i + 1.0]
+            let lap_v = v[i - 1.0] - 2.0 * v[i] + v[i + 1.0]
+            let uvv = u[i] * v[i] * v[i]
             next_u[i] = u[i] + du * lap_u - uvv + feed * (1.0 - u[i])
             next_v[i] = v[i] + dv * lap_v + uvv - (kill + feed) * v[i]
             i += 1.0

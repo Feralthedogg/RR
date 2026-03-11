@@ -18,9 +18,9 @@ import r default from "dplyr"
 import r * as base from "base"
 
 fn main() {
-    df = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
-    out = df |> dplyr.mutate(trend = x * 0.5 + 0.2, smooth = signal * 0.8 + 0.1)
-    p = ggplot2.ggplot(out, ggplot2.aes(x = x, y = trend)) +
+    let df = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
+    let out = df |> dplyr.mutate(trend = x * 0.5 + 0.2, smooth = signal * 0.8 + 0.1)
+    let p = ggplot2.ggplot(out, ggplot2.aes(x = x, y = trend)) +
         ggplot2.geom_line(color = "steelblue") +
         ggplot2.geom_point(ggplot2.aes(y = smooth), color = "tomato")
     print(p)
@@ -84,10 +84,10 @@ import r default from "dplyr"
 import r * as base from "base"
 
 fn main() {
-    offset = 0.25
-    df = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
-    out = df |> dplyr.mutate(trend = @x * 0.5 + ^offset)
-    p = ggplot2.ggplot(out, ggplot2.aes(x = @x, y = @trend)) +
+    let offset = 0.25
+    let df = base.data.frame(x = c(0, 1, 2), signal = c(0.1, 0.5, 0.9))
+    let out = df |> dplyr.mutate(trend = @x * 0.5 + ^offset)
+    let p = ggplot2.ggplot(out, ggplot2.aes(x = @x, y = @trend)) +
         ggplot2.geom_line(color = "steelblue")
     print("tidy_eval_ok")
     print(p)

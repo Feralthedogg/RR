@@ -2,11 +2,11 @@ import r { plot as draw_plot, lines, legend } from "graphics"
 import r default from "grDevices"
 
 fn main() {
-    outfile = "rr_graphics_sine_plot_modern.png"
-    i = seq_len(200)
-    x = (i - 1) * (6.28318 / 199)
-    signal = sin(x) + (0.15 * cos(x * 3))
-    trend = 0.25 * sin(x * 0.5)
+    let outfile = "rr_graphics_sine_plot_modern.png"
+    let i = seq_len(200)
+    let x = (i - 1) * (6.28318 / 199)
+    let signal = sin(x) + (0.15 * cos(x * 3))
+    let trend = 0.25 * sin(x * 0.5)
 
     grDevices.png(filename = outfile, width = 960, height = 540)
     draw_plot(

@@ -1,19 +1,19 @@
 import "../common/sim_utils.rr"
 
 fn main() {
-    theta = 1.1
-    omega = 0.0
-    dt = 0.05
-    damp = 0.06
-    g_over_l = 1.0
-    step = 1.0
+    let theta = 1.1
+    let omega = 0.0
+    let dt = 0.05
+    let damp = 0.06
+    let g_over_l = 1.0
+    let step = 1.0
     while (step <= 160.0) {
-        alpha = 0.0 - g_over_l * theta - damp * omega
+        let alpha = 0.0 - g_over_l * theta - damp * omega
         omega = omega + dt * alpha
         theta = theta + dt * omega
         step += 1.0
     }
-    energy = 0.5 * omega * omega + 0.5 * theta * theta
+    let energy = 0.5 * omega * omega + 0.5 * theta * theta
     print_metric("pendulum_theta", theta)
     print_metric("pendulum_energy", energy)
 }

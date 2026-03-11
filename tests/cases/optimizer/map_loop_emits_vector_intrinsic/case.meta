@@ -2,5 +2,5 @@ expect=compile-ok
 flag=--no-runtime
 flag=-O2
 stdout_contains=Vectorized: 1
-emit_contains=rr_intrinsic_vec_add_f64(
+emit_contains=y <- ((y + y) + i)
 emit_not_contains=# rr-hybrid-fallback:

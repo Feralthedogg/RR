@@ -1,10 +1,33 @@
 # Writing RR for Performance and Safety
 
-This guide is for RR users writing `.rr` programs.
+This page is the performance and safety guide for RR authors.
 
 RR's optimizer is strongest when code stays close to explicit numeric kernels,
 canonical loops, and predictable dataflow. It is intentionally conservative when
 proofs are missing, so "easy to reason about" code is usually both faster and safer.
+
+## Audience
+
+Read this page when:
+
+- generated R is slower or stranger than expected
+- a loop did not vectorize
+- you want code that is both optimization-friendly and review-friendly
+
+This is not a syntax reference. Use [Language Reference](language.md) for that.
+
+## Contract
+
+Tachyon is pattern-driven.
+
+That means:
+
+- optimization comes from recognizable source structure
+- missing proof usually means a deliberate skip, not a near miss
+- the best source style is the one that makes dataflow obvious
+
+The practical consequence is that “compiler-friendly” RR usually also reads more
+like a numerical kernel specification and less like dynamic metaprogramming.
 
 ## Why This Style Optimizes Well
 
@@ -26,6 +49,9 @@ use the optimizer's own feedback:
 
 - normal `-O1` / `-O2` compile output for `Vectorized`, `Reduced`, `Simplified`, and `VecSkip`
 - `RR_VECTORIZE_TRACE=1` when you need per-loop reject reasons
+- `--no-incremental` when you are debugging optimizer output on a stable input path;
+  the normal CLI default is incremental `auto`, so unchanged inputs may reuse a
+  cached artifact instead of rebuilding the hot loop you are inspecting
 
 Canonical loops matter mainly because they are the main entry point to RR's
 vectorization pipeline. Today that usually means rewriting scalar loops into
@@ -37,6 +63,7 @@ SIMD-like execution and lower interpreter overhead.
 - Prefer straight-line numeric code, canonical loops, and pure helpers.
 - Keep indexing, lengths, and reduction state obvious.
 - Avoid dynamic runtime features in hot paths.
+- Remember that helper-heavy vector loops may intentionally keep a scalar fallback at runtime.
 - Develop with strict/runtime safety knobs enabled, then measure with optimized builds.
 - Prefer one statement per line; semicolons are not supported.
 
@@ -99,6 +126,82 @@ for i in 1..n {
 `length(x)` is loop-invariant, and LICM may hoist some invariants automatically.
 Still, spelling out `n` is better because it makes the trip count explicit for
 both the reviewer and the optimizer instead of relying on inference.
+
+RR can also optimize selected partial-range kernels when the slice boundaries are
+explicit and all reads/writes stay tied to the same induction variable.
+
+Good:
+
+```rr
+fn tail_abs(x) {
+  let n = length(x)
+  let out = x
+  for i in 2..n {
+    out[i] = abs(x[i])
+  }
+  out
+}
+```
+
+Also good:
+
+```rr
+fn interior_step(x) {
+  let y = seq_len(length(x))
+  let i = 1L
+  while (i < length(x)) {
+    y[i] = x[i] + 10L
+    i = i + 1L
+  }
+  y
+}
+```
+
+These shapes typically lower through slice-assignment helpers instead of a
+scalar `repeat` loop. They still benefit from the same discipline:
+
+- keep the loop bound obvious
+- keep the index direct
+- avoid rebuilding `i` through aliases or indirect lookup tables
+
+### Simple fills and multi-output loops can still optimize
+
+RR is not limited to a single `out[i] = f(x[i])` map. The optimizer can also
+handle a few nearby shapes when the writes remain direct and non-aliasing:
+
+- invariant fills such as `y[i] = 0`
+- multiple direct destinations such as `y[i] = x[i] + 1` and `z[i] = x[i] * 2`
+- a loop-carried scalar that is only tracking the last value written to one
+  destination, for example `last = z[i]`
+
+Good:
+
+```rr
+fn pair_kernel(x) {
+  let n = length(x)
+  let y = seq_len(n)
+  let z = seq_len(n)
+  let last = 0
+
+  for i in 1..n {
+    y[i] = x[i] + 1
+    z[i] = x[i] * 2
+    last = z[i]
+  }
+
+  print(last)
+  z
+}
+```
+
+This is still proof-friendly because:
+
+- every destination is written at one obvious index
+- the scalar state is just a shadow of one destination element
+- there are no unrelated side effects inside the loop
+
+Once the loop starts mixing logging, package calls, alias-heavy writes, or
+indirect indices, RR becomes conservative again.
 
 ### Keep reductions simple
 
@@ -172,6 +275,17 @@ to see in source:
 - keep paired vectors the same length
 - use one canonical index instead of rebuilding equivalent indices in several forms
 - prefer row/column access patterns that stay visibly tied to matrix dimensions
+- 3D scalar indexing is supported
+- selected 3D array maps, expr-maps, conditional maps, call-maps, scatter-maps, and sum/prod/min/max reductions can optimize when one axis is the loop induction variable and the remaining index expressions stay loop-shaped or loop-invariant in a way Tachyon can prove
+- aligned 3D slice reads such as `a[i, j0, k0]` work best when `j0` and `k0` stay visibly loop-invariant
+- 3D expr-map RHS can also use gather-style reads such as `a[idx_i[i], idx_j[i], k0]` as long as the loop still writes one obvious single-axis slice
+- the same applies to 3D branch kernels: `if (a[idx_i[i], idx_j[i], k0] > t) out[i, j0, k0] = ...` can optimize if the destination slice is still obvious
+- vector-safe 3D call kernels such as `out[i, j0, k0] = pmax(a[idx_i[i], idx_j[i], k0], b[idx_i[i], idx_j[i], k0])` can optimize under the same constraint
+- multiple 3D slice destinations in the same loop can optimize too when each write stays direct and independent, for example `y[i, j0, k0] = ...` and `z[i, j1, k1] = ...`
+- 3D scatter writes such as `out[idx_i[i], idx_j[i], k0] = value[i]` can also optimize when the write still comes from one obvious loop and the RHS does not read back from the destination
+- 3D reductions such as `acc = acc + a[idx_i[i], idx_j[i], k0]` can optimize too when the accumulator is the only loop-carried state
+- single-axis 3D shift/recur kernels such as `out[i, j0, k0] = src[i + 1, j0, k0]` and `out[i, j0, k0] = out[i - 1, j0, k0] + c` can also optimize when the axis and fixed coordinates stay obvious
+- arbitrary 3D traversal is still much less optimization-friendly than canonical 1D/2D shapes
 
 Good:
 
@@ -247,23 +361,81 @@ so explicit invariants are often worth more than trusting a future cleanup pass.
 
 ### Use strict development settings
 
-These modes catch common mistakes early:
+Use the language/runtime checks for day-to-day development, and add the
+compiler-side verification knobs when you are debugging optimization or
+incremental behavior.
+
+Under the default strict declaration rules, the first assignment to a local or
+top-level name should use `let`, including traditional forms such as
+`let main <- function() { ... }`.
+
+Language and runtime safety settings:
 
 | Setting | Use it for |
 | --- | --- |
-| `RR_STRICT_LET=1` | assignment to an undeclared name becomes a compile error |
-| `RR_WARN_IMPLICIT_DECL=1` | warns when assignment would implicitly declare a variable |
+| `--type-mode strict` | keep static typing in the stricter mode during development; this is the normal default |
+| `RR_STRICT_LET=1` | explicit spelling of the default strict-let behavior: assignment to an undeclared name is a compile error |
+| `RR_WARN_IMPLICIT_DECL=1` | warns when assignment would implicitly declare a variable; mainly useful if you temporarily opt out with `RR_STRICT_LET=0` |
 | `RR_RUNTIME_MODE=debug` | enables the fuller runtime safety path |
 | `RR_STRICT_INDEX_READ=1` | turns NA read-index behavior into a hard runtime error |
 
+Compiler verification settings:
+
+| Setting | Use it for |
+| --- | --- |
+| `RR_VERIFY_EACH_PASS=1` | run the MIR verifier after each optimization pass; use this when `-O1` or `-O2` behavior looks suspicious |
+| `--strict-incremental-verify` | rebuild and compare against any reused incremental artifact instead of trusting the cache blindly |
+| `--no-incremental` | force a fresh compile when you want to inspect the current optimizer output rather than a cached result |
+
 Recommended workflow:
 
-1. Develop and test with `RR_STRICT_LET=1 RR_RUNTIME_MODE=debug`.
+1. Develop and test in `--type-mode strict` with `RR_RUNTIME_MODE=debug`.
 2. Add `RR_STRICT_INDEX_READ=1` when indexing bugs are plausible.
-3. Measure with `RR_RUNTIME_MODE=release` only after correctness is stable.
+3. Add `RR_VERIFY_EACH_PASS=1` when investigating optimizer regressions.
+4. Use `--strict-incremental-verify` when you are validating incremental reuse.
+5. Use `--no-incremental` when you care about the exact emitted R from the current source tree.
+6. Measure with `RR_RUNTIME_MODE=release` only after correctness is stable.
+7. When benchmarking helper-heavy vector loops, pin the runtime profitability knobs so you know which path you are measuring.
 
 > Recommended default during development:
-> `RR_STRICT_LET=1 RR_RUNTIME_MODE=debug`
+> `RR_RUNTIME_MODE=debug`
+
+Examples:
+
+```bash
+RR_RUNTIME_MODE=debug cargo run -- example/tesseract.rr -O0 --type-mode strict
+```
+
+```bash
+RR_RUNTIME_MODE=debug RR_VERIFY_EACH_PASS=1 \
+  cargo run -- example/tesseract.rr -O2 --type-mode strict --no-incremental
+```
+
+```bash
+cargo run -- example/tesseract.rr -O2 --type-mode strict --strict-incremental-verify
+```
+
+```bash
+RR_VECTOR_FALLBACK_BASE_TRIP=0 RR_VECTOR_FALLBACK_HELPER_SCALE=0 \
+  cargo run -- example/tesseract.rr -O2 --type-mode strict --no-incremental
+```
+
+If you are porting older RR code that still relies on implicit declaration, use:
+
+```bash
+RR_STRICT_LET=0 RR_WARN_IMPLICIT_DECL=1 cargo run -- example/tesseract.rr -O0 --type-mode strict
+```
+
+The last two commands serve different purposes:
+
+- `--no-incremental` is for "show me what the optimizer emits right now"
+- `--strict-incremental-verify` is for "prove the incremental cache matches a fresh rebuild"
+
+Helper-heavy vector call kernels have an extra runtime decision point:
+
+- RR may emit `rr_call_map_whole_auto(...)` or `rr_call_map_slice_auto(...)` instead of a direct helper-heavy vector call.
+- That guard keeps the vector form for large trip counts, but can use a scalar R loop when the helper overhead would dominate on small inputs.
+- Use `RR_VECTOR_FALLBACK_BASE_TRIP` and `RR_VECTOR_FALLBACK_HELPER_SCALE` to pin that choice while benchmarking.
 
 ### Validate lengths and indices at boundaries
 
@@ -285,6 +457,24 @@ than a loop that also:
 - rewrites several aliasing containers at once
 
 Split effectful orchestration from the compute kernel when possible.
+
+A small loop-carried scalar shadow is usually fine if it is obviously derived
+from the current destination element. Arbitrary side effects are not.
+
+Fully-typed vector helpers are also a good boundary for RR's parallel wrapper
+path. If RR can prove the sliced vector inputs from explicit hints or from a
+straight-line typed binding chain, and the helper stays as a slice-stable
+expression kernel, RR can emit an implementation helper plus a parallel wrapper
+automatically. In practice, small numeric helpers such as:
+
+```rr
+fn fused(a: vector<float>, b: vector<float>) -> vector<float> {
+  return (a + b) * 0.5
+}
+```
+
+are a better fit than reduction-style helpers such as `mean(abs(x))`, because
+the wrapper can safely split and reassemble the former.
 
 ### Check optimized and unoptimized behavior
 
@@ -336,6 +526,7 @@ Before blaming the optimizer, check these first:
 
 - Is the hot loop using one clear induction variable?
 - Are reads and writes indexed directly from that variable?
+- If the loop intentionally skips a prefix/suffix, is that slice range explicit?
 - Did you hoist `length(...)`, `mean(...)`, and other invariant scalars once?
 - Is the helper call pure enough to inline or reason about?
 - Are dynamic features kept outside the numeric kernel?

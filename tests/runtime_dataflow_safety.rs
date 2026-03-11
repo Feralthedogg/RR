@@ -10,11 +10,11 @@ fn run_compile(source: &str, file_name: &str) -> (bool, String, String) {
 fn range_and_dataflow_runtime_hazards_are_detected() {
     let src = r#"
 fn bad(x) {
-  y <- x[length(x) - length(x)]
+  let y = x[length(x) - length(x)]
 
-  z <- 10L / (length(x) - length(x))
+  let z = 10L / (length(x) - length(x))
 
-  w <- seq_len((length(x) - length(x)) - 1L)
+  let w = seq_len((length(x) - length(x)) - 1L)
 
   return z + length(w) + y
 

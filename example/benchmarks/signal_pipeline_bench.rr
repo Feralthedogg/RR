@@ -1,0 +1,42 @@
+fn main() {
+    let n = 250000.0
+    let passes = 16.0
+
+    let idx = seq_len(n)
+    let x = ((idx * 13.0) % 1000.0) / 1000.0 - 0.5
+    let y = (((idx * 17.0) + 7.0) % 1000.0) / 1000.0 - 0.5
+    let score = rep.int(0.0, n)
+    let clean = rep.int(0.0, n)
+
+    let pass = 1.0
+    while (pass <= passes) {
+        for (i in 1..n) {
+            score[i] = pmax(abs(x[i] * 0.65 + y[i] * 0.35 - 0.08), 0.05)
+        }
+
+        for (i in 1..n) {
+            if (score[i] > 0.40) {
+                clean[i] = sqrt(score[i] + 0.10)
+            } else {
+                clean[i] = score[i] * 0.55 + 0.03
+            }
+        }
+
+        for (i in 1..n) {
+            x[i] = clean[i] + y[i] * 0.15
+        }
+
+        for (i in 1..n) {
+            y[i] = score[i] * 0.80 + clean[i] * 0.20
+        }
+
+        pass += 1.0
+    }
+
+    print("signal_pipeline_tail")
+    print(clean[n])
+    print("signal_pipeline_mean")
+    print(mean(clean))
+}
+
+main()

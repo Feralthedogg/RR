@@ -15,12 +15,13 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const CACHE_VERSION: &str = concat!("rr-incremental-v2|", env!("CARGO_PKG_VERSION"));
-const IMPORT_PATTERN: &str = r#"(?m)^\s*import\s+"([^"]+)"\s*;"#;
+const IMPORT_PATTERN: &str = r#"(?m)^\s*import\s+"([^"]+)"\s*(?:#.*)?$"#;
 static IMPORT_RE: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct IncrementalOptions {
     pub enabled: bool,
+    pub auto: bool,
     pub phase1: bool,
     pub phase2: bool,
     pub phase3: bool,
@@ -28,9 +29,25 @@ pub struct IncrementalOptions {
 }
 
 impl IncrementalOptions {
+    pub fn disabled() -> Self {
+        Self::default()
+    }
+
+    pub fn auto() -> Self {
+        Self {
+            enabled: true,
+            auto: true,
+            phase1: false,
+            phase2: false,
+            phase3: false,
+            strict_verify: false,
+        }
+    }
+
     pub fn phase1_only() -> Self {
         Self {
             enabled: true,
+            auto: false,
             phase1: true,
             phase2: false,
             phase3: false,
@@ -41,10 +58,25 @@ impl IncrementalOptions {
     pub fn all_phases() -> Self {
         Self {
             enabled: true,
+            auto: false,
             phase1: true,
             phase2: true,
             phase3: true,
             strict_verify: false,
+        }
+    }
+
+    pub fn resolve(self, has_session: bool) -> Self {
+        if !self.enabled || !self.auto {
+            return self;
+        }
+        Self {
+            enabled: true,
+            auto: false,
+            phase1: true,
+            phase2: true,
+            phase3: has_session,
+            strict_verify: self.strict_verify,
         }
     }
 }
@@ -198,7 +230,8 @@ pub fn compile_with_configs_incremental_with_output_options(
     output_options: CompileOutputOptions,
     session: Option<&mut IncrementalSession>,
 ) -> RR<IncrementalCompileOutput> {
-    if !options.enabled {
+    let resolved = options.resolve(session.is_some());
+    if !resolved.enabled {
         let (r_code, source_map) = compile_with_configs_with_options(
             entry_path,
             entry_input,
@@ -221,17 +254,17 @@ pub fn compile_with_configs_incremental_with_output_options(
         opt_level,
         type_cfg,
         parallel_cfg,
-        options,
+        resolved,
         output_options,
     );
     let mut strict_expected = Vec::new();
 
-    if options.phase3
+    if resolved.phase3
         && let Some(s) = session.as_ref()
         && let Some(hit) = s.phase3_artifacts.get(&cache_key)
     {
         stats.phase3_memory_hit = true;
-        if options.strict_verify {
+        if resolved.strict_verify {
             strict_expected.push((StrictArtifactTier::Phase3Memory, hit.clone()));
         } else {
             return Ok(IncrementalCompileOutput {
@@ -243,14 +276,14 @@ pub fn compile_with_configs_incremental_with_output_options(
     }
 
     let cache_root = cache_root_for_entry(entry_path);
-    if options.phase1
+    if resolved.phase1
         && let Some(hit) = load_artifact(&cache_root, &cache_key)?
     {
         stats.phase1_artifact_hit = true;
-        if options.strict_verify {
+        if resolved.strict_verify {
             strict_expected.push((StrictArtifactTier::Phase1Disk, hit.clone()));
         } else {
-            if options.phase3
+            if resolved.phase3
                 && let Some(s) = session
             {
                 s.phase3_artifacts.insert(cache_key, hit.clone());
@@ -263,7 +296,7 @@ pub fn compile_with_configs_incremental_with_output_options(
         }
     }
 
-    let (r_code, source_map) = if options.phase2 {
+    let (r_code, source_map) = if resolved.phase2 {
         let mut fn_cache = DiskFnEmitCache::new(cache_root.join("function-emits"));
         let (code, map, hits, misses) = compile_with_configs_using_emit_cache(
             entry_path,
@@ -289,15 +322,15 @@ pub fn compile_with_configs_incremental_with_output_options(
     };
     let built = CachedArtifact { r_code, source_map };
 
-    if options.phase1 {
+    if resolved.phase1 {
         store_artifact(&cache_root, &cache_key, &built)?;
     }
-    if options.phase3
+    if resolved.phase3
         && let Some(s) = session
     {
         s.phase3_artifacts.insert(cache_key, built.clone());
     }
-    if options.strict_verify {
+    if resolved.strict_verify {
         stats.strict_verification_checked = !strict_expected.is_empty();
         for (tier, expected) in &strict_expected {
             verify_strict_artifact_match(*tier, expected, &built)?;

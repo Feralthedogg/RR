@@ -20,6 +20,21 @@ fn extract_numeric_series(stdout: &str, marker: &str) -> Vec<f64> {
     out
 }
 
+fn assert_series_close(label: &str, a: &[f64], b: &[f64]) {
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "{label} series length mismatch:\nleft={a:?}\nright={b:?}"
+    );
+    for (idx, (lhs, rhs)) in a.iter().zip(b.iter()).enumerate() {
+        let diff = (lhs - rhs).abs();
+        assert!(
+            diff <= 1e-12,
+            "{label} mismatch at index {idx}: left={lhs}, right={rhs}, diff={diff}"
+        );
+    }
+}
+
 #[test]
 fn tesseract_compiles_across_opt_levels() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -100,4 +115,61 @@ fn tesseract_runs_at_o2() {
         !stdout.trim().is_empty(),
         "tesseract O2 runtime produced empty stdout"
     );
+}
+
+#[test]
+fn tesseract_runtime_markers_match_between_o1_and_o2() {
+    let rscript = match rscript_path() {
+        Some(p) if rscript_available(&p) => p,
+        _ => {
+            eprintln!("Skipping tesseract parity test: Rscript not available.");
+            return;
+        }
+    };
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let rr_src = root.join("example").join("tesseract.rr");
+    let out_dir = root.join("target").join("examples_tesseract_parity");
+    fs::create_dir_all(&out_dir).expect("failed to create tesseract parity dir");
+
+    let o1_path = out_dir.join("tesseract_o1.R");
+    let o2_path = out_dir.join("tesseract_o2.R");
+    compile_rr(&rr_bin, &rr_src, &o1_path, "-O1");
+    compile_rr(&rr_bin, &rr_src, &o2_path, "-O2");
+
+    let o1 = run_rscript(&rscript, &o1_path);
+    let o2 = run_rscript(&rscript, &o2_path);
+    let stdout_o1 = normalize(&o1.stdout);
+    let stdout_o2 = normalize(&o2.stdout);
+    let stderr_o1 = normalize(&o1.stderr);
+    let stderr_o2 = normalize(&o2.stderr);
+
+    assert_eq!(
+        o1.status, 0,
+        "tesseract O1 runtime failed:\nstdout={stdout_o1}\nstderr={stderr_o1}"
+    );
+    assert_eq!(
+        o2.status, 0,
+        "tesseract O2 runtime failed:\nstdout={stdout_o2}\nstderr={stderr_o2}"
+    );
+
+    let center_b_o1 = extract_numeric_series(&stdout_o1, "Center B:");
+    let center_b_o2 = extract_numeric_series(&stdout_o2, "Center B:");
+    let wave_b_o1 = extract_numeric_series(&stdout_o1, "Wave B:");
+    let wave_b_o2 = extract_numeric_series(&stdout_o2, "Wave B:");
+    let particle_x_o1 = extract_numeric_series(&stdout_o1, "Particle 1 Position (X):");
+    let particle_x_o2 = extract_numeric_series(&stdout_o2, "Particle 1 Position (X):");
+    let max_u_o1 = extract_numeric_series(&stdout_o1, "Step Complete. Max U:");
+    let max_u_o2 = extract_numeric_series(&stdout_o2, "Step Complete. Max U:");
+
+    assert!(!center_b_o1.is_empty(), "missing Center B series in O1 stdout");
+    assert!(!wave_b_o1.is_empty(), "missing Wave B series in O1 stdout");
+    assert!(!particle_x_o1.is_empty(), "missing particle x series in O1 stdout");
+    assert!(!max_u_o1.is_empty(), "missing max_u series in O1 stdout");
+
+    assert_series_close("Center B", &center_b_o1, &center_b_o2);
+    assert_series_close("Wave B", &wave_b_o1, &wave_b_o2);
+    assert_series_close("Particle 1 Position (X)", &particle_x_o1, &particle_x_o2);
+    assert_series_close("Max U", &max_u_o1, &max_u_o2);
 }

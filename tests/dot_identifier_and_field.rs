@@ -23,7 +23,7 @@ fn dotted_identifiers_and_field_access_coexist() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let rr_src = r#"
-solve.cg <- function(v) {
+let solve.cg <- function(v) {
   v + 1L
 }
 
@@ -31,21 +31,21 @@ fn dot.mul(z) {
   return z * 2L
 }
 
-idx.cube <- function(f, x, y, size) {
-  ff <- round(f)
+let idx.cube <- function(f, x, y, size) {
+  let ff <- round(f)
   if (ff < 1L) {
-    ff <- 1L
+    ff = 1L
   }
   (ff - 1L) * size * size + y
 }
 
-field.check <- function() {
-  rec <- {x: 10L, y: 2L}
+let field.check <- function() {
+  let rec <- {x: 10L, y: 2L}
   rec.x = rec.x + 1L
   rec.x + rec.y
 }
 
-main <- function() {
+let main <- function() {
   print(solve.cg(4L))
   print(dot.mul(3L))
   print(idx.cube(2L, 1L, 3L, 4L))

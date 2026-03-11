@@ -4,8 +4,13 @@ use crate::mir::flow::Facts;
 use crate::mir::*;
 use crate::syntax::ast::{BinOp, Lit};
 use crate::typeck::solver::{hir_ty_to_type_state, hir_ty_to_type_term};
-use crate::utils::Span;
+use crate::utils::{Span, did_you_mean};
 use rustc_hash::{FxHashMap, FxHashSet};
+
+#[path = "lower_hir/loops.rs"]
+mod loops;
+#[path = "lower_hir/matching.rs"]
+mod matching;
 
 #[derive(Clone, Copy)]
 struct LoopTargets {
@@ -13,7 +18,6 @@ struct LoopTargets {
     continue_bb: BlockId,
     continue_step: Option<(hir::LocalId, ValueId)>,
 }
-
 pub struct MirLowerer<'a> {
     fn_ir: FnIR,
 
@@ -44,6 +48,87 @@ impl<'a> MirLowerer<'a> {
     // Only the small scalar-indexing group is allowed to shadow base R names.
     fn allow_user_builtin_shadowing(name: &str) -> bool {
         matches!(name, "length" | "floor" | "round" | "ceiling" | "trunc")
+    }
+
+    fn function_name_suggestion_candidates() -> &'static [&'static str] {
+        &[
+            "length",
+            "seq_along",
+            "seq_len",
+            "c",
+            "list",
+            "sum",
+            "mean",
+            "min",
+            "max",
+            "abs",
+            "sqrt",
+            "sin",
+            "cos",
+            "tan",
+            "asin",
+            "acos",
+            "atan",
+            "atan2",
+            "sinh",
+            "cosh",
+            "tanh",
+            "log",
+            "log10",
+            "log2",
+            "exp",
+            "sign",
+            "gamma",
+            "lgamma",
+            "floor",
+            "ceiling",
+            "trunc",
+            "round",
+            "pmax",
+            "pmin",
+            "print",
+            "is.na",
+            "is.finite",
+            "numeric",
+            "rep.int",
+            "vector",
+            "matrix",
+            "colSums",
+            "rowSums",
+            "crossprod",
+            "tcrossprod",
+            "library",
+            "require",
+            "plot",
+            "lines",
+            "legend",
+            "png",
+            "dev.off",
+            "eval",
+            "parse",
+            "get",
+            "assign",
+            "exists",
+            "mget",
+            "rm",
+            "ls",
+            "parent.frame",
+            "environment",
+            "sys.frame",
+            "sys.call",
+            "do.call",
+        ]
+    }
+
+    fn suggest_function_name(&self, name: &str) -> Option<String> {
+        did_you_mean(
+            name,
+            self.known_functions.keys().cloned().chain(
+                Self::function_name_suggestion_candidates()
+                    .iter()
+                    .map(|name| (*name).to_string()),
+            ),
+        )
     }
 
     pub fn new(
@@ -117,20 +202,14 @@ impl<'a> MirLowerer<'a> {
         val: ValueId,
         emit_assign: bool,
     ) {
-        // Update origin_var of the value to the name of this local.
-        // When assigning from a value that is already bound to a *different* variable
-        // name, rebind through an explicit Load(dst) for future reads to preserve
-        // assignment semantics under later variable mutation.
         let name = self.var_names.get(&var).cloned();
         if let Some(n) = name {
             if emit_assign {
-                // Emit assignment instruction so it exists in R code.
                 self.fn_ir.blocks[block].instrs.push(Instr::Assign {
                     dst: n.clone(),
                     src: val,
                     span: Span::default(),
                 });
-
                 let mismatched_origin = self
                     .fn_ir
                     .values
@@ -324,7 +403,16 @@ impl<'a> MirLowerer<'a> {
 
         // 1. Bind parameters in the entry block
         for (i, param) in f.params.iter().enumerate() {
-            let param_name = self.symbols[&param.name].clone(); // Clone early to avoid borrow conflict
+            let param_name = self.symbols.get(&param.name).cloned().ok_or_else(|| {
+                InternalCompilerError::new(
+                    Stage::Mir,
+                    format!(
+                        "missing parameter symbol during MIR lowering: {:?}",
+                        param.name
+                    ),
+                )
+                .into_exception()
+            })?; // Clone early to avoid borrow conflict
             if let Some((&local_id, _)) =
                 self.var_names.iter().find(|(_, name)| **name == param_name)
             {
@@ -453,12 +541,24 @@ impl<'a> MirLowerer<'a> {
                                     },
                                 );
                             }
+                            [i, j, k] => {
+                                self.fn_ir.blocks[self.curr_block].instrs.push(
+                                    Instr::StoreIndex3D {
+                                        base: base_id,
+                                        i: *i,
+                                        j: *j,
+                                        k: *k,
+                                        val: v,
+                                        span,
+                                    },
+                                );
+                            }
                             _ => {
                                 return Err(crate::error::RRException::new(
                                     "RR.SemanticError",
                                     crate::error::RRCode::E1002,
                                     crate::error::Stage::Mir,
-                                    "Only 1D/2D indexing is supported",
+                                    "Only 1D/2D/3D indexing is supported",
                                 ));
                             }
                         }
@@ -485,7 +585,7 @@ impl<'a> MirLowerer<'a> {
                             hir::HirExpr::Local(lid) => {
                                 self.write_var(lid, set_id);
                             }
-                            hir::HirExpr::Global(sym) => {
+                            hir::HirExpr::Global(sym, _) => {
                                 if let Some(dst_name) = self.symbols.get(&sym).cloned() {
                                     self.fn_ir.blocks[self.curr_block]
                                         .instrs
@@ -672,7 +772,7 @@ impl<'a> MirLowerer<'a> {
                 Ok(self.add_value(ValueKind::Const(al), Span::default()))
             }
             hir::HirExpr::Local(l) => self.read_var(l, self.curr_block),
-            hir::HirExpr::Global(sym) => {
+            hir::HirExpr::Global(sym, span) => {
                 let raw_name = self
                     .symbols
                     .get(&sym)
@@ -683,7 +783,7 @@ impl<'a> MirLowerer<'a> {
                         ValueKind::RSymbol {
                             name: raw_name.clone(),
                         },
-                        Span::default(),
+                        span,
                     ));
                 }
                 let name = if self.known_functions.contains_key(&raw_name) {
@@ -693,7 +793,7 @@ impl<'a> MirLowerer<'a> {
                 };
                 Ok(self.add_value_with_name(
                     ValueKind::Load { var: name.clone() },
-                    Span::default(),
+                    span,
                     Some(name),
                 ))
             }
@@ -758,11 +858,22 @@ impl<'a> MirLowerer<'a> {
                         Facts::empty(),
                         None,
                     )),
+                    [i, j, k] => Ok(self.fn_ir.add_value(
+                        ValueKind::Index3D {
+                            base: base_id,
+                            i: *i,
+                            j: *j,
+                            k: *k,
+                        },
+                        span,
+                        Facts::empty(),
+                        None,
+                    )),
                     _ => Err(crate::error::RRException::new(
                         "RR.SemanticError",
                         crate::error::RRCode::E1002,
                         crate::error::Stage::Mir,
-                        "Only 1D/2D indexing is supported",
+                        "Only 1D/2D/3D indexing is supported",
                     )),
                 }
             }
@@ -770,7 +881,7 @@ impl<'a> MirLowerer<'a> {
 
             hir::HirExpr::Call(hir::HirCall { callee, args, span }) => {
                 let tidy_mask_args = match callee.as_ref() {
-                    hir::HirExpr::Global(sym) => self
+                    hir::HirExpr::Global(sym, _) => self
                         .symbols
                         .get(sym)
                         .is_some_and(|name| Self::is_tidy_data_mask_call(name)),
@@ -807,7 +918,7 @@ impl<'a> MirLowerer<'a> {
                 }
 
                 match callee.as_ref() {
-                    hir::HirExpr::Global(sym) => {
+                    hir::HirExpr::Global(sym, _) => {
                         if let Some(name) = self.symbols.get(sym) {
                             if name.starts_with("rr_") {
                                 return Ok(self.fn_ir.add_value(
@@ -998,14 +1109,18 @@ impl<'a> MirLowerer<'a> {
                                     None,
                                 ));
                             }
-                            return Err(crate::error::RRException::new(
+                            let mut err = crate::error::RRException::new(
                                 "RR.SemanticError",
                                 crate::error::RRCode::E1001,
                                 crate::error::Stage::Mir,
                                 format!("undefined function '{}'", name),
                             )
                             .at(span)
-                            .note("Define or import the function before calling it."));
+                            .note("Define or import the function before calling it.");
+                            if let Some(suggestion) = self.suggest_function_name(name) {
+                                err = err.help(suggestion);
+                            }
+                            return Err(err);
                         }
                         Err(crate::error::RRException::new(
                             "RR.SemanticError",
@@ -1469,353 +1584,5 @@ impl<'a> MirLowerer<'a> {
                 "prefer supported tidy helpers or add this helper to the direct tidy interop surface",
             ),
         )
-    }
-
-    fn lower_match_expr(
-        &mut self,
-        scrut: hir::HirExpr,
-        arms: Vec<hir::HirMatchArm>,
-    ) -> RR<ValueId> {
-        let span = Span::default();
-        if arms.is_empty() {
-            return Err(crate::error::RRException::new(
-                "RR.SemanticError",
-                crate::error::RRCode::E3001,
-                crate::error::Stage::Lower,
-                "match expression requires at least one arm",
-            )
-            .at(span)
-            .note("Add at least one match arm, typically ending with `_ => ...`."));
-        }
-        if !Self::match_has_final_unguarded_catch_all(&arms) {
-            return Err(crate::error::RRException::new(
-                "RR.SemanticError",
-                crate::error::RRCode::E3001,
-                crate::error::Stage::Lower,
-                "non-exhaustive match requires an unguarded catch-all arm",
-            )
-            .at(span)
-            .note("Add `_ => ...` (or an unguarded binding arm) as the final fallback."));
-        }
-        let scrut_val = self.lower_expr(scrut)?;
-
-        let merge_bb = self.fn_ir.add_block();
-        let mut arm_results: Vec<(ValueId, BlockId)> = Vec::new();
-        let mut test_bb = self.curr_block;
-        let arm_len = arms.len();
-
-        for (i, arm) in arms.into_iter().enumerate() {
-            self.curr_block = test_bb;
-            let arm_bb = self.fn_ir.add_block();
-            let is_final_catch_all = i + 1 == arm_len && Self::is_unguarded_catch_all_arm(&arm);
-            let fail_bb = if let Some(guard_expr) = arm.guard {
-                let cond = self.lower_match_pat_cond(scrut_val, &arm.pat, arm.span)?;
-                let guard_bb = self.fn_ir.add_block();
-                let fail_bb = self.fn_ir.add_block();
-                self.terminate(Terminator::If {
-                    cond,
-                    then_bb: guard_bb,
-                    else_bb: fail_bb,
-                });
-                self.add_pred(guard_bb, test_bb);
-                self.add_pred(fail_bb, test_bb);
-
-                self.curr_block = guard_bb;
-                self.seal_block(guard_bb)?;
-                self.bind_match_pattern(scrut_val, &arm.pat, arm.span)?;
-                let guard_val = self.lower_expr(guard_expr)?;
-                self.terminate(Terminator::If {
-                    cond: guard_val,
-                    then_bb: arm_bb,
-                    else_bb: fail_bb,
-                });
-                self.add_pred(arm_bb, guard_bb);
-                self.add_pred(fail_bb, guard_bb);
-                Some(fail_bb)
-            } else if is_final_catch_all {
-                self.terminate(Terminator::Goto(arm_bb));
-                self.add_pred(arm_bb, test_bb);
-                None
-            } else {
-                let cond = self.lower_match_pat_cond(scrut_val, &arm.pat, arm.span)?;
-                let fail_bb = self.fn_ir.add_block();
-                self.terminate(Terminator::If {
-                    cond,
-                    then_bb: arm_bb,
-                    else_bb: fail_bb,
-                });
-                self.add_pred(arm_bb, test_bb);
-                self.add_pred(fail_bb, test_bb);
-                Some(fail_bb)
-            };
-
-            self.curr_block = arm_bb;
-            self.seal_block(arm_bb)?;
-            self.bind_match_pattern(scrut_val, &arm.pat, arm.span)?;
-            let arm_val = self.lower_expr(arm.body)?;
-            let arm_end_bb = self.curr_block;
-            if !self.is_terminated(self.curr_block) {
-                self.add_pred(merge_bb, self.curr_block);
-                self.terminate(Terminator::Goto(merge_bb));
-            }
-            arm_results.push((arm_val, arm_end_bb));
-
-            if let Some(fail_bb) = fail_bb {
-                test_bb = fail_bb;
-                self.seal_block(fail_bb)?;
-
-                // If this is the last arm, keep flowing to default no-match path.
-                if i + 1 == arm_len {
-                    self.curr_block = test_bb;
-                }
-            }
-        }
-
-        self.curr_block = merge_bb;
-        self.seal_block(merge_bb)?;
-        let phi = self.add_value(ValueKind::Phi { args: arm_results }, span);
-        if let Some(v) = self.fn_ir.values.get_mut(phi) {
-            v.phi_block = Some(merge_bb);
-        }
-        Ok(phi)
-    }
-
-    fn match_has_final_unguarded_catch_all(arms: &[hir::HirMatchArm]) -> bool {
-        arms.last()
-            .map(Self::is_unguarded_catch_all_arm)
-            .unwrap_or(false)
-    }
-
-    fn is_unguarded_catch_all_arm(arm: &hir::HirMatchArm) -> bool {
-        arm.guard.is_none() && matches!(&arm.pat, hir::HirPat::Wild | hir::HirPat::Bind { .. })
-    }
-
-    fn lower_match_pat_cond(
-        &mut self,
-        scrut: ValueId,
-        pat: &hir::HirPat,
-        span: Span,
-    ) -> RR<ValueId> {
-        match pat {
-            hir::HirPat::Wild | hir::HirPat::Bind { .. } => Ok(self.add_bool_val(true, span)),
-            hir::HirPat::Lit(l) => {
-                let rhs = self.add_value(ValueKind::Const(Self::hir_lit_to_lit(l)), span);
-                Ok(self.add_value(
-                    ValueKind::Binary {
-                        op: BinOp::Eq,
-                        lhs: scrut,
-                        rhs,
-                    },
-                    span,
-                ))
-            }
-            hir::HirPat::Or(pats) => {
-                if pats.is_empty() {
-                    return Ok(self.add_value(ValueKind::Const(Lit::Bool(false)), span));
-                }
-                let mut cond = self.lower_match_pat_cond(scrut, &pats[0], span)?;
-                for p in pats.iter().skip(1) {
-                    let rhs = self.lower_match_pat_cond(scrut, p, span)?;
-                    cond = self.add_bin_bool(BinOp::Or, cond, rhs, span);
-                }
-                Ok(cond)
-            }
-            hir::HirPat::List { items, rest } => {
-                let len = self.add_value(ValueKind::Len { base: scrut }, span);
-                let expected = self.add_int_val(items.len() as i64, span);
-                let mut cond = if rest.is_some() {
-                    self.add_bin_bool(BinOp::Ge, len, expected, span)
-                } else {
-                    self.add_bin_bool(BinOp::Eq, len, expected, span)
-                };
-
-                for (i, item_pat) in items.iter().enumerate() {
-                    let idx = self.add_int_val((i + 1) as i64, span);
-                    let elem = self.add_value(
-                        ValueKind::Index1D {
-                            base: scrut,
-                            idx,
-                            is_safe: true,
-                            is_na_safe: true,
-                        },
-                        span,
-                    );
-                    let elem_cond = self.lower_match_pat_cond(elem, item_pat, span)?;
-                    cond = self.add_bin_bool(BinOp::And, cond, elem_cond, span);
-                }
-                Ok(cond)
-            }
-            hir::HirPat::Record { fields } => {
-                let mut cond = self.add_bool_val(true, span);
-                for (field, subpat) in fields {
-                    let field_name = self.symbol_name(*field);
-                    let field_name_val =
-                        self.add_value(ValueKind::Const(Lit::Str(field_name)), span);
-                    let exists =
-                        self.add_call_value("rr_field_exists", vec![scrut, field_name_val], span);
-                    cond = self.add_bin_bool(BinOp::And, cond, exists, span);
-
-                    let field_val =
-                        self.add_call_value("rr_field_get", vec![scrut, field_name_val], span);
-                    let field_cond = self.lower_match_pat_cond(field_val, subpat, span)?;
-                    cond = self.add_bin_bool(BinOp::And, cond, field_cond, span);
-                }
-                Ok(cond)
-            }
-        }
-    }
-
-    fn bind_match_pattern(&mut self, scrut: ValueId, pat: &hir::HirPat, span: Span) -> RR<()> {
-        match pat {
-            hir::HirPat::Bind { local, .. } => {
-                self.write_var(*local, scrut);
-                Ok(())
-            }
-            hir::HirPat::Or(_) | hir::HirPat::Wild | hir::HirPat::Lit(_) => Ok(()),
-            hir::HirPat::List { items, rest } => {
-                for (i, item_pat) in items.iter().enumerate() {
-                    let idx = self.add_int_val((i + 1) as i64, span);
-                    let elem = self.add_value(
-                        ValueKind::Index1D {
-                            base: scrut,
-                            idx,
-                            is_safe: true,
-                            is_na_safe: true,
-                        },
-                        span,
-                    );
-                    self.bind_match_pattern(elem, item_pat, span)?;
-                }
-                if let Some((_, rest_local)) = rest {
-                    let start_idx = self.add_int_val((items.len() + 1) as i64, span);
-                    let tail = self.add_call_value("rr_list_rest", vec![scrut, start_idx], span);
-                    self.write_var(*rest_local, tail);
-                }
-                Ok(())
-            }
-            hir::HirPat::Record { fields } => {
-                for (field, subpat) in fields {
-                    let field_name = self.symbol_name(*field);
-                    let field_name_val =
-                        self.add_value(ValueKind::Const(Lit::Str(field_name)), span);
-                    let field_val =
-                        self.add_call_value("rr_field_get", vec![scrut, field_name_val], span);
-                    self.bind_match_pattern(field_val, subpat, span)?;
-                }
-                Ok(())
-            }
-        }
-    }
-
-    fn hir_lit_to_lit(l: &hir::HirLit) -> Lit {
-        match l {
-            hir::HirLit::Int(i) => Lit::Int(*i),
-            hir::HirLit::Double(f) => Lit::Float(*f),
-            hir::HirLit::Char(s) => Lit::Str(s.clone()),
-            hir::HirLit::Bool(b) => Lit::Bool(*b),
-            hir::HirLit::NA => Lit::Na,
-            hir::HirLit::Null => Lit::Null,
-        }
-    }
-
-    fn unique_param_local_name(&self, param_name: &str, local_id: hir::LocalId) -> String {
-        let mut candidate = format!(".arg_{}", param_name);
-        if self.var_names.values().any(|n| n == &candidate) {
-            candidate = format!(".arg_{}_{}", param_name, local_id.0);
-        }
-        candidate
-    }
-
-    fn lower_for(&mut self, iter: hir::HirForIter, body: hir::HirBlock, span: Span) -> RR<()> {
-        let (var, start_id, end_id) = match iter {
-            hir::HirForIter::Range {
-                var, start, end, ..
-            } => (var, self.lower_expr(start)?, self.lower_expr(end)?),
-            hir::HirForIter::SeqAlong { var, xs } => {
-                // If xs is a Range, extract start/end
-                if let hir::HirExpr::Range { start, end } = xs {
-                    (var, self.lower_expr(*start)?, self.lower_expr(*end)?)
-                } else {
-                    let xs_id = self.lower_expr(xs)?;
-                    let start = self.add_value(ValueKind::Const(Lit::Int(1)), span);
-                    let end = self.add_value(ValueKind::Len { base: xs_id }, span);
-                    (var, start, end)
-                }
-            }
-            hir::HirForIter::SeqLen { var, len } => {
-                let start = self.add_value(ValueKind::Const(Lit::Int(1)), span);
-                let end = self.lower_expr(len)?;
-                (var, start, end)
-            }
-        };
-        let pre_bb = self.curr_block;
-
-        let header_bb = self.fn_ir.add_block();
-        let body_bb = self.fn_ir.add_block();
-        let exit_bb = self.fn_ir.add_block();
-
-        self.write_var(var, start_id);
-        self.add_pred(header_bb, pre_bb);
-        self.terminate(Terminator::Goto(header_bb));
-
-        self.curr_block = header_bb;
-        let iv = self.read_var(var, header_bb)?;
-        let cond = self.fn_ir.add_value(
-            ValueKind::Binary {
-                op: BinOp::Le,
-                lhs: iv,
-                rhs: end_id,
-            },
-            span,
-            Facts::empty(),
-            None,
-        );
-        self.terminate(Terminator::If {
-            cond,
-            then_bb: body_bb,
-            else_bb: exit_bb,
-        });
-
-        self.add_pred(body_bb, header_bb);
-        self.seal_block(body_bb)?; // Body is dominated by header, so we can seal immediately
-        self.curr_block = body_bb;
-        self.loop_stack.push(LoopTargets {
-            break_bb: exit_bb,
-            continue_bb: header_bb,
-            continue_step: Some((var, iv)),
-        });
-        self.lower_block_effects(body)?;
-        self.loop_stack.pop();
-
-        let curr_reachable = self
-            .preds
-            .get(&self.curr_block)
-            .map(|ps| !ps.is_empty())
-            .unwrap_or(false);
-        if !self.is_terminated(self.curr_block) && curr_reachable {
-            let one =
-                self.fn_ir
-                    .add_value(ValueKind::Const(Lit::Int(1)), span, Facts::empty(), None);
-            let next_iv = self.fn_ir.add_value(
-                ValueKind::Binary {
-                    op: BinOp::Add,
-                    lhs: iv,
-                    rhs: one,
-                },
-                span,
-                Facts::empty(),
-                None,
-            );
-            self.write_var(var, next_iv);
-            self.add_pred(header_bb, self.curr_block);
-            self.terminate(Terminator::Goto(header_bb));
-        }
-
-        self.seal_block(header_bb)?;
-        self.add_pred(exit_bb, header_bb);
-        self.curr_block = exit_bb;
-        self.seal_block(exit_bb)?;
-
-        Ok(())
     }
 }

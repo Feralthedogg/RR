@@ -82,8 +82,8 @@ impl MirLoopOptimizer {
     }
 
     fn vectorize_loop(&self, fn_ir: &mut FnIR, lp: &LoopInfo) -> bool {
-        // Vectorize only canonical loops.
-        if lp.is_seq_len.is_none() {
+        // This legacy fast path is only valid for exact 1..N full-range loops.
+        if !self.is_exact_full_range_loop(fn_ir, lp) {
             return false;
         }
 
@@ -167,6 +167,30 @@ impl MirLoopOptimizer {
         // simplify_cfg will handle reachability of old body.
 
         true
+    }
+
+    fn is_exact_full_range_loop(&self, fn_ir: &FnIR, lp: &LoopInfo) -> bool {
+        let Some(iv) = lp.iv.as_ref() else {
+            return false;
+        };
+        if lp.is_seq_len.is_none()
+            || lp.limit_adjust != 0
+            || Self::const_integral_value(fn_ir, iv.init_val) != Some(1)
+            || iv.step != 1
+            || iv.step_op != BinOp::Add
+        {
+            return false;
+        }
+        let Some(limit) = lp.is_seq_len else {
+            return false;
+        };
+        !matches!(
+            fn_ir.values[limit].kind,
+            ValueKind::Binary { .. }
+                | ValueKind::Range { .. }
+                | ValueKind::Index1D { .. }
+                | ValueKind::Index2D { .. }
+        )
     }
 
     fn try_vectorize_value(
@@ -287,6 +311,15 @@ impl MirLoopOptimizer {
                 out.push(*c);
                 out.push(*val);
             }
+            Instr::StoreIndex3D {
+                base, i, j, k, val, ..
+            } => {
+                out.push(*base);
+                out.push(*i);
+                out.push(*j);
+                out.push(*k);
+                out.push(*val);
+            }
         }
     }
 
@@ -332,6 +365,12 @@ impl MirLoopOptimizer {
                 out.push(*base);
                 out.push(*r);
                 out.push(*c);
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                out.push(*base);
+                out.push(*i);
+                out.push(*j);
+                out.push(*k);
             }
         }
     }

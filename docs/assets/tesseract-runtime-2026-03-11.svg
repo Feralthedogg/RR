@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="430" viewBox="0 0 820 430" role="img" aria-labelledby="title desc">
+  <title id="title">Tesseract Runtime Comparison</title>
+  <desc id="desc">Mean wall-clock runtime in milliseconds for direct base R, RR O2 on GNU R, RR O2 on Renjin, and RR compile-only.</desc>
+  <rect width="820" height="430" fill="#fcfcf8"/>
+  <text x="24" y="34" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#16212b">Tesseract Runtime Comparison</text>
+  <text x="24" y="56" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#4b5b67">Apple M4, 24 GiB RAM, 5 timed runs, mean wall-clock ms</text>
+
+  <line x1="270" y1="80" x2="270" y2="360" stroke="#9aa8b2" stroke-width="1"/>
+  <line x1="270" y1="360" x2="760" y2="360" stroke="#9aa8b2" stroke-width="1"/>
+
+  <g font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#5d6b75">
+    <text x="270" y="378" text-anchor="middle">0</text>
+    <text x="392" y="378" text-anchor="middle">1400</text>
+    <text x="515" y="378" text-anchor="middle">2800</text>
+    <text x="637" y="378" text-anchor="middle">4200</text>
+    <text x="760" y="378" text-anchor="middle">5600</text>
+  </g>
+
+  <g font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#16212b">
+    <text x="24" y="112">Direct base R</text>
+    <text x="24" y="162">RR O2 on GNU R</text>
+    <text x="24" y="212">RR O2 on GNU R</text>
+    <text x="24" y="262">RR O2 on Renjin</text>
+    <text x="24" y="312">RR compile only</text>
+  </g>
+
+  <g font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#5d6b75">
+    <text x="24" y="178">default runtime</text>
+  </g>
+
+  <rect x="270" y="86" width="229" height="28" fill="#2a9d8f" rx="4"/>
+  <rect x="270" y="136" width="127" height="28" fill="#e76f51" rx="4"/>
+  <rect x="270" y="186" width="128" height="28" fill="#f4a261" rx="4"/>
+  <rect x="270" y="236" width="413" height="28" fill="#264653" rx="4"/>
+  <rect x="270" y="286" width="10" height="28" fill="#6d597a" rx="4"/>
+
+  <g font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#16212b">
+    <text x="509" y="106">2617.5 ms ± 36.0</text>
+    <text x="407" y="156">1454.7 ms ± 5.8</text>
+    <text x="408" y="206">1463.6 ms ± 6.8</text>
+    <text x="693" y="256">4720.8 ms ± 55.9</text>
+    <text x="290" y="306">113.7 ms ± 0.3</text>
+  </g>
+
+  <g font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#4b5b67">
+    <text x="24" y="408">Source data: docs/assets/tesseract-runtime-2026-03-11.csv</text>
+  </g>
+</svg>

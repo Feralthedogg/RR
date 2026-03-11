@@ -21,7 +21,7 @@ fn user_defined_builtins_shadow_base_r_calls() {
 
     let rr_src = r#"
 fn round(x) {
-  r = x % 1.0
+  let r = x % 1.0
   if (r >= 0.5) {
     return (x - r) + 1.0
   }
@@ -33,7 +33,7 @@ fn length(xs) {
 }
 
 fn main() {
-  xs = [1L, 2L, 3L]
+  let xs = [1L, 2L, 3L]
   print(round(2.5))
   print(length(xs))
   return 0L

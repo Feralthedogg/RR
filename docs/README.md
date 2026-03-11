@@ -1,68 +1,64 @@
 # RR Documentation
 
-This directory documents RR as implemented in this repository.
-Current compiler line: `RR Tachyon v4.0.0`.
+This directory is the RR manual set. It documents the compiler as implemented
+in this repository, not as an aspirational future design.
 
-The docs are organized for three audiences:
+Current compiler line: `RR Tachyon v5.0.0`.
 
-- users who want to compile or run RR programs
-- contributors who need to understand the pipeline and runtime
-- reviewers who need a map from behavior to source code
+## Manual Organization
+
+The RR docs are split the way large systems projects split their manuals:
+
+- `Guide`
+  - task-oriented
+  - build, compile, run, watch, and performance-minded authoring
+- `Reference`
+  - behavior-oriented
+  - syntax, CLI, interop, configuration, and limits
+- `Internals`
+  - contract-oriented
+  - pipeline, IR, optimizer, runtime, and diagnostics
+- `Development`
+  - verification-oriented
+  - tests, audit steps, and regression workflows
+
+This keeps “how do I use RR?”, “why did RR emit this?”, and “how do I verify a
+compiler change?” separate instead of mixing them into one page.
 
 ## Start Here
 
 If you are using RR:
 
-- [Getting Started](getting-started.md): build RR, compile a file, run a project
-- [Writing RR for Performance and Safety](writing-rr.md): user-facing guide for optimization-friendly and safe `.rr` code
-- [CLI Reference](cli.md): command forms, options, watch/build behavior
-- [Configuration](configuration.md): environment variables and optimizer/runtime knobs
-- [Language Reference](language.md): syntax and supported forms
-- [R Interop](r-interop.md): supported R package interop surface and fallback tiers
+- [Getting Started](getting-started.md)
+- [Writing RR for Performance and Safety](writing-rr.md)
+- [CLI Reference](cli.md)
+- [Language Reference](language.md)
+
+If you are validating generated output:
+
+- [Configuration](configuration.md)
+- [Compatibility and Limits](compatibility.md)
+- [R Interop](r-interop.md)
+- [Runtime and Error Model](runtime-and-errors.md)
 
 If you are working on the compiler:
 
-- [Compiler Pipeline](compiler-pipeline.md): end-to-end compile phases
-- [IR Model](ir-model.md): HIR/MIR structure and purpose
-- [Tachyon Engine](optimization.md): optimization passes and vectorization coverage
-- [Runtime and Errors](runtime-and-errors.md): emitted runtime helpers and diagnostics model
-- [Testing and Quality Gates](testing.md): integration, perf, and fuzz coverage
-- [Contributing Audit Checklist](contributing-audit.md): final manual and command-based verification pass
-  - includes `scripts/contributing_audit.sh` for baseline command + static rule checks
-  - includes `scripts/verify_cleanroom.sh` for strict clean-worktree verification of a scoped patch
+- [Compiler Pipeline](compiler-pipeline.md)
+- [IR Model](ir-model.md)
+- [Tachyon Engine](optimization.md)
+- [Testing and Quality Gates](testing.md)
+- [Contributing Audit Checklist](contributing-audit.md)
 
-If you need behavior limits:
+## Documentation Conventions
 
-- [Compatibility and Limits](compatibility.md)
-
-## Documentation Map
-
-- `getting-started.md`
-  - minimal setup and first successful compile/run flow
-- `writing-rr.md`
-  - how to structure `.rr` programs so current RR optimization and safety checks work well
-- `cli.md`
-  - command-line surface and execution modes
-- `language.md`
-  - surface syntax and language behavior
-- `r-interop.md`
-  - direct/opaque/hybrid R package interop model and supported package surface
-- `compiler-pipeline.md`
-  - pipeline phases, pass order, and validation points
-- `optimization.md`
-  - Tachyon optimizer strategy and current vectorization/runtime helper lowering
-- `runtime-and-errors.md`
-  - runtime helper contract, backend policy, and diagnostics
-- `configuration.md`
-  - environment-driven behavior switches
-- `testing.md`
-  - test families, perf gates, fuzzing
-- `contributing-audit.md`
-  - post-change verification checklist for compiler contributors
+- User-facing pages state guarantees, limits, and expected workflows before implementation detail.
+- Internal pages state phase boundaries, invariants, and failure modes before code layout.
+- Testing pages are treated as product contract, not as contributor-only notes.
+- Pages prefer exact file paths, pass names, flags, and helper names over vague summaries.
 
 ## VitePress
 
-Docs are served from the `docs/` directory with VitePress.
+Docs are served from `docs/` with VitePress.
 
 ```bash
 cd docs
@@ -79,9 +75,14 @@ pnpm docs:preview
 
 ## Project Snapshot
 
-- frontend: lexer/parser/HIR in `src/syntax` and `src/hir`
-- core IR: SSA-like MIR in `src/mir`
-- optimizer: `TachyonEngine` in `src/mir/opt.rs`
-- backend: MIR-to-R emission in `src/codegen/mir_emit.rs`
-- runtime: embedded R helper library in `src/runtime/mod.rs`
-- diagnostics: structured `RRException` in `src/error.rs`
+- frontend
+  - lexer/parser/HIR in `src/syntax` and `src/hir`
+- middle end
+  - SSA-like MIR in `src/mir`
+  - optimizer entry in `src/mir/opt.rs`
+- backend
+  - MIR-to-R emission in `src/codegen/mir_emit.rs`
+- runtime
+  - embedded R runtime in `src/runtime`
+- diagnostics
+  - structured `RRException` in `src/error.rs`

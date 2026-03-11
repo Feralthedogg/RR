@@ -1,33 +1,53 @@
 # Runtime and Error Model
 
-RR emits self-contained R scripts by prepending runtime helpers from `src/runtime/mod.rs`.
+This page is the runtime contract and diagnostics reference for RR.
 
-## Runtime Responsibilities
+## Runtime Structure
+
+RR emits self-contained `.R` scripts by prepending a selected runtime helper
+subset.
+
+Runtime source is split across:
+
+- `src/runtime/runtime_prelude.R`
+- `src/runtime/source.rs`
+- `src/runtime/subset.rs`
+- `src/runtime/mod.rs`
+
+## Runtime Contract
 
 The embedded runtime is responsible for:
 
-- source location tracking:
+- source tracking
   - `rr_mark`
-  - `rr_set_source`
-- typed runtime checks:
-  - `rr_bool`, `rr_truthy1`
-  - `rr_index1_read`, `rr_index1_write`
-  - `rr_i0`, `rr_i1`
-  - `rr_same_len`, `rr_same_or_scalar`
-- vectorized/helper operations:
+- typed runtime checks
+  - `rr_bool`
+  - `rr_truthy1`
+  - `rr_index1_read`
+  - `rr_index1_write`
+- helper operations
   - `rr_assign_slice`
-  - `rr_assign_index_vec`
   - `rr_index1_read_vec`
+  - `rr_gather`
   - `rr_wrap_index_vec_i`
   - `rr_idx_cube_vec_i`
-- intrinsic and backend dispatch:
+- intrinsic/backend dispatch
   - `rr_intrinsic_vec_*`
-  - `rr_native_call(...)`
+  - `rr_native_call`
   - `rr_parallel_*`
-- data helpers:
-  - record/list helpers
-  - closure helpers
-  - matrix row/column helpers
+  - `rr_parallel_typed_vec_call`
+
+Only referenced helpers plus their transitive dependencies are injected.
+
+## Bootstrap Policy
+
+The runtime bootstrap does two distinct things:
+
+1. define env-driven defaults from `Sys.getenv(...)`
+2. append compile-time policy assignments chosen by RR for the current artifact
+
+That means the final emitted `.R` usually preserves compile-time backend/mode
+selection unless you edit the artifact manually.
 
 ## Runtime Modes
 
@@ -36,111 +56,80 @@ The embedded runtime is responsible for:
   - full checks enabled
   - marks enabled by default
 - `RR_RUNTIME_MODE=release`
-  - enables lighter fast paths
-  - disables marks by default unless explicitly re-enabled
+  - lighter fast paths
+  - marks disabled by default unless explicitly re-enabled
 - `RR_FAST_RUNTIME=1`
-  - force fast-path rebinding regardless of mode
+  - force fast runtime paths
 - `RR_ENABLE_MARKS=0|1`
-  - explicitly disable or enable `rr_mark`
+  - explicitly disable or enable marks
 
-Use `debug` when diagnosing correctness problems.
-Use `release` when measuring runtime performance.
+## Native and Parallel Policy
 
-## NA and Indexing Policy
-
-- read paths preserve R-like NA behavior unless strict read mode is enabled
-- write paths reject NA index values
-- BCE and proof-based guard removal may eliminate wrappers only when safety is proven
-- `RR_STRICT_INDEX_READ=1` converts NA read-index behavior into a hard runtime error
-
-## Native Backend
-
-Compile/runtime glue carries these settings:
-
-- `RR_NATIVE_BACKEND=off|optional|required`
-- `RR_NATIVE_LIB=/path/to/librr_native.{so,dylib,dll}`
-- `RR_NATIVE_AUTOBUILD=0|1`
-
-Policy:
+### Native
 
 - `off`
-  - always use pure-R fallback helpers
+  - always use pure-R fallback
 - `optional`
-  - attempt native `.Call`, then fallback to pure-R if load/call fails
+  - try native call, fallback on failure
 - `required`
-  - native load/call failure becomes a runtime error
+  - native failure is a runtime error
 
-If `RR_NATIVE_LIB` is unset and autobuild is enabled, the runtime searches project-relative paths
-and may attempt `R CMD SHLIB native/rr_native.c` into `target/native`.
-
-## Parallel Backend
-
-- `RR_PARALLEL_MODE=off|optional|required`
-- `RR_PARALLEL_BACKEND=auto|r|openmp`
-- `RR_PARALLEL_THREADS=<N>`
-- `RR_PARALLEL_MIN_TRIP=<N>`
-
-Policy:
+### Parallel
 
 - `off`
   - always execute sequentially
 - `optional`
-  - try the configured backend, then fallback to sequential
+  - try configured backend, fallback to sequential
 - `required`
-  - backend failure is a runtime error (`E1031`)
+  - backend failure is a runtime error
 
-## Error Object
+Typed vector wrappers currently rely on the same parallel knobs, but practical
+parallel execution is still R-backend centric.
+
+## Indexing and NA Policy
+
+- reads preserve normal R-like NA behavior unless strict read mode is enabled
+- writes reject invalid or NA index values
+- guard elimination is proof-based only
+- `RR_STRICT_INDEX_READ=1` turns NA read-index behavior into a hard runtime error
+
+## Error Model
 
 Compiler diagnostics use `RRException` from `src/error.rs`.
 
-Fields include:
+Important fields:
 
-- module/kind:
+- module / kind
   - `RR.ParseError`
   - `RR.TypeError`
   - `RR.RuntimeError`
   - `RR.InternalCompilerError`
-- code:
+- code
   - for example `E0001`, `E1002`, `E2001`, `E2007`, `ICE9001`
-- stage:
+- stage
   - `Lex`, `Parse`, `Lower`, `MIR`, `Opt`, `Codegen`, `Runtime`, `Runner`, `ICE`
-- optional span, notes, related diagnostics, and stack frames
 
-The compiler core returns structured diagnostics to callers; the CLI decides final process exit behavior.
+The compiler core returns structured diagnostics. The CLI decides final
+formatting and exit behavior.
 
 ## Multi-Error Reporting
 
-Parser and semantic/runtime validators can aggregate multiple findings into a single report:
+RR may aggregate multiple findings into a single report:
 
 - summary header
 - child diagnostics
-- per-error snippets and notes
+- snippets, notes, and help text
 
-This is intentionally not fail-fast only.
+This is intentional. RR does not force fail-fast-only reporting.
 
-## Strict-Type and Backend Diagnostics
-
-Examples of important codes:
-
-- `E1010`
-  - type hint conflict
-- `E1011`
-  - call signature type mismatch
-- `E1012`
-  - unresolved strict-required type
-- `E1030`
-  - required parallel safety proof failed
-- `E1031`
-  - required parallel backend load/call failure
-- `E1032`
-  - non-deterministic parallel reduction rejected
-
-## Colored Diagnostics
-
-Diagnostics are colorized by category when terminal output supports ANSI or `RR_FORCE_COLOR` is set.
-Set `NO_COLOR` to disable color.
-
-## Runtime Execution and Source Mapping
+## Runtime Execution
 
 `src/runtime/runner.rs` executes generated `.gen.R` through `Rscript --vanilla`.
-RR uses generated source maps to map R/runtime line information back to RR spans when reporting failures.
+RR uses source maps to map runtime line information back to RR spans when
+reporting failures.
+
+## Related Manuals
+
+- [Configuration](configuration.md)
+- [Compiler Pipeline](compiler-pipeline.md)
+- [Testing and Quality Gates](testing.md)

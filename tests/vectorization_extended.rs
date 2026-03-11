@@ -562,12 +562,14 @@ print(mat_col_reduce(3, 4, 2))
         "expected invariant call-map args to be guarded by rr_same_or_scalar(...)"
     );
     assert!(
-        code.contains("log10("),
-        "expected extended call-map vectorization to use log10(...)"
+        code.contains("log10(")
+            || (code.contains("rr_call_map_slice_auto(") && code.contains("\"log10\"")),
+        "expected extended call-map vectorization to use log10(...) or a runtime-profit-guarded log10 call-map"
     );
     assert!(
-        code.contains("atan2("),
-        "expected extended call-map vectorization to use atan2(...)"
+        code.contains("atan2(")
+            || (code.contains("rr_call_map_slice_auto(") && code.contains("\"atan2\"")),
+        "expected extended call-map vectorization to use atan2(...) or a runtime-profit-guarded atan2 call-map"
     );
     assert!(
         code.contains("abs((x + 1L))")

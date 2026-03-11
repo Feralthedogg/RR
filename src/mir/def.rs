@@ -192,6 +192,15 @@ pub enum Instr {
         val: ValueId,
         span: Span,
     },
+    // Memory Store: x[i, j, k] <- val
+    StoreIndex3D {
+        base: ValueId,
+        i: ValueId,
+        j: ValueId,
+        k: ValueId,
+        val: ValueId,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -283,6 +292,12 @@ pub enum ValueKind {
         base: ValueId,
         r: ValueId,
         c: ValueId,
+    },
+    Index3D {
+        base: ValueId,
+        i: ValueId,
+        j: ValueId,
+        k: ValueId,
     },
 
     // Explicit Load from Variable (Critical for TCO/ParallelCopy cycle breaking)

@@ -1,6 +1,6 @@
 # Contributing Audit Checklist
 
-Current compiler line: `RR Tachyon v4.0.0`.
+Current compiler line: `RR Tachyon v5.0.0`.
 
 Use this checklist after meaningful compiler changes to verify that the code still matches [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 
@@ -93,7 +93,7 @@ cargo test -q --test example_perf_smoke -- --ignored --nocapture
 - Compiler faults use ICE/internal-error paths, not user-facing diagnostics.
 - New emitted R behavior is covered by regression tests.
 - Incremental cache keys change when output mode or compiler/runtime salt changes.
-- `--no-runtime` behavior stays aligned with CLI/docs wording.
+- `--no-runtime` behavior stays aligned with CLI/docs wording and selective-helper injection.
 - Native backend resolution stays anchored to the intended project root.
 
 ## Ongoing Watch Items

@@ -73,11 +73,14 @@ fn lap_x(field, w, h) {
         "expected wrap helper calls to rewrite to rr_wrap_index_vec_i"
     );
     assert!(
-        code.contains("rr_index1_read_vec(") || code.contains("rr_index1_read_vec_floor("),
+        code.contains("rr_gather(")
+            || code.contains("rr_index1_read_vec(")
+            || code.contains("rr_index1_read_vec_floor("),
         "expected lap loop to emit vector gather reads"
     );
     assert!(
         code.contains("rr_assign_slice(")
+            || code.contains("out <- (rr_gather(")
             || code.contains("out <- (rr_index1_read_vec(")
             || code.contains("out <- (rr_index1_read_vec_floor("),
         "expected vector writeback form (slice assign or whole-array assignment)"

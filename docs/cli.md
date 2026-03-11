@@ -1,8 +1,10 @@
 # CLI Reference
 
-RR supports direct compile, run, build, and watch workflows.
+This page is the driver manual for RR.
 
-## Invocation Forms
+Current compiler line: `RR Tachyon v5.0.0`.
+
+## Synopsis
 
 ```bash
 RR --version
@@ -15,9 +17,17 @@ RR watch [main.rr|dir|.] [options]
 
 During development, `cargo run -- ...` is equivalent to invoking `RR ...`.
 
-Current compiler line: `RR Tachyon v4.0.0`.
+## Command Summary
 
-## Command Behavior
+| Command | Purpose | Typical use |
+| --- | --- | --- |
+| `RR file.rr` | compile one file | emit one `.R` artifact |
+| `RR run .` | compile and execute entry | local project runs |
+| `RR build . --out-dir build` | compile a tree | batch builds |
+| `RR watch .` | rebuild on changes | edit/compile loops |
+| `RR --version` | print compiler line | scripts and CI |
+
+## Command Forms
 
 ### `version`
 
@@ -26,8 +36,7 @@ RR --version
 RR version
 ```
 
-- prints the compiler banner version and exits
-- intended for scripts, CI, and local environment checks
+Print the compiler line and exit.
 
 ### Direct Compile
 
@@ -35,9 +44,11 @@ RR version
 RR input.rr -o out.R -O2
 ```
 
-- compiles one `.rr` file
-- writes one `.R` file
-- accepts `--no-runtime` to omit source/native bootstrap while keeping helper definitions and runtime settings
+Use direct compile when:
+
+- one `.rr` file should become one `.R` file
+- you want to inspect generated output directly
+- you want exact control over `-O0/-O1/-O2`
 
 ### `run`
 
@@ -51,7 +62,7 @@ Input may be:
 - a directory
 - a `.rr` file
 
-If input is `.` or a directory, RR resolves `main.rr` in that directory.
+If input is `.` or a directory, RR resolves `main.rr`.
 
 ### `build`
 
@@ -59,10 +70,12 @@ If input is `.` or a directory, RR resolves `main.rr` in that directory.
 RR build . --out-dir build -O2
 ```
 
-Input may be:
+Use `build` when:
 
-- a directory: recursively compile all `.rr` files
-- a single `.rr` file: compile one file into the output directory
+- you want every `.rr` file under a tree compiled
+- you want output paths mirrored under a build directory
+
+RR skips `target/`, `.git/`, and the selected output directory during tree walks.
 
 ### `watch`
 
@@ -70,24 +83,25 @@ Input may be:
 RR watch . -O2
 ```
 
-- resolves targets like `run`
-- polls for changes
-- keeps an in-memory incremental session across ticks
+Use `watch` when:
 
-## Common Options
+- you want repeated rebuilds from one live session
+- you want phase 3 in-memory incremental reuse
 
-- `-O0`, `-O1`, `-O2`
-- `-o0`, `-o1`, `-o2`
-  - accepted optimization aliases
+## Option Classes
+
+### Optimization and Output
+
+- `-O0`
+- `-O1`
+- `-O2`
 - `-o <file>`
-  - direct compile: output file
-  - `build`: alias for `--out-dir`
 - `--out-dir <dir>`
-  - output directory for `build`
 - `--no-runtime`
-  - omit source/native bootstrap while keeping helper definitions and runtime settings
 - `--keep-r`
-  - keep generated `.gen.R` after `run`
+
+### Type and Backend Policy
+
 - `--type-mode strict|gradual`
 - `--native-backend off|optional|required`
 - `--parallel-mode off|optional|required`
@@ -95,63 +109,75 @@ RR watch . -O2
 - `--parallel-threads <N>`
 - `--parallel-min-trip <N>`
 
-Builtin resolution note:
+### Incremental and Watch
 
-- most math/aggregation builtins such as `abs`, `sqrt`, `exp`, `sum`, `mean`, and `print` are reserved for builtin/intrinsic lowering
-- only the scalar-indexing group `length`, `floor`, `round`, `ceiling`, and `trunc` is allowed to shadow builtin names
-
-R interop note:
-
-- `import r "pkg"` creates package-name namespace access, so `pkg.fn(...)` lowers to `pkg::fn(...)`
-- `import r { fn as local } from "pkg"` binds one symbol to a local RR name
-- `import r * as pkg from "pkg"` and `import r default from "pkg"` both create namespace-style access
-- currently supported direct-interop packages include `graphics`, `grDevices`, `ggplot2`, selected `dplyr`, and selected `stats/readr/tidyr` calls
-
-## Incremental and Watch Options
-
-- `--incremental[=off|1|1,2|1,2,3|all]`
-- `--incremental-phases <off|1|1,2|1,2,3|all>`
+- `--incremental[=auto|off|1|1,2|1,2,3|all]`
+- `--incremental-phases <auto|off|1|1,2|1,2,3|all>`
+- `--no-incremental`
 - `--strict-incremental-verify`
-  - rebuild and compare against any available incremental cache artifact
-  - compares both emitted R and source maps
-  - first compile after a cache miss is populated but not yet "verified"
 - `--poll-ms <N>`
-  - watch polling interval in milliseconds
 - `--once`
-  - run one watch tick and exit
 
-Incremental phases are described in [Compiler Pipeline](compiler-pipeline.md).
+## Semantics Notes
 
-## Examples
+### `--no-runtime`
 
-Compile one file:
+`--no-runtime` does not mean “emit raw source only”.
 
-```bash
-RR path/to/input.rr -o out.R -O2
-```
+It means:
 
-Run a directory project:
+- omit source/native bootstrap
+- still emit the runtime helper subset actually used by generated code
 
-```bash
-RR run path/to/project -O2
-```
+Use it for inspection and backend debugging, not for normal end-user execution.
 
-Build all `.rr` files under a tree:
+### Builtin Naming
 
-```bash
-RR build path/to/project --out-dir build -O2
-```
+Most math and aggregation names are reserved for builtin/intrinsic lowering.
 
-Watch a project once with full incremental phases:
+User shadowing is intentionally narrow:
 
-```bash
-RR watch . --incremental=all --once -O2
-```
+- allowed scalar-index helpers:
+  - `length`
+  - `floor`
+  - `round`
+  - `ceiling`
+  - `trunc`
 
-## Exit Behavior
+Everything else should use distinct user names.
 
-- `0`: success
-- non-zero: parse, semantic, compiler, or runtime failure
+### R Interop
 
-RR returns structured diagnostics from the compiler core and lets the CLI choose the final process exit code.
-Colored output is enabled on supported terminals unless disabled by `NO_COLOR`.
+- `import r "pkg"` gives namespace-style access
+- `pkg.fn(...)` lowers to `pkg::fn(...)`
+- `import r { fn as local } from "pkg"` binds one local alias
+- `import r * as pkg from "pkg"` binds namespace-style access
+
+See [R Interop](r-interop.md) for package coverage and fallback tiers.
+
+## Incremental Compile Policy
+
+Default CLI behavior is `--incremental=auto`.
+
+`auto` means:
+
+- phase 1 enabled
+- phase 2 enabled
+- phase 3 enabled only when a live session exists, such as `watch`
+
+Use:
+
+- `--no-incremental` when you want a fresh compile for inspection
+- `--strict-incremental-verify` when you want cache reuse checked against a rebuild
+
+The incremental artifact model is documented in [Compiler Pipeline](compiler-pipeline.md).
+
+## Exit Status
+
+- `0`
+  - compile or run succeeded
+- non-zero
+  - parse, semantic, type, compiler, or runtime failure
+
+The compiler core returns structured diagnostics. The CLI owns final process
+exit behavior and formatting.

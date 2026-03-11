@@ -8,6 +8,7 @@ pub fn stmt_is_pure(stmt: &Instr, fn_ir: &FnIR) -> bool {
         Instr::Eval { val, .. } => rvalue_is_pure(*val, fn_ir),
         Instr::StoreIndex1D { .. } => false, // Memory write is a side effect
         Instr::StoreIndex2D { .. } => false, // Memory write is a side effect
+        Instr::StoreIndex3D { .. } => false, // Memory write is a side effect
     }
 }
 
@@ -56,6 +57,12 @@ fn rvalue_is_pure_inner(vid: ValueId, fn_ir: &FnIR, visiting: &mut HashSet<Value
             rvalue_is_pure_inner(*base, fn_ir, visiting)
                 && rvalue_is_pure_inner(*r, fn_ir, visiting)
                 && rvalue_is_pure_inner(*c, fn_ir, visiting)
+        }
+        ValueKind::Index3D { base, i, j, k } => {
+            rvalue_is_pure_inner(*base, fn_ir, visiting)
+                && rvalue_is_pure_inner(*i, fn_ir, visiting)
+                && rvalue_is_pure_inner(*j, fn_ir, visiting)
+                && rvalue_is_pure_inner(*k, fn_ir, visiting)
         }
         _ => false, // Conservative default
     };
@@ -117,9 +124,20 @@ pub fn call_is_pure(callee: &str) -> bool {
         | "rr_named_list"
         | "rr_row_sum_range"
         | "rr_col_sum_range"
+        | "rr_dim1_sum_range"
+        | "rr_dim2_sum_range"
+        | "rr_dim3_sum_range"
+        | "rr_dim1_reduce_range"
+        | "rr_dim2_reduce_range"
+        | "rr_dim3_reduce_range"
+        | "rr_dim1_read_values"
+        | "rr_dim2_read_values"
+        | "rr_dim3_read_values"
+        | "rr_array3_gather_values"
         | "rr_index_vec_floor"
         | "rr_index1_read_vec"
         | "rr_index1_read_vec_floor"
+        | "rr_gather"
         | "rr_wrap_index_vec"
         | "rr_wrap_index_vec_i"
         | "rr_idx_cube_vec_i" => true,

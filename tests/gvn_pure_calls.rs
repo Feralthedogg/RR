@@ -92,9 +92,9 @@ fn gvn_eliminates_duplicate_vector_helper_calls() {
 
     let source = r#"
 fn kernel(field, n_l, n_r, size) {
-    out = rep.int(0.0, size)
-    i = 1.0
-    ii = 0.0
+    let out = rep.int(0.0, size)
+    let i = 1.0
+    let ii = 0.0
   while (i <= size) {
     ii = floor(i)
     out[ii] = (field[n_l[ii]] + field[n_r[ii]]) - field[n_l[ii]]
@@ -103,9 +103,9 @@ fn kernel(field, n_l, n_r, size) {
   return out
 }
 
-field = c(1.0, 2.0, 3.0, 4.0)
-n_l = c(1.0, 2.0, 3.0, 4.0)
-n_r = c(4.0, 3.0, 2.0, 1.0)
+let field = c(1.0, 2.0, 3.0, 4.0)
+let n_l = c(1.0, 2.0, 3.0, 4.0)
+let n_r = c(4.0, 3.0, 2.0, 1.0)
 print(kernel(field, n_l, n_r, 4.0))
 "#;
 

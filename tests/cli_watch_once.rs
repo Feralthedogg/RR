@@ -7,6 +7,7 @@ use std::process::Command;
 
 #[test]
 fn watch_once_compiles_and_exits_successfully() {
+    let _env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
@@ -38,7 +39,6 @@ main()
         .arg("1")
         .arg("-o")
         .arg(&out_file)
-        .arg("--incremental=all")
         .status()
         .expect("failed to run rr watch --once");
     assert!(status.success(), "watch --once command failed");
