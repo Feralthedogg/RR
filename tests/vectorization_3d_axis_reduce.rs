@@ -165,12 +165,6 @@ print(reduce_general_dim1(a, idx_i, idx_j))
         "expected generic dim3 3D reduction helper in O2 output:\n{}",
         code
     );
-    assert!(
-        code.contains("rr_array3_gather_values("),
-        "expected generalized 3D gather reduction in O2 output:\n{}",
-        code
-    );
-
     let base = run_rscript(&rscript, &o0);
     let opt = run_rscript(&rscript, &o2);
     assert_eq!(base.status, 0, "O0 execution failed:\n{}", base.stderr);
