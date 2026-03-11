@@ -541,13 +541,17 @@ pub(super) fn choose_call_map_lowering(
     whole_dest: bool,
     shadow_vars: &[VarId],
 ) -> CallMapLoweringMode {
-    if whole_dest && shadow_vars.is_empty() && is_builtin_vector_safe_call(callee, args.len()) {
-        return CallMapLoweringMode::DirectVector;
-    }
     if !call_map_profit_guard_supported(callee, args.len()) {
         return CallMapLoweringMode::DirectVector;
     }
     let helper_cost = estimate_call_map_helper_cost(fn_ir, callee, args, whole_dest, shadow_vars);
+    if whole_dest
+        && shadow_vars.is_empty()
+        && is_builtin_vector_safe_call(callee, args.len())
+        && helper_cost < CALL_MAP_AUTO_HELPER_COST_THRESHOLD
+    {
+        return CallMapLoweringMode::DirectVector;
+    }
     if helper_cost >= CALL_MAP_AUTO_HELPER_COST_THRESHOLD {
         CallMapLoweringMode::RuntimeAuto { helper_cost }
     } else {

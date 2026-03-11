@@ -476,6 +476,32 @@ fn rewrite_strict_ifelse_expr(
     expr.to_string()
 }
 
+fn helper_heavy_runtime_auto_args(args: &str) -> bool {
+    [
+        "rr_gather(",
+        "rr_array3_gather_values(",
+        "rr_index1_read_vec(",
+        "rr_index1_read_vec_floor(",
+        "rr_ifelse_strict(",
+        "rr_assign_slice(",
+        "rr_dim1_read_values(",
+        "rr_dim2_read_values(",
+        "rr_dim3_read_values(",
+    ]
+    .iter()
+    .any(|needle| args.contains(needle))
+}
+
+fn helper_heavy_runtime_auto_args_with_temps(
+    args: &str,
+    helper_heavy_vars: &FxHashSet<String>,
+) -> bool {
+    helper_heavy_runtime_auto_args(args)
+        || expr_idents(args)
+            .into_iter()
+            .any(|ident| helper_heavy_vars.contains(&ident))
+}
+
 fn is_one(expr: &str, scalar_consts: &FxHashMap<String, String>) -> bool {
     matches!(
         normalize_expr(expr, scalar_consts).as_str(),
@@ -537,6 +563,7 @@ pub(crate) fn optimize_emitted_r(code: &str, direct_builtin_call_map: bool) -> S
     let mut identity_indices: FxHashMap<String, String> = FxHashMap::default();
     let mut aliases: FxHashMap<String, String> = FxHashMap::default();
     let mut no_na_vars: FxHashSet<String> = FxHashSet::default();
+    let mut helper_heavy_vars: FxHashSet<String> = FxHashSet::default();
     let mut out_lines = Vec::new();
 
     for line in code.lines() {
@@ -602,7 +629,9 @@ pub(crate) fn optimize_emitted_r(code: &str, direct_builtin_call_map: bool) -> S
                 let callee = caps.name("callee").map(|m| m.as_str()).unwrap_or("");
                 let slots = caps.name("slots").map(|m| m.as_str()).unwrap_or("").trim();
                 let args = caps.name("args").map(|m| m.as_str()).unwrap_or("").trim();
-                if slots == "1L" || slots == "1" {
+                if (slots == "1L" || slots == "1")
+                    && !helper_heavy_runtime_auto_args_with_temps(args, &helper_heavy_vars)
+                {
                     match callee {
                         "abs" | "sqrt" | "log" => format!("{callee}({args})"),
                         "pmax" | "pmin" => format!("{callee}({args})"),
@@ -699,6 +728,12 @@ pub(crate) fn optimize_emitted_r(code: &str, direct_builtin_call_map: bool) -> S
             no_na_vars.insert(lhs.to_string());
         } else {
             no_na_vars.remove(lhs);
+        }
+
+        if helper_heavy_runtime_auto_args(&rewritten_rhs) {
+            helper_heavy_vars.insert(lhs.to_string());
+        } else {
+            helper_heavy_vars.remove(lhs);
         }
 
         out_lines.push(format!("{indent}{lhs} <- {rewritten_rhs}"));
