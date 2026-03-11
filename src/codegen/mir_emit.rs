@@ -682,6 +682,19 @@ impl RBackend {
         self.resolve_val(val_id, values, params, false)
     }
 
+    fn resolve_read_base(&self, val_id: usize, values: &[Value], params: &[String]) -> String {
+        if let Some(bound) = self.resolve_bound_value(val_id) {
+            return bound;
+        }
+        if let ValueKind::Call { callee, .. } = &values[val_id].kind
+            && callee.contains("::")
+            && let Some(origin_var) = values[val_id].origin_var.as_ref()
+        {
+            return origin_var.clone();
+        }
+        self.resolve_val(val_id, values, params, false)
+    }
+
     fn begin_branch_snapshot(&mut self) -> BranchSnapshot {
         self.branch_snapshot_depth += 1;
         BranchSnapshot {
@@ -1304,7 +1317,7 @@ impl RBackend {
         values: &[Value],
         params: &[String],
     ) -> String {
-        let b = self.resolve_val(base, values, params, false);
+        let b = self.resolve_read_base(base, values, params);
         let i = self.resolve_val(idx, values, params, false);
         if (is_safe && is_na_safe) || Self::can_elide_index_wrapper(idx, values) {
             format!("{}[{}]", b, i)
@@ -1321,7 +1334,7 @@ impl RBackend {
         values: &[Value],
         params: &[String],
     ) -> String {
-        let b = self.resolve_val(base, values, params, false);
+        let b = self.resolve_read_base(base, values, params);
         let rr = self.resolve_val(r, values, params, false);
         let cc = self.resolve_val(c, values, params, false);
         let r_idx = if Self::can_elide_index_wrapper(r, values) {
@@ -1346,7 +1359,7 @@ impl RBackend {
         values: &[Value],
         params: &[String],
     ) -> String {
-        let b = self.resolve_val(base, values, params, false);
+        let b = self.resolve_read_base(base, values, params);
         let i_val = self.resolve_val(i, values, params, false);
         let j_val = self.resolve_val(j, values, params, false);
         let k_val = self.resolve_val(k, values, params, false);
