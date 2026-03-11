@@ -163,9 +163,15 @@ fn tesseract_runtime_markers_match_between_o1_and_o2() {
     let max_u_o1 = extract_numeric_series(&stdout_o1, "Step Complete. Max U:");
     let max_u_o2 = extract_numeric_series(&stdout_o2, "Step Complete. Max U:");
 
-    assert!(!center_b_o1.is_empty(), "missing Center B series in O1 stdout");
+    assert!(
+        !center_b_o1.is_empty(),
+        "missing Center B series in O1 stdout"
+    );
     assert!(!wave_b_o1.is_empty(), "missing Wave B series in O1 stdout");
-    assert!(!particle_x_o1.is_empty(), "missing particle x series in O1 stdout");
+    assert!(
+        !particle_x_o1.is_empty(),
+        "missing particle x series in O1 stdout"
+    );
     assert!(!max_u_o1.is_empty(), "missing max_u series in O1 stdout");
 
     assert_series_close("Center B", &center_b_o1, &center_b_o2);

@@ -240,16 +240,16 @@ fn assert_compile_matrix(case_name: &str, src: &str, seed: u64) {
         );
         if scenario.output_opts.inject_runtime {
             assert!(
-                code.contains("rr_set_source("),
+                code.contains(".rr_env$file <- "),
                 "runtime-injected compile must include source bootstrap"
             );
         } else {
             assert!(
-                !code.contains("rr_set_source("),
+                !code.contains(".rr_env$file <- "),
                 "helper-only compile must omit source bootstrap"
             );
             assert!(
-                !code.contains("rr_set_native_roots("),
+                !code.contains(".rr_env$native_anchor_roots <- unique(vapply(c("),
                 "helper-only compile must omit native root bootstrap"
             );
         }

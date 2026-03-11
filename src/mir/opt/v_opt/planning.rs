@@ -414,7 +414,8 @@ fn reduction_has_non_acc_loop_state_assignments(
     acc_phi: ValueId,
     iv_phi: ValueId,
 ) -> bool {
-    let acc_var = phi_state_var(fn_ir, acc_phi).or_else(|| fn_ir.values[acc_phi].origin_var.clone());
+    let acc_var =
+        phi_state_var(fn_ir, acc_phi).or_else(|| fn_ir.values[acc_phi].origin_var.clone());
     let iv_var = induction_origin_var(fn_ir, iv_phi);
     for bid in &lp.body {
         for ins in &fn_ir.blocks[*bid].instrs {
@@ -528,11 +529,15 @@ pub(super) fn match_reduction(
                         {
                             if vectorize_trace_enabled() {
                                 let lhs_detail = match &fn_ir.values[other].kind {
-                                    ValueKind::Binary { lhs, .. } => format!("{:?}", fn_ir.values[*lhs].kind),
+                                    ValueKind::Binary { lhs, .. } => {
+                                        format!("{:?}", fn_ir.values[*lhs].kind)
+                                    }
                                     _ => "-".to_string(),
                                 };
                                 let rhs_detail = match &fn_ir.values[other].kind {
-                                    ValueKind::Binary { rhs, .. } => format!("{:?}", fn_ir.values[*rhs].kind),
+                                    ValueKind::Binary { rhs, .. } => {
+                                        format!("{:?}", fn_ir.values[*rhs].kind)
+                                    }
                                     _ => "-".to_string(),
                                 };
                                 eprintln!(

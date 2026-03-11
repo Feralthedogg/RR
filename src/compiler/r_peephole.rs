@@ -33,7 +33,10 @@ fn range_re() -> Option<&'static Regex> {
 fn floor_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
-        compile_regex(format!(r"^rr_index_vec_floor\((?P<src>{})\)$", IDENT_PATTERN))
+        compile_regex(format!(
+            r"^rr_index_vec_floor\((?P<src>{})\)$",
+            IDENT_PATTERN
+        ))
     })
     .as_ref()
 }
@@ -41,7 +44,10 @@ fn floor_re() -> Option<&'static Regex> {
 fn seq_len_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
-        compile_regex(format!(r"^seq_len\((?P<len>{}|\d+(?:\.\d+)?)\)$", IDENT_PATTERN))
+        compile_regex(format!(
+            r"^seq_len\((?P<len>{}|\d+(?:\.\d+)?)\)$",
+            IDENT_PATTERN
+        ))
     })
     .as_ref()
 }
@@ -571,23 +577,23 @@ pub(crate) fn optimize_emitted_r(code: &str, direct_builtin_call_map: bool) -> S
 
         let rewritten_rhs =
             if let Some(caps) = call_map_slice_re().and_then(|re| re.captures(&rewritten_rhs)) {
-            let dest = caps.name("dest").map(|m| m.as_str()).unwrap_or("").trim();
-            let start = caps.name("start").map(|m| m.as_str()).unwrap_or("").trim();
-            let end = caps.name("end").map(|m| m.as_str()).unwrap_or("").trim();
-            let rest = caps.name("rest").map(|m| m.as_str()).unwrap_or("").trim();
-            let end = normalize_expr(end, &scalar_consts);
-            if is_one(start, &scalar_consts)
-                && vector_lens
-                    .get(dest)
-                    .is_some_and(|dest_len| dest_len == &end)
-            {
-                format!("rr_call_map_whole_auto({dest}, {rest})")
+                let dest = caps.name("dest").map(|m| m.as_str()).unwrap_or("").trim();
+                let start = caps.name("start").map(|m| m.as_str()).unwrap_or("").trim();
+                let end = caps.name("end").map(|m| m.as_str()).unwrap_or("").trim();
+                let rest = caps.name("rest").map(|m| m.as_str()).unwrap_or("").trim();
+                let end = normalize_expr(end, &scalar_consts);
+                if is_one(start, &scalar_consts)
+                    && vector_lens
+                        .get(dest)
+                        .is_some_and(|dest_len| dest_len == &end)
+                {
+                    format!("rr_call_map_whole_auto({dest}, {rest})")
+                } else {
+                    rewritten_rhs
+                }
             } else {
                 rewritten_rhs
-            }
-        } else {
-            rewritten_rhs
-        };
+            };
 
         let rewritten_rhs = if direct_builtin_call_map {
             if let Some(caps) =
@@ -616,27 +622,27 @@ pub(crate) fn optimize_emitted_r(code: &str, direct_builtin_call_map: bool) -> S
 
         let rewritten_rhs =
             if let Some(caps) = assign_slice_re().and_then(|re| re.captures(&rewritten_rhs)) {
-            let dest = caps.name("dest").map(|m| m.as_str()).unwrap_or("").trim();
-            let start = caps.name("start").map(|m| m.as_str()).unwrap_or("").trim();
-            let end = normalize_expr(
-                caps.name("end").map(|m| m.as_str()).unwrap_or("").trim(),
-                &scalar_consts,
-            );
-            let rest = caps.name("rest").map(|m| m.as_str()).unwrap_or("").trim();
-            if is_one(start, &scalar_consts)
-                && vector_lens
-                    .get(dest)
-                    .is_some_and(|dest_len| dest_len == &end)
-                && infer_len_from_expr(rest, &vector_lens, &scalar_consts)
-                    .is_some_and(|len| len == end)
-            {
-                rest.to_string()
+                let dest = caps.name("dest").map(|m| m.as_str()).unwrap_or("").trim();
+                let start = caps.name("start").map(|m| m.as_str()).unwrap_or("").trim();
+                let end = normalize_expr(
+                    caps.name("end").map(|m| m.as_str()).unwrap_or("").trim(),
+                    &scalar_consts,
+                );
+                let rest = caps.name("rest").map(|m| m.as_str()).unwrap_or("").trim();
+                if is_one(start, &scalar_consts)
+                    && vector_lens
+                        .get(dest)
+                        .is_some_and(|dest_len| dest_len == &end)
+                    && infer_len_from_expr(rest, &vector_lens, &scalar_consts)
+                        .is_some_and(|len| len == end)
+                {
+                    rest.to_string()
+                } else {
+                    rewritten_rhs
+                }
             } else {
                 rewritten_rhs
-            }
-        } else {
-            rewritten_rhs
-        };
+            };
 
         let rewritten_rhs = rewrite_known_aliases(&rewritten_rhs, &aliases);
         let rewritten_rhs = rewrite_direct_vec_helper_expr(&rewritten_rhs, direct_builtin_call_map);

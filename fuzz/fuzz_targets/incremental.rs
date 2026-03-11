@@ -193,16 +193,16 @@ fn assert_helper_mode(output: &str, inject_runtime: bool) {
     );
     if inject_runtime {
         assert!(
-            output.contains("rr_set_source("),
+            output.contains(".rr_env$file <- "),
             "runtime-injected incremental output must include source bootstrap"
         );
     } else {
         assert!(
-            !output.contains("rr_set_source("),
+            !output.contains(".rr_env$file <- "),
             "helper-only incremental output must omit source bootstrap"
         );
         assert!(
-            !output.contains("rr_set_native_roots("),
+            !output.contains(".rr_env$native_anchor_roots <- unique(vapply(c("),
             "helper-only incremental output must omit native root bootstrap"
         );
     }
