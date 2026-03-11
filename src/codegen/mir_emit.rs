@@ -552,7 +552,7 @@ impl RBackend {
             } => {
                 self.emit_mark(*span, Some("store"));
                 self.record_span(*span);
-                let base_val = self.resolve_val(*base, values, params, false);
+                let base_val = self.resolve_mutable_base(*base, values, params);
                 let idx_val = self.resolve_val(*idx, values, params, false);
                 let src_val = self.resolve_val(*val, values, params, false);
 
@@ -580,7 +580,7 @@ impl RBackend {
             } => {
                 self.emit_mark(*span, Some("store2d"));
                 self.record_span(*span);
-                let base_val = self.resolve_val(*base, values, params, false);
+                let base_val = self.resolve_mutable_base(*base, values, params);
                 let r_val = self.resolve_val(*r, values, params, false);
                 let c_val = self.resolve_val(*c, values, params, false);
                 let src_val = self.resolve_val(*val, values, params, false);
@@ -610,7 +610,7 @@ impl RBackend {
             } => {
                 self.emit_mark(*span, Some("store3d"));
                 self.record_span(*span);
-                let base_val = self.resolve_val(*base, values, params, false);
+                let base_val = self.resolve_mutable_base(*base, values, params);
                 let i_val = self.resolve_val(*i, values, params, false);
                 let j_val = self.resolve_val(*j, values, params, false);
                 let k_val = self.resolve_val(*k, values, params, false);
@@ -670,6 +670,16 @@ impl RBackend {
         if let Some(var) = values[base].origin_var.as_ref() {
             self.note_var_write(var);
         }
+    }
+
+    fn resolve_mutable_base(&self, val_id: usize, values: &[Value], params: &[String]) -> String {
+        if let Some(bound) = self.resolve_bound_value(val_id) {
+            return bound;
+        }
+        if let Some(origin_var) = values[val_id].origin_var.as_ref() {
+            return origin_var.clone();
+        }
+        self.resolve_val(val_id, values, params, false)
     }
 
     fn begin_branch_snapshot(&mut self) -> BranchSnapshot {
@@ -1147,10 +1157,7 @@ impl RBackend {
         // CSE/GVN when a value reuses a variable-origin annotation.
         let should_use_name = !prefer_expr
             && val.origin_var.is_some()
-            && matches!(
-                val.kind,
-                ValueKind::Load { .. } | ValueKind::Param { .. }
-            );
+            && matches!(val.kind, ValueKind::Load { .. } | ValueKind::Param { .. });
         if should_use_name && let Some(origin_var) = &val.origin_var {
             return origin_var.clone();
         }
