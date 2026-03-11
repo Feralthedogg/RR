@@ -8,6 +8,13 @@ use RR::compiler::{
 use common::unique_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::MutexGuard;
+
+fn lock_env_guard() -> MutexGuard<'static, ()> {
+    common::env_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
 
 fn strict_opts() -> IncrementalOptions {
     IncrementalOptions {
@@ -66,9 +73,7 @@ fn map_artifacts(cache_dir: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn strict_incremental_verify_checks_cached_outputs() {
-    let _guard = common::env_lock()
-        .lock()
-        .expect("failed to lock incremental strict verify env guard");
+    let _guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -144,9 +149,7 @@ fn strict_incremental_verify_checks_cached_outputs() {
 
 #[test]
 fn strict_incremental_verify_rejects_source_map_drift() {
-    let _guard = common::env_lock()
-        .lock()
-        .expect("failed to lock incremental strict verify env guard");
+    let _guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -206,9 +209,7 @@ fn strict_incremental_verify_rejects_source_map_drift() {
 
 #[test]
 fn incremental_cache_separates_runtime_injection_mode() {
-    let _guard = common::env_lock()
-        .lock()
-        .expect("failed to lock incremental strict verify env guard");
+    let _guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -247,7 +248,7 @@ fn incremental_cache_separates_runtime_injection_mode() {
         "first helper-only compile should seed phase1 cache"
     );
     assert!(
-        !helper_only.r_code.contains("rr_set_source(\""),
+        !helper_only.r_code.contains(".rr_env$file <- \"main.rr\";"),
         "helper-only output should omit runtime bootstrap"
     );
 
@@ -269,7 +270,9 @@ fn incremental_cache_separates_runtime_injection_mode() {
         "phase1 artifact key must distinguish runtime injection mode"
     );
     assert!(
-        runtime_injected.r_code.contains("rr_set_source(\""),
+        runtime_injected
+            .r_code
+            .contains(".rr_env$file <- \"main.rr\";"),
         "runtime-injected output should include runtime bootstrap"
     );
 
