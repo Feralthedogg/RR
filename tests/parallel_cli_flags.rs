@@ -23,14 +23,23 @@ fn cli_parallel_flags_are_injected_into_runtime_prelude() {
     let tmp = unique_tmp_dir("proj");
     let rr_path = tmp.join("main.rr");
     let out_path = tmp.join("out.R");
-    fs::write(&rr_path, "print(1L)\n").expect("write rr source");
+    fs::write(
+        &rr_path,
+        r#"
+fn addv(x: vector<float>, y: vector<float>) -> vector<float> {
+  return x + y
+}
+
+print(addv(c(1.0, 2.0), c(3.0, 4.0)))
+"#,
+    )
+    .expect("write rr source");
 
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let output = Command::new(&rr_bin)
         .arg(&rr_path)
         .arg("-o")
         .arg(&out_path)
-        .arg("--no-runtime")
         .arg("-O1")
         .arg("--parallel-mode")
         .arg("optional")
@@ -50,8 +59,8 @@ fn cli_parallel_flags_are_injected_into_runtime_prelude() {
     );
 
     let code = fs::read_to_string(&out_path).expect("read out");
-    assert!(code.contains("rr_set_parallel_mode(\"optional\");"));
-    assert!(code.contains("rr_set_parallel_backend(\"r\");"));
-    assert!(code.contains("rr_set_parallel_threads(3);"));
-    assert!(code.contains("rr_set_parallel_min_trip(77);"));
+    assert!(code.contains(".rr_env$parallel_mode <- \"optional\";"));
+    assert!(code.contains(".rr_env$parallel_backend <- \"r\";"));
+    assert!(code.contains(".rr_env$parallel_threads <- as.integer(3);"));
+    assert!(code.contains(".rr_env$parallel_min_trip <- as.integer(77);"));
 }

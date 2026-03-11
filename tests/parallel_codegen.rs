@@ -30,10 +30,10 @@ print(addv(c(1.0, 2.0), c(3.0, 4.0)))
     )
     .expect("compile should succeed");
 
-    assert!(code.contains("rr_set_parallel_mode(\"optional\");"));
-    assert!(code.contains("rr_set_parallel_backend(\"openmp\");"));
-    assert!(code.contains("rr_set_parallel_threads(4);"));
-    assert!(code.contains("rr_set_parallel_min_trip(64);"));
+    assert!(code.contains(".rr_env$parallel_mode <- \"optional\";"));
+    assert!(code.contains(".rr_env$parallel_backend <- \"openmp\";"));
+    assert!(code.contains(".rr_env$parallel_threads <- as.integer(4);"));
+    assert!(code.contains(".rr_env$parallel_min_trip <- as.integer(64);"));
     assert!(
         code.contains("rr_parallel_vec_add_f64("),
         "typed vector add should lower to parallel-safe wrapper"
