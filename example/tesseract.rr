@@ -1358,13 +1358,6 @@ fn tesseract_main() {
     let adj_u = build_neighbor_table(4.0, N)
 
 
-    print("  Building Rotation Matrices...")
-
-    let rot_l = build_rotation_table(1.0, N)
-
-    let rot_r = build_rotation_table(2.0, N)
-
-
     print("  Allocating State...")
 
     let u = barrier_alloc(TOTAL, 10.0, 3.0)

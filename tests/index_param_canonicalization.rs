@@ -19,6 +19,8 @@ fn gather(a, idx, n) {
   return out
 
 }
+
+print(gather(seq_len(4), seq_len(4) + 0.25, 4))
 "#;
 
     let rr_path = out_dir.join("index_param_canonicalization.rr");
@@ -31,6 +33,7 @@ fn gather(a, idx, n) {
         .arg("-o")
         .arg(&out_path)
         .arg("--no-runtime")
+        .arg("--preserve-all-defs")
         .arg("-O2")
         .status()
         .expect("failed to run RR compiler");
@@ -44,19 +47,30 @@ fn gather(a, idx, n) {
     let fn_pos = code
         .find("Sym_1 <- function")
         .expect("expected compiled function Sym_1");
-    let fn_code = &code[fn_pos..];
+    let fn_end = code[fn_pos + 1..]
+        .find("\nSym_")
+        .map(|idx| fn_pos + 1 + idx)
+        .unwrap_or(code.len());
+    let fn_code = &code[fn_pos..fn_end];
 
     assert!(
         fn_code.contains("idx <- rr_index_vec_floor(idx)")
+            || fn_code.contains("return(rr_gather(a, rr_index_vec_floor(idx)))")
             || fn_code.contains(".arg_idx <- rr_index_vec_floor(.arg_idx)"),
         "expected one-time index vector canonicalization for floor-index parameter"
+    );
+    assert_eq!(
+        fn_code.matches("rr_index_vec_floor(").count(),
+        1,
+        "expected exactly one floor-index canonicalization in the preserved gather body"
     );
     assert!(
         !fn_code.contains("rr_index1_read_vec(out, rr_index_vec_floor("),
         "expected floor wrapper to be removed from gather read after canonicalization"
     );
     assert!(
-        fn_code.contains("rr_index1_read_vec("),
-        "expected gather to use vector read path"
+        fn_code.contains("return(rr_gather(a, rr_index_vec_floor(idx)))")
+            || fn_code.contains("return(rr_gather(.arg_a, rr_index_vec_floor(.arg_idx)))"),
+        "expected gather to lower through a single canonicalized whole-vector gather"
     );
 }

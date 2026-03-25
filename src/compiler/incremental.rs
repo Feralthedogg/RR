@@ -148,15 +148,19 @@ impl EmitFunctionCache for DiskFnEmitCache {
             return Ok(None);
         }
         let code = fs::read_to_string(&code_path).map_err(|e| {
-            InternalCompilerError::new(
-                Stage::Codegen,
-                format!(
-                    "failed to read function emit cache '{}': {}",
-                    code_path.display(),
-                    e
+            attach_incremental_cache_recovery_guidance(
+                RRException::new(
+                    "RR.CompilerError",
+                    RRCode::ICE9001,
+                    Stage::Codegen,
+                    format!(
+                        "failed to read function emit cache '{}': {}",
+                        code_path.display(),
+                        e
+                    ),
                 ),
+                incremental_cache_root_for_path(&self.root),
             )
-            .into_exception()
         })?;
         let map = read_source_map(&map_path)?;
         Ok(Some((code, map)))
@@ -166,27 +170,35 @@ impl EmitFunctionCache for DiskFnEmitCache {
         let (code_path, map_path) = self.paths(key);
         if let Some(parent) = code_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                InternalCompilerError::new(
-                    Stage::Codegen,
-                    format!(
-                        "failed to create function cache dir '{}': {}",
-                        parent.display(),
-                        e
+                attach_incremental_cache_recovery_guidance(
+                    RRException::new(
+                        "RR.CompilerError",
+                        RRCode::ICE9001,
+                        Stage::Codegen,
+                        format!(
+                            "failed to create function cache dir '{}': {}",
+                            parent.display(),
+                            e
+                        ),
                     ),
+                    incremental_cache_root_for_path(&self.root),
                 )
-                .into_exception()
             })?;
         }
         fs::write(&code_path, code).map_err(|e| {
-            InternalCompilerError::new(
-                Stage::Codegen,
-                format!(
-                    "failed to write function emit cache '{}': {}",
-                    code_path.display(),
-                    e
+            attach_incremental_cache_recovery_guidance(
+                RRException::new(
+                    "RR.CompilerError",
+                    RRCode::ICE9001,
+                    Stage::Codegen,
+                    format!(
+                        "failed to write function emit cache '{}': {}",
+                        code_path.display(),
+                        e
+                    ),
                 ),
+                incremental_cache_root_for_path(&self.root),
             )
-            .into_exception()
         })?;
         write_source_map(&map_path, map)
     }
@@ -217,6 +229,26 @@ pub fn compile_with_configs_incremental(
         CompileOutputOptions::default(),
         session,
     )
+}
+
+pub fn module_tree_fingerprint(entry_path: &str, entry_input: &str) -> RR<u64> {
+    let modules = collect_module_fingerprints(entry_path, entry_input)?;
+    let mut payload = String::new();
+    payload.push_str(CACHE_VERSION);
+    for module in modules {
+        payload.push('|');
+        payload.push_str(&module.canonical_path.to_string_lossy());
+        payload.push(':');
+        payload.push_str(&module.content_hash.to_string());
+    }
+    Ok(stable_hash_bytes(payload.as_bytes()))
+}
+
+pub fn module_tree_snapshot(entry_path: &str, entry_input: &str) -> RR<Vec<(PathBuf, u64)>> {
+    Ok(collect_module_fingerprints(entry_path, entry_input)?
+        .into_iter()
+        .map(|module| (module.canonical_path, module.content_hash))
+        .collect())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -333,7 +365,7 @@ pub fn compile_with_configs_incremental_with_output_options(
     if resolved.strict_verify {
         stats.strict_verification_checked = !strict_expected.is_empty();
         for (tier, expected) in &strict_expected {
-            verify_strict_artifact_match(*tier, expected, &built)?;
+            verify_strict_artifact_match(*tier, &cache_root, expected, &built)?;
         }
         stats.strict_verification_passed = stats.strict_verification_checked;
     }
@@ -471,6 +503,12 @@ fn build_artifact_key(
         "helper-only"
     });
     payload.push('|');
+    payload.push_str(if output_options.preserve_all_defs {
+        "preserve-defs"
+    } else {
+        "strip-defs"
+    });
+    payload.push('|');
     payload.push_str(&compile_output_cache_salt().to_string());
     for module in modules {
         payload.push('|');
@@ -516,32 +554,69 @@ fn artifact_paths(cache_root: &Path, key: &str) -> (PathBuf, PathBuf) {
 
 fn verify_strict_artifact_match(
     tier: StrictArtifactTier,
+    cache_root: &Path,
     expected: &CachedArtifact,
     built: &CachedArtifact,
 ) -> RR<()> {
     if expected.r_code != built.r_code {
-        return Err(InternalCompilerError::new(
-            Stage::Codegen,
-            format!(
-                "strict incremental verification failed: {} R output mismatch",
-                tier.label()
-            ),
-        )
-        .note("Disable --strict-incremental-verify or clear target/.rr-cache and rebuild.")
-        .into_exception());
+        return Err(
+            RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Codegen,
+                format!(
+                    "strict incremental verification failed: {} R output mismatch",
+                    tier.label()
+                ),
+            )
+            .note(format!("incremental cache root: {}", cache_root.display()))
+            .help("rerun with --no-incremental to bypass cached artifacts for this compile")
+            .fix(format!(
+                "clear the incremental cache at `{}` and rebuild if you expect the cache to be stale or corrupted",
+                cache_root.display()
+            )),
+        );
     }
     if expected.source_map != built.source_map {
-        return Err(InternalCompilerError::new(
-            Stage::Codegen,
-            format!(
-                "strict incremental verification failed: {} source map mismatch",
-                tier.label()
-            ),
-        )
-        .note("Disable --strict-incremental-verify or clear target/.rr-cache and rebuild.")
-        .into_exception());
+        return Err(
+            RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Codegen,
+                format!(
+                    "strict incremental verification failed: {} source map mismatch",
+                    tier.label()
+                ),
+            )
+            .note(format!("incremental cache root: {}", cache_root.display()))
+            .help("rerun with --no-incremental to bypass cached artifacts for this compile")
+            .fix(format!(
+                "clear the incremental cache at `{}` and rebuild if you expect the cache to be stale or corrupted",
+                cache_root.display()
+            )),
+        );
     }
     Ok(())
+}
+
+fn attach_incremental_cache_recovery_guidance(
+    mut err: RRException,
+    cache_root: Option<&Path>,
+) -> RRException {
+    err = err.help("rerun with --no-incremental to bypass cached artifacts for this compile");
+    if let Some(cache_root) = cache_root {
+        err = err
+            .note(format!("incremental cache root: {}", cache_root.display()))
+            .fix(format!(
+                "clear the incremental cache at `{}` and rebuild if you expect the cache to be stale, malformed, or inaccessible",
+                cache_root.display()
+            ));
+    }
+    err
+}
+
+fn incremental_cache_root_for_path(path: &Path) -> Option<&Path> {
+    cache_root_for_artifact_path(path)
 }
 
 fn load_artifact(cache_root: &Path, key: &str) -> RR<Option<CachedArtifact>> {
@@ -550,15 +625,19 @@ fn load_artifact(cache_root: &Path, key: &str) -> RR<Option<CachedArtifact>> {
         return Ok(None);
     }
     let r_code = fs::read_to_string(&code_path).map_err(|e| {
-        InternalCompilerError::new(
-            Stage::Codegen,
-            format!(
-                "failed to read incremental artifact '{}': {}",
-                code_path.display(),
-                e
+        attach_incremental_cache_recovery_guidance(
+            RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Codegen,
+                format!(
+                    "failed to read incremental artifact '{}': {}",
+                    code_path.display(),
+                    e
+                ),
             ),
+            Some(cache_root),
         )
-        .into_exception()
     })?;
     let source_map = read_source_map(&map_path)?;
     Ok(Some(CachedArtifact { r_code, source_map }))
@@ -568,27 +647,35 @@ fn store_artifact(cache_root: &Path, key: &str, artifact: &CachedArtifact) -> RR
     let (code_path, map_path) = artifact_paths(cache_root, key);
     if let Some(parent) = code_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
-            InternalCompilerError::new(
-                Stage::Codegen,
-                format!(
-                    "failed to create cache directory '{}': {}",
-                    parent.display(),
-                    e
+            attach_incremental_cache_recovery_guidance(
+                RRException::new(
+                    "RR.CompilerError",
+                    RRCode::ICE9001,
+                    Stage::Codegen,
+                    format!(
+                        "failed to create cache directory '{}': {}",
+                        parent.display(),
+                        e
+                    ),
                 ),
+                Some(cache_root),
             )
-            .into_exception()
         })?;
     }
     fs::write(&code_path, &artifact.r_code).map_err(|e| {
-        InternalCompilerError::new(
-            Stage::Codegen,
-            format!(
-                "failed to write incremental artifact '{}': {}",
-                code_path.display(),
-                e
+        attach_incremental_cache_recovery_guidance(
+            RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Codegen,
+                format!(
+                    "failed to write incremental artifact '{}': {}",
+                    code_path.display(),
+                    e
+                ),
             ),
+            Some(cache_root),
         )
-        .into_exception()
     })?;
     write_source_map(&map_path, &artifact.source_map)
 }
@@ -608,37 +695,66 @@ fn write_source_map(path: &Path, map: &[MapEntry]) -> RR<()> {
         ));
     }
     fs::write(path, out).map_err(|e| {
-        InternalCompilerError::new(
-            Stage::Codegen,
-            format!(
-                "failed to write incremental source map '{}': {}",
-                path.display(),
-                e
+        attach_incremental_cache_recovery_guidance(
+            RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Codegen,
+                format!(
+                    "failed to write incremental source map '{}': {}",
+                    path.display(),
+                    e
+                ),
             ),
+            incremental_cache_root_for_path(path),
         )
-        .into_exception()
     })
 }
 
 fn read_source_map(path: &Path) -> RR<Vec<MapEntry>> {
     let content = fs::read_to_string(path).map_err(|e| {
-        InternalCompilerError::new(
-            Stage::Codegen,
-            format!(
-                "failed to read incremental source map '{}': {}",
-                path.display(),
-                e
+        attach_incremental_cache_recovery_guidance(
+            RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Codegen,
+                format!(
+                    "failed to read incremental source map '{}': {}",
+                    path.display(),
+                    e
+                ),
             ),
+            incremental_cache_root_for_path(path),
         )
-        .into_exception()
     })?;
     let mut out = Vec::new();
-    for line in content.lines() {
+    for (line_no, line) in content.lines().enumerate() {
         if let Some(entry) = parse_source_map_entry(line) {
             out.push(entry);
+        } else if !line.trim().is_empty() {
+            let err = RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Codegen,
+                format!(
+                    "failed to parse incremental source map '{}': malformed entry at line {}",
+                    path.display(),
+                    line_no + 1
+                ),
+            )
+            .note("the cached source map entry is malformed or was written by an incompatible compiler shape");
+            return Err(attach_incremental_cache_recovery_guidance(
+                err,
+                incremental_cache_root_for_path(path),
+            ));
         }
     }
     Ok(out)
+}
+
+fn cache_root_for_artifact_path(path: &Path) -> Option<&Path> {
+    path.ancestors()
+        .find(|ancestor| ancestor.file_name().and_then(|name| name.to_str()) == Some(".rr-cache"))
 }
 
 fn parse_source_map_entry(line: &str) -> Option<MapEntry> {

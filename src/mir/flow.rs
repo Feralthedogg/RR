@@ -145,6 +145,14 @@ impl Facts {
     }
 }
 
+fn is_scalar_fact(f: Facts) -> bool {
+    !f.has(Facts::IS_VECTOR) && (f.has(Facts::INT_SCALAR) || f.has(Facts::BOOL_SCALAR))
+}
+
+fn is_non_na_scalar_fact(f: Facts) -> bool {
+    is_scalar_fact(f) && f.has(Facts::NON_NA)
+}
+
 pub struct DataflowSolver;
 
 impl Default for DataflowSolver {
@@ -273,24 +281,55 @@ impl DataflowSolver {
                     res.add(Facts::IS_VECTOR);
                 }
 
-                // Propagate Int Scalar
-                if lf.has(Facts::INT_SCALAR) && rf.has(Facts::INT_SCALAR) {
-                    res.add(Facts::INT_SCALAR);
+                let lhs_non_na_scalar = is_non_na_scalar_fact(lf);
+                let rhs_non_na_scalar = is_non_na_scalar_fact(rf);
+                let both_int = lf.has(Facts::INT_SCALAR) && rf.has(Facts::INT_SCALAR);
 
-                    // Interval Arithmetic
-                    let ival = match op {
-                        crate::syntax::ast::BinOp::Add => lf.interval.add(&rf.interval),
-                        crate::syntax::ast::BinOp::Sub => lf.interval.sub(&rf.interval),
-                        crate::syntax::ast::BinOp::Mul => lf.interval.mul(&rf.interval),
-                        // Div/etc
-                        _ => Interval::TOP,
-                    };
-                    res.interval = ival;
-                } else {
-                    res.interval = Interval::TOP;
+                match op {
+                    crate::syntax::ast::BinOp::Add
+                    | crate::syntax::ast::BinOp::Sub
+                    | crate::syntax::ast::BinOp::Mul => {
+                        if both_int {
+                            res.add(Facts::INT_SCALAR);
+                            let ival = match op {
+                                crate::syntax::ast::BinOp::Add => lf.interval.add(&rf.interval),
+                                crate::syntax::ast::BinOp::Sub => lf.interval.sub(&rf.interval),
+                                crate::syntax::ast::BinOp::Mul => lf.interval.mul(&rf.interval),
+                                _ => Interval::TOP,
+                            };
+                            res.interval = ival;
+                        } else {
+                            res.interval = Interval::TOP;
+                        }
+                        if lhs_non_na_scalar && rhs_non_na_scalar {
+                            res.add(Facts::NON_NA);
+                        }
+                    }
+                    crate::syntax::ast::BinOp::Div | crate::syntax::ast::BinOp::Mod => {
+                        res.interval = Interval::TOP;
+                        if lhs_non_na_scalar && rhs_non_na_scalar && !rf.interval.contains(0) {
+                            res.add(Facts::NON_NA);
+                        }
+                    }
+                    crate::syntax::ast::BinOp::Eq
+                    | crate::syntax::ast::BinOp::Ne
+                    | crate::syntax::ast::BinOp::Lt
+                    | crate::syntax::ast::BinOp::Le
+                    | crate::syntax::ast::BinOp::Gt
+                    | crate::syntax::ast::BinOp::Ge
+                    | crate::syntax::ast::BinOp::And
+                    | crate::syntax::ast::BinOp::Or => {
+                        res.add(Facts::BOOL_SCALAR);
+                        res.interval = Interval::new(0, 1);
+                        if lhs_non_na_scalar && rhs_non_na_scalar {
+                            res.add(Facts::NON_NA);
+                        }
+                    }
+                    _ => {
+                        res.interval = Interval::TOP;
+                    }
                 }
 
-                // Re-derive
                 if res.interval.min >= 0 {
                     res.add(Facts::NON_NEG);
                 }
@@ -314,6 +353,11 @@ impl DataflowSolver {
                     let min = rf.interval.max.saturating_neg();
                     let max = rf.interval.min.saturating_neg();
                     res.interval = Interval::new(min, max); // Note swapped min/max
+                } else {
+                    res.interval = Interval::TOP;
+                }
+                if rf.has(Facts::NON_NA) && !rf.has(Facts::IS_VECTOR) {
+                    res.add(Facts::NON_NA);
                 }
                 res
             }

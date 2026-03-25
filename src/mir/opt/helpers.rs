@@ -470,6 +470,21 @@ impl TachyonEngine {
         helpers
     }
 
+    pub(super) fn collect_trivial_clamp_helpers(
+        all_fns: &FxHashMap<String, FnIR>,
+    ) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        for name in Self::sorted_fn_names(all_fns) {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_trivial_clamp_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
     pub(super) fn rewrite_floor_helper_calls(
         all_fns: &mut FxHashMap<String, FnIR>,
         helpers: &FxHashSet<String>,
@@ -490,6 +505,46 @@ impl TachyonEngine {
                 }
                 *callee = "floor".to_string();
                 *names = vec![None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    pub(super) fn rewrite_trivial_clamp_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            let mut pending = Vec::new();
+            for (vid, value) in fn_ir.values.iter().enumerate() {
+                let ValueKind::Call { callee, args, .. } = &value.kind else {
+                    continue;
+                };
+                if !helpers.contains(callee.as_str()) || args.len() != 3 {
+                    continue;
+                }
+                pending.push((vid, args[0], args[1], args[2], value.span, value.facts));
+            }
+            for (vid, x, lo, hi, span, facts) in pending {
+                let max_call = fn_ir.add_value(
+                    ValueKind::Call {
+                        callee: "pmax".to_string(),
+                        args: vec![x, lo],
+                        names: vec![None, None],
+                    },
+                    span,
+                    facts,
+                    None,
+                );
+                let value = &mut fn_ir.values[vid];
+                value.kind = ValueKind::Call {
+                    callee: "pmin".to_string(),
+                    args: vec![max_call, hi],
+                    names: vec![None, None],
+                };
+                value.origin_var = None;
                 rewrites += 1;
             }
         }
@@ -838,6 +893,159 @@ impl TachyonEngine {
             }
         }
         saw_seed
+    }
+
+    pub(super) fn parse_trivial_clamp_cond(
+        fn_ir: &FnIR,
+        cond: ValueId,
+    ) -> Option<(String, bool, usize)> {
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            return None;
+        };
+        match op {
+            BinOp::Lt | BinOp::Gt => {
+                if let Some(var) = Self::value_non_param_var_name(fn_ir, *lhs) {
+                    let bound = Self::value_param_index(fn_ir, *rhs)?;
+                    Some((var, matches!(op, BinOp::Lt), bound))
+                } else if let Some(var) = Self::value_non_param_var_name(fn_ir, *rhs) {
+                    let bound = Self::value_param_index(fn_ir, *lhs)?;
+                    Some((var, matches!(op, BinOp::Gt), bound))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_trivial_clamp_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [clamp-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 3 {
+            fail!("conservative interop or arity != 3");
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let reachable = Self::reachable_blocks(fn_ir);
+        let mut return_vals = Vec::new();
+        let mut rules = Vec::new();
+        for bb in &fn_ir.blocks {
+            if !reachable.contains(&bb.id) {
+                continue;
+            }
+            match bb.term {
+                Terminator::If {
+                    cond,
+                    then_bb,
+                    else_bb,
+                } => {
+                    let then_assign = Self::single_assign_block(fn_ir, then_bb)
+                        .ok_or_else(|| "then block is not single-assign".to_string());
+                    let else_assigns = Self::block_assignments(fn_ir, else_bb)
+                        .ok_or_else(|| "else block is not assign-only".to_string());
+                    let Ok((dst, src)) = then_assign else {
+                        fail!("then block is not single-assign");
+                    };
+                    let Ok(else_assigns) = else_assigns else {
+                        fail!("else block is not assign-only");
+                    };
+                    if !else_assigns.is_empty() {
+                        fail!("else block is not empty");
+                    }
+                    let Some((cond_var, is_lower, bound_param)) =
+                        Self::parse_trivial_clamp_cond(fn_ir, cond)
+                    else {
+                        fail!("cond parse failed");
+                    };
+                    if dst != cond_var || Self::value_param_index(fn_ir, src) != Some(bound_param) {
+                        fail!("then assignment does not clamp the compared variable");
+                    }
+                    rules.push((cond_var, is_lower, bound_param));
+                }
+                Terminator::Return(Some(v)) => {
+                    let v = Self::resolve_load_alias_value(fn_ir, v);
+                    if !matches!(fn_ir.values[v].kind, ValueKind::Const(Lit::Null)) {
+                        return_vals.push(v);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if rules.len() != 2 {
+            fail!("if rule count != 2");
+        }
+        if return_vals.len() != 1 {
+            fail!("missing single non-null return");
+        }
+
+        let Some(ret_var) = Self::value_var_name(fn_ir, return_vals[0]) else {
+            fail!("return is not a scalar state var");
+        };
+
+        let mut saw_seed = false;
+        let mut saw_lo = false;
+        let mut saw_hi = false;
+        for bb in &fn_ir.blocks {
+            if !reachable.contains(&bb.id) {
+                continue;
+            }
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                if dst != &ret_var {
+                    continue;
+                }
+                match Self::value_param_index(fn_ir, *src) {
+                    Some(0) => saw_seed = true,
+                    Some(1) => saw_lo = true,
+                    Some(2) => saw_hi = true,
+                    _ => fail!("state var assignment is not sourced from x/lo/hi"),
+                }
+            }
+        }
+        if !(saw_seed && saw_lo && saw_hi) {
+            fail!("missing x/lo/hi state assignments");
+        }
+
+        let mut saw_lower = false;
+        let mut saw_upper = false;
+        for (var, is_lower, bound_param) in rules {
+            if var != ret_var {
+                fail!("rules do not update the returned state var");
+            }
+            match (is_lower, bound_param) {
+                (true, 1) => saw_lower = true,
+                (false, 2) => saw_upper = true,
+                _ => fail!("rules do not match clamp(x, lo, hi)"),
+            }
+        }
+        if !(saw_lower && saw_upper) {
+            fail!("missing lower/upper clamp rules");
+        }
+
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [clamp-detect] {}: matched", fn_ir.name);
+        }
+        true
     }
 
     pub(super) fn is_round_call_of_param(

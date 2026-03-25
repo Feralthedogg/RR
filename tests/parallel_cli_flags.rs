@@ -59,6 +59,7 @@ print(addv(c(1.0, 2.0), c(3.0, 4.0)))
     );
 
     let code = fs::read_to_string(&out_path).expect("read out");
+    assert!(code.contains("if (!nzchar(Sys.getenv(\"RR_PARALLEL_MODE\", \"\")))"));
     assert!(code.contains(".rr_env$parallel_mode <- \"optional\";"));
     assert!(code.contains(".rr_env$parallel_backend <- \"r\";"));
     assert!(code.contains(".rr_env$parallel_threads <- as.integer(3);"));

@@ -125,6 +125,20 @@ pub(super) fn upper_const(intv: &crate::mir::analyze::range::RangeInterval) -> O
     }
 }
 
+pub(super) fn lower_const(intv: &crate::mir::analyze::range::RangeInterval) -> Option<i64> {
+    match intv.lo {
+        crate::mir::analyze::range::SymbolicBound::Const(v) => Some(v),
+        _ => None,
+    }
+}
+
+pub(super) fn interval_guarantees_above_const(
+    intv: &crate::mir::analyze::range::RangeInterval,
+    limit: i64,
+) -> bool {
+    lower_const(intv).is_some_and(|lo| lo > limit)
+}
+
 pub(super) fn format_interval(intv: &crate::mir::analyze::range::RangeInterval) -> String {
     format!("[{}, {}]", format_bound(&intv.lo), format_bound(&intv.hi))
 }

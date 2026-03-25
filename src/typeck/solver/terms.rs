@@ -1,5 +1,40 @@
 use super::*;
 
+fn const_integral_value(fn_ir: &FnIR, vid: ValueId) -> Option<i64> {
+    match &fn_ir.values[vid].kind {
+        ValueKind::Const(crate::syntax::ast::Lit::Int(i)) => Some(*i),
+        ValueKind::Const(crate::syntax::ast::Lit::Float(f))
+            if f.is_finite() && (*f - f.trunc()).abs() < f64::EPSILON =>
+        {
+            Some(*f as i64)
+        }
+        _ => None,
+    }
+}
+
+fn matrix_call_term(fn_ir: &FnIR, args: &[ValueId]) -> TypeTerm {
+    let elem = args
+        .first()
+        .map(|arg| match &fn_ir.values[*arg].value_term {
+            TypeTerm::Vector(inner)
+            | TypeTerm::Matrix(inner)
+            | TypeTerm::MatrixDim(inner, _, _) => inner.as_ref().clone(),
+            other => other.clone(),
+        })
+        .unwrap_or(TypeTerm::Double);
+    let rows = args
+        .get(1)
+        .and_then(|arg| const_integral_value(fn_ir, *arg));
+    let cols = args
+        .get(2)
+        .and_then(|arg| const_integral_value(fn_ir, *arg));
+    if rows.is_some() || cols.is_some() {
+        TypeTerm::MatrixDim(Box::new(elem), rows, cols)
+    } else {
+        TypeTerm::Matrix(Box::new(elem))
+    }
+}
+
 pub(super) fn analyze_function_terms(
     fn_ir: &mut FnIR,
     fn_ret: &FxHashMap<String, TypeTerm>,
@@ -106,6 +141,23 @@ pub(super) fn infer_value_term(
                     TypeTerm::Logical
                 }
                 BinOp::And | BinOp::Or => TypeTerm::Logical,
+                BinOp::MatMul => {
+                    let l_parts = l.matrix_parts().or_else(|| match &l {
+                        TypeTerm::Vector(inner) => Some((inner.as_ref(), Some(1), None)),
+                        _ => None,
+                    });
+                    let r_parts = r.matrix_parts().or_else(|| match &r {
+                        TypeTerm::Vector(inner) => Some((inner.as_ref(), None, Some(1))),
+                        _ => None,
+                    });
+                    match (l_parts, r_parts) {
+                        (Some((le, lrows, _lcols)), Some((re, _rrows, rcols))) => {
+                            let elem = le.join(re);
+                            TypeTerm::MatrixDim(Box::new(elem), lrows, rcols)
+                        }
+                        _ => TypeTerm::Matrix(Box::new(TypeTerm::Double)),
+                    }
+                }
                 _ => match (l, r) {
                     (TypeTerm::Double, TypeTerm::Int)
                     | (TypeTerm::Int, TypeTerm::Double)
@@ -120,6 +172,13 @@ pub(super) fn infer_value_term(
                     (TypeTerm::Matrix(a), TypeTerm::Matrix(b)) => {
                         TypeTerm::Matrix(Box::new(a.join(&b)))
                     }
+                    (TypeTerm::MatrixDim(a, ar, ac), TypeTerm::MatrixDim(b, br, bc)) => {
+                        TypeTerm::MatrixDim(Box::new(a.join(&b)), ar.or(br), ac.or(bc))
+                    }
+                    (TypeTerm::Matrix(a), TypeTerm::MatrixDim(b, _, _))
+                    | (TypeTerm::MatrixDim(b, _, _), TypeTerm::Matrix(a)) => {
+                        TypeTerm::Matrix(Box::new(a.join(&b)))
+                    }
                     _ => TypeTerm::Any,
                 },
             }
@@ -132,6 +191,33 @@ pub(super) fn infer_value_term(
             out
         }
         ValueKind::Call { callee, args, .. } => {
+            if callee == "matrix" {
+                return matrix_call_term(fn_ir, args);
+            }
+            if callee == "rr_field_get" && !args.is_empty() {
+                let field_name = args.get(1).and_then(|arg| match &fn_ir.values[*arg].kind {
+                    ValueKind::Const(crate::syntax::ast::Lit::Str(name)) => Some(name.as_str()),
+                    _ => None,
+                });
+                return fn_ir.values[args[0]]
+                    .value_term
+                    .field_value_named(field_name);
+            }
+            if callee == "rr_field_exists" {
+                return TypeTerm::Logical;
+            }
+            if callee == "rr_field_set" && !args.is_empty() {
+                let field_name = args.get(1).and_then(|arg| match &fn_ir.values[*arg].kind {
+                    ValueKind::Const(crate::syntax::ast::Lit::Str(name)) => Some(name.as_str()),
+                    _ => None,
+                });
+                if let (Some(name), Some(value)) = (field_name, args.get(2)) {
+                    return fn_ir.values[args[0]]
+                        .value_term
+                        .updated_field_value_named(name, &fn_ir.values[*value].value_term);
+                }
+                return fn_ir.values[args[0]].value_term.clone();
+            }
             let arg_terms: Vec<TypeTerm> = args
                 .iter()
                 .map(|a| fn_ir.values[*a].value_term.clone())

@@ -16,6 +16,9 @@ fn shifted(x) {
   }
   return y
 }
+
+let out = shifted(seq_along(1..8))
+print(out)
 "#;
 
     let rr_path = out_dir.join("shifted_index_bce.rr");
@@ -42,24 +45,8 @@ fn shifted(x) {
         code.contains("rr_shift_assign("),
         "expected shifted loop vectorized via rr_shift_assign(...)"
     );
-    let mut in_shifted = false;
-    let mut has_rr_index_read_call = false;
-    for line in code.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("shifted <- function") {
-            in_shifted = true;
-            continue;
-        }
-        if in_shifted && trimmed == "}" {
-            break;
-        }
-        if in_shifted && line.contains("rr_index1_read(") {
-            has_rr_index_read_call = true;
-            break;
-        }
-    }
     assert!(
-        !has_rr_index_read_call,
+        !code.contains("rr_index1_read("),
         "expected no rr_index1_read call sites in shifted vectorized code"
     );
 }

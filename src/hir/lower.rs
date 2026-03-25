@@ -311,6 +311,12 @@ impl Lowerer {
                 ast::ExprKind::Unary { rhs, .. } => {
                     visit_expr(lowerer, scopes, seen, captures, rhs)
                 }
+                ast::ExprKind::Formula { lhs, rhs } => {
+                    if let Some(lhs) = lhs {
+                        visit_expr(lowerer, scopes, seen, captures, lhs);
+                    }
+                    visit_expr(lowerer, scopes, seen, captures, rhs);
+                }
                 ast::ExprKind::Binary { lhs, rhs, .. } => {
                     visit_expr(lowerer, scopes, seen, captures, lhs);
                     visit_expr(lowerer, scopes, seen, captures, rhs);
@@ -520,9 +526,7 @@ impl Lowerer {
                     )));
                 }
                 if base == "matrix" && args.len() == 1 {
-                    // RR currently models matrix as vector-valued numeric container in HIR type.
-                    // Keep representation simple and conservative for downstream lowering.
-                    return Some(Ty::Vector(Box::new(
+                    return Some(Ty::Matrix(Box::new(
                         Self::parse_type_hint_expr(&args[0]).unwrap_or(Ty::Any),
                     )));
                 }
@@ -636,6 +640,81 @@ impl Lowerer {
             args,
             span,
         }))
+    }
+
+    fn formula_term_text(expr: &ast::Expr) -> Option<String> {
+        match &expr.kind {
+            ast::ExprKind::Name(name) => Some(name.clone()),
+            ast::ExprKind::Column(name) => Some(name.clone()),
+            ast::ExprKind::Field { base, name } => {
+                Self::formula_term_text(base).map(|prefix| format!("{prefix}.{name}"))
+            }
+            ast::ExprKind::Binary { op, lhs, rhs } => {
+                let lhs = Self::formula_term_text(lhs)?;
+                let rhs = Self::formula_term_text(rhs)?;
+                let op_str = match op {
+                    ast::BinOp::Add => "+",
+                    ast::BinOp::Sub => "-",
+                    ast::BinOp::Mul => "*",
+                    ast::BinOp::Div => "/",
+                    _ => return None,
+                };
+                Some(format!("{lhs} {op_str} {rhs}"))
+            }
+            ast::ExprKind::Lit(ast::Lit::Str(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    fn lower_formula_expr(
+        &mut self,
+        lhs: Option<ast::Expr>,
+        rhs: ast::Expr,
+        span: Span,
+    ) -> RR<HirExpr> {
+        let formula_text = if let Some(lhs) = lhs {
+            let Some(lhs_text) = Self::formula_term_text(&lhs) else {
+                return Err(Self::lower_formula_error(span));
+            };
+            let Some(rhs_text) = Self::formula_term_text(&rhs) else {
+                return Err(Self::lower_formula_error(span));
+            };
+            format!("{lhs_text} ~ {rhs_text}")
+        } else {
+            let Some(rhs_text) = Self::formula_term_text(&rhs) else {
+                return Err(Self::lower_formula_error(span));
+            };
+            format!("~{rhs_text}")
+        };
+        let callee = HirExpr::Global(self.intern_symbol("stats::as.formula"), span);
+        Ok(HirExpr::Call(HirCall {
+            callee: Box::new(callee),
+            args: vec![HirArg::Pos(HirExpr::Lit(HirLit::Char(formula_text)))],
+            span,
+        }))
+    }
+
+    fn lower_formula_unary_expr(&mut self, rhs: ast::Expr, span: Span) -> RR<HirExpr> {
+        self.lower_formula_expr(None, rhs, span)
+    }
+
+    fn lower_formula_binary_expr(
+        &mut self,
+        lhs: ast::Expr,
+        rhs: ast::Expr,
+        span: Span,
+    ) -> RR<HirExpr> {
+        self.lower_formula_expr(Some(lhs), rhs, span)
+    }
+
+    fn lower_formula_error(span: Span) -> RRException {
+        RRException::new(
+            "RR.TypeError",
+            crate::error::RRCode::E1002,
+            crate::error::Stage::Lower,
+            "formula shorthand currently supports names, columns, dotted field paths, string literals, and simple infix formulas over those terms",
+        )
+        .at(span)
     }
 
     pub fn lower_module(
@@ -1138,10 +1217,21 @@ impl Lowerer {
                     rhs: Box::new(self.lower_expr(*rhs)?),
                 })
             }
+            ast::ExprKind::Formula { lhs, rhs } => {
+                if let Some(lhs) = lhs {
+                    self.lower_formula_binary_expr(*lhs, *rhs, expr.span)
+                } else {
+                    self.lower_formula_unary_expr(*rhs, expr.span)
+                }
+            }
             ast::ExprKind::Unary { op, rhs } => {
+                if matches!(op, ast::UnaryOp::Formula) {
+                    return self.lower_formula_unary_expr(*rhs, expr.span);
+                }
                 let hop = match op {
                     ast::UnaryOp::Not => HirUnOp::Not,
                     ast::UnaryOp::Neg => HirUnOp::Neg,
+                    ast::UnaryOp::Formula => unreachable!("formula unary lowered earlier"),
                 };
                 Ok(HirExpr::Unary {
                     op: hop,

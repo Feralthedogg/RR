@@ -2,5 +2,5 @@ expect=compile-ok
 flag=--no-runtime
 flag=-O2
 stdout_contains=Vectorized: 1
-emit_contains=y <- rr_ifelse_strict((x > .arg_k), x, 0L)
+emit_contains=rr_ifelse_strict((seq_len(20L) > 8L), seq_len(20L), 0L)
 emit_not_contains=# rr-hybrid-fallback:

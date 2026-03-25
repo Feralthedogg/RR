@@ -1,11 +1,11 @@
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include <R.h>
 #include <R_ext/Rdynload.h>
 #include <Rinternals.h>
 #include <math.h>
-
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 static R_len_t out_len(SEXP a, SEXP b) {
   R_len_t la = XLENGTH(a);
@@ -82,6 +82,12 @@ static int as_int_default(SEXP x, int fallback) {
     return fallback;
   }
   return out;
+}
+
+static double clamp01(double x) {
+  if (x < 0.0) return 0.0;
+  if (x > 1.0) return 1.0;
+  return x;
 }
 
 static SEXP rr_binop_omp(SEXP a, SEXP b, SEXP threads_sxp, SEXP min_trip_sxp, int op) {

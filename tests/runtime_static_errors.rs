@@ -36,6 +36,11 @@ main()
         "missing NA condition detail:\n{}",
         stdout
     );
+    assert!(
+        stdout.contains("fix: guard NA before branching, for example with is.na(...) checks"),
+        "missing NA condition fix hint:\n{}",
+        stdout
+    );
 }
 
 #[test]
@@ -56,6 +61,11 @@ main()
     assert!(
         stdout.contains("division by zero is guaranteed at compile-time"),
         "missing divide-by-zero detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: guard the divisor or clamp it away from zero before division"),
+        "missing divide-by-zero fix hint:\n{}",
         stdout
     );
 }
@@ -80,6 +90,11 @@ main()
     assert!(
         stdout.contains("out of bounds"),
         "missing index-out-of-bounds detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: shift the index into the 1-based domain before indexing"),
+        "missing write-index fix hint:\n{}",
         stdout
     );
 }
@@ -107,6 +122,11 @@ main()
     assert!(
         stdout.contains("> length(base)"),
         "missing upper-bound detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: clamp or guard the index against length(base) before reading"),
+        "missing upper-bound fix hint:\n{}",
         stdout
     );
 }
@@ -165,6 +185,86 @@ bad(1.0)
     assert!(
         stdout.contains("E1010"),
         "missing strict type conflict error code:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn strict_mode_rejects_two_dimensional_index_on_vector_hint() {
+    let src = r#"
+fn bad(a: vector<int>) -> int {
+  return a[1, 1]
+}
+bad(c(1L, 2L, 3L))
+"#;
+    let (ok, stdout, _stderr) = run_compile_strict(src, "strict_matrix_base_conflict.rr");
+    assert!(
+        !ok,
+        "strict compile must fail for 2D indexing on vector-typed base"
+    );
+    assert!(
+        stdout.contains("E1002"),
+        "missing strict matrix-base conflict error code:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("2D indexing requires matrix-typed base"),
+        "missing strict matrix-base conflict detail:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn static_invalid_matrix_read_index_above_dimension_must_fail() {
+    let src = r#"
+fn main() {
+  let m = matrix(seq_len(4L), 2L, 2L)
+  let i = nrow(m) + 1L
+  return m[i, 1L]
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "bad_matrix_read_upper_index.rr");
+    assert!(
+        !ok,
+        "compile must fail for guaranteed upper out-of-bounds matrix read"
+    );
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("matrix row index is guaranteed out of bounds"),
+        "missing matrix upper-bound detail:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn static_invalid_matrix_write_index_above_dimension_must_fail() {
+    let src = r#"
+fn main() {
+  let m = matrix(seq_len(4L), 2L, 2L)
+  let j = ncol(m) + 1L
+  m[1L, j] <- 99L
+  return m
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "bad_matrix_write_upper_index.rr");
+    assert!(
+        !ok,
+        "compile must fail for guaranteed upper out-of-bounds matrix write"
+    );
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("matrix column assignment index is guaranteed out of bounds"),
+        "missing matrix write upper-bound detail:\n{}",
         stdout
     );
 }

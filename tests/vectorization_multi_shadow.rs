@@ -97,8 +97,9 @@ print(multi_shadow(5))
 
     let o1_code = fs::read_to_string(&o1).expect("failed to read O1 output");
     assert!(
-        o1_code.contains("last <- rr_index1_read("),
-        "expected multi expr map to restore shadow scalar state"
+        o1_code.contains("last <- rr_index1_read(")
+            || o1_code.contains("print(rr_index1_read(z, n, \"index\"))"),
+        "expected multi expr map to restore shadow scalar state or read the last element directly"
     );
     assert!(
         !o1_code.contains("repeat {"),

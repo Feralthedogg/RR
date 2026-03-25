@@ -1,330 +1,31 @@
-use super::*;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Axis3D {
-    Dim1,
-    Dim2,
-    Dim3,
-}
-
-#[derive(Debug, Clone)]
-pub enum VectorPlan {
-    Reduce {
-        kind: ReduceKind,
-        acc_phi: ValueId,
-        vec_expr: ValueId,
-        iv_phi: ValueId,
-    },
-    Reduce2DRowSum {
-        acc_phi: ValueId,
-        base: ValueId,
-        row: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    Reduce2DColSum {
-        acc_phi: ValueId,
-        base: ValueId,
-        col: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    Reduce3D {
-        kind: ReduceKind,
-        acc_phi: ValueId,
-        base: ValueId,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    Map {
-        dest: ValueId,
-        src: ValueId,
-        op: crate::syntax::ast::BinOp,
-        other: ValueId,
-        shadow_vars: Vec<VarId>,
-    },
-    CondMap {
-        dest: ValueId,
-        cond: ValueId,
-        then_val: ValueId,
-        else_val: ValueId,
-        iv_phi: ValueId,
-        start: ValueId,
-        end: ValueId,
-        whole_dest: bool,
-        shadow_vars: Vec<VarId>,
-    },
-    CondMap3D {
-        dest: ValueId,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        cond_lhs: ValueId,
-        cond_rhs: ValueId,
-        cmp_op: crate::syntax::ast::BinOp,
-        then_src: ValueId,
-        else_src: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    CondMap3DGeneral {
-        dest: ValueId,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        cond_lhs: ValueId,
-        cond_rhs: ValueId,
-        cmp_op: crate::syntax::ast::BinOp,
-        then_val: ValueId,
-        else_val: ValueId,
-        iv_phi: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    RecurrenceAddConst {
-        base: ValueId,
-        start: ValueId,
-        end: ValueId,
-        delta: ValueId,
-        negate_delta: bool,
-    },
-    RecurrenceAddConst3D {
-        base: ValueId,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        start: ValueId,
-        end: ValueId,
-        delta: ValueId,
-        negate_delta: bool,
-    },
-    ShiftedMap {
-        dest: ValueId,
-        src: ValueId,
-        start: ValueId,
-        end: ValueId,
-        offset: i64,
-    },
-    ShiftedMap3D {
-        dest: ValueId,
-        src: ValueId,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        start: ValueId,
-        end: ValueId,
-        offset: i64,
-    },
-    CallMap {
-        dest: ValueId,
-        callee: String,
-        args: Vec<CallMapArg>,
-        iv_phi: ValueId,
-        start: ValueId,
-        end: ValueId,
-        whole_dest: bool,
-        shadow_vars: Vec<VarId>,
-    },
-    CallMap3D {
-        dest: ValueId,
-        callee: String,
-        args: Vec<CallMapArg>,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    CallMap3DGeneral {
-        dest: ValueId,
-        callee: String,
-        args: Vec<CallMapArg>,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        iv_phi: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    CubeSliceExprMap {
-        dest: ValueId,
-        expr: ValueId,
-        iv_phi: ValueId,
-        face: ValueId,
-        row: ValueId,
-        size: ValueId,
-        ctx: Option<ValueId>,
-        start: ValueId,
-        end: ValueId,
-        shadow_vars: Vec<VarId>,
-    },
-    ExprMap {
-        dest: ValueId,
-        expr: ValueId,
-        iv_phi: ValueId,
-        start: ValueId,
-        end: ValueId,
-        whole_dest: bool,
-        shadow_vars: Vec<VarId>,
-    },
-    ExprMap3D {
-        dest: ValueId,
-        expr: ValueId,
-        iv_phi: ValueId,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    MultiExprMap3D {
-        entries: Vec<ExprMapEntry3D>,
-        iv_phi: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    MultiExprMap {
-        entries: Vec<ExprMapEntry>,
-        iv_phi: ValueId,
-        start: ValueId,
-        end: ValueId,
-    },
-    ScatterExprMap {
-        dest: ValueId,
-        idx: ValueId,
-        expr: ValueId,
-        iv_phi: ValueId,
-    },
-    ScatterExprMap3D {
-        dest: ValueId,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        idx: ValueId,
-        expr: ValueId,
-        iv_phi: ValueId,
-    },
-    ScatterExprMap3DGeneral {
-        dest: ValueId,
-        i: VectorAccessOperand3D,
-        j: VectorAccessOperand3D,
-        k: VectorAccessOperand3D,
-        expr: ValueId,
-        iv_phi: ValueId,
-    },
-    Map2DRow {
-        dest: ValueId,
-        row: ValueId,
-        start: ValueId,
-        end: ValueId,
-        lhs_src: ValueId,
-        rhs_src: ValueId,
-        op: crate::syntax::ast::BinOp,
-    },
-    Map2DCol {
-        dest: ValueId,
-        col: ValueId,
-        start: ValueId,
-        end: ValueId,
-        lhs_src: ValueId,
-        rhs_src: ValueId,
-        op: crate::syntax::ast::BinOp,
-    },
-    Map3D {
-        dest: ValueId,
-        axis: Axis3D,
-        fixed_a: ValueId,
-        fixed_b: ValueId,
-        start: ValueId,
-        end: ValueId,
-        lhs_src: ValueId,
-        rhs_src: ValueId,
-        op: crate::syntax::ast::BinOp,
-    },
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct CallMapArg {
-    pub(super) value: ValueId,
-    pub(super) vectorized: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExprMapEntry {
-    pub(super) dest: ValueId,
-    pub(super) expr: ValueId,
-    pub(super) whole_dest: bool,
-    pub(super) shadow_vars: Vec<VarId>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExprMapEntry3D {
-    pub(super) dest: ValueId,
-    pub(super) expr: ValueId,
-    pub(super) axis: Axis3D,
-    pub(super) fixed_a: ValueId,
-    pub(super) fixed_b: ValueId,
-    pub(super) shadow_vars: Vec<VarId>,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct CallMap3DMatchCandidate {
-    pub(super) dest: ValueId,
-    pub(super) axis: Axis3D,
-    pub(super) fixed_a: ValueId,
-    pub(super) fixed_b: ValueId,
-    pub(super) callee: String,
-    pub(super) args: Vec<CallMapArg>,
-    pub(super) generalized: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CallMapLoweringMode {
-    DirectVector,
-    RuntimeAuto { helper_cost: u32 },
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct BlockStore1D {
-    pub(super) base: ValueId,
-    pub(super) idx: ValueId,
-    pub(super) val: ValueId,
-    pub(super) is_vector: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) enum BlockStore1DMatch {
-    None,
-    One(BlockStore1D),
-    Invalid,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct BlockStore3D {
-    pub(super) base: ValueId,
-    pub(super) i: ValueId,
-    pub(super) j: ValueId,
-    pub(super) k: ValueId,
-    pub(super) val: ValueId,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum BlockStore3DMatch {
-    None,
-    One(BlockStore3D),
-    Invalid,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReduceKind {
-    Sum,
-    Prod,
-    Min,
-    Max,
-}
+use super::analysis::{
+    affine_iv_offset, as_safe_loop_index, axis3_operand_source, axis3_vector_operand_source,
+    canonical_value, classify_3d_general_vector_access, classify_3d_map_axis,
+    classify_3d_vector_access_axis, classify_store_1d_in_block, classify_store_3d_in_block,
+    collect_loop_shadow_vars_for_dest, expr_contains_index3d, expr_has_iv_dependency,
+    expr_has_non_vector_safe_call_in_vector_context, expr_reads_base, expr_reads_base_non_iv,
+    induction_origin_var, is_condition_vectorizable, is_floor_like_iv_expr, is_iv_equivalent,
+    is_loop_compatible_base, is_loop_invariant_axis, is_loop_invariant_scalar_expr,
+    is_origin_var_iv_alias_in_loop, is_prev_element, is_prev_element_3d, is_vector_safe_call,
+    is_vector_safe_call_chain_expr, is_vectorizable_expr, loop_covers_whole_destination,
+    loop_has_store_effect, loop_matches_vec, resolve_base_var, resolve_load_alias_value,
+    resolve_match_alias_value, same_base_value, same_loop_invariant_value, unique_assign_source,
+};
+use super::debug::vectorize_trace_enabled;
+use super::reconstruct::{
+    expr_has_ambiguous_loop_local_load, expr_has_unstable_loop_local_load, expr_reads_var,
+    merged_assign_source_in_loop, phi_state_var, unique_assign_source_in_loop,
+    unique_origin_phi_value_in_loop,
+};
+pub use super::types::{Axis3D, CallMapArg, ExprMapEntry, ExprMapEntry3D, ReduceKind, VectorPlan};
+use super::types::{
+    BlockStore1DMatch, BlockStore3DMatch, CallMap3DMatchCandidate, VectorAccessOperand3D,
+    VectorAccessPattern3D,
+};
+use crate::mir::opt::loop_analysis::LoopInfo;
+use crate::mir::*;
+use crate::syntax::ast::BinOp;
+use rustc_hash::FxHashSet;
 
 fn expr_has_non_iv_loop_state_load(
     fn_ir: &FnIR,
@@ -2241,7 +1942,11 @@ pub(super) fn classify_expr_map_store_candidate(
         return None;
     }
 
-    let dest = canonical_value(fn_ir, store.base);
+    let dest = if resolve_base_var(fn_ir, store.base).is_some() {
+        store.base
+    } else {
+        canonical_value(fn_ir, store.base)
+    };
     if !idx_ok {
         let Some(cube) =
             match_cube_slice_index_info(fn_ir, lp, user_call_whitelist, store.idx, iv_phi)
@@ -2386,7 +2091,13 @@ pub(super) fn match_expr_map(
                         ExprMapStoreCandidate::Standard { dest, expr } => {
                             if cube_candidate.is_some()
                                 || found.iter().any(|(existing_dest, _)| {
-                                    same_base_value(fn_ir, *existing_dest, dest)
+                                    match (
+                                        resolve_base_var(fn_ir, *existing_dest),
+                                        resolve_base_var(fn_ir, dest),
+                                    ) {
+                                        (Some(a), Some(b)) => a == b,
+                                        _ => same_base_value(fn_ir, *existing_dest, dest),
+                                    }
                                 })
                             {
                                 trace_expr_map_duplicate_store_reject();

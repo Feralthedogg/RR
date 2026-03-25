@@ -1,0 +1,28 @@
+import r default from "ggplot2"
+import r default from "readr"
+import r * as base from "base"
+
+fn main() {
+    let rdsfile = "rr_readr_rds_ggplot2_roundtrip_modern.rds"
+    let outfile = "rr_readr_rds_ggplot2_roundtrip_modern.png"
+
+    let raw = base.data.frame(
+        step = c(0, 1, 2, 3, 4),
+        value = c(0.3, 0.8, 1.1, 0.9, 0.4)
+    )
+
+    readr.write_rds(raw, rdsfile)
+    let loaded = readr.read_rds(rdsfile)
+
+    let p = ggplot2.ggplot(loaded, ggplot2.aes(x = step, y = value)) +
+        ggplot2.geom_line(color = "steelblue", linewidth = 1.2) +
+        ggplot2.geom_point(color = "tomato", size = 2.1) +
+        ggplot2.ggtitle("RR modern + readr::read_rds/write_rds") +
+        ggplot2.theme_bw()
+
+    ggplot2.ggsave(filename = outfile, plot = p, width = 8, height = 4.5, dpi = 120)
+    print("saved_plot")
+    print(outfile)
+}
+
+main()

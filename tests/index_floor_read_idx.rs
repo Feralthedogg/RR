@@ -31,6 +31,8 @@ fn scalar_idx_kernel(n) {
   return out
 
 }
+
+print(scalar_idx_kernel(4))
 "#;
 
     let rr_path = out_dir.join("scalar_idx_kernel.rr");

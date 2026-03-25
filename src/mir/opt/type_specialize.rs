@@ -1,6 +1,10 @@
 use crate::mir::*;
 use crate::typeck::{PrimTy, ShapeTy};
 
+fn is_numeric_array_shape(shape: ShapeTy) -> bool {
+    matches!(shape, ShapeTy::Vector | ShapeTy::Matrix)
+}
+
 pub fn optimize(fn_ir: &mut FnIR) -> bool {
     let mut changed = false;
 
@@ -27,10 +31,11 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
             ValueKind::Binary { op, lhs, rhs } => {
                 let lhs_ty = fn_ir.values[lhs].value_ty;
                 let rhs_ty = fn_ir.values[rhs].value_ty;
-                let both_vec = lhs_ty.shape == ShapeTy::Vector && rhs_ty.shape == ShapeTy::Vector;
+                let both_arrays =
+                    lhs_ty.shape == rhs_ty.shape && is_numeric_array_shape(lhs_ty.shape);
                 let both_numeric = matches!(lhs_ty.prim, PrimTy::Double | PrimTy::Int)
                     && matches!(rhs_ty.prim, PrimTy::Double | PrimTy::Int);
-                if both_vec && both_numeric {
+                if both_arrays && both_numeric {
                     let op = match op {
                         crate::syntax::ast::BinOp::Add => Some(IntrinsicOp::VecAddF64),
                         crate::syntax::ast::BinOp::Sub => Some(IntrinsicOp::VecSubF64),
@@ -58,16 +63,16 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                         .first()
                         .map(|a| fn_ir.values[*a].value_ty)
                         .unwrap_or(TypeState::unknown());
-                    let numeric_vec0 = arg0_ty.shape == ShapeTy::Vector
+                    let numeric_array0 = is_numeric_array_shape(arg0_ty.shape)
                         && matches!(arg0_ty.prim, PrimTy::Double | PrimTy::Int);
                     let mk = match (callee.as_str(), args.len()) {
-                        ("abs", 1) if numeric_vec0 => Some(IntrinsicOp::VecAbsF64),
-                        ("log", 1) if numeric_vec0 => Some(IntrinsicOp::VecLogF64),
-                        ("sqrt", 1) if numeric_vec0 => Some(IntrinsicOp::VecSqrtF64),
-                        ("pmax", 2) if numeric_vec0 => Some(IntrinsicOp::VecPmaxF64),
-                        ("pmin", 2) if numeric_vec0 => Some(IntrinsicOp::VecPminF64),
-                        ("sum", 1) if numeric_vec0 => Some(IntrinsicOp::VecSumF64),
-                        ("mean", 1) if numeric_vec0 => Some(IntrinsicOp::VecMeanF64),
+                        ("abs", 1) if numeric_array0 => Some(IntrinsicOp::VecAbsF64),
+                        ("log", 1) if numeric_array0 => Some(IntrinsicOp::VecLogF64),
+                        ("sqrt", 1) if numeric_array0 => Some(IntrinsicOp::VecSqrtF64),
+                        ("pmax", 2) if numeric_array0 => Some(IntrinsicOp::VecPmaxF64),
+                        ("pmin", 2) if numeric_array0 => Some(IntrinsicOp::VecPminF64),
+                        ("sum", 1) if numeric_array0 => Some(IntrinsicOp::VecSumF64),
+                        ("mean", 1) if numeric_array0 => Some(IntrinsicOp::VecMeanF64),
                         _ => None,
                     };
                     mk.map(|op| ValueKind::Intrinsic { op, args })

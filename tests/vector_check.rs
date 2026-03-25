@@ -112,6 +112,7 @@ fn vector_check_compiles_and_preserves_semantics() {
     assert!(
         o1_code.contains("x + x")
             || o1_code.contains("(x + x)")
+            || o1_code.contains("seq_len(20L) + seq_len(20L)")
             || o1_code.contains("rr_intrinsic_vec_add_f64("),
         "expected optimized arithmetic expression in O1 output (direct add or intrinsic add)"
     );

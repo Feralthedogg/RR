@@ -52,7 +52,7 @@ print(main())
 
     let o2_code = fs::read_to_string(&o2).expect("failed to read emitted O2 code");
     assert!(
-        o2_code.contains("rr_mark(9, 3);")
+        (o2_code.contains("rr_mark(9, 3);") || o2_code.contains("rr_mark(9L, 3L);"))
             && o2_code.contains("a[2L, 2L, 2L] <- 99L")
             && o2_code.contains("a[1L, 2L, 1L] <- (a[2L, 1L, 2L] + 10L)"),
         "expected emitted R to contain 3D read/write lowering:\n{}",

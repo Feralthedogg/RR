@@ -100,7 +100,9 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
 fn call_na_behavior(callee: &str, args: &[ValueId], states: &[NaState]) -> NaState {
     // Functions that never return NA regardless of args.
     match callee {
-        "length" | "seq_len" | "seq_along" => return NaState::Never,
+        "length" | "seq_len" | "seq_along" | "dim" | "dimnames" | "nrow" | "ncol" | "t" => {
+            return NaState::Never;
+        }
         _ => {}
     }
 
@@ -139,6 +141,13 @@ fn call_na_behavior(callee: &str, args: &[ValueId], states: &[NaState]) -> NaSta
         | "%*%"
         | "crossprod"
         | "tcrossprod" => {
+            let mut acc = NaState::Never;
+            for a in args {
+                acc = NaState::propagate(acc, states[*a]);
+            }
+            return acc;
+        }
+        "diag" | "rbind" | "cbind" => {
             let mut acc = NaState::Never;
             for a in args {
                 acc = NaState::propagate(acc, states[*a]);

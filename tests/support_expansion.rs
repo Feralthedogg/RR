@@ -40,8 +40,36 @@ fn t_seq_len_sum(n) {
     return s
 }
 
+fn t_matrix_shape_helpers() {
+    let m = matrix(seq_len(4L), 2L, 2L)
+    print(dim(m))
+    print(nrow(m))
+    print(ncol(m))
+
+    let named = matrix(
+        c(1.0, 2.0, 3.0, 4.0),
+        2L,
+        2L,
+        dimnames = list(c("r1", "r2"), c("c1", "c2"))
+    )
+    print(dimnames(named))
+    return 0L
+}
+
+fn t_matrix_algebra_helpers() {
+    let m = matrix(seq_len(6L), 2L, 3L)
+    print(dim(t(m)))
+    print(dim(rbind(m, m)))
+    print(dim(cbind(m, m)))
+    print(diag(matrix(seq_len(4L), 2L, 2L)))
+    print(dim(m %*% t(m)))
+    return 0L
+}
+
 print(t_unary_field())
 print(t_seq_len_sum(5))
+print(t_matrix_shape_helpers())
+print(t_matrix_algebra_helpers())
 "#;
 
     let rr_path = out_dir.join("support_expansion.rr");
@@ -82,7 +110,7 @@ print(t_seq_len_sum(5))
         "stderr mismatch O0 vs O2"
     );
 
-    let expected = "[1] -5\n[1] TRUE\n[1] 10\n[1] 2\n[1] 12\n[1] 15\n";
+    let expected = "[1] -5\n[1] TRUE\n[1] 10\n[1] 2\n[1] 12\n[1] 15\n[1] 2 2\n[1] 2\n[1] 2\n[[1]]\n[1] \"r1\" \"r2\"\n\n[[2]]\n[1] \"c1\" \"c2\"\n\n[1] 0\n[1] 3 2\n[1] 4 3\n[1] 2 6\n[1] 1 4\n[1] 2 2\n[1] 0\n";
     assert_eq!(
         normalize(&base.stdout),
         expected,

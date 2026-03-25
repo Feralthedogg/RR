@@ -2,6 +2,14 @@
 
 This page is the runtime contract and diagnostics reference for RR.
 
+## Audience
+
+Read this page when you need to understand:
+
+- what the embedded runtime is responsible for
+- when RR fails at compile time versus runtime
+- how compile-time policy becomes artifact-local runtime policy
+
 ## Runtime Structure
 
 RR emits self-contained `.R` scripts by prepending a selected runtime helper
@@ -39,15 +47,34 @@ The embedded runtime is responsible for:
 
 Only referenced helpers plus their transitive dependencies are injected.
 
+Generated artifacts also carry explicit section markers:
+
+- `# --- RR runtime (auto-generated) ---`
+- `# --- RR generated code (from user RR source) ---`
+- `# --- RR synthesized entrypoints (auto-generated) ---`
+
+Those markers are there to distinguish injected runtime code, lowered RR
+functions, and synthetic top-level entry calls in the final `.R` artifact.
+
+Typed parallel wrappers have a narrower contract than the name suggests.
+
+- Vector wrappers may slice by element range.
+- Matrix wrappers are only used for straight-line shape-preserving kernels.
+- When a matrix wrapper is used, the R fallback splits work by column blocks and
+  restores the original `dim` and `dimnames` on the joined result.
+- Shape-sensitive matrix kernels such as transpose-like rewrites are not wrapped;
+  they stay on the normal single-threaded path.
+
 ## Bootstrap Policy
 
 The runtime bootstrap does two distinct things:
 
 1. define env-driven defaults from `Sys.getenv(...)`
-2. append compile-time policy assignments chosen by RR for the current artifact
+2. append compile-time backend/parallel policy defaults chosen by RR for the current artifact
 
-That means the final emitted `.R` usually preserves compile-time backend/mode
-selection unless you edit the artifact manually.
+That means the final emitted `.R` keeps the compile-time backend and parallel
+policy by default, but an explicit runtime override still wins. Runtime mode and
+similar per-run knobs remain env-driven.
 
 ## Runtime Modes
 
@@ -84,7 +111,11 @@ selection unless you edit the artifact manually.
   - backend failure is a runtime error
 
 Typed vector wrappers currently rely on the same parallel knobs, but practical
-parallel execution is still R-backend centric.
+parallel execution is still R-backend centric. In current artifacts that means:
+
+- the runtime can attempt chunked parallel execution under the configured policy
+- some generated kernels still fall back to pure-R sequential or chunked-R paths
+- not every typed kernel has a dedicated native/OpenMP implementation
 
 ## Indexing and NA Policy
 
@@ -92,6 +123,8 @@ parallel execution is still R-backend centric.
 - writes reject invalid or NA index values
 - guard elimination is proof-based only
 - `RR_STRICT_INDEX_READ=1` turns NA read-index behavior into a hard runtime error
+- obvious matrix bounds errors such as `m[nrow(m) + 1, 1]` or `m[1, ncol(m) + 1]`
+  are rejected at compile time when the matrix extent is statically known
 
 ## Error Model
 
@@ -112,6 +145,18 @@ Important fields:
 The compiler core returns structured diagnostics. The CLI decides final
 formatting and exit behavior.
 
+## Reporting Contract
+
+RR prefers:
+
+- structured compiler diagnostics before execution when proof is available
+- source-aware runtime failures when proof is not available until execution
+- aggregate reporting when multiple independent failures are provable
+
+RR does not treat these as interchangeable. If a failure can be proven before
+execution, the intended behavior is a compile-time diagnostic rather than a
+deferred runtime failure.
+
 ## Multi-Error Reporting
 
 RR may aggregate multiple findings into a single report:
@@ -127,6 +172,23 @@ This is intentional. RR does not force fail-fast-only reporting.
 `src/runtime/runner.rs` executes generated `.gen.R` through `Rscript --vanilla`.
 RR uses source maps to map runtime line information back to RR spans when
 reporting failures.
+
+Runner selection order is:
+
+1. explicit runner path passed by the caller
+2. `RRSCRIPT` environment override
+3. `Rscript` from `PATH`
+
+If runner startup fails, RR reports it as `RR.RunnerError` and includes recovery
+guidance such as:
+
+- install `Rscript` or set `RRSCRIPT`
+- rerun with `--keep-r` to inspect the generated `.gen.R` file
+- make the source directory writable if RR cannot create the temporary `.gen.R`,
+  or rerun `RR build --out-dir <dir>` if you want emitted R somewhere else
+
+When `RR run --keep-r` succeeds, RR also reports the kept generated artifact
+path so you can inspect or rerun the exact emitted `.gen.R`.
 
 ## Related Manuals
 

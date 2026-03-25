@@ -31,6 +31,7 @@ fn floor_idx_cse(a, b, n_l, n_r, n) {
         .arg("-o")
         .arg(&out_path)
         .arg("--no-runtime")
+        .arg("--preserve-all-defs")
         .arg("-O1")
         .status()
         .expect("failed to run RR compiler");
@@ -41,8 +42,8 @@ fn floor_idx_cse(a, b, n_l, n_r, n) {
     );
 
     let code = fs::read_to_string(&out_path).expect("failed to read compiled R");
-    let floor_r = code.matches("n_r <- rr_index_vec_floor(n_r)").count();
-    let floor_l = code.matches("n_l <- rr_index_vec_floor(n_l)").count();
+    let floor_r = code.matches("rr_index_vec_floor(n_r)").count();
+    let floor_l = code.matches("rr_index_vec_floor(n_l)").count();
     assert_eq!(
         floor_r, 1,
         "expected n_r to be canonicalized once, got {}",
@@ -54,12 +55,14 @@ fn floor_idx_cse(a, b, n_l, n_r, n) {
         floor_l
     );
     assert!(
-        code.contains("rr_index1_read_vec("),
+        code.contains("rr_index1_read_vec(") || code.contains("rr_gather("),
         "expected vector gather read calls in output"
     );
     assert!(
         !code.contains("rr_index1_read_vec(.arg_a, rr_index_vec_floor(")
-            && !code.contains("rr_index1_read_vec(.arg_b, rr_index_vec_floor("),
+            && !code.contains("rr_index1_read_vec(.arg_b, rr_index_vec_floor(")
+            && !code.contains("rr_gather(a, rr_index_vec_floor(")
+            && !code.contains("rr_gather(b, rr_index_vec_floor("),
         "expected floor wrapper to be removed from gather reads"
     );
 }

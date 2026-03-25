@@ -393,6 +393,10 @@ impl MirSCCP {
             return Lattice::Top;
         }
 
+        if self.base_value_has_store_effects(fn_ir, base) {
+            return Lattice::Bottom;
+        }
+
         if let Some(i) = self.const_index_value(&idx_state)
             && let Some(v) = self.try_const_index(base, i, fn_ir, lattice)
         {
@@ -400,6 +404,29 @@ impl MirSCCP {
         }
 
         Lattice::Bottom
+    }
+
+    fn base_value_has_store_effects(&self, fn_ir: &FnIR, base: ValueId) -> bool {
+        let direct_origin = fn_ir.values.get(base).and_then(|v| v.origin_var.as_deref());
+        for block in &fn_ir.blocks {
+            for instr in &block.instrs {
+                let stored_base = match instr {
+                    Instr::StoreIndex1D { base, .. }
+                    | Instr::StoreIndex2D { base, .. }
+                    | Instr::StoreIndex3D { base, .. } => *base,
+                    Instr::Assign { .. } | Instr::Eval { .. } => continue,
+                };
+                if stored_base == base {
+                    return true;
+                }
+                if direct_origin.is_some()
+                    && fn_ir.values[stored_base].origin_var.as_deref() == direct_origin
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn eval_call(
@@ -1402,6 +1429,75 @@ mod tests {
         let mut opt = fn_ir.clone();
         assert!(sccp.optimize(&mut opt));
         assert!(matches!(opt.values[at].kind, ValueKind::Const(Lit::Int(2))));
+    }
+
+    #[test]
+    fn test_index_seq_len_does_not_constant_fold_after_store() {
+        let mut fn_ir = FnIR::new("index_seq_len_store".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let n = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(5)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let idx1 = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let idx2 = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let seq = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "seq_len".to_string(),
+                args: vec![n],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("acc".to_string()),
+        );
+        let forty_two = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(42)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].instrs.push(Instr::StoreIndex1D {
+            base: seq,
+            idx: idx1,
+            val: forty_two,
+            is_safe: false,
+            is_na_safe: false,
+            is_vector: false,
+            span: Span::default(),
+        });
+        let at = fn_ir.add_value(
+            ValueKind::Index1D {
+                base: seq,
+                idx: idx2,
+                is_safe: false,
+                is_na_safe: false,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(at));
+
+        let sccp = MirSCCP::new();
+        let mut opt = fn_ir.clone();
+        sccp.optimize(&mut opt);
+        assert!(matches!(opt.values[at].kind, ValueKind::Index1D { .. }));
     }
 
     #[test]

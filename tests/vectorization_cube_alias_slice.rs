@@ -34,6 +34,8 @@ fn fill_row(face, row, size) {
   }
   return out
 }
+
+print(fill_row(2, 3, 4))
 "#;
 
     let rr_path = out_dir.join("cube_alias_slice.rr");

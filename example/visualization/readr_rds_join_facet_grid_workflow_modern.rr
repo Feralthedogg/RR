@@ -1,0 +1,40 @@
+import r default from "ggplot2"
+import r default from "readr"
+import r default from "dplyr"
+import r * as base from "base"
+
+fn main() {
+    let rdsfile = "rr_readr_rds_join_facet_grid_workflow_modern.rds"
+    let outfile = "rr_readr_rds_join_facet_grid_workflow_modern.png"
+
+    let left = base.data.frame(
+        id = c(1.0, 2.0, 3.0, 4.0),
+        grp = c("x", "y", "x", "y"),
+        value = c(1.2, 2.4, 1.8, 3.1)
+    )
+    let right = base.data.frame(
+        id = c(2.0, 4.0),
+        marker = c("keep", "keep")
+    )
+
+    readr.write_rds(left, rdsfile)
+    let loaded = readr.read_rds(rdsfile)
+
+    let kept = dplyr.semi_join(loaded, right, by = "id") |>
+        dplyr.mutate(kind = "kept")
+    let dropped = dplyr.anti_join(loaded, right, by = "id") |>
+        dplyr.mutate(kind = "dropped")
+    let combined = dplyr.bind_rows(kept, dropped)
+
+    let p = ggplot2.ggplot(combined, ggplot2.aes(x = grp, y = value, fill = kind)) +
+        ggplot2.geom_col() +
+        ggplot2.facet_grid(~kind + grp) +
+        ggplot2.ggtitle("RR modern + readr RDS + dplyr joins + facet_grid") +
+        ggplot2.theme_bw()
+
+    ggplot2.ggsave(filename = outfile, plot = p, width = 8, height = 4.5, dpi = 120)
+    print("saved_plot")
+    print(outfile)
+}
+
+main()

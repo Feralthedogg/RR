@@ -2,6 +2,8 @@ mod common;
 
 use common::{rscript_available, rscript_path, unique_dir};
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -94,6 +96,117 @@ main()
         stdout.contains("[1] 123"),
         "expected runtime output from main.rr, got:\n{}",
         stdout
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_command_uses_rscript_env_override() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_run");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "rscript_override");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_src = r#"
+fn main() {
+  print(123)
+}
+main()
+"#;
+    fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
+
+    let fake_rscript = proj_dir.join("fake_rscript.sh");
+    fs::write(&fake_rscript, "#!/bin/sh\nprintf '[1] 777\\n'\nexit 0\n")
+        .expect("failed to write fake Rscript");
+    let mut perms = fs::metadata(&fake_rscript)
+        .expect("failed to stat fake Rscript")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fake_rscript, perms).expect("failed to chmod fake Rscript");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let output = Command::new(&rr_bin)
+        .current_dir(&proj_dir)
+        .arg("run")
+        .arg(".")
+        .arg("-O0")
+        .env("PATH", "")
+        .env("RRSCRIPT", &fake_rscript)
+        .output()
+        .expect("failed to run rr run . with fake RRSCRIPT");
+
+    assert!(
+        output.status.success(),
+        "rr run . with fake RRSCRIPT failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[1] 777"),
+        "expected fake RRSCRIPT output, got:\n{}",
+        stdout
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_keep_r_preserves_generated_artifact_on_success() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_run");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "keep_r_success");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_src = r#"
+fn main() {
+  print(123)
+}
+main()
+"#;
+    fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
+
+    let fake_rscript = proj_dir.join("fake_rscript.sh");
+    fs::write(&fake_rscript, "#!/bin/sh\nprintf '[1] 888\\n'\nexit 0\n")
+        .expect("failed to write fake Rscript");
+    let mut perms = fs::metadata(&fake_rscript)
+        .expect("failed to stat fake Rscript")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fake_rscript, perms).expect("failed to chmod fake Rscript");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let output = Command::new(&rr_bin)
+        .current_dir(&proj_dir)
+        .arg("run")
+        .arg(".")
+        .arg("-O0")
+        .arg("--keep-r")
+        .env("PATH", "")
+        .env("RRSCRIPT", &fake_rscript)
+        .output()
+        .expect("failed to run rr run . --keep-r with fake RRSCRIPT");
+
+    assert!(
+        output.status.success(),
+        "rr run . --keep-r failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("[1] 888"),
+        "expected fake RRSCRIPT output, got:\n{}",
+        stdout
+    );
+    assert!(
+        stderr.contains("help: kept generated artifact at"),
+        "expected kept-artifact hint, got:\n{}",
+        stderr
+    );
+    assert!(
+        proj_dir.join("main.gen.R").exists(),
+        "expected generated artifact to be preserved by --keep-r"
     );
 }
 

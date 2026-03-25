@@ -1,4 +1,20 @@
-use super::*;
+use super::debug::{VectorizeSkipReason, vectorize_trace_enabled};
+use super::planning::{Axis3D, CallMapArg, VectorPlan, is_builtin_vector_safe_call};
+use super::reconstruct::{
+    has_non_passthrough_assignment_in_loop, is_scalar_broadcast_value,
+    unique_assign_source_in_loop, unique_assign_source_reaching_block_in_loop,
+    value_use_block_in_loop,
+};
+use super::types::{
+    BlockStore1D, BlockStore1DMatch, BlockStore3D, BlockStore3DMatch, CallMapLoweringMode,
+    VectorAccessOperand3D, VectorAccessPattern3D,
+};
+use crate::mir::opt::loop_analysis::{LoopInfo, build_pred_map};
+use crate::mir::*;
+use crate::syntax::ast::BinOp;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+pub(super) const CALL_MAP_AUTO_HELPER_COST_THRESHOLD: u32 = 6;
 
 pub(super) fn last_assign_to_var_in_block(
     fn_ir: &FnIR,
@@ -1193,28 +1209,6 @@ pub(super) fn classify_3d_vector_access_axis(
     None
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum VectorAccessOperand3D {
-    Scalar(ValueId),
-    Vector(ValueId),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct VectorAccessPattern3D {
-    pub i: VectorAccessOperand3D,
-    pub j: VectorAccessOperand3D,
-    pub k: VectorAccessOperand3D,
-}
-
-impl VectorAccessPattern3D {
-    pub(super) fn vector_count(&self) -> usize {
-        [self.i, self.j, self.k]
-            .into_iter()
-            .filter(|operand| matches!(operand, VectorAccessOperand3D::Vector(_)))
-            .count()
-    }
-}
-
 pub(super) fn classify_3d_general_vector_access(
     fn_ir: &FnIR,
     base: ValueId,
@@ -1523,6 +1517,7 @@ pub(super) fn loop_entry_seed_source_in_loop(
     var: &str,
 ) -> Option<ValueId> {
     let mut seed: Option<ValueId> = None;
+    let mut passthrough_seen = FxHashSet::default();
     for bid in &lp.body {
         for ins in &fn_ir.blocks[*bid].instrs {
             let Instr::Assign { dst, src, .. } = ins else {
@@ -1532,14 +1527,10 @@ pub(super) fn loop_entry_seed_source_in_loop(
                 continue;
             }
             let src = canonical_value(fn_ir, *src);
+            passthrough_seen.clear();
             if is_passthrough_load_of_var(fn_ir, src, var)
-                || collapse_same_var_passthrough_phi_to_load(
-                    fn_ir,
-                    src,
-                    var,
-                    &mut FxHashSet::default(),
-                )
-                .is_some()
+                || collapse_same_var_passthrough_phi_to_load(fn_ir, src, var, &mut passthrough_seen)
+                    .is_some()
             {
                 continue;
             }
@@ -1659,6 +1650,9 @@ pub(super) fn collect_loop_shadow_vars_for_dest(
         let Some(origin_var) = value.origin_var.as_deref() else {
             continue;
         };
+        if !has_non_passthrough_assignment_in_loop(fn_ir, lp, origin_var) {
+            continue;
+        }
         if allowed_vars
             .iter()
             .any(|allowed| origin_var == allowed.as_str())
@@ -1806,6 +1800,9 @@ pub(super) fn loop_has_non_iv_loop_carried_state_except(
         let Some(origin_var) = value.origin_var.as_deref() else {
             continue;
         };
+        if !has_non_passthrough_assignment_in_loop(fn_ir, lp, origin_var) {
+            continue;
+        }
         if allowed_vars
             .iter()
             .any(|allowed| origin_var == allowed.as_str())
@@ -1921,11 +1918,30 @@ pub(super) fn loop_carried_phi_is_invariant_passthrough(
                         Some(_) => return None,
                     }
                 }
-                if saw_non_self { found } else { None }
+                if saw_non_self {
+                    found
+                } else if let Some(var) = fn_ir.values[root].origin_var.as_deref()
+                    && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var)
+                {
+                    Some(format!("origin:{var}"))
+                } else {
+                    None
+                }
             }
             ValueKind::Const(lit) => Some(format!("const:{lit:?}")),
             ValueKind::Param { index } => Some(format!("param:{index}")),
             ValueKind::Load { var } => Some(format!("load:{var}")),
+            ValueKind::Call { callee, args, .. }
+                if matches!(callee.as_str(), "seq_len" | "rep.int" | "numeric") =>
+            {
+                let mut arg_keys = Vec::with_capacity(args.len());
+                for arg in args {
+                    let arg = preserve_phi_value(fn_ir, *arg);
+                    let key = invariant_passthrough_key(fn_ir, lp, arg, iv_phi, seen)?;
+                    arg_keys.push(key);
+                }
+                Some(format!("call:{}({})", callee, arg_keys.join(",")))
+            }
             _ if is_iv_equivalent(fn_ir, root, iv_phi)
                 || expr_has_iv_dependency(fn_ir, root, iv_phi) =>
             {
@@ -3140,6 +3156,127 @@ pub(super) fn loop_length_key(lp: &LoopInfo, fn_ir: &FnIR) -> Option<ValueId> {
     }
 }
 
+pub(super) fn affine_iv_offset(fn_ir: &FnIR, idx: ValueId, iv_phi: ValueId) -> Option<i64> {
+    if is_iv_equivalent(fn_ir, idx, iv_phi) {
+        return Some(0);
+    }
+    match &fn_ir.values[idx].kind {
+        ValueKind::Binary {
+            op: BinOp::Add,
+            lhs,
+            rhs,
+        } => {
+            if is_iv_equivalent(fn_ir, *lhs, iv_phi)
+                && let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*rhs].kind
+            {
+                return Some(k);
+            }
+            if is_iv_equivalent(fn_ir, *rhs, iv_phi)
+                && let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*lhs].kind
+            {
+                return Some(k);
+            }
+            None
+        }
+        ValueKind::Binary {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } => {
+            if is_iv_equivalent(fn_ir, *lhs, iv_phi)
+                && let ValueKind::Const(Lit::Int(k)) = fn_ir.values[*rhs].kind
+            {
+                return Some(-k);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn loop_matches_full_base(lp: &LoopInfo, fn_ir: &FnIR, base: ValueId) -> bool {
+    if lp.limit_adjust != 0 {
+        return false;
+    }
+
+    let base = canonical_value(fn_ir, base);
+    if lp.is_seq_along.map(|b| canonical_value(fn_ir, b)) == Some(base) {
+        return true;
+    }
+    if let Some(loop_base) = lp.is_seq_along
+        && let (Some(a), Some(b)) = (
+            resolve_base_var(fn_ir, base),
+            resolve_base_var(fn_ir, loop_base),
+        )
+        && a == b
+    {
+        return true;
+    }
+
+    if let Some(limit) = lp
+        .is_seq_len
+        .map(|limit| resolve_load_alias_value(fn_ir, limit))
+    {
+        if let ValueKind::Len { base: len_base } = fn_ir.values[limit].kind {
+            if canonical_value(fn_ir, len_base) == base {
+                return true;
+            }
+            if let (Some(a), Some(b)) = (
+                resolve_base_var(fn_ir, base),
+                resolve_base_var(fn_ir, len_base),
+            ) && a == b
+            {
+                return true;
+            }
+        }
+
+        if base_length_key(fn_ir, base).is_some_and(|base_key| {
+            canonical_value(fn_ir, base_key) == canonical_value(fn_ir, limit)
+        }) {
+            return true;
+        }
+    }
+
+    if let (Some(base_key), Some(loop_key)) =
+        (base_length_key(fn_ir, base), loop_length_key(lp, fn_ir))
+    {
+        return canonical_value(fn_ir, base_key) == canonical_value(fn_ir, loop_key);
+    }
+
+    false
+}
+
+pub(super) fn loop_matches_vec(lp: &LoopInfo, fn_ir: &FnIR, base: ValueId) -> bool {
+    let base = canonical_value(fn_ir, base);
+    if lp.is_seq_along.map(|b| canonical_value(fn_ir, b)) == Some(base) {
+        return true;
+    }
+    if let Some(loop_base) = lp.is_seq_along
+        && let (Some(a), Some(b)) = (
+            resolve_base_var(fn_ir, base),
+            resolve_base_var(fn_ir, loop_base),
+        )
+        && a == b
+    {
+        return true;
+    }
+    if let Some(limit) = lp.is_seq_len
+        && let ValueKind::Len { base: len_base } = fn_ir.values[limit].kind
+    {
+        if canonical_value(fn_ir, len_base) == base {
+            return true;
+        }
+        if let (Some(a), Some(b)) = (
+            resolve_base_var(fn_ir, base),
+            resolve_base_var(fn_ir, len_base),
+        ) && a == b
+        {
+            return true;
+        }
+    }
+    false
+}
+
 pub(super) fn vector_length_key(fn_ir: &FnIR, root: ValueId) -> Option<ValueId> {
     fn unify_length_keys(
         fn_ir: &FnIR,
@@ -3876,7 +4013,9 @@ pub(super) fn unique_assign_source(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
 
 #[cfg(test)]
 mod tests {
-    use super::{VectorPlan, rank_vector_plans, vector_plan_label};
+    use super::super::api::{rank_vector_plans, vector_plan_label};
+    use super::super::planning::ExprMapEntry;
+    use super::VectorPlan;
 
     #[test]
     fn rank_prefers_specific_vector_plan_over_generic_map() {
@@ -3918,13 +4057,13 @@ mod tests {
             },
             VectorPlan::MultiExprMap {
                 entries: vec![
-                    super::ExprMapEntry {
+                    ExprMapEntry {
                         dest: 1,
                         expr: 2,
                         whole_dest: true,
                         shadow_vars: Vec::new(),
                     },
-                    super::ExprMapEntry {
+                    ExprMapEntry {
                         dest: 6,
                         expr: 7,
                         whole_dest: true,

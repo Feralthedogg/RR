@@ -23,6 +23,7 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Getting Started', link: '/getting-started' },
+          { text: 'RR for R Users', link: '/r-for-r-users' },
           { text: 'Writing RR', link: '/writing-rr' },
           { text: 'CLI', link: '/cli' },
         ],
@@ -67,6 +68,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: 'Getting Started', link: '/getting-started' },
+          { text: 'RR for R Users', link: '/r-for-r-users' },
           { text: 'Writing RR for Performance & Safety', link: '/writing-rr' },
           { text: 'CLI Reference', link: '/cli' },
           { text: 'Configuration', link: '/configuration' },

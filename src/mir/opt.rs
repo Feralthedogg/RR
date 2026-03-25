@@ -15,6 +15,8 @@ mod callmap;
 mod cfg_cleanup;
 #[path = "opt/config.rs"]
 mod config;
+#[path = "opt/copy_cleanup.rs"]
+mod copy_cleanup;
 #[path = "opt/helpers.rs"]
 mod helpers;
 #[path = "opt/plan.rs"]
@@ -28,6 +30,7 @@ mod value_utils;
 
 pub mod bce;
 pub mod de_ssa;
+pub mod fresh_alias;
 pub mod fresh_alloc;
 pub mod gvn;
 pub mod inline;
@@ -87,6 +90,31 @@ impl TachyonEngine {
                 false
             }
         }
+    }
+
+    fn debug_stage_dump(fn_ir: &FnIR, stage: &str) {
+        let Some(names) = std::env::var_os("RR_DEBUG_STAGE_FN") else {
+            return;
+        };
+        let names = names.to_string_lossy().into_owned();
+        let wanted: std::collections::HashSet<&str> = names
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !wanted.contains(fn_ir.name.as_str()) {
+            return;
+        }
+        if let Some(filter) = std::env::var_os("RR_DEBUG_STAGE_MATCH") {
+            let filter = filter.to_string_lossy();
+            if !stage.contains(filter.as_ref()) {
+                return;
+            }
+        }
+        eprintln!(
+            "=== RR_DEBUG_STAGE {} :: {} ===\n{:#?}",
+            fn_ir.name, stage, fn_ir
+        );
     }
 
     fn is_floor_like_single_positional_call(
@@ -703,6 +731,10 @@ impl TachyonEngine {
         if !floor_helpers.is_empty() {
             let _ = Self::rewrite_floor_helper_calls(all_fns, &floor_helpers);
         }
+        let clamp_helpers = Self::collect_trivial_clamp_helpers(all_fns);
+        if !clamp_helpers.is_empty() {
+            let _ = Self::rewrite_trivial_clamp_helper_calls(all_fns, &clamp_helpers);
+        }
         let wrap_index_helpers = Self::collect_wrap_index_helpers(all_fns);
         if !wrap_index_helpers.is_empty() {
             let _ = Self::rewrite_wrap_index_helper_calls(all_fns, &wrap_index_helpers);
@@ -711,7 +743,6 @@ impl TachyonEngine {
         if !cube_index_helpers.is_empty() {
             let _ = Self::rewrite_cube_index_helper_calls(all_fns, &cube_index_helpers);
         }
-
         let ordered_names = Self::sorted_fn_names(all_fns);
         for name in &ordered_names {
             let Some(fn_ir) = all_fns.get_mut(name) else {
@@ -799,6 +830,13 @@ impl TachyonEngine {
                 changed = true;
             }
             Self::maybe_verify(fn_ir, "After AlwaysTier/TypeSpecialize");
+
+            let tco_changed = tco::optimize(fn_ir);
+            if tco_changed {
+                stats.tco_hits += 1;
+                changed = true;
+            }
+            Self::maybe_verify(fn_ir, "After AlwaysTier/TCO");
 
             let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
             if loop_changed_count > 0 {
@@ -929,6 +967,17 @@ impl TachyonEngine {
                 );
             }
         }
+        let clamp_helpers = Self::collect_trivial_clamp_helpers(all_fns);
+        if !clamp_helpers.is_empty() {
+            let rewrites = Self::rewrite_trivial_clamp_helper_calls(all_fns, &clamp_helpers);
+            if Self::wrap_trace_enabled() && rewrites > 0 {
+                let helper_names = Self::sorted_names(&clamp_helpers).join(", ");
+                eprintln!(
+                    "   [clamp] rewrote {} call site(s) using helper(s): {}",
+                    rewrites, helper_names
+                );
+            }
+        }
 
         // Tier A (always): lightweight canonicalization for every safe function.
         for (idx, name) in ordered_names.iter().enumerate() {
@@ -999,6 +1048,22 @@ impl TachyonEngine {
             if fn_ir.requires_conservative_optimization() {
                 stats.skipped_functions += 1;
                 let _ = Self::verify_or_reject(fn_ir, "SkipOpt/ConservativeInterop");
+                Self::emit_progress(
+                    &mut progress,
+                    TachyonProgressTier::Heavy,
+                    idx + 1,
+                    ordered_total,
+                    name,
+                );
+                continue;
+            }
+            if fn_ir
+                .values
+                .iter()
+                .any(|value| matches!(&value.kind, ValueKind::Call { callee, .. } if callee == &fn_ir.name))
+            {
+                stats.skipped_functions += 1;
+                let _ = Self::verify_or_reject(fn_ir, "SkipOpt/SelfRecursive");
                 Self::emit_progress(
                     &mut progress,
                     TachyonProgressTier::Heavy,
@@ -1097,6 +1162,8 @@ impl TachyonEngine {
             }
         }
 
+        let _ = fresh_alias::optimize_program(all_fns);
+
         // 3. De-SSA (Phi elimination via parallel copy) before codegen.
         let ordered_names = Self::sorted_fn_names(all_fns);
         let de_ssa_total = ordered_names.len();
@@ -1107,6 +1174,14 @@ impl TachyonEngine {
             let de_ssa_changed = de_ssa::run(fn_ir);
             if de_ssa_changed {
                 stats.de_ssa_hits += 1;
+            }
+            let copy_cleanup_changed = if fn_ir.requires_conservative_optimization() {
+                false
+            } else {
+                copy_cleanup::optimize(fn_ir)
+            };
+            if copy_cleanup_changed {
+                stats.simplify_hits += 1;
             }
             // Cleanup after De-SSA to drop dead temps and unreachable blocks.
             if !fn_ir.requires_conservative_optimization() {
@@ -1194,10 +1269,12 @@ impl TachyonEngine {
         if !Self::verify_or_reject(fn_ir, "Start") {
             return stats;
         }
+        Self::debug_stage_dump(fn_ir, "Start");
         let canonicalized_index_params =
             Self::canonicalize_floor_index_params(fn_ir, proven_param_slots, floor_helpers);
         if canonicalized_index_params {
             Self::maybe_verify(fn_ir, "After ParamIndexCanonicalize");
+            Self::debug_stage_dump(fn_ir, "After ParamIndexCanonicalize");
         }
         seen_hashes.insert(Self::fn_ir_fingerprint(fn_ir));
 
@@ -1216,6 +1293,7 @@ impl TachyonEngine {
             if run_heavy_structural {
                 let type_spec_changed = type_specialize::optimize(fn_ir);
                 Self::maybe_verify(fn_ir, "After TypeSpecialize");
+                Self::debug_stage_dump(fn_ir, "After TypeSpecialize");
                 pass_changed |= type_spec_changed;
 
                 // Vectorization
@@ -1231,12 +1309,48 @@ impl TachyonEngine {
                 stats.vector_skip_indirect_index_access += v_stats.skip_indirect_index_access;
                 stats.vector_skip_store_effects += v_stats.skip_store_effects;
                 stats.vector_skip_no_supported_pattern += v_stats.skip_no_supported_pattern;
+                stats.vector_candidate_total += v_stats.candidate_total;
+                stats.vector_candidate_reductions += v_stats.candidate_reductions;
+                stats.vector_candidate_conditionals += v_stats.candidate_conditionals;
+                stats.vector_candidate_recurrences += v_stats.candidate_recurrences;
+                stats.vector_candidate_shifted += v_stats.candidate_shifted;
+                stats.vector_candidate_call_maps += v_stats.candidate_call_maps;
+                stats.vector_candidate_expr_maps += v_stats.candidate_expr_maps;
+                stats.vector_candidate_scatters += v_stats.candidate_scatters;
+                stats.vector_candidate_cube_slices += v_stats.candidate_cube_slices;
+                stats.vector_candidate_basic_maps += v_stats.candidate_basic_maps;
+                stats.vector_candidate_multi_exprs += v_stats.candidate_multi_exprs;
+                stats.vector_candidate_2d += v_stats.candidate_2d;
+                stats.vector_candidate_3d += v_stats.candidate_3d;
+                stats.vector_candidate_call_map_direct += v_stats.candidate_call_map_direct;
+                stats.vector_candidate_call_map_runtime += v_stats.candidate_call_map_runtime;
+                stats.vector_applied_total += v_stats.applied_total;
+                stats.vector_applied_reductions += v_stats.applied_reductions;
+                stats.vector_applied_conditionals += v_stats.applied_conditionals;
+                stats.vector_applied_recurrences += v_stats.applied_recurrences;
+                stats.vector_applied_shifted += v_stats.applied_shifted;
+                stats.vector_applied_call_maps += v_stats.applied_call_maps;
+                stats.vector_applied_expr_maps += v_stats.applied_expr_maps;
+                stats.vector_applied_scatters += v_stats.applied_scatters;
+                stats.vector_applied_cube_slices += v_stats.applied_cube_slices;
+                stats.vector_applied_basic_maps += v_stats.applied_basic_maps;
+                stats.vector_applied_multi_exprs += v_stats.applied_multi_exprs;
+                stats.vector_applied_2d += v_stats.applied_2d;
+                stats.vector_applied_3d += v_stats.applied_3d;
+                stats.vector_applied_call_map_direct += v_stats.applied_call_map_direct;
+                stats.vector_applied_call_map_runtime += v_stats.applied_call_map_runtime;
+                stats.vector_trip_tier_tiny += v_stats.trip_tier_tiny;
+                stats.vector_trip_tier_small += v_stats.trip_tier_small;
+                stats.vector_trip_tier_medium += v_stats.trip_tier_medium;
+                stats.vector_trip_tier_large += v_stats.trip_tier_large;
                 let v_changed = v_stats.changed();
                 Self::maybe_verify(fn_ir, "After Vectorization");
+                Self::debug_stage_dump(fn_ir, "After Vectorization");
                 pass_changed |= v_changed;
 
                 let type_spec_post_vec = type_specialize::optimize(fn_ir);
                 Self::maybe_verify(fn_ir, "After TypeSpecialize(PostVec)");
+                Self::debug_stage_dump(fn_ir, "After TypeSpecialize(PostVec)");
                 pass_changed |= type_spec_post_vec;
 
                 // TCO
@@ -1245,6 +1359,7 @@ impl TachyonEngine {
                     stats.tco_hits += 1;
                 }
                 Self::maybe_verify(fn_ir, "After TCO");
+                Self::debug_stage_dump(fn_ir, "After TCO");
                 pass_changed |= tco_changed;
             }
 
@@ -1256,11 +1371,13 @@ impl TachyonEngine {
                     stats.simplify_hits += 1;
                 }
                 Self::maybe_verify(fn_ir, "After Structural SimplifyCFG");
+                Self::debug_stage_dump(fn_ir, "After Structural SimplifyCFG");
                 let dce_changed = self.dce(fn_ir);
                 if dce_changed {
                     stats.dce_hits += 1;
                 }
                 Self::maybe_verify(fn_ir, "After Structural DCE");
+                Self::debug_stage_dump(fn_ir, "After Structural DCE");
                 changed |= sc_changed || dce_changed;
             }
 
@@ -1270,6 +1387,7 @@ impl TachyonEngine {
                 stats.simplify_hits += 1;
             }
             Self::maybe_verify(fn_ir, "After SimplifyCFG");
+            Self::debug_stage_dump(fn_ir, "After SimplifyCFG");
             changed |= sc_changed;
 
             let sccp_changed = sccp::MirSCCP::new().optimize(fn_ir);
@@ -1277,6 +1395,7 @@ impl TachyonEngine {
                 stats.sccp_hits += 1;
             }
             Self::maybe_verify(fn_ir, "After SCCP");
+            Self::debug_stage_dump(fn_ir, "After SCCP");
             changed |= sccp_changed;
 
             let intr_changed = intrinsics::optimize(fn_ir);
@@ -1284,6 +1403,7 @@ impl TachyonEngine {
                 stats.intrinsics_hits += 1;
             }
             Self::maybe_verify(fn_ir, "After Intrinsics");
+            Self::debug_stage_dump(fn_ir, "After Intrinsics");
             changed |= intr_changed;
 
             let gvn_changed = if Self::gvn_enabled() {
@@ -1296,6 +1416,7 @@ impl TachyonEngine {
                 false
             };
             Self::maybe_verify(fn_ir, "After GVN");
+            Self::debug_stage_dump(fn_ir, "After GVN");
             changed |= gvn_changed;
 
             let simplify_changed = simplify::optimize(fn_ir);
@@ -1303,6 +1424,7 @@ impl TachyonEngine {
                 stats.simplify_hits += 1;
             }
             Self::maybe_verify(fn_ir, "After Simplify");
+            Self::debug_stage_dump(fn_ir, "After Simplify");
             changed |= simplify_changed;
 
             let dce_changed = self.dce(fn_ir);
@@ -1310,6 +1432,7 @@ impl TachyonEngine {
                 stats.dce_hits += 1;
             }
             Self::maybe_verify(fn_ir, "After DCE");
+            Self::debug_stage_dump(fn_ir, "After DCE");
             changed |= dce_changed;
 
             if !(heavy_pass_budgeted && iterations > 1) {
@@ -1317,6 +1440,7 @@ impl TachyonEngine {
                 stats.simplified_loops += loop_changed_count;
                 let loop_changed = loop_changed_count > 0;
                 Self::maybe_verify(fn_ir, "After LoopOpt");
+                Self::debug_stage_dump(fn_ir, "After LoopOpt");
                 changed |= loop_changed;
 
                 let licm_changed = if Self::licm_enabled() && Self::licm_allowed_for_fn(fn_ir) {
@@ -1329,6 +1453,7 @@ impl TachyonEngine {
                     false
                 };
                 Self::maybe_verify(fn_ir, "After LICM");
+                Self::debug_stage_dump(fn_ir, "After LICM");
                 changed |= licm_changed;
 
                 let fresh_changed = fresh_alloc::optimize(fn_ir);
@@ -1336,6 +1461,7 @@ impl TachyonEngine {
                     stats.fresh_alloc_hits += 1;
                 }
                 Self::maybe_verify(fn_ir, "After FreshAlloc");
+                Self::debug_stage_dump(fn_ir, "After FreshAlloc");
                 changed |= fresh_changed;
 
                 let bce_changed = bce::optimize(fn_ir);
@@ -1343,6 +1469,7 @@ impl TachyonEngine {
                     stats.bce_hits += 1;
                 }
                 Self::maybe_verify(fn_ir, "After BCE");
+                Self::debug_stage_dump(fn_ir, "After BCE");
                 changed |= bce_changed;
             }
             // check_elimination remains disabled.
@@ -1383,6 +1510,7 @@ impl TachyonEngine {
             }
         }
         let _ = Self::verify_or_reject(fn_ir, "End");
+        Self::debug_stage_dump(fn_ir, "End");
         stats
     }
 
@@ -1530,6 +1658,97 @@ mod tests {
         let stats = TachyonEngine::new().run_always_tier_with_stats(&mut f, None, &floor_helpers);
         assert_eq!(stats.always_tier_functions, 1);
         assert!(crate::mir::verify::verify_ir(&f).is_ok());
+    }
+
+    #[test]
+    fn copy_cleanup_skips_conservative_functions() {
+        let mut fn_ir = FnIR::new("opaque_alias".to_string(), vec!["a".to_string()]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let load_a = fn_ir.add_value(
+            ValueKind::Load {
+                var: "a".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("a".to_string()),
+        );
+        let load_tmp = fn_ir.add_value(
+            ValueKind::Load {
+                var: "tmp".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("tmp".to_string()),
+        );
+
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: "tmp".to_string(),
+            src: load_a,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: "out".to_string(),
+            src: load_tmp,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].term = Terminator::Return(None);
+        fn_ir.mark_opaque_interop("preserve raw aliasing".to_string());
+
+        let mut all = FxHashMap::default();
+        all.insert(fn_ir.name.clone(), fn_ir);
+        let _ = TachyonEngine::new().run_program_with_stats(&mut all);
+
+        let fn_ir = all
+            .get("opaque_alias")
+            .expect("function should remain present");
+        let Instr::Assign { src, .. } = &fn_ir.blocks[entry].instrs[1] else {
+            panic!("expected alias assignment to remain in place");
+        };
+        match &fn_ir.values[*src].kind {
+            ValueKind::Load { var } => assert_eq!(var, "tmp"),
+            other => panic!("expected load(tmp) to be preserved, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_program_applies_tco_before_recursive_functions_are_skipped() {
+        let mut fn_ir = FnIR::new("recur".to_string(), vec!["n".to_string()]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let n = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("n".to_string()),
+        );
+        let recur = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "recur".to_string(),
+                args: vec![n],
+                names: vec![],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(recur));
+
+        let mut all = FxHashMap::default();
+        all.insert(fn_ir.name.clone(), fn_ir);
+        let stats = TachyonEngine::new().run_program_with_stats(&mut all);
+
+        assert!(
+            stats.tco_hits > 0,
+            "tail recursion should be rewritten before skip logic"
+        );
+        let fn_ir = all.get("recur").expect("function should remain present");
+        assert!(matches!(fn_ir.blocks[entry].term, Terminator::Goto(target) if target == entry));
+        assert!(crate::mir::verify::verify_ir(fn_ir).is_ok());
     }
 
     #[test]

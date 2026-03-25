@@ -30,8 +30,20 @@ pub fn emit_parallel_copy(
     moves: Vec<Move>,
     span: Span,
 ) {
-    let mut pending: Vec<Move> = moves;
+    let mut pending: Vec<Move> = moves
+        .into_iter()
+        .filter(|m| !move_is_noop(fn_ir, m))
+        .collect();
     let mut cycle_idx: usize = 0;
+    let mut capture_idx: usize = 0;
+
+    pre_materialize_complex_pending_sources(
+        fn_ir,
+        out_instrs,
+        &mut pending,
+        span,
+        &mut capture_idx,
+    );
 
     while !pending.is_empty() {
         // Emit an acyclic move first: dst is not consumed by another pending source.
@@ -69,6 +81,30 @@ pub fn emit_parallel_copy(
 
             let victim_var = pending[0].dst.clone();
 
+            for m in &mut pending {
+                if !value_reads_var(fn_ir, m.src, &victim_var)
+                    || source_is_cheap_to_rewrite(fn_ir, m.src)
+                {
+                    continue;
+                }
+
+                let temp_var = format!("{}_src_tmp{}", m.dst, capture_idx);
+                capture_idx += 1;
+                out_instrs.push(Instr::Assign {
+                    dst: temp_var.clone(),
+                    src: m.src,
+                    span,
+                });
+                m.src = fn_ir.add_value(
+                    ValueKind::Load {
+                        var: temp_var.clone(),
+                    },
+                    span,
+                    Facts::empty(),
+                    Some(temp_var),
+                );
+            }
+
             let temp_var = format!("{}_cycle_tmp{}", victim_var, cycle_idx);
             cycle_idx += 1;
 
@@ -102,13 +138,79 @@ pub fn emit_parallel_copy(
     }
 }
 
+fn pre_materialize_complex_pending_sources(
+    fn_ir: &mut FnIR,
+    out_instrs: &mut Vec<Instr>,
+    pending: &mut [Move],
+    span: Span,
+    capture_idx: &mut usize,
+) {
+    let pending_dsts: Vec<VarId> = pending.iter().map(|m| m.dst.clone()).collect();
+    let mut materialized: std::collections::HashMap<ValueId, VarId> =
+        std::collections::HashMap::new();
+
+    for m in pending.iter_mut() {
+        if source_is_cheap_to_rewrite(fn_ir, m.src)
+            || !pending_dsts
+                .iter()
+                .any(|dst| value_reads_var(fn_ir, m.src, dst))
+        {
+            continue;
+        }
+
+        if let Some(temp_var) = materialized.get(&m.src).cloned() {
+            m.src = fn_ir.add_value(
+                ValueKind::Load {
+                    var: temp_var.clone(),
+                },
+                span,
+                Facts::empty(),
+                Some(temp_var),
+            );
+            continue;
+        }
+
+        let temp_var = format!(".__pc_src_tmp{}", *capture_idx);
+        *capture_idx += 1;
+        out_instrs.push(Instr::Assign {
+            dst: temp_var.clone(),
+            src: m.src,
+            span,
+        });
+        materialized.insert(m.src, temp_var.clone());
+        m.src = fn_ir.add_value(
+            ValueKind::Load {
+                var: temp_var.clone(),
+            },
+            span,
+            Facts::empty(),
+            Some(temp_var),
+        );
+    }
+}
+
+fn source_is_cheap_to_rewrite(fn_ir: &FnIR, src: ValueId) -> bool {
+    matches!(
+        fn_ir.values[src].kind,
+        ValueKind::Const(_)
+            | ValueKind::Load { .. }
+            | ValueKind::Param { .. }
+            | ValueKind::RSymbol { .. }
+    )
+}
+
+pub(crate) fn move_is_noop(fn_ir: &FnIR, m: &Move) -> bool {
+    match &fn_ir.values[m.src].kind {
+        ValueKind::Load { var } => var == &m.dst,
+        ValueKind::Param { index } => {
+            param_runtime_var(fn_ir, *index).is_some_and(|name| name == m.dst)
+        }
+        _ => false,
+    }
+}
+
 fn value_reads_var(fn_ir: &FnIR, src: ValueId, var: &VarId) -> bool {
     let val = &fn_ir.values[src];
-    if let Some(name) = &val.origin_var
-        && name == var
-    {
-        return true;
-    }
     match &val.kind {
         ValueKind::Load { var: v } => v == var,
         ValueKind::Param { index } => {
@@ -266,4 +368,193 @@ fn replace_var_read(fn_ir: &mut FnIR, src: ValueId, old_var: &VarId, new_var: &V
     };
 
     fn_ir.add_value(new_kind, val.span, val.facts, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skips_noop_load_move() {
+        let mut f = FnIR::new("pc_noop".to_string(), vec![]);
+        let b0 = f.add_block();
+        f.entry = b0;
+        f.body_head = b0;
+
+        let load = f.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut out = Vec::new();
+        emit_parallel_copy(
+            &mut f,
+            &mut out,
+            vec![Move {
+                dst: "x".to_string(),
+                src: load,
+            }],
+            Span::default(),
+        );
+
+        assert!(out.is_empty(), "no-op load move should be skipped");
+    }
+
+    #[test]
+    fn cycle_break_materializes_complex_sources_before_rewrite() {
+        let mut f = FnIR::new("pc_capture_complex".to_string(), vec![]);
+        let b0 = f.add_block();
+        f.entry = b0;
+        f.body_head = b0;
+
+        let load_x = f.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let load_y = f.add_value(
+            ValueKind::Load {
+                var: "y".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("y".to_string()),
+        );
+        let complex = f.add_value(
+            ValueKind::Call {
+                callee: "foo".to_string(),
+                args: vec![load_x, load_y],
+                names: vec![None, None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut out = Vec::new();
+        emit_parallel_copy(
+            &mut f,
+            &mut out,
+            vec![
+                Move {
+                    dst: "x".to_string(),
+                    src: complex,
+                },
+                Move {
+                    dst: "y".to_string(),
+                    src: load_x,
+                },
+            ],
+            Span::default(),
+        );
+
+        assert!(
+            out.iter().any(|instr| matches!(
+                instr,
+                Instr::Assign { dst, src, .. }
+                    if dst.starts_with(".__pc_src_tmp") && *src == complex
+            )),
+            "cycle break should capture complex victim-dependent source before rewriting"
+        );
+    }
+
+    #[test]
+    fn pre_materializes_shared_complex_sources_before_cycle_break() {
+        let mut f = FnIR::new("pc_pre_materialize".to_string(), vec![]);
+        let b0 = f.add_block();
+        f.entry = b0;
+        f.body_head = b0;
+
+        let load_x = f.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let load_y = f.add_value(
+            ValueKind::Load {
+                var: "y".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("y".to_string()),
+        );
+        let call = f.add_value(
+            ValueKind::Call {
+                callee: "foo".to_string(),
+                args: vec![load_x, load_y],
+                names: vec![None, None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let key_x = f.add_value(
+            ValueKind::Const(Lit::Str("x".to_string())),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let field_x = f.add_value(
+            ValueKind::Call {
+                callee: "rr_field_get".to_string(),
+                args: vec![call, key_x],
+                names: vec![None, None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let key_y = f.add_value(
+            ValueKind::Const(Lit::Str("y".to_string())),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let field_y = f.add_value(
+            ValueKind::Call {
+                callee: "rr_field_get".to_string(),
+                args: vec![call, key_y],
+                names: vec![None, None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut out = Vec::new();
+        emit_parallel_copy(
+            &mut f,
+            &mut out,
+            vec![
+                Move {
+                    dst: "x".to_string(),
+                    src: field_x,
+                },
+                Move {
+                    dst: "y".to_string(),
+                    src: field_y,
+                },
+            ],
+            Span::default(),
+        );
+
+        let pre_materialized = out
+            .iter()
+            .filter(|instr| matches!(instr, Instr::Assign { dst, src, .. } if dst.starts_with(".__pc_src_tmp") && (*src == field_x || *src == field_y)))
+            .count();
+        assert_eq!(
+            pre_materialized, 2,
+            "complex pending sources should be materialized once before cycle-breaking rewrites"
+        );
+    }
 }

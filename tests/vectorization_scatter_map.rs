@@ -54,6 +54,7 @@ fn scatter_shift(field, w, h) {
         .arg("-o")
         .arg(&out_path)
         .arg("--no-runtime")
+        .arg("--preserve-all-defs")
         .arg("-O2")
         .status()
         .expect("failed to run RR compiler");

@@ -4,6 +4,8 @@ use common::unique_dir;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[test]
 fn watch_once_compiles_and_exits_successfully() {
@@ -44,6 +46,238 @@ main()
     assert!(status.success(), "watch --once command failed");
     assert!(out_file.is_file(), "watch output file was not generated");
     // SAFETY: Matches the scoped set_var above and restores process env state for this test.
+    unsafe {
+        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
+    }
+}
+
+#[test]
+fn watch_rebuilds_when_imported_module_changes() {
+    let _env_guard = common::env_lock().lock().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "import_change");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_dir = proj_dir.join(".rr-cache");
+    unsafe {
+        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
+    }
+
+    let main_path = proj_dir.join("main.rr");
+    let module_path = proj_dir.join("module.rr");
+    fs::write(
+        &main_path,
+        r#"
+import "./module.rr"
+
+fn main() {
+  print(answer())
+}
+main()
+"#,
+    )
+    .expect("failed to write main.rr");
+    fs::write(
+        &module_path,
+        r#"
+fn answer() {
+  return 1L
+}
+"#,
+    )
+    .expect("failed to write module.rr");
+
+    let out_file = proj_dir.join("watched.R");
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let mut child = Command::new(rr_bin)
+        .arg("watch")
+        .arg(&proj_dir)
+        .arg("--poll-ms")
+        .arg("25")
+        .arg("-o")
+        .arg(&out_file)
+        .spawn()
+        .expect("failed to spawn rr watch");
+
+    let mut wait_for_output = |expected_fragment: &str| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().expect("failed to poll rr watch") {
+                panic!(
+                    "rr watch exited early with status {} while waiting for {:?}",
+                    status, expected_fragment,
+                );
+            }
+
+            if let Ok(code) = fs::read_to_string(&out_file)
+                && code.contains(expected_fragment)
+            {
+                break;
+            }
+
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                panic!(
+                    "timed out waiting for watch output fragment {:?}",
+                    expected_fragment,
+                );
+            }
+
+            thread::sleep(Duration::from_millis(25));
+        }
+    };
+
+    wait_for_output("return(1L)");
+
+    fs::write(
+        &module_path,
+        r#"
+fn answer() {
+  return 2L
+}
+"#,
+    )
+    .expect("failed to update module.rr");
+
+    wait_for_output("return(2L)");
+
+    child.kill().expect("failed to stop rr watch");
+    let _ = child.wait();
+
+    unsafe {
+        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
+    }
+}
+
+#[test]
+fn watch_once_returns_failure_on_compile_error() {
+    let _env_guard = common::env_lock().lock().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "compile_error");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_dir = proj_dir.join(".rr-cache");
+    unsafe {
+        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
+    }
+
+    let main_path = proj_dir.join("main.rr");
+    fs::write(
+        &main_path,
+        r#"
+fn main() {
+  return missing_name
+}
+main()
+"#,
+    )
+    .expect("failed to write main.rr");
+
+    let out_file = proj_dir.join("watched.R");
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(rr_bin)
+        .arg("watch")
+        .arg(&proj_dir)
+        .arg("--once")
+        .arg("--poll-ms")
+        .arg("1")
+        .arg("-o")
+        .arg(&out_file)
+        .status()
+        .expect("failed to run rr watch --once");
+    assert!(
+        !status.success(),
+        "watch --once should fail on compile error"
+    );
+    assert!(
+        !out_file.exists(),
+        "watch --once should not leave an output artifact on compile failure"
+    );
+
+    unsafe {
+        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
+    }
+}
+
+#[test]
+fn watch_restores_output_when_artifact_is_missing_or_modified_without_source_changes() {
+    let _env_guard = common::env_lock().lock().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "restore_output");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_dir = proj_dir.join(".rr-cache");
+    unsafe {
+        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
+    }
+
+    let main_path = proj_dir.join("main.rr");
+    fs::write(
+        &main_path,
+        r#"
+fn answer() {
+  return 1L
+}
+
+print(answer())
+"#,
+    )
+    .expect("failed to write main.rr");
+
+    let out_file = proj_dir.join("watched.R");
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let mut child = Command::new(rr_bin)
+        .arg("watch")
+        .arg(&proj_dir)
+        .arg("--poll-ms")
+        .arg("25")
+        .arg("-o")
+        .arg(&out_file)
+        .spawn()
+        .expect("failed to spawn rr watch");
+
+    let mut wait_for_output = |expected_fragment: &str| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().expect("failed to poll rr watch") {
+                panic!(
+                    "rr watch exited early with status {} while waiting for {:?}",
+                    status, expected_fragment,
+                );
+            }
+
+            if let Ok(code) = fs::read_to_string(&out_file)
+                && code.contains(expected_fragment)
+            {
+                break;
+            }
+
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                panic!(
+                    "timed out waiting for watch output fragment {:?}",
+                    expected_fragment,
+                );
+            }
+
+            thread::sleep(Duration::from_millis(25));
+        }
+    };
+
+    wait_for_output("return(1L)");
+
+    fs::write(&out_file, "BROKEN\n").expect("failed to corrupt watched output");
+    wait_for_output("return(1L)");
+
+    fs::remove_file(&out_file).expect("failed to remove watched output");
+    wait_for_output("return(1L)");
+
+    child.kill().expect("failed to stop rr watch");
+    let _ = child.wait();
+
     unsafe {
         std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
     }

@@ -1,3 +1,3 @@
 expect=run-equal-o0-o2
 stdout_contains=Vectorized: 1
-emit_contains=y <- rr_ifelse_strict((x > .arg_k), x, 0L)
+emit_contains=rr_ifelse_strict((seq_len(n) > k), seq_len(n), 0L)

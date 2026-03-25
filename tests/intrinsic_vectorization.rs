@@ -36,7 +36,9 @@ print(call_abs(5L))
             || code.contains("rr_intrinsic_vec_sum_f64(")
             || code.contains("rr_call_map_whole_auto(")
             || code.contains("rr_call_map_slice_auto(")
-            || code.contains("y <- abs("),
+            || code.contains("y <- abs(")
+            || code.contains("return(print(((abs(")
+            || code.contains("abs((seq_len("),
         "expected intrinsic helper call, direct vector abs, or runtime-profit-guarded call-map in optimized output"
     );
 }

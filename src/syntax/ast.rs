@@ -135,6 +135,10 @@ pub enum ExprKind {
         op: UnaryOp,
         rhs: Box<Expr>,
     },
+    Formula {
+        lhs: Option<Box<Expr>>,
+        rhs: Box<Expr>,
+    },
     Binary {
         op: BinOp,
         lhs: Box<Expr>,
@@ -253,6 +257,7 @@ impl std::hash::Hash for Lit {
 pub enum UnaryOp {
     Neg,
     Not,
+    Formula,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -4,6 +4,12 @@ Current compiler line: `RR Tachyon v5.0.0`.
 
 Use this checklist after meaningful compiler changes to verify that the code still matches [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 
+## Scope
+
+This page is the post-change verification contract, not a replacement for
+`CONTRIBUTING.md`. Use it after changes land in your worktree and before you
+trust a result enough to ship or merge it.
+
 ## Current Status
 
 Manual audit status as of `2026-03-08`:
@@ -51,7 +57,7 @@ dirty worktree, run:
 
 ```bash
 scripts/verify_cleanroom.sh
-scripts/verify_cleanroom.sh --files src/mir/opt/v_opt.rs tests/vectorization_phi_ifelse.rs
+scripts/verify_cleanroom.sh --files src/mir/opt/v_opt/mod.rs src/mir/opt/v_opt/planning.rs src/mir/opt/v_opt/reconstruct.rs src/mir/opt/v_opt/transform.rs tests/vectorization_phi_ifelse.rs
 scripts/verify_cleanroom.sh --fast --files scripts/verify_cleanroom.sh
 ```
 
@@ -90,17 +96,21 @@ cargo test -q --test example_perf_smoke -- --ignored --nocapture
 - No new `unsafe` in `src/**` without adjacent `// SAFETY:` rationale.
 - Deterministic traversal is preserved where output order matters.
 - Hot loops do not add hidden allocation, path work, regex compilation, or avoidable cloning.
+- IR invariants still hold across touched stages, and relevant `validate_*`/verifier hooks were exercised.
+- Long-lived compiler data does not add avoidable copy churn when interning or arena allocation would be the clearer cost model.
 - Compiler faults use ICE/internal-error paths, not user-facing diagnostics.
+- Constant folding and evaluator helpers still follow RR numeric and overflow semantics rather than host-language accident.
 - New emitted R behavior is covered by regression tests.
 - Incremental cache keys change when output mode or compiler/runtime salt changes.
 - `--no-runtime` behavior stays aligned with CLI/docs wording and selective-helper injection.
 - Native backend resolution stays anchored to the intended project root.
+- Public APIs and non-obvious transform entrypoints document their design intent when local code shape is insufficient for review.
 
 ## Ongoing Watch Items
 
 These are not current rule violations, but they are the first places likely to regress if new work lands quickly:
 
-- `src/mir/opt/v_opt.rs`: vector materialization and interop lowering remain structurally complex even after recent splits.
+- `src/mir/opt/v_opt/`: vector materialization and interop lowering remain structurally complex even after recent splits.
 - `src/codegen/mir_emit.rs`: emitted R construction is sensitive to hidden allocation regressions.
 - `src/mir/analyze/range.rs`: analysis precision and hot-loop cost need to stay balanced.
 - `tests/common/random_rr.rs` and differential harnesses: generator growth should stay deterministic and easy to shrink.

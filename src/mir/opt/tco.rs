@@ -43,6 +43,14 @@ fn param_runtime_var(fn_ir: &FnIR, index: usize) -> Option<String> {
     fn_ir.params.get(index).cloned()
 }
 
+fn tail_arg_is_direct_param_or_const(fn_ir: &FnIR, arg_id: ValueId) -> bool {
+    match &fn_ir.values[arg_id].kind {
+        ValueKind::Const(_) | ValueKind::Param { .. } => true,
+        ValueKind::Load { var } => fn_ir.params.iter().any(|param| param == var),
+        _ => false,
+    }
+}
+
 fn perform_tco(fn_ir: &mut FnIR, bid: BlockId) -> bool {
     let ret_val_id = if let Terminator::Return(Some(v)) = &fn_ir.blocks[bid].term {
         *v
@@ -57,6 +65,14 @@ fn perform_tco(fn_ir: &mut FnIR, bid: BlockId) -> bool {
     };
 
     if args.len() != fn_ir.params.len() {
+        return false;
+    }
+
+    if !args
+        .iter()
+        .copied()
+        .all(|arg_id| tail_arg_is_direct_param_or_const(fn_ir, arg_id))
+    {
         return false;
     }
 
@@ -83,4 +99,110 @@ fn perform_tco(fn_ir: &mut FnIR, bid: BlockId) -> bool {
     fn_ir.blocks[bid].term = Terminator::Goto(body_head);
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::Span;
+
+    #[test]
+    fn complex_tail_call_args_do_not_trigger_tco() {
+        let mut fn_ir = FnIR::new(
+            "recur".to_string(),
+            vec!["n".to_string(), "acc".to_string()],
+        );
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let n = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::dummy(),
+            Facts::empty(),
+            Some("n".to_string()),
+        );
+        let acc = fn_ir.add_value(
+            ValueKind::Param { index: 1 },
+            Span::dummy(),
+            Facts::empty(),
+            Some("acc".to_string()),
+        );
+        let one = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let dec_n = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Sub,
+                lhs: n,
+                rhs: one,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let call = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "recur".to_string(),
+                args: vec![dec_n, acc],
+                names: vec![],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(call));
+
+        assert!(!optimize(&mut fn_ir));
+        assert!(matches!(
+            fn_ir.blocks[entry].term,
+            Terminator::Return(Some(_))
+        ));
+    }
+
+    #[test]
+    fn temp_load_tail_call_args_do_not_trigger_tco() {
+        let mut fn_ir = FnIR::new(
+            "recur".to_string(),
+            vec!["n".to_string(), "acc".to_string()],
+        );
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let temp_n = fn_ir.add_value(
+            ValueKind::Load {
+                var: "tmp_n".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            Some("tmp_n".to_string()),
+        );
+        let acc = fn_ir.add_value(
+            ValueKind::Param { index: 1 },
+            Span::dummy(),
+            Facts::empty(),
+            Some("acc".to_string()),
+        );
+        let call = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "recur".to_string(),
+                args: vec![temp_n, acc],
+                names: vec![],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(call));
+
+        assert!(!optimize(&mut fn_ir));
+        assert!(matches!(
+            fn_ir.blocks[entry].term,
+            Terminator::Return(Some(_))
+        ));
+    }
 }

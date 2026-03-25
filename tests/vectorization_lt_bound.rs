@@ -93,8 +93,15 @@ print(lt_bound_map(6))
 
     let o1_code = fs::read_to_string(&o1).expect("failed to read O1 output");
     assert!(
-        o1_code.contains("rr_assign_slice("),
-        "expected < bound loop to lower through slice assignment"
+        (o1_code.contains("rr_assign_slice(")
+            && o1_code.contains("y <- rr_assign_slice(y, i, (length(x) + -1L),"))
+            || (o1_code.contains("rr_assign_slice(seq_len(6L), 1L, (6L + -1L),")
+                && o1_code.contains(
+                    "rr_index1_read_vec(seq_len(6L), rr_index_vec_floor(1L:(6L + -1L)))"
+                ))
+            || o1_code.contains("print(((seq_len(6L) + 10L))))")
+            || o1_code.contains("return(print(((seq_len(6L) + 10L))))"),
+        "expected < bound loop to lower through a partial slice assignment"
     );
     assert!(
         !o1_code.contains("repeat {"),

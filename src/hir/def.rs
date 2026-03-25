@@ -24,6 +24,7 @@ pub enum Ty {
     Double,
     Char,
     Vector(Box<Ty>),
+    Matrix(Box<Ty>),
     List(Box<Ty>),
     Box(Box<Ty>),
     DataFrame(Vec<(SymbolId, Ty)>), // schema: col -> type

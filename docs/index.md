@@ -37,6 +37,7 @@ systems projects such as the Linux kernel, GCC, and LLVM.
 Use these pages when you want to get something done with RR.
 
 - [Getting Started](/getting-started)
+- [RR for R Users](/r-for-r-users)
 - [Writing RR for Performance and Safety](/writing-rr)
 - [CLI Reference](/cli)
 - [Configuration](/configuration)
@@ -71,8 +72,9 @@ triaging a regression.
 If you are new to RR:
 
 1. Read [Getting Started](/getting-started).
-2. Read [CLI Reference](/cli).
-3. Read [Language Reference](/language).
+2. Read [RR for R Users](/r-for-r-users).
+3. Read [CLI Reference](/cli).
+4. Read [Language Reference](/language).
 
 If you are validating generated output:
 

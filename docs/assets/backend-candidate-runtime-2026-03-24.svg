@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="1140" viewBox="0 0 980 1140" role="img" aria-labelledby="title desc">
+  <title id="title">Backend Candidate Runtime Comparison</title>
+  <desc id="desc">Mean wall-clock runtime in milliseconds for RR backend candidate workloads.</desc>
+  <rect width="980" height="1140" fill="#fcfcf8"/>
+  <text x="24" y="34" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#16212b">Backend Candidate Runtime Comparison</text>
+  <text x="24" y="56" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#4b5b67">Vector fusion, orbital sweep, bootstrap resample; Apple M4; 5 timed runs; warm rows average 10 in-process iterations</text>
+  <line x1="390" y1="86" x2="390" y2="1080" stroke="#9aa8b2" stroke-width="1"/>
+  <line x1="390" y1="1080" x2="910" y2="1080" stroke="#9aa8b2" stroke-width="1"/>
+  <g font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#5d6b75">
+    <text x="390" y="1098" text-anchor="middle">0</text>
+    <text x="494" y="1098" text-anchor="middle">66</text>
+    <text x="598" y="1098" text-anchor="middle">131</text>
+    <text x="702" y="1098" text-anchor="middle">197</text>
+    <text x="806" y="1098" text-anchor="middle">262</text>
+    <text x="910" y="1098" text-anchor="middle">328</text>
+  </g>
+  <g font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#16212b">
+    <text x="24" y="102">Vector Fusion RR O2</text>
+    <text x="24" y="142">Vector Fusion RR O2 warm x10</text>
+    <text x="24" y="182">Vector Fusion native</text>
+    <text x="24" y="222">Vector Fusion native warm x10</text>
+    <text x="24" y="262">Vector Fusion parallel R</text>
+    <text x="24" y="302">Vector Fusion parallel R warm x10</text>
+    <text x="24" y="342">Vector Fusion native + OpenMP</text>
+    <text x="24" y="382">Vector Fusion native + OpenMP warm x10</text>
+    <text x="24" y="422">Orbital Sweep RR O2</text>
+    <text x="24" y="462">Orbital Sweep RR O2 warm x10</text>
+    <text x="24" y="502">Orbital Sweep native</text>
+    <text x="24" y="542">Orbital Sweep native warm x10</text>
+    <text x="24" y="582">Orbital Sweep parallel R</text>
+    <text x="24" y="622">Orbital Sweep parallel R warm x10</text>
+    <text x="24" y="662">Orbital Sweep native + OpenMP</text>
+    <text x="24" y="702">Orbital Sweep native + OpenMP warm x10</text>
+    <text x="24" y="742">Bootstrap Resample RR O2</text>
+    <text x="24" y="782">Bootstrap Resample RR O2 warm x10</text>
+    <text x="24" y="822">Bootstrap Resample native</text>
+    <text x="24" y="862">Bootstrap Resample native warm x10</text>
+    <text x="24" y="902">Bootstrap Resample parallel R</text>
+    <text x="24" y="942">Bootstrap Resample parallel R warm x10</text>
+    <text x="24" y="982">Bootstrap Resample native + OpenMP</text>
+    <text x="24" y="1022">Bootstrap Resample native + OpenMP warm x10</text>
+  </g>
+  <rect x="390" y="86" width="254.4" height="22" fill="#264653" rx="4"/>
+  <text x="654.4" y="102" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">160.3 ms ± 14.8</text>
+  <rect x="390" y="126" width="28.7" height="22" fill="#6d597a" rx="4"/>
+  <text x="428.7" y="142" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">18.1 ms ± 1.1</text>
+  <rect x="390" y="166" width="254.8" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="654.8" y="182" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">160.6 ms ± 8.1</text>
+  <rect x="390" y="206" width="30.6" height="22" fill="#6d597a" rx="4"/>
+  <text x="430.6" y="222" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">19.3 ms ± 2.2</text>
+  <rect x="390" y="246" width="285.0" height="22" fill="#e76f51" rx="4"/>
+  <text x="685.0" y="262" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">179.6 ms ± 22.2</text>
+  <rect x="390" y="286" width="27.3" height="22" fill="#6d597a" rx="4"/>
+  <text x="427.3" y="302" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">17.2 ms ± 1.0</text>
+  <rect x="390" y="326" width="235.3" height="22" fill="#457b9d" rx="4"/>
+  <text x="635.3" y="342" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">148.3 ms ± 3.1</text>
+  <rect x="390" y="366" width="29.2" height="22" fill="#6d597a" rx="4"/>
+  <text x="429.2" y="382" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">18.4 ms ± 1.2</text>
+  <rect x="390" y="406" width="321.5" height="22" fill="#264653" rx="4"/>
+  <text x="721.5" y="422" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">202.6 ms ± 6.8</text>
+  <rect x="390" y="446" width="123.3" height="22" fill="#6d597a" rx="4"/>
+  <text x="523.3" y="462" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">77.7 ms ± 4.7</text>
+  <rect x="390" y="486" width="311.8" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="711.8" y="502" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">196.5 ms ± 4.8</text>
+  <rect x="390" y="526" width="119.3" height="22" fill="#6d597a" rx="4"/>
+  <text x="519.3" y="542" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">75.2 ms ± 3.3</text>
+  <rect x="390" y="566" width="305.1" height="22" fill="#e76f51" rx="4"/>
+  <text x="705.1" y="582" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">192.3 ms ± 9.6</text>
+  <rect x="390" y="606" width="121.4" height="22" fill="#6d597a" rx="4"/>
+  <text x="521.4" y="622" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">76.5 ms ± 2.1</text>
+  <rect x="390" y="646" width="315.9" height="22" fill="#457b9d" rx="4"/>
+  <text x="715.9" y="662" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">199.1 ms ± 4.5</text>
+  <rect x="390" y="686" width="121.1" height="22" fill="#6d597a" rx="4"/>
+  <text x="521.1" y="702" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">76.3 ms ± 3.5</text>
+  <rect x="390" y="726" width="497.6" height="22" fill="#264653" rx="4"/>
+  <text x="897.6" y="742" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">313.6 ms ± 0.7</text>
+  <rect x="390" y="766" width="277.7" height="22" fill="#6d597a" rx="4"/>
+  <text x="677.7" y="782" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">175.0 ms ± 3.4</text>
+  <rect x="390" y="806" width="506.4" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="906.4" y="822" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">319.1 ms ± 13.8</text>
+  <rect x="390" y="846" width="278.6" height="22" fill="#6d597a" rx="4"/>
+  <text x="678.6" y="862" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">175.6 ms ± 3.5</text>
+  <rect x="390" y="886" width="507.3" height="22" fill="#e76f51" rx="4"/>
+  <text x="907.3" y="902" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">319.7 ms ± 6.5</text>
+  <rect x="390" y="926" width="274.4" height="22" fill="#6d597a" rx="4"/>
+  <text x="674.4" y="942" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">172.9 ms ± 4.8</text>
+  <rect x="390" y="966" width="520.0" height="22" fill="#457b9d" rx="4"/>
+  <text x="920.0" y="982" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">327.7 ms ± 9.4</text>
+  <rect x="390" y="1006" width="271.8" height="22" fill="#6d597a" rx="4"/>
+  <text x="671.8" y="1022" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">171.3 ms ± 0.8</text>
+  <g font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#4b5b67">
+    <text x="24" y="1118">Source data: backend_candidate_bench.csv</text>
+  </g>
+</svg>

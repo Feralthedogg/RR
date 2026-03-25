@@ -71,6 +71,22 @@ fn map_artifacts(cache_dir: &Path) -> Vec<PathBuf> {
     map_files
 }
 
+fn code_artifacts(cache_dir: &Path) -> Vec<PathBuf> {
+    let artifact_dir = cache_dir.join("artifacts");
+    let mut code_files: Vec<PathBuf> = fs::read_dir(&artifact_dir)
+        .expect("missing incremental artifact dir")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("R"))
+        .collect();
+    code_files.sort();
+    assert!(
+        !code_files.is_empty(),
+        "expected at least one .R artifact in {}",
+        artifact_dir.display()
+    );
+    code_files
+}
+
 #[test]
 fn strict_incremental_verify_checks_cached_outputs() {
     let _guard = lock_env_guard();
@@ -200,6 +216,24 @@ fn strict_incremental_verify_rejects_source_map_drift() {
         "unexpected strict verify error: {}",
         err.message
     );
+    assert!(
+        err.notes
+            .iter()
+            .any(|note| note.contains("incremental cache root:")),
+        "strict verify error should mention cache root:\n{err:?}"
+    );
+    assert!(
+        err.helps
+            .iter()
+            .any(|help| help.contains("--no-incremental")),
+        "strict verify error should suggest --no-incremental:\n{err:?}"
+    );
+    assert!(
+        err.fixes
+            .iter()
+            .any(|fix| fix.message.contains("clear the incremental cache")),
+        "strict verify error should suggest clearing the cache:\n{err:?}"
+    );
 
     // SAFETY: Paired with scoped set_var above to restore environment state.
     unsafe {
@@ -239,6 +273,7 @@ fn incremental_cache_separates_runtime_injection_mode() {
         opts,
         CompileOutputOptions {
             inject_runtime: false,
+            preserve_all_defs: false,
         },
         None,
     )
@@ -261,6 +296,7 @@ fn incremental_cache_separates_runtime_injection_mode() {
         opts,
         CompileOutputOptions {
             inject_runtime: true,
+            preserve_all_defs: false,
         },
         None,
     )
@@ -285,6 +321,7 @@ fn incremental_cache_separates_runtime_injection_mode() {
         opts,
         CompileOutputOptions {
             inject_runtime: true,
+            preserve_all_defs: false,
         },
         None,
     )
@@ -294,7 +331,236 @@ fn incremental_cache_separates_runtime_injection_mode() {
         "same output mode should reuse phase1 artifact cache"
     );
 
+    let preserve_defs = compile_with_configs_incremental_with_output_options(
+        &path_str,
+        source,
+        OptLevel::O1,
+        type_cfg,
+        parallel_cfg,
+        opts,
+        CompileOutputOptions {
+            inject_runtime: true,
+            preserve_all_defs: true,
+        },
+        None,
+    )
+    .expect("preserve-defs compile failed");
+    assert!(
+        !preserve_defs.stats.phase1_artifact_hit,
+        "phase1 artifact key must distinguish preserve-all-defs mode"
+    );
+
     // SAFETY: Paired with scoped set_var above to restore environment state.
+    unsafe {
+        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
+    }
+}
+
+#[test]
+fn malformed_incremental_source_map_surfaces_recovery_guidance() {
+    let _guard = lock_env_guard();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("incremental_strict_verify");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "malformed_map");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_dir = proj_dir.join(".rr-cache");
+    unsafe {
+        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
+    }
+
+    let (main_path, source) = write_basic_project(&proj_dir);
+    let path_str = main_path.to_string_lossy().to_string();
+    let type_cfg = type_config_from_env();
+    let parallel_cfg = parallel_config_from_env();
+    let opts = phase1_only_opts();
+
+    compile_with_configs_incremental(
+        &path_str,
+        source,
+        OptLevel::O1,
+        type_cfg,
+        parallel_cfg,
+        opts,
+        None,
+    )
+    .expect("phase1 seed compile failed");
+
+    for map_path in map_artifacts(&cache_dir) {
+        fs::write(&map_path, "this-is-not-a-valid-source-map-entry\n")
+            .expect("failed to corrupt incremental source map");
+    }
+
+    let err = compile_with_configs_incremental(
+        &path_str,
+        source,
+        OptLevel::O1,
+        type_cfg,
+        parallel_cfg,
+        opts,
+        None,
+    )
+    .expect_err("malformed incremental source map should be rejected");
+    assert!(
+        err.message
+            .contains("failed to parse incremental source map"),
+        "unexpected malformed map error: {}",
+        err.message
+    );
+    assert!(
+        err.helps
+            .iter()
+            .any(|help| help.contains("--no-incremental")),
+        "malformed map error should suggest --no-incremental:\n{err:?}"
+    );
+    assert!(
+        err.fixes
+            .iter()
+            .any(|fix| fix.message.contains("clear the incremental cache")),
+        "malformed map error should suggest clearing the cache:\n{err:?}"
+    );
+
+    unsafe {
+        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
+    }
+}
+
+#[test]
+fn unreadable_incremental_artifact_surfaces_recovery_guidance() {
+    let _guard = lock_env_guard();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("incremental_strict_verify");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "invalid_utf8_artifact");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_dir = proj_dir.join(".rr-cache");
+    unsafe {
+        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
+    }
+
+    let (main_path, source) = write_basic_project(&proj_dir);
+    let path_str = main_path.to_string_lossy().to_string();
+    let type_cfg = type_config_from_env();
+    let parallel_cfg = parallel_config_from_env();
+    let opts = phase1_only_opts();
+
+    compile_with_configs_incremental(
+        &path_str,
+        source,
+        OptLevel::O1,
+        type_cfg,
+        parallel_cfg,
+        opts,
+        None,
+    )
+    .expect("phase1 seed compile failed");
+
+    for code_path in code_artifacts(&cache_dir) {
+        fs::write(&code_path, [0xff, 0xfe, 0xfd]).expect("failed to corrupt incremental artifact");
+    }
+
+    let err = compile_with_configs_incremental(
+        &path_str,
+        source,
+        OptLevel::O1,
+        type_cfg,
+        parallel_cfg,
+        opts,
+        None,
+    )
+    .expect_err("invalid utf8 incremental artifact should be rejected");
+    assert!(
+        err.message.contains("failed to read incremental artifact"),
+        "unexpected unreadable artifact error: {}",
+        err.message
+    );
+    assert!(
+        err.notes
+            .iter()
+            .any(|note| note.contains("incremental cache root:")),
+        "unreadable artifact error should mention cache root:\n{err:?}"
+    );
+    assert!(
+        err.helps
+            .iter()
+            .any(|help| help.contains("--no-incremental")),
+        "unreadable artifact error should suggest --no-incremental:\n{err:?}"
+    );
+    assert!(
+        err.fixes
+            .iter()
+            .any(|fix| fix.message.contains("clear the incremental cache")),
+        "unreadable artifact error should suggest clearing the cache:\n{err:?}"
+    );
+
+    unsafe {
+        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
+    }
+}
+
+#[test]
+fn incremental_cache_write_failure_surfaces_recovery_guidance() {
+    let _guard = lock_env_guard();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("incremental_strict_verify");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "cache_write_failure");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_root_file = proj_dir.join("cache-root-file");
+    fs::write(&cache_root_file, "not-a-directory").expect("failed to write cache root file");
+    unsafe {
+        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_root_file);
+    }
+
+    let (main_path, source) = write_basic_project(&proj_dir);
+    let path_str = main_path.to_string_lossy().to_string();
+    let type_cfg = type_config_from_env();
+    let parallel_cfg = parallel_config_from_env();
+    let opts = phase1_only_opts();
+
+    let err = compile_with_configs_incremental(
+        &path_str,
+        source,
+        OptLevel::O1,
+        type_cfg,
+        parallel_cfg,
+        opts,
+        None,
+    )
+    .expect_err("cache-root file should reject incremental writes");
+    assert!(
+        err.message.contains("failed to create cache directory"),
+        "unexpected incremental write failure error: {}",
+        err.message
+    );
+    assert!(
+        err.notes
+            .iter()
+            .any(|note| note.contains("incremental cache root:")),
+        "incremental write failure should mention cache root:\n{err:?}"
+    );
+    assert!(
+        err.helps
+            .iter()
+            .any(|help| help.contains("--no-incremental")),
+        "incremental write failure should suggest --no-incremental:\n{err:?}"
+    );
+    assert!(
+        err.fixes
+            .iter()
+            .any(|fix| fix.message.contains("clear the incremental cache")),
+        "incremental write failure should suggest clearing the cache:\n{err:?}"
+    );
+
     unsafe {
         std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
     }

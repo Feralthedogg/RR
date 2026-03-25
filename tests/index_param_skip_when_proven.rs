@@ -31,6 +31,8 @@ fn main(n) {
   return gather(a, mk_idx(n), n)
 
 }
+
+print(main(4))
 "#;
 
     let rr_path = out_dir.join("index_param_skip_when_proven.rr");
@@ -43,6 +45,7 @@ fn main(n) {
         .arg("-o")
         .arg(&out_path)
         .arg("--no-runtime")
+        .arg("--preserve-all-defs")
         .arg("-O2")
         .status()
         .expect("failed to run RR compiler");
@@ -54,8 +57,8 @@ fn main(n) {
 
     let code = fs::read_to_string(&out_path).expect("failed to read compiled R");
     let sig_pos = code
-        .find("function(a, idx, n)")
-        .expect("expected gather-like function signature");
+        .find("function(a, idx)")
+        .expect("expected preserved gather-like function signature");
     let tail = &code[sig_pos..];
     let fn_end = tail.find("\nSym_").unwrap_or(tail.len());
     let fn_code = &tail[..fn_end];
@@ -66,11 +69,12 @@ fn main(n) {
         "did not expect entry floor canonicalization when callsites already prove int-vector idx"
     );
     assert!(
-        fn_code.contains("rr_index1_read_vec("),
-        "expected vector gather path in optimized output"
+        fn_code.contains("return(rr_gather(a, idx))")
+            || fn_code.contains("return(rr_gather(.arg_a, .arg_idx))"),
+        "expected optimized gather path to skip floor canonicalization entirely when idx is proven integer"
     );
     assert!(
-        !fn_code.contains("rr_index1_read_vec(.arg_a, rr_index_vec_floor("),
-        "expected floor wrapper to be omitted in gather read when idx is already proven int-vector"
+        !fn_code.contains("rr_index_vec_floor("),
+        "expected floor wrapper to be omitted entirely when idx is already proven int-vector"
     );
 }

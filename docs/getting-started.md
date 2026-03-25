@@ -2,6 +2,12 @@
 
 This page is the shortest path to a working RR compile and run.
 
+## Purpose
+
+Use this page as a quick-start manual, not as a full language or pipeline
+reference. It is meant to get a new checkout from "can build" to "can compile
+and run one RR program" with the fewest decisions.
+
 ## Audience
 
 Read this page if you want to:
@@ -17,6 +23,7 @@ If you already know the driver shape, jump to [CLI Reference](cli.md).
 
 - Rust toolchain with `cargo`
 - `Rscript` in `PATH` if you want to execute generated `.R`
+- `corepack pnpm` only if you also want to build the docs site
 
 ## Fast Path
 
@@ -108,7 +115,7 @@ RR emits ordinary `.R` files.
 Normal output:
 
 - includes the runtime helper subset actually referenced by the emitted code
-- includes runtime bootstrap and compile-time policy assignments
+- includes runtime bootstrap and compile-time policy defaults
 - is intended to run directly under `Rscript`
 
 Helper-only output:
@@ -118,6 +125,25 @@ RR main.rr -o main.R --no-runtime -O2
 ```
 
 Helper-only output:
+
+## Non-Goals
+
+This page does not try to explain:
+
+- the complete RR syntax surface
+- optimizer behavior or skip reasons
+- runtime helper policy in detail
+- contributor verification workflow
+
+Use the manuals linked below for those topics.
+
+## Related Manuals
+
+- [RR for R Users](r-for-r-users.md)
+- [CLI Reference](cli.md)
+- [Language Reference](language.md)
+- [Runtime and Error Model](runtime-and-errors.md)
+- [Testing and Quality Gates](testing.md)
 
 - omits source/native bootstrap
 - still injects the helper subset needed by the emitted program
@@ -140,6 +166,10 @@ Useful flags:
 
 RR defaults to incremental `auto`, so normal compiles already reuse phase 1 and
 phase 2 caches when possible.
+
+`RR watch` also fingerprints the full imported module tree now, so unchanged
+poll ticks do not rebuild repeatedly, and edits in imported `*.rr` modules
+trigger rebuilds even when `main.rr` itself did not change.
 
 ## Recommended Reading Order
 

@@ -1,0 +1,23 @@
+import r default from "ggplot2"
+import r * as base from "base"
+
+fn main() {
+    let outfile = "rr_ggplot2_facet_wrap_formula_ops_modern.png"
+    let df = base.data.frame(
+        label = c("A", "A", "B", "B"),
+        grp = c("x", "y", "x", "y"),
+        value = c(1.2, 2.4, 1.8, 3.1)
+    )
+
+    let p = ggplot2.ggplot(df, ggplot2.aes(x = grp, y = value)) +
+        ggplot2.geom_col(fill = "steelblue") +
+        ggplot2.facet_wrap(~label * grp) +
+        ggplot2.ggtitle("RR modern + ggplot2 formula ops") +
+        ggplot2.theme_bw()
+
+    ggplot2.ggsave(filename = outfile, plot = p, width = 8, height = 4.5, dpi = 120)
+    print("saved_plot")
+    print(outfile)
+}
+
+main()

@@ -37,11 +37,25 @@ impl Runner {
                     ),
                 )
             );
+            eprintln!(
+                "{}",
+                style(
+                    color,
+                    "1;92",
+                    &format!(
+                        "help: RR run writes a temporary generated artifact at {}; make that directory writable, or rerun RR build --out-dir <dir> if you want emitted R elsewhere",
+                        gen_path.display()
+                    ),
+                )
+            );
             return 1;
         }
 
-        let rscript = rscript_path.unwrap_or("Rscript");
-        let output = match Command::new(rscript)
+        let rscript = rscript_path
+            .map(|p| p.to_string())
+            .or_else(|| env::var("RRSCRIPT").ok().filter(|v| !v.trim().is_empty()))
+            .unwrap_or_else(|| "Rscript".to_string());
+        let output = match Command::new(&rscript)
             .arg("--vanilla")
             .arg(&gen_path)
             .output()
@@ -59,6 +73,35 @@ impl Runner {
                         ),
                     )
                 );
+                if e.kind() == ErrorKind::NotFound {
+                    eprintln!(
+                        "{}",
+                        style(
+                            color,
+                            "1;92",
+                            "help: install Rscript or set RRSCRIPT=/absolute/path/to/Rscript",
+                        )
+                    );
+                }
+                if !keep_r {
+                    eprintln!(
+                        "{}",
+                        style(
+                            color,
+                            "1;92",
+                            "help: rerun with --keep-r if you want to inspect the generated .gen.R artifact",
+                        )
+                    );
+                } else {
+                    eprintln!(
+                        "{}",
+                        style(
+                            color,
+                            "1;92",
+                            &format!("help: generated artifact kept at {}", gen_path.display()),
+                        )
+                    );
+                }
                 if !keep_r {
                     fs::remove_file(&gen_path).ok();
                 }
@@ -85,6 +128,14 @@ impl Runner {
                     ),
                 )
             );
+            eprintln!(
+                "{}",
+                style(
+                    color,
+                    "1;92",
+                    "help: redirect stdout to a writable sink, or rerun with --keep-r to inspect the generated .gen.R artifact directly",
+                )
+            );
             if !keep_r {
                 fs::remove_file(&gen_path).ok();
             }
@@ -97,7 +148,16 @@ impl Runner {
             Self::emit_mapped_stderr(source_path, &stderr, source_map, color);
         }
 
-        if !keep_r {
+        if keep_r {
+            eprintln!(
+                "{}",
+                style(
+                    color,
+                    "1;92",
+                    &format!("help: kept generated artifact at {}", gen_path.display()),
+                )
+            );
+        } else {
             fs::remove_file(&gen_path).ok();
         }
 

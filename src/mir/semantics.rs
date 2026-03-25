@@ -5,7 +5,7 @@ use crate::utils::did_you_mean;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 #[path = "semantics/call_model.rs"]
-mod call_model;
+pub(crate) mod call_model;
 #[path = "semantics/const_eval.rs"]
 mod const_eval;
 #[path = "semantics/runtime_proofs.rs"]
@@ -281,7 +281,9 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                         }
                     }
                 }
-                Instr::StoreIndex2D { r, c, span, .. } => {
+                Instr::StoreIndex2D {
+                    base, r, c, span, ..
+                } => {
                     if let Some(lit) = eval_const(fn_ir, *r, &mut memo, &mut FxHashSet::default())
                         && let Err(e) = validate_index_lit_for_write(lit, *span)
                     {
@@ -341,6 +343,73 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                                 .fix("shift the index into the 1-based domain before writing")
                                 .build(),
                             );
+                        }
+                        if let Some((rows, cols)) =
+                            matrix_known_dims(fn_ir, *base, &mut memo, &mut FxHashSet::default())
+                        {
+                            let limit = if idx == *r { rows } else { cols };
+                            let axis = if idx == *r { "row" } else { "column" };
+                            if let Some(lit) =
+                                eval_const(fn_ir, idx, &mut memo, &mut FxHashSet::default())
+                                && let Some(i) = as_integral(&lit)
+                                && i > limit
+                            {
+                                errors.push(
+                                    DiagnosticBuilder::new(
+                                        "RR.RuntimeError",
+                                        RRCode::E2007,
+                                        Stage::Mir,
+                                        format!(
+                                            "matrix {axis} assignment index is guaranteed out of bounds (>{axis}s={limit})"
+                                        ),
+                                    )
+                                    .at(*span)
+                                    .origin(
+                                        fn_ir.values[idx].span,
+                                        format!("{axis} index is proven constant at {i}"),
+                                    )
+                                    .constraint(
+                                        *span,
+                                        format!("matrix {axis} index must be <= {limit}"),
+                                    )
+                                    .use_site(*span, "used here as a matrix assignment index")
+                                    .fix(format!(
+                                        "clamp or guard the {axis} index against the matrix extent before writing"
+                                    ))
+                                    .build(),
+                                );
+                            } else if let Some(facts) = out_ranges {
+                                let idx_range = facts.get(idx);
+                                if interval_guarantees_above_const(&idx_range, limit) {
+                                    errors.push(
+                                        DiagnosticBuilder::new(
+                                            "RR.RuntimeError",
+                                            RRCode::E2007,
+                                            Stage::Mir,
+                                            format!(
+                                                "matrix {axis} assignment index is guaranteed out of bounds (>{axis}s={limit})"
+                                            ),
+                                        )
+                                        .at(*span)
+                                        .origin(
+                                            fn_ir.values[idx].span,
+                                            format!(
+                                                "{axis} index range is proven as {}",
+                                                format_interval(&idx_range)
+                                            ),
+                                        )
+                                        .constraint(
+                                            *span,
+                                            format!("matrix {axis} index must be <= {limit}"),
+                                        )
+                                        .use_site(*span, "used here as a matrix assignment index")
+                                        .fix(format!(
+                                            "clamp or guard the {axis} index against the matrix extent before writing"
+                                        ))
+                                        .build(),
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -470,7 +539,7 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                     }
                 }
             }
-            ValueKind::Index2D { r, c, .. } => {
+            ValueKind::Index2D { base, r, c } => {
                 if let Some(lit) = eval_const(fn_ir, *r, &mut memo, &mut FxHashSet::default())
                     && let Err(e) = validate_index_lit_for_read(lit, v.span)
                 {
@@ -509,6 +578,70 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                                 )
                                 .build(),
                             );
+                        }
+                        if let Some((rows, cols)) =
+                            matrix_known_dims(fn_ir, *base, &mut memo, &mut FxHashSet::default())
+                        {
+                            let limit = if idx == *r { rows } else { cols };
+                            let axis = if idx == *r { "row" } else { "column" };
+                            if let Some(lit) =
+                                eval_const(fn_ir, idx, &mut memo, &mut FxHashSet::default())
+                                && let Some(i) = as_integral(&lit)
+                                && i > limit
+                            {
+                                errors.push(
+                                    DiagnosticBuilder::new(
+                                        "RR.RuntimeError",
+                                        RRCode::E2007,
+                                        Stage::Mir,
+                                        format!(
+                                            "matrix {axis} index is guaranteed out of bounds (>{axis}s={limit})"
+                                        ),
+                                    )
+                                    .at(v.span)
+                                    .origin(
+                                        fn_ir.values[idx].span,
+                                        format!("{axis} index is proven constant at {i}"),
+                                    )
+                                    .constraint(
+                                        v.span,
+                                        format!("matrix {axis} index must be <= {limit}"),
+                                    )
+                                    .use_site(v.span, "used here in a matrix index read")
+                                    .fix(format!(
+                                        "clamp or guard the {axis} index against the matrix extent before reading"
+                                    ))
+                                    .build(),
+                                );
+                            } else if interval_guarantees_above_const(&idx_range, limit) {
+                                errors.push(
+                                    DiagnosticBuilder::new(
+                                        "RR.RuntimeError",
+                                        RRCode::E2007,
+                                        Stage::Mir,
+                                        format!(
+                                            "matrix {axis} index is guaranteed out of bounds (>{axis}s={limit})"
+                                        ),
+                                    )
+                                    .at(v.span)
+                                    .origin(
+                                        fn_ir.values[idx].span,
+                                        format!(
+                                            "{axis} index range is proven as {}",
+                                            format_interval(&idx_range)
+                                        ),
+                                    )
+                                    .constraint(
+                                        v.span,
+                                        format!("matrix {axis} index must be <= {limit}"),
+                                    )
+                                    .use_site(v.span, "used here in a matrix index read")
+                                    .fix(format!(
+                                        "clamp or guard the {axis} index against the matrix extent before reading"
+                                    ))
+                                    .build(),
+                                );
+                            }
                         }
                     }
                 }

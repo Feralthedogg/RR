@@ -85,7 +85,10 @@ impl TypeState {
     }
 
     pub fn is_unknown(self) -> bool {
-        self.prim == PrimTy::Any || self.shape == ShapeTy::Unknown
+        self.prim == PrimTy::Any
+            && self.shape == ShapeTy::Unknown
+            && self.na == NaTy::Maybe
+            && self.len_sym.is_none()
     }
 
     pub fn is_logical_scalar_non_na(self) -> bool {
@@ -110,14 +113,17 @@ impl TypeState {
 
         let prim = match (self.prim, other.prim) {
             (a, b) if a == b => a,
+            (PrimTy::Any, b) => b,
+            (a, PrimTy::Any) => a,
             (PrimTy::Int, PrimTy::Double) | (PrimTy::Double, PrimTy::Int) => PrimTy::Double,
             _ => PrimTy::Any,
         };
 
-        let shape = if self.shape == other.shape {
-            self.shape
-        } else {
-            ShapeTy::Unknown
+        let shape = match (self.shape, other.shape) {
+            (a, b) if a == b => a,
+            (ShapeTy::Unknown, b) => b,
+            (a, ShapeTy::Unknown) => a,
+            _ => ShapeTy::Unknown,
         };
 
         let na = if self.na == NaTy::Never && other.na == NaTy::Never {

@@ -8,7 +8,10 @@ use std::collections::VecDeque;
 use super::builtin_sigs::{infer_builtin, infer_builtin_term};
 use super::constraints::{ConstraintSet, TypeConstraint};
 use super::lattice::{LenSym, NaTy, PrimTy, ShapeTy, TypeState};
-use super::term::{TypeTerm, from_hir_ty as term_from_hir_ty, from_lit as lit_term};
+use super::term::{
+    TypeTerm, from_hir_ty as term_from_hir_ty,
+    from_hir_ty_with_symbols as term_from_hir_ty_with_symbols, from_lit as lit_term,
+};
 
 #[path = "solver/index_demands.rs"]
 mod index_demands;
@@ -96,12 +99,20 @@ fn from_hir_ty(ty: &Ty) -> TypeState {
         Ty::Double => TypeState::scalar(PrimTy::Double, true),
         Ty::Char => TypeState::scalar(PrimTy::Char, true),
         Ty::Vector(inner) => TypeState::vector(from_hir_ty(inner).prim, true),
-        Ty::List(_)
-        | Ty::Box(_)
-        | Ty::DataFrame(_)
-        | Ty::Union(_)
-        | Ty::Option(_)
-        | Ty::Result(_, _) => TypeState::vector(PrimTy::Any, false),
+        Ty::Matrix(inner) => TypeState::matrix(from_hir_ty(inner).prim, true),
+        Ty::List(_) => TypeState::vector(PrimTy::Any, false),
+        Ty::Box(inner) => from_hir_ty(inner),
+        Ty::DataFrame(_) => TypeState::matrix(PrimTy::Any, false),
+        Ty::Union(xs) => xs
+            .iter()
+            .map(from_hir_ty)
+            .fold(TypeState::unknown(), TypeState::join),
+        Ty::Option(inner) => {
+            let mut inner_ty = from_hir_ty(inner);
+            inner_ty.na = NaTy::Maybe;
+            inner_ty
+        }
+        Ty::Result(ok, err) => from_hir_ty(ok).join(from_hir_ty(err)),
         Ty::Never => TypeState::unknown(),
     }
 }
@@ -122,10 +133,76 @@ fn lit_type(lit: &crate::syntax::ast::Lit) -> TypeState {
 }
 
 fn normalize_call_numeric_shape(args: &[TypeState]) -> ShapeTy {
-    if args.iter().any(|a| a.shape == ShapeTy::Vector) {
-        ShapeTy::Vector
-    } else {
-        ShapeTy::Scalar
+    let has_matrix = args.iter().any(|a| a.shape == ShapeTy::Matrix);
+    let has_vector = args.iter().any(|a| a.shape == ShapeTy::Vector);
+    match (has_matrix, has_vector) {
+        (true, true) => ShapeTy::Unknown,
+        (true, false) => ShapeTy::Matrix,
+        (false, true) => ShapeTy::Vector,
+        (false, false) => ShapeTy::Scalar,
+    }
+}
+
+fn type_state_from_term(term: &TypeTerm) -> TypeState {
+    match term {
+        TypeTerm::Any | TypeTerm::Never => TypeState::unknown(),
+        TypeTerm::Null => TypeState::null(),
+        TypeTerm::Logical => TypeState::scalar(PrimTy::Logical, false),
+        TypeTerm::Int => TypeState::scalar(PrimTy::Int, false),
+        TypeTerm::Double => TypeState::scalar(PrimTy::Double, false),
+        TypeTerm::Char => TypeState::scalar(PrimTy::Char, false),
+        TypeTerm::Vector(inner) => TypeState::vector(type_state_from_term(inner).prim, false),
+        TypeTerm::Matrix(inner) => TypeState::matrix(type_state_from_term(inner).prim, false),
+        TypeTerm::MatrixDim(inner, _, _) => {
+            TypeState::matrix(type_state_from_term(inner).prim, false)
+        }
+        TypeTerm::DataFrame(cols) => {
+            let prim = cols
+                .iter()
+                .map(type_state_from_term)
+                .fold(TypeState::unknown(), TypeState::join)
+                .prim;
+            TypeState::matrix(prim, false)
+        }
+        TypeTerm::DataFrameNamed(cols) => {
+            let prim = cols
+                .iter()
+                .map(|(_, term)| type_state_from_term(term))
+                .fold(TypeState::unknown(), TypeState::join)
+                .prim;
+            TypeState::matrix(prim, false)
+        }
+        TypeTerm::List(_) => TypeState::vector(PrimTy::Any, false),
+        TypeTerm::Boxed(inner) => type_state_from_term(inner),
+        TypeTerm::Option(inner) => {
+            let mut inner_ty = type_state_from_term(inner);
+            inner_ty.na = NaTy::Maybe;
+            inner_ty
+        }
+        TypeTerm::Union(xs) => xs
+            .iter()
+            .map(type_state_from_term)
+            .fold(TypeState::unknown(), TypeState::join),
+    }
+}
+
+fn refine_type_with_term(ty: TypeState, term: &TypeTerm) -> TypeState {
+    let term_ty = type_state_from_term(term);
+    let mut out = ty.join(term_ty);
+    if out.len_sym.is_none() {
+        out.len_sym = ty.len_sym.or(term_ty.len_sym);
+    }
+    out
+}
+
+fn promoted_numeric_prim(lhs: PrimTy, rhs: PrimTy) -> PrimTy {
+    match (lhs, rhs) {
+        (PrimTy::Int, PrimTy::Int) => PrimTy::Int,
+        (PrimTy::Int, PrimTy::Double)
+        | (PrimTy::Double, PrimTy::Int)
+        | (PrimTy::Double, PrimTy::Double) => PrimTy::Double,
+        (PrimTy::Any, other) | (other, PrimTy::Any) => other,
+        _ => PrimTy::Any,
     }
 }
 
@@ -398,10 +475,173 @@ fn validate_strict(all_fns: &FxHashMap<String, FnIR>) -> Vec<RRException> {
                         );
                     }
                 }
+                if let crate::mir::Instr::StoreIndex2D { base, r, c, .. } = ins
+                    && has_explicit_hints
+                {
+                    let base_ty = fn_ir.values[*base].value_ty;
+                    if base_ty.shape != ShapeTy::Unknown && base_ty.shape != ShapeTy::Matrix {
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.TypeError",
+                                RRCode::E1002,
+                                Stage::Mir,
+                                format!(
+                                    "strict mode 2D assignment requires matrix-typed base in function '{}' (got {:?})",
+                                    fname, base_ty
+                                ),
+                            )
+                            .at(fn_ir.values[*base].span)
+                            .constraint(
+                                fn_ir.values[*base].span,
+                                "2D assignment requires a matrix-typed base",
+                            )
+                            .use_site(fn_ir.values[*base].span, "used here as a 2D assignment base")
+                            .fix("change the base type hint to matrix<T>, or use 1D indexing")
+                            .build(),
+                        );
+                    }
+                    for idx in [r, c] {
+                        let ity = fn_ir.values[*idx].value_ty;
+                        if ity.is_unknown() {
+                            errors.push(
+                                DiagnosticBuilder::new(
+                                    "RR.TypeError",
+                                    RRCode::E1012,
+                                    Stage::Mir,
+                                    format!(
+                                        "strict mode unresolved 2D index type in function '{}' (value #{})",
+                                        fname, idx
+                                    ),
+                                )
+                                .at(fn_ir.values[*idx].span)
+                                .constraint(
+                                    fn_ir.span,
+                                    "strict mode requires matrix indices to be integer scalars",
+                                )
+                                .use_site(fn_ir.values[*idx].span, "used here as a matrix index")
+                                .fix("add an explicit integer type hint or cast before indexing")
+                                .build(),
+                            );
+                        }
+                    }
+                }
             }
         }
 
         for v in &fn_ir.values {
+            if has_explicit_hints && let ValueKind::Index2D { base, r, c } = &v.kind {
+                let base_ty = fn_ir.values[*base].value_ty;
+                if base_ty.shape != ShapeTy::Unknown && base_ty.shape != ShapeTy::Matrix {
+                    errors.push(
+                        DiagnosticBuilder::new(
+                            "RR.TypeError",
+                            RRCode::E1002,
+                            Stage::Mir,
+                            format!(
+                                "strict mode 2D indexing requires matrix-typed base in function '{}' (got {:?})",
+                                fname, base_ty
+                            ),
+                        )
+                        .at(v.span)
+                        .constraint(v.span, "2D indexing requires a matrix-typed base")
+                        .use_site(v.span, "used here as a 2D indexing expression")
+                        .fix("change the base type hint to matrix<T>, or use 1D indexing")
+                        .build(),
+                    );
+                }
+                for idx in [r, c] {
+                    let ity = fn_ir.values[*idx].value_ty;
+                    if ity.is_unknown() {
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.TypeError",
+                                RRCode::E1012,
+                                Stage::Mir,
+                                format!(
+                                    "strict mode unresolved 2D index type in function '{}' (value #{})",
+                                    fname, idx
+                                ),
+                            )
+                            .at(fn_ir.values[*idx].span)
+                            .constraint(
+                                fn_ir.span,
+                                "strict mode requires matrix indices to be integer scalars",
+                            )
+                            .use_site(fn_ir.values[*idx].span, "used here as a matrix index")
+                            .fix("add an explicit integer type hint or cast before indexing")
+                            .build(),
+                        );
+                    }
+                }
+            }
+            if has_explicit_hints
+                && let ValueKind::Call { callee, args, .. } = &v.kind
+                && matches!(callee.as_str(), "rr_field_get" | "rr_field_set")
+                && !args.is_empty()
+            {
+                let base_term = &fn_ir.values[args[0]].value_term;
+                let field_name = args.get(1).and_then(|arg| match &fn_ir.values[*arg].kind {
+                    ValueKind::Const(crate::syntax::ast::Lit::Str(name)) => Some(name.as_str()),
+                    _ => None,
+                });
+                if let Some(field_name) = field_name
+                    && base_term.has_exact_named_fields()
+                {
+                    let expected_field = base_term.exact_field_value(field_name);
+                    if expected_field.is_none() {
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.TypeError",
+                                RRCode::E1002,
+                                Stage::Mir,
+                                format!(
+                                    "strict mode field '{}' is not present in the visible dataframe schema for function '{}'",
+                                    field_name, fname
+                                ),
+                            )
+                            .at(v.span)
+                            .constraint(
+                                v.span,
+                                format!("field '{}' must exist in the dataframe schema", field_name),
+                            )
+                            .use_site(v.span, "used here as a named dataframe field access")
+                            .fix("change the field name or widen/remove the dataframe schema hint")
+                            .build(),
+                        );
+                    } else if callee == "rr_field_set" && args.len() >= 3 {
+                        let expected_field = expected_field.unwrap_or(TypeTerm::Any);
+                        let got_term = fn_ir.values[args[2]].value_term.clone();
+                        if !expected_field.is_any()
+                            && !got_term.is_any()
+                            && !expected_field.compatible_with(&got_term)
+                        {
+                            errors.push(
+                                DiagnosticBuilder::new(
+                                    "RR.TypeError",
+                                    RRCode::E1011,
+                                    Stage::Mir,
+                                    format!(
+                                        "dataframe field '{}' expects {:?}, got {:?} in function '{}'",
+                                        field_name, expected_field, got_term, fname
+                                    ),
+                                )
+                                .at(v.span)
+                                .origin(
+                                    fn_ir.values[args[2]].span,
+                                    format!("assigned field value is inferred as {:?}", got_term),
+                                )
+                                .constraint(
+                                    v.span,
+                                    format!("field '{}' is constrained to {:?}", field_name, expected_field),
+                                )
+                                .use_site(v.span, "used here as a dataframe field assignment")
+                                .fix("cast the assigned value or widen the dataframe schema hint")
+                                .build(),
+                            );
+                        }
+                    }
+                }
+            }
             if let ValueKind::Call { callee, args, .. } = &v.kind
                 && let Some(callee_fn) = all_fns.get(callee)
             {
@@ -864,6 +1104,7 @@ fn infer_value_type(
             .param_ty_hints
             .get(*index)
             .copied()
+            .map(|ty| refine_type_with_term(ty, &fn_ir.param_term_hints[*index]))
             .unwrap_or(TypeState::unknown()),
         ValueKind::Len { .. } => TypeState::scalar(PrimTy::Int, true),
         ValueKind::Indices { base } => {
@@ -915,13 +1156,37 @@ fn infer_value_type(
                         None
                     },
                 },
+                BinOp::MatMul => TypeState {
+                    prim: match promoted_numeric_prim(l.prim, r.prim) {
+                        PrimTy::Int | PrimTy::Double => PrimTy::Double,
+                        other => other,
+                    },
+                    shape: if matches!(l.shape, ShapeTy::Vector | ShapeTy::Matrix)
+                        && matches!(r.shape, ShapeTy::Vector | ShapeTy::Matrix)
+                    {
+                        ShapeTy::Matrix
+                    } else {
+                        ShapeTy::Unknown
+                    },
+                    na: if l.na == NaTy::Never && r.na == NaTy::Never {
+                        NaTy::Never
+                    } else {
+                        NaTy::Maybe
+                    },
+                    len_sym: None,
+                },
                 _ => {
-                    let prim = match (l.prim, r.prim) {
-                        (PrimTy::Int, PrimTy::Int) => PrimTy::Int,
-                        (PrimTy::Int, PrimTy::Double)
-                        | (PrimTy::Double, PrimTy::Int)
-                        | (PrimTy::Double, PrimTy::Double) => PrimTy::Double,
-                        _ => PrimTy::Any,
+                    let prim = match op {
+                        BinOp::Div => match (l.prim, r.prim) {
+                            (PrimTy::Int, PrimTy::Int)
+                            | (PrimTy::Int, PrimTy::Double)
+                            | (PrimTy::Double, PrimTy::Int)
+                            | (PrimTy::Double, PrimTy::Double) => PrimTy::Double,
+                            (PrimTy::Any, other) | (other, PrimTy::Any) => other,
+                            _ => PrimTy::Any,
+                        },
+                        BinOp::Mod => promoted_numeric_prim(l.prim, r.prim),
+                        _ => promoted_numeric_prim(l.prim, r.prim),
                     };
                     TypeState {
                         prim,
@@ -959,9 +1224,45 @@ fn infer_value_type(
                 };
                 return TypeState::vector(PrimTy::Int, true).with_len(len_sym);
             }
+            if callee == "rr_field_get" && !args.is_empty() {
+                let field_name = args.get(1).and_then(|arg| match &fn_ir.values[*arg].kind {
+                    ValueKind::Const(crate::syntax::ast::Lit::Str(name)) => Some(name.as_str()),
+                    _ => None,
+                });
+                return type_state_from_term(
+                    &fn_ir.values[args[0]]
+                        .value_term
+                        .field_value_named(field_name),
+                );
+            }
+            if callee == "rr_field_exists" {
+                return TypeState::scalar(PrimTy::Logical, true);
+            }
+            if callee == "rr_field_set" && !args.is_empty() {
+                let field_name = args.get(1).and_then(|arg| match &fn_ir.values[*arg].kind {
+                    ValueKind::Const(crate::syntax::ast::Lit::Str(name)) => Some(name.as_str()),
+                    _ => None,
+                });
+                if let (Some(name), Some(value)) = (field_name, args.get(2)) {
+                    let updated = fn_ir.values[args[0]]
+                        .value_term
+                        .updated_field_value_named(name, &fn_ir.values[*value].value_term);
+                    return refine_type_with_term(fn_ir.values[args[0]].value_ty, &updated);
+                }
+                return fn_ir.values[args[0]].value_ty;
+            }
             let arg_tys: Vec<TypeState> = args.iter().map(|a| fn_ir.values[*a].value_ty).collect();
+            let arg_terms: Vec<TypeTerm> = args
+                .iter()
+                .map(|a| fn_ir.values[*a].value_term.clone())
+                .collect();
             if let Some(b) = infer_builtin(callee, &arg_tys) {
-                return b;
+                let with_builtin_term = if let Some(term) = infer_builtin_term(callee, &arg_terms) {
+                    refine_type_with_term(b, &term)
+                } else {
+                    b
+                };
+                return refine_type_with_term(with_builtin_term, &fn_ir.values[vid].value_term);
             }
             if callee.starts_with("Sym_") {
                 return fn_ret.get(callee).copied().unwrap_or(TypeState::unknown());
@@ -970,38 +1271,85 @@ fn infer_value_type(
         }
         ValueKind::Index1D { base, .. } => {
             let b = fn_ir.values[*base].value_ty;
-            TypeState {
-                prim: b.prim,
-                shape: ShapeTy::Scalar,
-                na: NaTy::Maybe,
-                len_sym: None,
-            }
+            refine_type_with_term(
+                TypeState {
+                    prim: b.prim,
+                    shape: ShapeTy::Scalar,
+                    na: NaTy::Maybe,
+                    len_sym: None,
+                },
+                &fn_ir.values[*base].value_term.index_element(),
+            )
         }
         ValueKind::Index2D { base, .. } => {
             let b = fn_ir.values[*base].value_ty;
-            TypeState {
-                prim: b.prim,
-                shape: ShapeTy::Scalar,
-                na: NaTy::Maybe,
-                len_sym: None,
-            }
+            refine_type_with_term(
+                TypeState {
+                    prim: b.prim,
+                    shape: ShapeTy::Scalar,
+                    na: NaTy::Maybe,
+                    len_sym: None,
+                },
+                &fn_ir.values[*base].value_term.index_element(),
+            )
         }
         ValueKind::Index3D { base, .. } => {
             let b = fn_ir.values[*base].value_ty;
-            TypeState {
-                prim: b.prim,
-                shape: ShapeTy::Scalar,
-                na: NaTy::Maybe,
-                len_sym: None,
-            }
+            refine_type_with_term(
+                TypeState {
+                    prim: b.prim,
+                    shape: ShapeTy::Scalar,
+                    na: NaTy::Maybe,
+                    len_sym: None,
+                },
+                &fn_ir.values[*base].value_term.index_element(),
+            )
         }
-        ValueKind::Load { var } => var_tys.get(var).copied().unwrap_or(TypeState::unknown()),
+        ValueKind::Load { var } => {
+            let ty = var_tys.get(var).copied().unwrap_or(TypeState::unknown());
+            refine_type_with_term(
+                ty,
+                fn_ir
+                    .values
+                    .get(vid)
+                    .map(|v| &v.value_term)
+                    .unwrap_or(&TypeTerm::Any),
+            )
+        }
         ValueKind::RSymbol { .. } => TypeState::unknown(),
         ValueKind::Intrinsic { op, args } => {
             use crate::mir::IntrinsicOp;
             match op {
                 IntrinsicOp::VecSumF64 | IntrinsicOp::VecMeanF64 => {
                     TypeState::scalar(PrimTy::Double, false)
+                }
+                IntrinsicOp::VecAbsF64 => {
+                    let prim = args
+                        .first()
+                        .map(|arg| fn_ir.values[*arg].value_ty.prim)
+                        .unwrap_or(PrimTy::Double);
+                    TypeState::vector(
+                        if matches!(prim, PrimTy::Int | PrimTy::Double) {
+                            prim
+                        } else {
+                            PrimTy::Double
+                        },
+                        false,
+                    )
+                }
+                IntrinsicOp::VecPmaxF64 | IntrinsicOp::VecPminF64 => {
+                    let prim = args
+                        .iter()
+                        .map(|arg| fn_ir.values[*arg].value_ty.prim)
+                        .fold(PrimTy::Any, promoted_numeric_prim);
+                    TypeState::vector(
+                        if matches!(prim, PrimTy::Int | PrimTy::Double) {
+                            prim
+                        } else {
+                            PrimTy::Double
+                        },
+                        false,
+                    )
                 }
                 _ => {
                     let mut out = TypeState::vector(PrimTy::Double, false);
@@ -1021,6 +1369,13 @@ pub fn hir_ty_to_type_state(ty: &Ty) -> TypeState {
 
 pub fn hir_ty_to_type_term(ty: &Ty) -> TypeTerm {
     from_hir_ty_term(ty)
+}
+
+pub fn hir_ty_to_type_term_with_symbols(
+    ty: &Ty,
+    symbols: &FxHashMap<crate::hir::def::SymbolId, String>,
+) -> TypeTerm {
+    term_from_hir_ty_with_symbols(ty, symbols)
 }
 
 fn compute_reachable(fn_ir: &FnIR) -> Vec<bool> {

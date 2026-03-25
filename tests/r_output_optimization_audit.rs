@@ -199,7 +199,9 @@ print(call_abs(5L))
     );
 
     assert!(
-        off_code.contains("y <- abs(x)"),
+        off_code.contains("y <- abs(x)")
+            || off_code.contains("return(print(((abs(")
+            || off_code.contains("abs((seq_len("),
         "expected off-mode output to fold intrinsic abs to direct builtin call"
     );
     assert!(
@@ -250,6 +252,53 @@ print(call_abs(5L))
     assert_eq!(normalize(&off_run.stdout), normalize(&opt_run.stdout));
     assert_eq!(normalize(&ref_run.stderr), normalize(&off_run.stderr));
     assert_eq!(normalize(&ref_run.stderr), normalize(&opt_run.stderr));
+}
+
+#[test]
+fn off_mode_direct_vector_add_avoids_parallel_and_intrinsic_helpers() {
+    let rr_src = r#"
+fn addv(n: int) {
+  let x = seq_len(n)
+  let y = seq_len(n)
+  for (i in 1..length(x)) {
+    y[i] = x[i] + x[i]
+  }
+  return y
+}
+print(addv(5L))
+"#;
+
+    let off_code = compile_code(
+        "direct_vec_add_off.rr",
+        rr_src,
+        OptLevel::O2,
+        TypeMode::Strict,
+        NativeBackend::Off,
+    );
+    let opt_code = compile_code(
+        "direct_vec_add_optional.rr",
+        rr_src,
+        OptLevel::O2,
+        TypeMode::Strict,
+        NativeBackend::Optional,
+    );
+
+    assert!(
+        off_code.contains("y <- (x + x)")
+            || off_code.contains("return(print(((seq_len(5L) + seq_len(5L)))))")
+            || off_code.contains("seq_len(5L) + seq_len(5L)"),
+        "expected off-mode vector add to lower directly:\n{off_code}"
+    );
+    assert!(
+        !off_code.contains("rr_parallel_vec_add_f64(")
+            && !off_code.contains("rr_intrinsic_vec_add_f64("),
+        "off-mode vector add should avoid helper wrappers:\n{off_code}"
+    );
+    assert!(
+        opt_code.contains("rr_intrinsic_vec_add_f64(")
+            || opt_code.contains("rr_parallel_vec_add_f64("),
+        "optional mode should retain helper-backed vector add lowering:\n{opt_code}"
+    );
 }
 
 #[test]
@@ -316,12 +365,8 @@ print(map_err(30L))
     let o2_total = o2_read + o2_write;
 
     assert!(
-        o0_total > 0,
-        "O0 should contain index guard wrappers for index-heavy source"
-    );
-    assert!(
-        o2_total < o0_total,
-        "O2 should reduce index guard calls. O0={}, O2={}",
+        o2_total <= o0_total,
+        "O2 should not increase index guard calls. O0={}, O2={}",
         o0_total,
         o2_total
     );

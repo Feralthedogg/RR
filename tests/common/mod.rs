@@ -74,8 +74,22 @@ pub fn compile_rr_env(
     level: &str,
     env_kv: &[(&str, &str)],
 ) {
+    compile_rr_env_with_args(rr_bin, rr_src, out_path, level, &[], env_kv);
+}
+
+pub fn compile_rr_env_with_args(
+    rr_bin: &Path,
+    rr_src: &Path,
+    out_path: &Path,
+    level: &str,
+    extra_args: &[&str],
+    env_kv: &[(&str, &str)],
+) {
     let mut cmd = Command::new(rr_bin);
     cmd.arg(rr_src).arg("-o").arg(out_path).arg(level);
+    for arg in extra_args {
+        cmd.arg(arg);
+    }
     for (k, v) in env_kv {
         cmd.env(k, v);
     }

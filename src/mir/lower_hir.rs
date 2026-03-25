@@ -3,7 +3,7 @@ use crate::hir::def as hir;
 use crate::mir::flow::Facts;
 use crate::mir::*;
 use crate::syntax::ast::{BinOp, Lit};
-use crate::typeck::solver::{hir_ty_to_type_state, hir_ty_to_type_term};
+use crate::typeck::solver::{hir_ty_to_type_state, hir_ty_to_type_term_with_symbols};
 use crate::utils::{Span, did_you_mean};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -93,10 +93,18 @@ impl<'a> MirLowerer<'a> {
             "rep.int",
             "vector",
             "matrix",
+            "dim",
+            "dimnames",
+            "nrow",
+            "ncol",
             "colSums",
             "rowSums",
             "crossprod",
             "tcrossprod",
+            "t",
+            "diag",
+            "rbind",
+            "cbind",
             "library",
             "require",
             "plot",
@@ -338,6 +346,23 @@ impl<'a> MirLowerer<'a> {
             new_args.push((val, pred));
         }
 
+        if let Some(src) = self.trivial_phi_source(phi_val, &new_args, &mut FxHashSet::default()) {
+            self.defs.entry(block).or_default().insert(var, src);
+            let src_val = self.fn_ir.values[src].clone();
+            if let Some(dst) = self.fn_ir.values.get_mut(phi_val) {
+                dst.kind = src_val.kind;
+                dst.facts = src_val.facts;
+                dst.value_ty = src_val.value_ty;
+                dst.value_term = src_val.value_term;
+                if dst.origin_var.is_none() {
+                    dst.origin_var = src_val.origin_var;
+                }
+                dst.phi_block = None;
+                dst.escape = src_val.escape;
+            }
+            return Ok(());
+        }
+
         // Update Phi instruction
         if let Some(val) = self.fn_ir.values.get_mut(phi_val) {
             if let ValueKind::Phi { ref mut args } = val.kind {
@@ -357,8 +382,59 @@ impl<'a> MirLowerer<'a> {
             .into_exception());
         }
 
-        // Trivial Phi elimination could be done here (if all args same)
         Ok(())
+    }
+
+    fn trivial_phi_source(
+        &self,
+        phi_val: ValueId,
+        args: &[(ValueId, BlockId)],
+        seen: &mut FxHashSet<ValueId>,
+    ) -> Option<ValueId> {
+        if !seen.insert(phi_val) {
+            return None;
+        }
+        let mut candidate = None;
+        for (arg, pred) in args {
+            if *arg == phi_val {
+                continue;
+            }
+            let resolved = match &self.fn_ir.values[*arg].kind {
+                ValueKind::Phi { args: nested } => {
+                    self.trivial_phi_source(*arg, nested, seen).unwrap_or(*arg)
+                }
+                _ => *arg,
+            };
+            let resolved = self.canonicalize_phi_arg_for_pred(*pred, resolved);
+            match candidate {
+                None => candidate = Some(resolved),
+                Some(prev) if prev == resolved => {}
+                Some(_) => return None,
+            }
+        }
+        candidate
+    }
+
+    fn canonicalize_phi_arg_for_pred(&self, pred: BlockId, mut value: ValueId) -> ValueId {
+        let mut seen = FxHashSet::default();
+        while seen.insert(value) {
+            let ValueKind::Load { var } = &self.fn_ir.values[value].kind else {
+                break;
+            };
+            let Some(next) = self.fn_ir.blocks[pred]
+                .instrs
+                .iter()
+                .rev()
+                .find_map(|instr| match instr {
+                    Instr::Assign { dst, src, .. } if dst == var => Some(*src),
+                    _ => None,
+                })
+            else {
+                break;
+            };
+            value = next;
+        }
+        value
     }
 
     fn add_phi_placeholder(&mut self, _block: BlockId, span: Span) -> ValueId {
@@ -388,7 +464,7 @@ impl<'a> MirLowerer<'a> {
             .iter()
             .map(|p| {
                 p.ty.as_ref()
-                    .map(hir_ty_to_type_term)
+                    .map(|ty| hir_ty_to_type_term_with_symbols(ty, self.symbols))
                     .unwrap_or(crate::typeck::TypeTerm::Any)
             })
             .collect();
@@ -398,7 +474,10 @@ impl<'a> MirLowerer<'a> {
             .map(|p| p.ty.as_ref().map(|_| p.span))
             .collect();
         self.fn_ir.ret_ty_hint = f.ret_ty.as_ref().map(hir_ty_to_type_state);
-        self.fn_ir.ret_term_hint = f.ret_ty.as_ref().map(hir_ty_to_type_term);
+        self.fn_ir.ret_term_hint = f
+            .ret_ty
+            .as_ref()
+            .map(|ty| hir_ty_to_type_term_with_symbols(ty, self.symbols));
         self.fn_ir.ret_hint_span = f.ret_ty.as_ref().map(|_| f.span);
 
         // 1. Bind parameters in the entry block
@@ -1019,10 +1098,18 @@ impl<'a> MirLowerer<'a> {
                                     | "rep.int"
                                     | "vector"
                                     | "matrix"
+                                    | "dim"
+                                    | "dimnames"
+                                    | "nrow"
+                                    | "ncol"
                                     | "colSums"
                                     | "rowSums"
                                     | "crossprod"
                                     | "tcrossprod"
+                                    | "t"
+                                    | "diag"
+                                    | "rbind"
+                                    | "cbind"
                             ) {
                                 return Ok(self.fn_ir.add_value(
                                     ValueKind::Call {
@@ -1357,111 +1444,27 @@ impl<'a> MirLowerer<'a> {
     }
 
     fn is_dynamic_fallback_builtin(name: &str) -> bool {
-        matches!(
-            name,
-            "eval"
-                | "parse"
-                | "get"
-                | "assign"
-                | "exists"
-                | "mget"
-                | "rm"
-                | "ls"
-                | "parent.frame"
-                | "environment"
-                | "sys.frame"
-                | "sys.call"
-                | "do.call"
-                | "library"
-                | "require"
-                | "png"
-                | "plot"
-                | "lines"
-                | "legend"
-                | "dev.off"
-        )
+        crate::mir::semantics::call_model::is_dynamic_fallback_builtin(name)
     }
 
     fn is_namespaced_r_call(name: &str) -> bool {
-        let Some((pkg, sym)) = name.split_once("::") else {
-            return false;
-        };
-        !pkg.is_empty() && !sym.is_empty() && !pkg.contains(':') && !sym.contains(':')
+        crate::mir::semantics::call_model::is_namespaced_r_call(name)
     }
 
     fn is_tidy_data_mask_call(name: &str) -> bool {
-        matches!(
-            name,
-            "ggplot2::aes"
-                | "dplyr::mutate"
-                | "dplyr::filter"
-                | "dplyr::select"
-                | "dplyr::summarise"
-                | "dplyr::arrange"
-                | "dplyr::group_by"
-                | "dplyr::rename"
-                | "tidyr::pivot_longer"
-                | "tidyr::pivot_wider"
-        )
+        crate::mir::semantics::call_model::is_tidy_data_mask_call(name)
     }
 
     fn is_tidy_helper_call(name: &str) -> bool {
-        matches!(
-            name,
-            "starts_with"
-                | "ends_with"
-                | "contains"
-                | "matches"
-                | "everything"
-                | "all_of"
-                | "any_of"
-                | "where"
-                | "desc"
-                | "between"
-                | "n"
-                | "row_number"
-        )
+        crate::mir::semantics::call_model::is_tidy_helper_call(name)
     }
 
     fn is_supported_package_call(name: &str) -> bool {
-        matches!(
-            name,
-            "base::data.frame"
-                | "stats::median"
-                | "stats::sd"
-                | "stats::lm"
-                | "stats::predict"
-                | "stats::quantile"
-                | "stats::glm"
-                | "stats::as.formula"
-                | "readr::read_csv"
-                | "readr::write_csv"
-                | "tidyr::pivot_longer"
-                | "tidyr::pivot_wider"
-                | "graphics::plot"
-                | "graphics::lines"
-                | "graphics::legend"
-                | "grDevices::png"
-                | "grDevices::dev.off"
-                | "ggplot2::aes"
-                | "ggplot2::ggplot"
-                | "ggplot2::geom_line"
-                | "ggplot2::geom_point"
-                | "ggplot2::ggtitle"
-                | "ggplot2::theme_minimal"
-                | "ggplot2::ggsave"
-                | "dplyr::mutate"
-                | "dplyr::filter"
-                | "dplyr::select"
-                | "dplyr::summarise"
-                | "dplyr::arrange"
-                | "dplyr::group_by"
-                | "dplyr::rename"
-        )
+        crate::mir::semantics::call_model::is_supported_package_call(name)
     }
 
     fn is_supported_tidy_helper_call(name: &str) -> bool {
-        Self::is_tidy_helper_call(name)
+        crate::mir::semantics::call_model::is_supported_tidy_helper_call(name)
     }
 
     fn should_lower_as_tidy_symbol(name: &str) -> bool {
@@ -1511,10 +1514,18 @@ impl<'a> MirLowerer<'a> {
                     | "rep.int"
                     | "vector"
                     | "matrix"
+                    | "dim"
+                    | "dimnames"
+                    | "nrow"
+                    | "ncol"
                     | "colSums"
                     | "rowSums"
                     | "crossprod"
                     | "tcrossprod"
+                    | "t"
+                    | "diag"
+                    | "rbind"
+                    | "cbind"
             )
     }
 
@@ -1584,5 +1595,96 @@ impl<'a> MirLowerer<'a> {
                 "prefer supported tidy helpers or add this helper to the direct tidy interop surface",
             ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trivial_phi_is_folded_during_sealing_for_pred_local_load_aliases() {
+        let symbols = FxHashMap::default();
+        let known_functions = FxHashMap::default();
+        let mut var_names = FxHashMap::default();
+        let local_x = hir::LocalId(0);
+        var_names.insert(local_x, "x".to_string());
+
+        let mut lowerer = MirLowerer::new(
+            "seal_phi_alias".to_string(),
+            vec![],
+            var_names,
+            &symbols,
+            &known_functions,
+        );
+
+        let left = lowerer.fn_ir.body_head;
+        let right = lowerer.fn_ir.add_block();
+        let merge = lowerer.fn_ir.add_block();
+        lowerer.defs.entry(right).or_default();
+        lowerer.defs.entry(merge).or_default();
+
+        let one = lowerer.fn_ir.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_left = lowerer.fn_ir.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_right = lowerer.fn_ir.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = lowerer.add_phi_placeholder(merge, Span::default());
+
+        lowerer.fn_ir.blocks[left].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        lowerer.fn_ir.blocks[left].term = Terminator::Goto(merge);
+        lowerer.fn_ir.blocks[right].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        lowerer.fn_ir.blocks[right].term = Terminator::Goto(merge);
+        lowerer.preds.insert(merge, vec![left, right]);
+        lowerer
+            .defs
+            .entry(left)
+            .or_default()
+            .insert(local_x, load_left);
+        lowerer
+            .defs
+            .entry(right)
+            .or_default()
+            .insert(local_x, load_right);
+
+        lowerer.add_phi_operands(merge, local_x, phi).unwrap();
+
+        assert!(
+            !matches!(lowerer.fn_ir.values[phi].kind, ValueKind::Phi { .. }),
+            "sealing should fold load-alias phi inputs that resolve to the same predecessor-local assignment"
+        );
+        assert_eq!(
+            lowerer
+                .defs
+                .get(&merge)
+                .and_then(|m| m.get(&local_x))
+                .copied(),
+            Some(one)
+        );
     }
 }

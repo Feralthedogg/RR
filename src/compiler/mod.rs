@@ -5,6 +5,7 @@ mod r_peephole;
 pub use incremental::{
     IncrementalCompileOutput, IncrementalOptions, IncrementalSession, IncrementalStats,
     compile_with_configs_incremental, compile_with_configs_incremental_with_output_options,
+    module_tree_fingerprint, module_tree_snapshot,
 };
 pub use pipeline::{
     CliLog, CompileOutputOptions, OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile,

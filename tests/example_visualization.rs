@@ -100,6 +100,34 @@ fn assert_ggplot2_code(code: &str) {
     );
 }
 
+fn assert_ggplot2_facet_grid_code(code: &str) {
+    assert!(
+        code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::aes(")
+            && code.contains("ggplot2::geom_col(")
+            && code.contains("ggplot2::facet_grid(")
+            && code.contains("stats::as.formula(\"~label + grp\")")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR ggplot2 facet_grid example to preserve direct package interop"
+    );
+}
+
+fn assert_ggplot2_facet_formula_ops_code(code: &str) {
+    assert!(
+        code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::aes(")
+            && code.contains("ggplot2::geom_col(")
+            && code.contains("ggplot2::facet_wrap(")
+            && code.contains("stats::as.formula(\"~label * grp\")")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR ggplot2 facet formula-ops example to preserve direct package interop"
+    );
+}
+
 fn assert_dplyr_ggplot2_pipeline_code(code: &str) {
     assert!(
         code.contains("dplyr::mutate(")
@@ -192,6 +220,117 @@ fn assert_readr_dplyr_tidyr_workflow_code(code: &str) {
             && !code.contains("# rr-hybrid-fallback:")
             && !code.contains("# rr-opaque-interop:"),
         "expected compiled RR readr + dplyr + tidyr + ggplot2 workflow example to preserve direct interop package calls"
+    );
+}
+
+fn assert_dplyr_join_filter_plot_code(code: &str) {
+    assert!(
+        code.contains("dplyr::semi_join(")
+            && code.contains("dplyr::anti_join(")
+            && code.contains("dplyr::bind_rows(")
+            && code.contains("dplyr::mutate(")
+            && code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::geom_col(")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR dplyr join/filter example to preserve direct interop package calls"
+    );
+}
+
+fn assert_dplyr_join_facet_grid_plot_code(code: &str) {
+    assert!(
+        code.contains("dplyr::semi_join(")
+            && code.contains("dplyr::anti_join(")
+            && code.contains("dplyr::bind_rows(")
+            && code.contains("dplyr::mutate(")
+            && code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::geom_col(")
+            && code.contains("ggplot2::facet_grid(")
+            && code.contains("stats::as.formula(\"~kind + grp\")")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR dplyr join + facet_grid example to preserve direct interop package calls"
+    );
+}
+
+fn assert_tidyr_separate_unite_plot_code(code: &str) {
+    assert!(
+        code.contains("tidyr::separate(")
+            && code.contains("tidyr::unite(")
+            && code.contains("label")
+            && code.contains("grp")
+            && code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::geom_col(")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR tidyr separate/unite example to preserve direct interop package calls"
+    );
+}
+
+fn assert_readr_rds_roundtrip_code(code: &str) {
+    assert!(
+        code.contains("readr::write_rds(")
+            && code.contains("readr::read_rds(")
+            && code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::geom_line(")
+            && code.contains("ggplot2::geom_point(")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR readr RDS roundtrip example to preserve direct interop package calls"
+    );
+}
+
+fn assert_readr_delim_roundtrip_code(code: &str) {
+    assert!(
+        code.contains("readr::write_delim(")
+            && code.contains("readr::read_delim(")
+            && code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::geom_line(")
+            && code.contains("ggplot2::geom_point(")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR readr delim roundtrip example to preserve direct interop package calls"
+    );
+}
+
+fn assert_readr_tidyr_facet_grid_workflow_code(code: &str) {
+    assert!(
+        code.contains("readr::write_delim(")
+            && code.contains("readr::read_delim(")
+            && code.contains("tidyr::separate(")
+            && code.contains("tidyr::unite(")
+            && code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::geom_col(")
+            && code.contains("ggplot2::facet_grid(")
+            && code.contains("stats::as.formula(\"~label + grp\")")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR readr+tidyr+facet_grid workflow to preserve direct interop package calls"
+    );
+}
+
+fn assert_readr_rds_join_facet_grid_workflow_code(code: &str) {
+    assert!(
+        code.contains("readr::write_rds(")
+            && code.contains("readr::read_rds(")
+            && code.contains("dplyr::semi_join(")
+            && code.contains("dplyr::anti_join(")
+            && code.contains("dplyr::bind_rows(")
+            && code.contains("dplyr::mutate(")
+            && code.contains("ggplot2::ggplot(")
+            && code.contains("ggplot2::geom_col(")
+            && code.contains("ggplot2::facet_grid(")
+            && code.contains("stats::as.formula(\"~kind + grp\")")
+            && code.contains("ggplot2::ggsave(")
+            && !code.contains("# rr-hybrid-fallback:")
+            && !code.contains("# rr-opaque-interop:"),
+        "expected compiled RR readr+dplyr+facet_grid workflow to preserve direct interop package calls"
     );
 }
 
@@ -298,6 +437,74 @@ fn ggplot2_visualization_modern_example_compiles_and_generates_png_when_availabl
         &compiled,
         &run_dir,
         "rr_ggplot2_line_plot_modern.png",
+    );
+}
+
+#[test]
+fn ggplot2_facet_grid_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!("Skipping ggplot2 facet_grid visualization test: Rscript not available.");
+            return;
+        }
+    };
+
+    if !ggplot2_available(&rscript) {
+        eprintln!("Skipping ggplot2 facet_grid visualization test: ggplot2 not available.");
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "ggplot2_facet_grid_modern.rr",
+        "ggplot2_facet_grid_modern_o2.R",
+    );
+
+    let code =
+        fs::read_to_string(&compiled).expect("failed to read compiled ggplot2 facet_grid output");
+    assert_ggplot2_facet_grid_code(&code);
+
+    let run_dir = out_dir.join("ggplot2_facet_grid_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_ggplot2_facet_grid_modern.png",
+    );
+}
+
+#[test]
+fn ggplot2_facet_wrap_formula_ops_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!(
+                "Skipping ggplot2 facet formula-ops visualization test: Rscript not available."
+            );
+            return;
+        }
+    };
+
+    if !ggplot2_available(&rscript) {
+        eprintln!("Skipping ggplot2 facet formula-ops visualization test: ggplot2 not available.");
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "ggplot2_facet_wrap_formula_ops_modern.rr",
+        "ggplot2_facet_wrap_formula_ops_modern_o2.R",
+    );
+
+    let code = fs::read_to_string(&compiled)
+        .expect("failed to read compiled ggplot2 facet formula-ops output");
+    assert_ggplot2_facet_formula_ops_code(&code);
+
+    let run_dir = out_dir.join("ggplot2_facet_wrap_formula_ops_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_ggplot2_facet_wrap_formula_ops_modern.png",
     );
 }
 
@@ -501,5 +708,254 @@ fn readr_dplyr_tidyr_ggplot2_workflow_modern_example_compiles_and_generates_png_
         &compiled,
         &run_dir,
         "rr_readr_dplyr_tidyr_ggplot2_workflow_modern.png",
+    );
+}
+
+#[test]
+fn dplyr_join_filter_plot_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!("Skipping dplyr join/filter visualization test: Rscript not available.");
+            return;
+        }
+    };
+
+    if !packages_available(&rscript, &["ggplot2", "dplyr"]) {
+        eprintln!(
+            "Skipping dplyr join/filter visualization test: required packages not available."
+        );
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "dplyr_join_filter_plot_modern.rr",
+        "dplyr_join_filter_plot_modern_o2.R",
+    );
+
+    let code =
+        fs::read_to_string(&compiled).expect("failed to read compiled dplyr join/filter output");
+    assert_dplyr_join_filter_plot_code(&code);
+
+    let run_dir = out_dir.join("dplyr_join_filter_plot_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_dplyr_join_filter_plot_modern.png",
+    );
+}
+
+#[test]
+fn dplyr_join_facet_grid_plot_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!(
+                "Skipping dplyr join + facet_grid visualization test: Rscript not available."
+            );
+            return;
+        }
+    };
+
+    if !packages_available(&rscript, &["ggplot2", "dplyr"]) {
+        eprintln!(
+            "Skipping dplyr join + facet_grid visualization test: required packages not available."
+        );
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "dplyr_join_facet_grid_plot_modern.rr",
+        "dplyr_join_facet_grid_plot_modern_o2.R",
+    );
+
+    let code = fs::read_to_string(&compiled)
+        .expect("failed to read compiled dplyr join + facet_grid output");
+    assert_dplyr_join_facet_grid_plot_code(&code);
+
+    let run_dir = out_dir.join("dplyr_join_facet_grid_plot_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_dplyr_join_facet_grid_plot_modern.png",
+    );
+}
+
+#[test]
+fn tidyr_separate_unite_plot_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!("Skipping tidyr separate/unite visualization test: Rscript not available.");
+            return;
+        }
+    };
+
+    if !packages_available(&rscript, &["ggplot2", "tidyr"]) {
+        eprintln!(
+            "Skipping tidyr separate/unite visualization test: required packages not available."
+        );
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "tidyr_separate_unite_plot_modern.rr",
+        "tidyr_separate_unite_plot_modern_o2.R",
+    );
+
+    let code =
+        fs::read_to_string(&compiled).expect("failed to read compiled tidyr separate/unite output");
+    assert_tidyr_separate_unite_plot_code(&code);
+
+    let run_dir = out_dir.join("tidyr_separate_unite_plot_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_tidyr_separate_unite_plot_modern.png",
+    );
+}
+
+#[test]
+fn readr_rds_ggplot2_roundtrip_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!("Skipping readr RDS roundtrip visualization test: Rscript not available.");
+            return;
+        }
+    };
+
+    if !packages_available(&rscript, &["ggplot2", "readr"]) {
+        eprintln!(
+            "Skipping readr RDS roundtrip visualization test: required packages not available."
+        );
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "readr_rds_ggplot2_roundtrip_modern.rr",
+        "readr_rds_ggplot2_roundtrip_modern_o2.R",
+    );
+
+    let code =
+        fs::read_to_string(&compiled).expect("failed to read compiled readr RDS roundtrip output");
+    assert_readr_rds_roundtrip_code(&code);
+
+    let run_dir = out_dir.join("readr_rds_ggplot2_roundtrip_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_readr_rds_ggplot2_roundtrip_modern.png",
+    );
+}
+
+#[test]
+fn readr_delim_ggplot2_roundtrip_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!("Skipping readr delim roundtrip visualization test: Rscript not available.");
+            return;
+        }
+    };
+
+    if !packages_available(&rscript, &["ggplot2", "readr"]) {
+        eprintln!(
+            "Skipping readr delim roundtrip visualization test: required packages not available."
+        );
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "readr_delim_ggplot2_roundtrip_modern.rr",
+        "readr_delim_ggplot2_roundtrip_modern_o2.R",
+    );
+
+    let code = fs::read_to_string(&compiled)
+        .expect("failed to read compiled readr delim roundtrip output");
+    assert_readr_delim_roundtrip_code(&code);
+
+    let run_dir = out_dir.join("readr_delim_ggplot2_roundtrip_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_readr_delim_ggplot2_roundtrip_modern.png",
+    );
+}
+
+#[test]
+fn readr_tidyr_facet_grid_workflow_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!("Skipping readr+tidyr+facet_grid visualization test: Rscript not available.");
+            return;
+        }
+    };
+
+    if !packages_available(&rscript, &["ggplot2", "readr", "tidyr"]) {
+        eprintln!(
+            "Skipping readr+tidyr+facet_grid visualization test: required packages not available."
+        );
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "readr_tidyr_facet_grid_workflow_modern.rr",
+        "readr_tidyr_facet_grid_workflow_modern_o2.R",
+    );
+
+    let code = fs::read_to_string(&compiled)
+        .expect("failed to read compiled readr+tidyr+facet_grid workflow output");
+    assert_readr_tidyr_facet_grid_workflow_code(&code);
+
+    let run_dir = out_dir.join("readr_tidyr_facet_grid_workflow_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_readr_tidyr_facet_grid_workflow_modern.png",
+    );
+}
+
+#[test]
+fn readr_rds_join_facet_grid_workflow_modern_example_compiles_and_generates_png_when_available() {
+    let rscript = match configured_rscript() {
+        Some(p) => p,
+        _ => {
+            eprintln!(
+                "Skipping readr RDS + dplyr join + facet_grid visualization test: Rscript not available."
+            );
+            return;
+        }
+    };
+
+    if !packages_available(&rscript, &["ggplot2", "readr", "dplyr"]) {
+        eprintln!(
+            "Skipping readr RDS + dplyr join + facet_grid visualization test: required packages not available."
+        );
+        return;
+    }
+
+    let (compiled, out_dir) = compile_visualization_example(
+        "readr_rds_join_facet_grid_workflow_modern.rr",
+        "readr_rds_join_facet_grid_workflow_modern_o2.R",
+    );
+
+    let code = fs::read_to_string(&compiled)
+        .expect("failed to read compiled readr+dplyr+facet_grid workflow output");
+    assert_readr_rds_join_facet_grid_workflow_code(&code);
+
+    let run_dir = out_dir.join("readr_rds_join_facet_grid_workflow_modern_runtime");
+    run_rscript_and_assert_png(
+        &rscript,
+        &compiled,
+        &run_dir,
+        "rr_readr_rds_join_facet_grid_workflow_modern.png",
     );
 }

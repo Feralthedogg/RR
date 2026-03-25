@@ -1,3 +1,4 @@
+use crate::diagnostic::DiagnosticBuilder;
 use crate::error::{RR, RRCode, RRException, Stage};
 use crate::mir::*;
 use crate::syntax::ast::BinOp;
@@ -148,41 +149,110 @@ pub(super) fn eval_const(
     if !visiting.insert(vid) {
         return None;
     }
-    let out = match &fn_ir.values[vid].kind {
-        ValueKind::Const(l) => Some(l.clone()),
-        ValueKind::Unary { op, rhs } => {
-            let r = eval_const(fn_ir, *rhs, memo, visiting)?;
-            match (op, r) {
-                (crate::syntax::ast::UnaryOp::Neg, Lit::Int(i)) => Some(Lit::Int(-i)),
-                (crate::syntax::ast::UnaryOp::Neg, Lit::Float(f)) => Some(Lit::Float(-f)),
-                (crate::syntax::ast::UnaryOp::Not, Lit::Bool(b)) => Some(Lit::Bool(!b)),
-                _ => None,
-            }
-        }
-        ValueKind::Binary { op, lhs, rhs } => {
-            let l = eval_const(fn_ir, *lhs, memo, visiting)?;
-            let r = eval_const(fn_ir, *rhs, memo, visiting)?;
-            eval_binary_const(*op, l, r)
-        }
-        ValueKind::Phi { args } => {
-            if args.is_empty() {
-                None
-            } else {
-                let first = eval_const(fn_ir, args[0].0, memo, visiting)?;
-                for (v, _) in &args[1..] {
-                    if eval_const(fn_ir, *v, memo, visiting) != Some(first.clone()) {
-                        return None;
-                    }
+    let out =
+        match &fn_ir.values[vid].kind {
+            ValueKind::Const(l) => Some(l.clone()),
+            ValueKind::Unary { op, rhs } => {
+                let r = eval_const(fn_ir, *rhs, memo, visiting)?;
+                match (op, r) {
+                    (crate::syntax::ast::UnaryOp::Neg, Lit::Int(i)) => Some(Lit::Int(-i)),
+                    (crate::syntax::ast::UnaryOp::Neg, Lit::Float(f)) => Some(Lit::Float(-f)),
+                    (crate::syntax::ast::UnaryOp::Not, Lit::Bool(b)) => Some(Lit::Bool(!b)),
+                    (crate::syntax::ast::UnaryOp::Formula, _) => None,
+                    _ => None,
                 }
-                Some(first)
             }
-        }
-        ValueKind::Intrinsic { .. } => None,
-        _ => None,
-    };
+            ValueKind::Binary { op, lhs, rhs } => {
+                let l = eval_const(fn_ir, *lhs, memo, visiting)?;
+                let r = eval_const(fn_ir, *rhs, memo, visiting)?;
+                eval_binary_const(*op, l, r)
+            }
+            ValueKind::Phi { args } => {
+                if args.is_empty() {
+                    None
+                } else {
+                    let first = eval_const(fn_ir, args[0].0, memo, visiting)?;
+                    for (v, _) in &args[1..] {
+                        if eval_const(fn_ir, *v, memo, visiting) != Some(first.clone()) {
+                            return None;
+                        }
+                    }
+                    Some(first)
+                }
+            }
+            ValueKind::Call { callee, args, .. } => match callee.as_str() {
+                "nrow" if args.len() == 1 => matrix_known_dims(fn_ir, args[0], memo, visiting)
+                    .map(|(rows, _)| Lit::Int(rows)),
+                "ncol" if args.len() == 1 => matrix_known_dims(fn_ir, args[0], memo, visiting)
+                    .map(|(_, cols)| Lit::Int(cols)),
+                _ => None,
+            },
+            ValueKind::Intrinsic { .. } => None,
+            _ => None,
+        };
     visiting.remove(&vid);
     memo.insert(vid, out.clone());
     out
+}
+
+pub(super) fn matrix_known_dims(
+    fn_ir: &FnIR,
+    vid: ValueId,
+    memo: &mut FxHashMap<ValueId, Option<Lit>>,
+    visiting: &mut FxHashSet<ValueId>,
+) -> Option<(i64, i64)> {
+    let mut seen = FxHashSet::default();
+    matrix_known_dims_inner(fn_ir, vid, memo, visiting, &mut seen)
+}
+
+fn matrix_known_dims_inner(
+    fn_ir: &FnIR,
+    vid: ValueId,
+    memo: &mut FxHashMap<ValueId, Option<Lit>>,
+    visiting: &mut FxHashSet<ValueId>,
+    seen: &mut FxHashSet<ValueId>,
+) -> Option<(i64, i64)> {
+    if !seen.insert(vid) {
+        return None;
+    }
+    match &fn_ir.values[vid].kind {
+        ValueKind::Call { callee, args, .. } if callee == "matrix" && args.len() >= 3 => {
+            let rows = as_integral(&eval_const(fn_ir, args[1], memo, visiting)?)?;
+            let cols = as_integral(&eval_const(fn_ir, args[2], memo, visiting)?)?;
+            Some((rows, cols))
+        }
+        ValueKind::Load { var } => {
+            let src = unique_assign_source_for_var(fn_ir, var)?;
+            matrix_known_dims_inner(fn_ir, src, memo, visiting, seen)
+        }
+        ValueKind::Phi { args } => {
+            let first = matrix_known_dims_inner(fn_ir, args.first()?.0, memo, visiting, seen)?;
+            for (src, _) in &args[1..] {
+                if matrix_known_dims_inner(fn_ir, *src, memo, visiting, seen)? != first {
+                    return None;
+                }
+            }
+            Some(first)
+        }
+        _ => None,
+    }
+}
+
+fn unique_assign_source_for_var(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
+    let mut found = None;
+    for block in &fn_ir.blocks {
+        for instr in &block.instrs {
+            if let Instr::Assign { dst, src, .. } = instr
+                && dst == var
+            {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(*src);
+            }
+        }
+    }
+    found
 }
 
 pub(super) fn eval_binary_const(op: BinOp, lhs: Lit, rhs: Lit) -> Option<Lit> {
@@ -253,15 +323,19 @@ pub(super) fn eval_binary_const(op: BinOp, lhs: Lit, rhs: Lit) -> Option<Lit> {
 pub(super) fn validate_const_condition(lit: Lit, span: Span) -> RR<()> {
     match lit {
         Lit::Bool(_) => Ok(()),
-        Lit::Na => Err(RRException::new(
+        Lit::Na => Err(DiagnosticBuilder::new(
             "RR.RuntimeError",
             RRCode::E2001,
             Stage::Mir,
             "condition is statically NA".to_string(),
         )
         .at(span)
-        .push_frame("mir::semantics::validate_const_condition/2", Some(span))
-        .note("R requires TRUE/FALSE in if/while conditions.")),
+        .note("R requires TRUE/FALSE in if/while conditions.")
+        .constraint(span, "branch conditions must evaluate to TRUE or FALSE")
+        .use_site(span, "used here as an if/while condition")
+        .fix("guard NA before branching, for example with is.na(...) checks")
+        .build()
+        .push_frame("mir::semantics::validate_const_condition/2", Some(span))),
         _ => Err(RRException::new(
             "RR.TypeError",
             RRCode::E1002,
@@ -282,13 +356,17 @@ pub(super) fn validate_index_lit_for_read(lit: Lit, span: Span) -> RR<()> {
 
 pub(super) fn validate_index_lit_for_write(lit: Lit, span: Span) -> RR<()> {
     if matches!(lit, Lit::Na) {
-        return Err(RRException::new(
+        return Err(DiagnosticBuilder::new(
             "RR.RuntimeError",
             RRCode::E2001,
             Stage::Mir,
             "index is statically NA in assignment".to_string(),
         )
         .at(span)
+        .constraint(span, "assignment indices must be non-NA integer scalars")
+        .use_site(span, "used here as an assignment index")
+        .fix("validate or cast the index before assignment")
+        .build()
         .push_frame("mir::semantics::validate_index_lit_for_write/2", Some(span)));
     }
     validate_index_integral_positive(lit, span)
@@ -296,31 +374,39 @@ pub(super) fn validate_index_lit_for_write(lit: Lit, span: Span) -> RR<()> {
 
 pub(super) fn validate_index_integral_positive(lit: Lit, span: Span) -> RR<()> {
     let Some(i) = as_integral(&lit) else {
-        return Err(RRException::new(
+        return Err(DiagnosticBuilder::new(
             "RR.TypeError",
             RRCode::E1002,
             Stage::Mir,
             "index must be an integer scalar".to_string(),
         )
         .at(span)
+        .constraint(span, "R indexing expects an integer-like scalar")
+        .use_site(span, "used here in an index expression")
+        .fix("cast or normalize the index to an integer scalar before indexing")
+        .build()
         .push_frame(
             "mir::semantics::validate_index_integral_positive/2",
             Some(span),
         ));
     };
     if i < 1 {
-        return Err(RRException::new(
+        return Err(DiagnosticBuilder::new(
             "RR.RuntimeError",
             RRCode::E2007,
             Stage::Mir,
             format!("index {} is out of bounds (must be >= 1)", i),
         )
         .at(span)
+        .note("R indexing is 1-based at runtime.")
+        .constraint(span, "index must be >= 1")
+        .use_site(span, "used here in an index expression")
+        .fix("shift the index into the 1-based domain before indexing")
+        .build()
         .push_frame(
             "mir::semantics::validate_index_integral_positive/2",
             Some(span),
-        )
-        .note("R indexing is 1-based at runtime."));
+        ));
     }
     Ok(())
 }

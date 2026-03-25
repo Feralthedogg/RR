@@ -54,6 +54,7 @@ pub enum TokenKind {
     Pipe,     // |>
     Question, // ?
     At,       // @
+    Tilde,    // ~
     Caret,    // ^
     Arrow,    // =>
 

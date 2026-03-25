@@ -15,6 +15,7 @@ pub struct Parser<'a> {
 #[derive(PartialEq, PartialOrd)]
 enum Precedence {
     Lowest,
+    Formula,    // ~
     Pipe,       // |>
     LogicOr,    // ||
     LogicAnd,   // &&
@@ -175,6 +176,7 @@ impl<'a> Parser<'a> {
 
     fn token_precedence(kind: &TokenKind) -> Precedence {
         match kind {
+            TokenKind::Tilde => Precedence::Formula,
             TokenKind::Pipe => Precedence::Pipe,
             TokenKind::Or => Precedence::LogicOr,
             TokenKind::And => Precedence::LogicAnd,
@@ -225,6 +227,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::Na
                 | TokenKind::Match
                 | TokenKind::At
+                | TokenKind::Tilde
                 | TokenKind::Caret
                 | TokenKind::LParen
                 | TokenKind::LBracket
@@ -1147,6 +1150,18 @@ impl<'a> Parser<'a> {
                     span: start.merge(end),
                 })
             }
+            TokenKind::Tilde => {
+                self.advance();
+                let rhs = self.parse_expr(Precedence::Formula)?;
+                let end = rhs.span;
+                Ok(Expr {
+                    kind: ExprKind::Formula {
+                        lhs: None,
+                        rhs: Box::new(rhs),
+                    },
+                    span: start.merge(end),
+                })
+            }
             _ => bail!(
                 "RR.ParseError",
                 RRCode::E0001,
@@ -1348,6 +1363,18 @@ impl<'a> Parser<'a> {
                 Ok(Expr {
                     kind: ExprKind::Try {
                         expr: Box::new(left),
+                    },
+                    span: start.merge(end),
+                })
+            }
+            TokenKind::Tilde => {
+                self.advance();
+                let right = self.parse_expr(Precedence::Formula)?;
+                let end = right.span;
+                Ok(Expr {
+                    kind: ExprKind::Formula {
+                        lhs: Some(Box::new(left)),
+                        rhs: Box::new(right),
                     },
                     span: start.merge(end),
                 })

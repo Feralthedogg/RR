@@ -233,6 +233,80 @@ Rule of thumb:
 - one accumulator
 - one obvious recurrence update
 
+### Make numeric intent obvious
+
+RR now preserves the integer / floating-point boundary more aggressively, so it is
+worth writing the operation you actually mean instead of relying on later cleanup.
+
+- use `/` when you want floating semantics
+- use `%%` when you want integer modulo semantics
+- expect `sum(int-vector)` to stay integer when RR can prove the input is integer
+- expect `mean`, `log`, `log10`, `log2`, `sqrt`, `atan2`, and similar math builtins to widen to floating-point
+- `abs`, `pmax`, and `pmin` keep integer element type when all proven numeric inputs are integer
+
+This matters because the strict type solver now feeds more precise facts into:
+
+- branch-condition checking
+- call-signature checking
+- backend intrinsic selection
+- vector shape and length preservation
+- matrix/container shape preservation for typed code
+
+Good:
+
+```rr
+fn score(counts: vector<int>, base: int) {
+  let clipped = pmax(counts, base)
+  let total = sum(clipped)
+  let ratio = total / 3
+  ratio
+}
+```
+
+Here RR can keep `clipped` and `total` on the integer side, and only widen at
+the division.
+
+Less helpful:
+
+```rr
+fn score(counts, base) {
+  let clipped = pmax(counts, base)
+  let total = sum(clipped)
+  total / 3
+}
+```
+
+This still compiles, but the solver has to recover more facts from use sites and
+will fall back to unknown/dynamic behavior sooner if other hints are missing.
+
+If you have matrix-shaped code, say so explicitly with `matrix<T>` instead of
+only `vector<T>`. RR now preserves that distinction internally, which improves:
+
+- matrix builtin inference
+- downstream strict checking
+- length/shape preservation through typed helper calls
+
+That also applies to matrix summary helpers. When RR can see calls such as
+`rowSums`, `colSums`, `crossprod`, or `tcrossprod`, it now keeps matrix/vector
+intent in the type layer instead of dropping back to unknown immediately.
+
+Matrix shape algebra is also more precise than before. Calls and operators such
+as `t`, `diag`, `rbind`, `cbind`, and `%*%` now preserve matrix-shaped terms
+more accurately, so RR can carry row/column intent further into strict checks
+and specialization instead of collapsing back to a generic matrix immediately.
+
+Typed matrix parallel wrappers are available, but the contract is intentionally
+narrow. RR only wraps straight-line shape-preserving matrix kernels there. In
+the R fallback runtime, those kernels are split by column blocks and rejoined
+with the original `dim` and `dimnames`. Shape-sensitive matrix transforms such
+as transpose-like behavior stay on the ordinary non-wrapper path.
+
+Likewise, nested container hints such as `list<box<float>>` and typed dataframe
+schemas are worth keeping when you have them. RR still handles dataframe logic
+conservatively at optimization time, but the type layer no longer has to discard
+that structure immediately. In particular, named dataframe field access can now
+refine to the matching column type when the schema is visible to RR.
+
 ### Prefer pure, small helpers
 
 Inlining, GVN/CSE, SCCP, and vectorization all benefit when helper functions:
@@ -475,6 +549,42 @@ fn fused(a: vector<float>, b: vector<float>) -> vector<float> {
 
 are a better fit than reduction-style helpers such as `mean(abs(x))`, because
 the wrapper can safely split and reassemble the former.
+
+When a workload is really a fixed whole-vector pipeline, try to keep the stages
+explicit and shape-stable so RR can fuse them into a backend-aware helper later.
+The current `signal_pipeline` benchmark is the reference example:
+
+- one stable input shape
+- one straight-line sequence of elementwise stages
+- no side effects between stages
+- no alias-heavy writes inside the pipeline
+
+In practice, code shaped like this:
+
+```rr
+score = pmax(abs(x * 0.65 + y * 0.35 - 0.08), 0.05)
+clean = ifelse(score > 0.4, sqrt(score + 0.1), score * 0.55 + 0.03)
+x = clean + y * 0.15
+y = score * 0.8 + clean * 0.2
+```
+
+is a much better fused-native candidate than code that spreads the same work
+across dynamic helper dispatch, logging, or process-level orchestration.
+
+Also treat R-process parallelism as a separate tool, not the default answer.
+For this kind of dense numeric pipeline, fused native/OpenMP lowering can win,
+while `parallel::mclapply` fan-out may be slower than even plain emitted R.
+
+But do not overgeneralize that rule to every hot loop. The current benchmark
+set now shows three distinct outcomes:
+
+- `signal_pipeline` and `orbital_sweep` benefit a lot from fused backend helpers
+- `vector_fusion` is already so compact in emitted R that backend fusion loses
+- `bootstrap_resample` is gather-heavy enough that a fused helper only breaks even or regresses
+
+So the best authoring rule is not “always force backend fusion,” but “write the
+kernel so RR has the option to fuse it when the shape and cost model both say
+that is worthwhile.”
 
 ### Check optimized and unoptimized behavior
 

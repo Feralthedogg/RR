@@ -1,6 +1,8 @@
 mod common;
 
-use common::{RunResult, compile_rr_env, normalize, rscript_available, rscript_path, run_rscript};
+use common::{
+    RunResult, compile_rr_env_with_args, normalize, rscript_available, rscript_path, run_rscript,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -52,11 +54,12 @@ fn golden_r_semantics() {
         let mut opt_runs: Vec<(String, RunResult)> = Vec::new();
         for (flag, tag) in levels {
             let compiled_path = out_dir.join(format!("{}_compiled_{}.R", stem, tag));
-            compile_rr_env(
+            compile_rr_env_with_args(
                 &rr_bin,
                 &rr_path,
                 &compiled_path,
                 flag,
+                &["--no-incremental"],
                 &[("RR_STRICT_LET", "0")],
             );
             let compiled_run = run_rscript(&rscript, &compiled_path);

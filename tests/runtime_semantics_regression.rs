@@ -180,25 +180,105 @@ print(addv(c(1.0, 2.0), c(3.0, 4.0)))
         },
         CompileOutputOptions {
             inject_runtime: true,
+            preserve_all_defs: false,
         },
     )
     .expect("compile should succeed")
     .0;
 
     assert!(
+        compiled.contains("if (!nzchar(Sys.getenv(\"RR_PARALLEL_MODE\", \"\")))"),
+        "artifact should gate compile-time parallel defaults on env absence"
+    );
+    assert!(
         compiled.contains(".rr_env$parallel_mode <- \"required\";"),
-        "artifact should embed compile-time parallel mode"
+        "artifact should embed compile-time parallel mode default"
     );
     assert!(
         compiled.contains(".rr_env$parallel_backend <- \"openmp\";"),
-        "artifact should embed compile-time parallel backend"
+        "artifact should embed compile-time parallel backend default"
     );
     assert!(
         compiled.contains(".rr_env$parallel_threads <- as.integer(8);"),
-        "artifact should embed compile-time thread count"
+        "artifact should embed compile-time thread count default"
     );
     assert!(
         compiled.contains(".rr_env$parallel_min_trip <- as.integer(256);"),
-        "artifact should embed compile-time min trip"
+        "artifact should embed compile-time min trip default"
     );
+    assert!(
+        compiled.contains("if (!nzchar(Sys.getenv(\"RR_PARALLEL_MODE\", \"\")))"),
+        "artifact should only apply compile-time parallel mode when env override is absent"
+    );
+}
+
+#[test]
+fn runtime_artifact_allows_env_override_of_parallel_policy() {
+    let Some(rscript) = rscript_path() else {
+        return;
+    };
+    if !rscript_available(&rscript) {
+        return;
+    }
+
+    let out_dir = runtime_out_dir();
+    let rr_path = out_dir.join("artifact_policy_override.rr");
+    let script_path = out_dir.join("artifact_policy_override.R");
+    let src = r#"
+fn addv(x: vector<float>, y: vector<float>) -> vector<float> {
+  return x + y
+}
+
+print(addv(c(1.0, 2.0), c(3.0, 4.0)))
+"#;
+    fs::write(&rr_path, src).expect("failed to write RR source");
+
+    let compiled = compile_with_configs_with_options(
+        rr_path.to_str().expect("non-utf8 path"),
+        src,
+        OptLevel::O2,
+        type_config_from_env(),
+        ParallelConfig {
+            mode: ParallelMode::Required,
+            backend: ParallelBackend::OpenMp,
+            threads: 8,
+            min_trip: 256,
+        },
+        CompileOutputOptions {
+            inject_runtime: true,
+            preserve_all_defs: false,
+        },
+    )
+    .expect("compile should succeed")
+    .0;
+    fs::write(&script_path, compiled).expect("failed to write compiled artifact");
+
+    let missing = out_dir.join(if cfg!(target_os = "macos") {
+        "missing_rr_native_override.dylib"
+    } else if cfg!(target_os = "windows") {
+        "missing_rr_native_override.dll"
+    } else {
+        "missing_rr_native_override.so"
+    });
+
+    let output = std::process::Command::new(&rscript)
+        .arg("--vanilla")
+        .arg(&script_path)
+        .env("RR_PARALLEL_MODE", "off")
+        .env("RR_NATIVE_BACKEND", "off")
+        .env("RR_NATIVE_LIB", missing.to_string_lossy().to_string())
+        .output()
+        .expect("failed to execute Rscript");
+
+    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        output.status.code().unwrap_or(-1),
+        0,
+        "env override should let artifact fall back to pure-R\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "[1] 4 6\n");
+    assert_eq!(stderr, "");
 }

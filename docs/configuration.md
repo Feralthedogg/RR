@@ -2,6 +2,14 @@
 
 This page is the environment and driver policy reference for RR.
 
+## Reading This Page
+
+Treat this page like a compiler-driver and runtime-policy table:
+
+- CLI flags are the primary user-facing surface
+- environment variables are mainly for automation, debugging, and controlled policy
+- many optimizer knobs are intentionally expert-only
+
 ## Precedence
 
 RR resolves configuration in this order:
@@ -10,8 +18,10 @@ RR resolves configuration in this order:
 2. environment variables
 3. built-in defaults
 
-Normal runtime-injected artifacts then append compile-time policy assignments so
-the emitted `.R` preserves the policy chosen at compile time.
+Normal runtime-injected artifacts then append compile-time policy defaults so
+the emitted `.R` preserves the compile-time backend/parallel choice unless the
+caller explicitly overrides it with `RR_NATIVE_BACKEND`, `RR_PARALLEL_MODE`,
+`RR_PARALLEL_BACKEND`, `RR_PARALLEL_THREADS`, or `RR_PARALLEL_MIN_TRIP`.
 
 ## Driver and Output
 
@@ -74,11 +84,26 @@ policy unless edited manually.
   - force fast runtime path
 - `RR_ENABLE_MARKS`
   - explicitly disable or enable `rr_mark`
+- `RR_VECTOR_FALLBACK_BASE_TRIP`
+  - runtime threshold for helper-heavy vector-to-scalar fallback decisions
+- `RR_VECTOR_FALLBACK_HELPER_SCALE`
+  - runtime helper-cost multiplier used by vector fallback heuristics
+
+## Incremental and Cache
+
+- `RR_INCREMENTAL_CACHE_DIR`
+  - override the incremental cache root directory
 
 ## Optimizer Control
 
 - `RR_VERIFY_EACH_PASS`
 - `RR_VERIFY_DUMP_DIR`
+- `RR_DEBUG_FNIR`
+  - dump selected optimized `FnIR` bodies while debugging optimizer/codegen issues
+- `RR_DEBUG_RAW_R_PATH`
+  - write the pre-peephole emitted R artifact to a file before final cleanup/remap
+- `RR_PULSE_JSON_PATH`
+  - write `TachyonPulseStats` JSON diagnostics for a compile to the given path
 - `RR_OPT_MAX_ITERS`
 - `RR_MAX_FN_OPT_MS`
 - `RR_ALWAYS_TIER_ITERS`
@@ -116,8 +141,15 @@ They are not the normal end-user entry surface.
 - `RR_INLINE_MAX_UNIT_GROWTH_PCT`
 - `RR_INLINE_MAX_FN_GROWTH_PCT`
 - `RR_INLINE_ALLOW_LOOPS`
+- `RR_INLINE_LOCAL_ROUNDS`
 
 These control inlining eligibility and growth limits.
+
+## Related Manuals
+
+- [CLI Reference](cli.md)
+- [Runtime and Error Model](runtime-and-errors.md)
+- [Testing and Quality Gates](testing.md)
 
 ## Performance Gates
 
@@ -130,9 +162,3 @@ These are test-budget knobs, not general optimization controls.
 
 - `RRSCRIPT`
   - override the R executable used by integration tests and local harnesses
-
-## Related Manuals
-
-- [CLI Reference](cli.md)
-- [Runtime and Error Model](runtime-and-errors.md)
-- [Testing and Quality Gates](testing.md)

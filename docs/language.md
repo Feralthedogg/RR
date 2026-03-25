@@ -31,6 +31,14 @@ It does not try to explain optimization strategy. For that, see
 - If a form is parsed but lowered conservatively, that is part of the current language contract.
 - When a feature is accepted only in a restricted form, that restriction is part of the language.
 
+## Stability Model
+
+This reference follows a GCC/LLVM-style "implemented surface wins" rule.
+
+- accepted and lowered forms are part of the current surface contract
+- accepted but conservative forms are still supported, just not aggressively optimized
+- rejected or opaque forms are not part of the typed/optimizing core language
+
 ## Language Summary
 
 RR currently provides:
@@ -41,6 +49,22 @@ RR currently provides:
 - records, lists, closures, and pattern matching
 - import/export and direct R package interop
 - strict declaration by default
+
+## What This Page Does Not Cover
+
+This page does not try to be:
+
+- a performance guide
+- a runtime contract page
+- a contributor implementation walkthrough
+
+Use:
+
+- [Writing RR for Performance and Safety](writing-rr.md)
+- [Runtime and Error Model](runtime-and-errors.md)
+- [Compiler Pipeline](compiler-pipeline.md)
+
+for those topics.
 
 ## Keywords
 
@@ -214,6 +238,23 @@ Type mode behavior:
 - `strict` (default): compiler reports hint conflicts, call mismatches, and unresolved strict positions (`E1010`/`E1011`/`E1012`)
 - `gradual`: unresolved regions keep runtime-guarded dynamic behavior
 
+Type precision notes:
+
+- RR now keeps the `int` / `float` boundary more precisely than older releases:
+  - `/` widens numeric expressions to floating-point
+  - `%%` stays integer when both operands are inferred integer
+  - `sum(int-vector)` stays integer; `mean(...)`, `log10(...)`, `atan2(...)`, and similar math builtins widen to floating-point
+- vector-valued math/logical builtins such as `abs`, `pmax`, `pmin`, `log10`, `is.na`, and `is.finite` preserve vector shape, and keep a symbolic length when RR can prove it from the arguments
+- `matrix<T>` hints now stay matrix-typed internally instead of collapsing immediately to `vector<T>`
+- matrix-oriented builtins such as `matrix`, `rowSums`, `colSums`, `crossprod`, and `tcrossprod` now preserve matrix/vector intent in the type layer instead of collapsing to unknown
+- shape helpers such as `dim`, `nrow`, `ncol`, and `dimnames` are also recognized directly instead of falling back to opaque package interop
+- matrix-shape algebra helpers such as `t`, `diag`, `rbind`, `cbind`, and `%*%`
+  also stay on the direct typed surface, so RR can preserve matrix shape information
+- dataframe schemas are still selective at the optimizer layer, but the type-term layer now keeps dataframe column terms instead of treating every dataframe hint as plain `any`
+- when RR lowers a typed dataframe schema through HIR/MIR, field access such as `df.col` can now refine to the matching column term instead of conservatively joining every column type
+- nested generic hints such as `list<box<float>>` are preserved through strict call checking and index-element inference instead of collapsing immediately to `any`
+- in strict mode, 2D indexing and 2D assignment now expect a matrix-typed base; using `a[i, j]` on a value hinted as `vector<T>` is diagnosed instead of silently degrading
+
 ### Builtin Resolution and Shadowing
 
 RR does not treat all function names equally at lowering time.
@@ -310,23 +351,30 @@ Direct tidy-eval support is limited but intentional:
   - `dplyr::arrange`
   - `dplyr::group_by`
   - `dplyr::rename`
+  - `tidyr::separate`
   - `tidyr::pivot_longer`
   - `tidyr::pivot_wider`
+  - `tidyr::unite`
 - currently supported helper names inside those calls:
   - `starts_with`, `ends_with`, `contains`, `matches`, `everything`
   - `all_of`, `any_of`, `where`, `desc`, `between`, `n`, `row_number`
+- outside that exact tidy-aware call list, bare unresolved names go back to
+  normal RR name resolution; use `@name` for a raw column symbol or `^expr` for
+  an RR environment value when you need to force the boundary explicitly
 
 Supported package calls in this surface are handled as direct RR interop, so they do not force whole-function hybrid fallback.
 Current direct-interop package surface includes:
 
 - `base::data.frame`
 - `stats::median`, `stats::sd`, `stats::lm`, `stats::predict`, `stats::quantile`, `stats::glm`, `stats::as.formula`
-- `readr::read_csv`, `readr::write_csv`
+- `readr::read_csv`, `readr::read_delim`, `readr::read_rds`, `readr::read_tsv`, `readr::write_csv`, `readr::write_delim`, `readr::write_rds`, `readr::write_tsv`
 - `tidyr::pivot_longer`, `tidyr::pivot_wider`
 - `graphics::plot`, `graphics::lines`, `graphics::legend`
 - `grDevices::png`, `grDevices::dev.off`
-- `ggplot2::aes`, `ggplot2::ggplot`, `ggplot2::geom_line`, `ggplot2::geom_point`, `ggplot2::ggtitle`, `ggplot2::theme_minimal`, `ggplot2::ggsave`
-- `dplyr::mutate`, `dplyr::filter`, `dplyr::select`, `dplyr::summarise`, `dplyr::arrange`, `dplyr::group_by`, `dplyr::rename`
+- `ggplot2::aes`, `ggplot2::ggplot`, `ggplot2::geom_col`, `ggplot2::geom_bar`, `ggplot2::facet_grid`, `ggplot2::geom_line`, `ggplot2::geom_point`, `ggplot2::facet_wrap`, `ggplot2::ggtitle`, `ggplot2::labs`, `ggplot2::theme_bw`, `ggplot2::theme_minimal`, `ggplot2::ggsave`
+- `dplyr::mutate`, `dplyr::filter`, `dplyr::full_join`, `dplyr::inner_join`, `dplyr::right_join`, `dplyr::select`, `dplyr::summarise`, `dplyr::arrange`, `dplyr::anti_join`, `dplyr::bind_rows`, `dplyr::group_by`, `dplyr::left_join`, `dplyr::rename`, `dplyr::semi_join`
+
+- `tidyr::pivot_longer`, `tidyr::pivot_wider`, `tidyr::separate`, `tidyr::unite`
 
 Unsupported namespaced package calls are still emitted directly, but the function is marked as opaque interop and optimized conservatively.
 Only truly dynamic runtime features such as `eval`, `parse`, `get`, `assign`, and `do.call` remain hybrid fallback.
@@ -343,6 +391,7 @@ Note: `export` is parsed as `export` + function declaration, not as general expo
 
 - Name: `x`
 - Unary: `-x`, `!x`
+- Formula shorthand: `~label`, `y ~ x`, `~grp + kind`
 - Binary: `+ - * / % %*% == != < <= > >= && ||` (or `&`, `|`)
 - Range: `a .. b`
 - Call: `f(x, y)`
@@ -455,7 +504,7 @@ From `src/hir/lower.rs`:
 - `x |> f(a)?` lowers to `Try(Call(...))`
 - `expr?` currently lowers through MIR mostly as pass-through of the inner expression
 - `@name` lowers to a raw R symbol value and is mainly intended for tidy-eval package interop such as `dplyr::mutate(...)` and `ggplot2::aes(...)`
-- inside tidy-aware package calls, unresolved bare names like `x` or `trend` are also preserved as raw R symbols
+- inside the exact tidy-aware package-call surface above, unresolved bare names like `x` or `trend` are also preserved as raw R symbols
 - `^expr` lowers to the inner RR expression and is mainly useful to force an environment value inside tidy-eval contexts
 
 ## Dynamic Builtins (Hybrid Fallback)

@@ -4,6 +4,15 @@ This page is the driver manual for RR.
 
 Current compiler line: `RR Tachyon v5.0.0`.
 
+## Audience
+
+Read this page when you need exact driver behavior:
+
+- accepted command forms
+- flag classes
+- precedence and defaults
+- output and exit behavior
+
 ## Synopsis
 
 ```bash
@@ -87,6 +96,24 @@ Use `watch` when:
 
 - you want repeated rebuilds from one live session
 - you want phase 3 in-memory incremental reuse
+- you want imported `*.rr` changes to trigger rebuilds without restarting the session
+
+Current watch behavior:
+
+- unchanged poll ticks do not rebuild repeatedly
+- imported module edits are tracked as part of the watched module tree
+- `--once` still runs exactly one watch tick and exits
+
+### R Runner Selection
+
+`RR run` executes emitted `.gen.R` through:
+
+1. explicit runner path passed by internal callers
+2. `RRSCRIPT` if set
+3. plain `Rscript` from `PATH`
+
+If RR cannot start the selected R runner, it prints a recovery hint and points
+at `--keep-r` so you can inspect the generated artifact.
 
 ## Option Classes
 
@@ -97,8 +124,6 @@ Use `watch` when:
 - `-O2`
 - `-o <file>`
 - `--out-dir <dir>`
-- `--no-runtime`
-- `--keep-r`
 
 ### Type and Backend Policy
 
@@ -118,6 +143,58 @@ Use `watch` when:
 - `--poll-ms <N>`
 - `--once`
 
+### Command-Specific Options
+
+- `--keep-r`
+  - accepted on the direct legacy compile/run path and on `RR run`
+  - not accepted on `build` or `watch`
+- `--no-runtime`
+  - accepted only on the direct compile path `RR file.rr ...`
+  - not accepted on `run`, `build`, or `watch`
+- `--preserve-all-defs`
+  - accepted on direct compile, `run`, `build`, and `watch`
+  - keeps unreachable top-level `Sym_*` definitions in emitted R
+- `--preserve-all-def`
+  - alias for `--preserve-all-defs`
+
+## Exit Status
+
+RR follows normal compiler-driver conventions:
+
+- `0`
+  - compile or run request completed successfully
+- non-zero
+  - a structured diagnostic or runner failure occurred
+
+The CLI owns final process exit behavior. Internal compiler layers return
+structured diagnostics instead of calling `std::process::exit(...)` directly.
+
+## Artifact Policy
+
+The direct compile path emits `.R` artifacts with:
+
+- selected runtime helper subset
+- compile-time runtime policy defaults for backend/parallel settings
+- source map side data when requested by internal flows
+
+By default RR treats emitted R as a whole-program artifact:
+
+- reachable top-level definitions are kept
+- unreachable `Sym_*` helpers may be stripped
+
+If you need a more source-preserving artifact, pass `--preserve-all-defs` or
+`--preserve-all-def`.
+
+If you pass `--no-runtime`, RR still emits helper-only output, not raw MIR or an
+intermediate dump.
+
+## Related Manuals
+
+- [Getting Started](getting-started.md)
+- [Configuration](configuration.md)
+- [Runtime and Error Model](runtime-and-errors.md)
+- [Compiler Pipeline](compiler-pipeline.md)
+
 ## Semantics Notes
 
 ### `--no-runtime`
@@ -126,10 +203,27 @@ Use `watch` when:
 
 It means:
 
-- omit source/native bootstrap
-- still emit the runtime helper subset actually used by generated code
+- omit compile-time source bootstrap and compile-time runtime policy defaults
+- still emit the helper subset required by the generated program
+- still emit ordinary `.R` code, not an internal IR dump
 
 Use it for inspection and backend debugging, not for normal end-user execution.
+
+### `--preserve-all-defs`
+
+`--preserve-all-defs` keeps otherwise unreachable top-level RR definitions in
+the emitted artifact.
+
+`--preserve-all-def` is a supported alias.
+
+Use it when:
+
+- you want a closer source-to-source transpilation view
+- you plan to inspect or call helper definitions from generated R
+- you do not want whole-program dead-definition stripping
+
+Without this flag, RR is free to drop unused top-level `Sym_*` definitions as
+part of normal emitted-R cleanup.
 
 ### Builtin Naming
 
@@ -171,13 +265,3 @@ Use:
 - `--strict-incremental-verify` when you want cache reuse checked against a rebuild
 
 The incremental artifact model is documented in [Compiler Pipeline](compiler-pipeline.md).
-
-## Exit Status
-
-- `0`
-  - compile or run succeeded
-- non-zero
-  - parse, semantic, type, compiler, or runtime failure
-
-The compiler core returns structured diagnostics. The CLI owns final process
-exit behavior and formatting.

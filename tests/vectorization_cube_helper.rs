@@ -46,6 +46,8 @@ fn scatter_face(field, size) {
   return out
 
 }
+
+print(scatter_face(seq_len(4), 4))
 "#;
 
     let rr_path = out_dir.join("cube_helper_vec.rr");

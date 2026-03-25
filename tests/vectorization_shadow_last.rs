@@ -94,8 +94,9 @@ print(shadow_last(5))
 
     let o1_code = fs::read_to_string(&o1).expect("failed to read O1 output");
     assert!(
-        o1_code.contains("last <- rr_index1_read("),
-        "expected shadow-state scalar restoration in vectorized output"
+        o1_code.contains("last <- rr_index1_read(")
+            || o1_code.contains("print(rr_index1_read(y, n, \"index\"))"),
+        "expected shadow-state scalar restoration or direct last-element read in vectorized output"
     );
     assert!(
         !o1_code.contains("repeat {"),

@@ -212,6 +212,10 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 TokenKind::At
             }
+            Some('~') => {
+                self.advance();
+                TokenKind::Tilde
+            }
             Some('^') => {
                 self.advance();
                 TokenKind::Caret

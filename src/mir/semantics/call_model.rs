@@ -50,8 +50,16 @@ pub(super) fn function_name_suggestion_candidates() -> &'static [&'static str] {
         "rep.int",
         "vector",
         "matrix",
+        "dim",
+        "dimnames",
+        "nrow",
+        "ncol",
         "crossprod",
         "tcrossprod",
+        "t",
+        "diag",
+        "rbind",
+        "cbind",
         "eval",
         "parse",
         "get",
@@ -157,7 +165,7 @@ pub(super) fn builtin_arity(name: &str) -> Option<(usize, Option<usize>)> {
         "length" | "seq_len" | "seq_along" | "abs" | "sqrt" | "sin" | "cos" | "tan" | "asin"
         | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "log10" | "log2" | "exp" | "sign"
         | "gamma" | "lgamma" | "floor" | "ceiling" | "trunc" | "colSums" | "rowSums" | "is.na"
-        | "is.finite" => Some((1, Some(1))),
+        | "is.finite" | "dim" | "dimnames" | "nrow" | "ncol" | "t" => Some((1, Some(1))),
         "atan2" => Some((2, Some(2))),
         "round" | "log" => Some((1, Some(2))),
         "pmax" | "pmin" => Some((2, None)),
@@ -168,12 +176,14 @@ pub(super) fn builtin_arity(name: &str) -> Option<(usize, Option<usize>)> {
         "rep.int" => Some((2, Some(2))),
         "vector" => Some((1, Some(2))),
         "matrix" => Some((1, Some(4))),
+        "diag" => Some((1, Some(4))),
+        "rbind" | "cbind" => Some((1, None)),
         "crossprod" | "tcrossprod" => Some((1, Some(2))),
         _ => None,
     }
 }
 
-pub(super) fn is_dynamic_fallback_builtin(name: &str) -> bool {
+pub(crate) fn is_dynamic_fallback_builtin(name: &str) -> bool {
     matches!(
         name,
         "eval"
@@ -199,14 +209,14 @@ pub(super) fn is_dynamic_fallback_builtin(name: &str) -> bool {
     )
 }
 
-pub(super) fn is_namespaced_r_call(name: &str) -> bool {
+pub(crate) fn is_namespaced_r_call(name: &str) -> bool {
     let Some((pkg, sym)) = name.split_once("::") else {
         return false;
     };
     !pkg.is_empty() && !sym.is_empty() && !pkg.contains(':') && !sym.contains(':')
 }
 
-pub(super) fn is_tidy_helper_call(name: &str) -> bool {
+pub(crate) fn is_tidy_helper_call(name: &str) -> bool {
     matches!(
         name,
         "starts_with"
@@ -224,7 +234,25 @@ pub(super) fn is_tidy_helper_call(name: &str) -> bool {
     )
 }
 
-pub(super) fn is_supported_package_call(name: &str) -> bool {
+pub(crate) fn is_tidy_data_mask_call(name: &str) -> bool {
+    matches!(
+        name,
+        "ggplot2::aes"
+            | "dplyr::mutate"
+            | "dplyr::filter"
+            | "dplyr::select"
+            | "dplyr::summarise"
+            | "dplyr::arrange"
+            | "dplyr::group_by"
+            | "dplyr::rename"
+            | "tidyr::separate"
+            | "tidyr::pivot_longer"
+            | "tidyr::pivot_wider"
+            | "tidyr::unite"
+    )
+}
+
+pub(crate) fn is_supported_package_call(name: &str) -> bool {
     matches!(
         name,
         "base::data.frame"
@@ -236,9 +264,17 @@ pub(super) fn is_supported_package_call(name: &str) -> bool {
             | "stats::glm"
             | "stats::as.formula"
             | "readr::read_csv"
+            | "readr::read_delim"
+            | "readr::read_rds"
+            | "readr::read_tsv"
             | "readr::write_csv"
+            | "readr::write_delim"
+            | "readr::write_rds"
+            | "readr::write_tsv"
+            | "tidyr::separate"
             | "tidyr::pivot_longer"
             | "tidyr::pivot_wider"
+            | "tidyr::unite"
             | "graphics::plot"
             | "graphics::lines"
             | "graphics::legend"
@@ -246,22 +282,35 @@ pub(super) fn is_supported_package_call(name: &str) -> bool {
             | "grDevices::dev.off"
             | "ggplot2::aes"
             | "ggplot2::ggplot"
+            | "ggplot2::geom_col"
+            | "ggplot2::geom_bar"
+            | "ggplot2::facet_grid"
             | "ggplot2::geom_line"
             | "ggplot2::geom_point"
             | "ggplot2::ggtitle"
+            | "ggplot2::facet_wrap"
+            | "ggplot2::labs"
+            | "ggplot2::theme_bw"
             | "ggplot2::theme_minimal"
             | "ggplot2::ggsave"
             | "dplyr::mutate"
             | "dplyr::filter"
+            | "dplyr::full_join"
+            | "dplyr::inner_join"
+            | "dplyr::right_join"
             | "dplyr::select"
             | "dplyr::summarise"
             | "dplyr::arrange"
+            | "dplyr::anti_join"
+            | "dplyr::bind_rows"
             | "dplyr::group_by"
+            | "dplyr::left_join"
             | "dplyr::rename"
+            | "dplyr::semi_join"
     )
 }
 
-pub(super) fn is_supported_tidy_helper_call(name: &str) -> bool {
+pub(crate) fn is_supported_tidy_helper_call(name: &str) -> bool {
     is_tidy_helper_call(name)
 }
 

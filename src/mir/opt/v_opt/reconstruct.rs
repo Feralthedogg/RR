@@ -1,5 +1,25 @@
-use super::*;
+use super::analysis::{
+    canonical_value, classify_3d_general_vector_access, classify_3d_vector_access_axis,
+    collapse_prior_origin_phi_state, expr_has_iv_dependency,
+    expr_has_non_vector_safe_call_in_vector_context, find_conditional_phi_shape,
+    find_conditional_phi_shape_with_blocks, floor_like_index_source, is_iv_equivalent,
+    is_loop_compatible_base, is_passthrough_load_of_var, is_prior_origin_phi_state,
+    is_runtime_vector_read_call, last_assign_to_var_in_block,
+    last_effective_assign_before_value_use_in_block, loop_covers_whole_destination,
+    preserve_phi_value, resolve_materialized_value, value_depends_on,
+};
+use super::debug::{
+    trace_block_instrs, trace_materialize_reject, trace_value_tree, vectorize_trace_enabled,
+};
+use super::types::{Axis3D, VectorAccessOperand3D};
+use crate::mir::opt::loop_analysis::{LoopInfo, build_pred_map};
+use crate::mir::*;
+use crate::syntax::ast::BinOp;
+use crate::typeck::{PrimTy, ShapeTy};
+use rustc_hash::{FxHashMap, FxHashSet};
 
+/// Materialize the canonical vector index range for a loop after applying any
+/// `<`/`>` style bound adjustment captured during loop analysis.
 pub(super) fn build_loop_index_vector(fn_ir: &mut FnIR, lp: &LoopInfo) -> Option<ValueId> {
     let iv = lp.iv.as_ref()?;
     let end = adjusted_loop_limit(fn_ir, lp.limit?, lp.limit_adjust);
@@ -12,6 +32,45 @@ pub(super) fn build_loop_index_vector(fn_ir: &mut FnIR, lp: &LoopInfo) -> Option
         crate::mir::def::Facts::empty(),
         None,
     ))
+}
+
+pub(super) fn add_int_offset(fn_ir: &mut FnIR, base: ValueId, offset: i64) -> ValueId {
+    if offset == 0 {
+        return base;
+    }
+    if let ValueKind::Const(Lit::Int(n)) = fn_ir.values[base].kind {
+        return fn_ir.add_value(
+            ValueKind::Const(Lit::Int(n + offset)),
+            crate::utils::Span::dummy(),
+            crate::mir::def::Facts::empty(),
+            None,
+        );
+    }
+    let k = fn_ir.add_value(
+        ValueKind::Const(Lit::Int(offset)),
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    fn_ir.add_value(
+        ValueKind::Binary {
+            op: BinOp::Add,
+            lhs: base,
+            rhs: k,
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    )
+}
+
+/// Apply the loop-analysis limit adjustment so downstream vector codegen can
+/// use the exact inclusive range implied by the original scalar loop guard.
+pub(super) fn adjusted_loop_limit(fn_ir: &mut FnIR, limit: ValueId, adjust: i64) -> ValueId {
+    if adjust == 0 {
+        return limit;
+    }
+    add_int_offset(fn_ir, limit, adjust)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -952,6 +1011,16 @@ pub(super) fn materialize_vector_phi(
     require_safe_index: bool,
     recurse: MaterializeRecurseFn,
 ) -> Option<ValueId> {
+    if args.is_empty()
+        && let Some(var) = fn_ir.values[root].origin_var.clone()
+        && !has_non_passthrough_assignment_in_loop(fn_ir, lp, &var)
+    {
+        let load = intern_materialized_value(fn_ir, interner, ValueKind::Load { var }, span, facts);
+        memo.insert(root, load);
+        visiting.remove(&root);
+        return Some(load);
+    }
+
     if let Some(seed) = fold_phi_seed_candidate(fn_ir, root, &args, lp) {
         let folded = recurse(
             fn_ir,

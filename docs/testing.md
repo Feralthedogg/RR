@@ -2,6 +2,14 @@
 
 This page is the verification manual for RR.
 
+## Audience
+
+Read this page when you need to choose:
+
+- which test layer should catch a regression
+- which local command matches CI
+- when to use cleanroom, audit, or fuzz flows
+
 RR uses:
 
 - unit tests
@@ -81,6 +89,14 @@ The test tree is intentionally layered like the manuals:
 - fuzz and soak coverage
 
 Use the lightest layer that catches the bug you are fixing.
+
+## Local vs CI
+
+RR CI does not replace local verification. The intended model is:
+
+- focused local regression first
+- standard local stack second
+- CI as confirmation and diff-scoped enforcement
 
 ## Test Families
 
@@ -164,6 +180,9 @@ artifact from the default incremental `auto` mode.
 
 These validate artifact cache invalidation, function emit reuse, in-memory watch
 session reuse, default `auto` phase selection, and strict cache verification.
+They also now fence malformed incremental source-map cache entries so cache
+corruption produces a recovery-oriented compiler error instead of being reused
+silently.
 
 ### CLI and Execution Behavior
 
@@ -198,7 +217,9 @@ This enforces compile-time budget expectations for optimized builds.
 
 - `example/data_science/*.rr`
 - `example/physics/*.rr`
+- `example/visualization/*.rr`
 - `tests/example_simulations.rs`
+- `tests/artifact_mode_equivalence.rs`
 - `tests/tesseract_runtime_smoke.rs`
 - `example/benchmarks/*.rr`
 - `tests/benchmark_examples_smoke.rs`
@@ -206,8 +227,28 @@ This enforces compile-time budget expectations for optimized builds.
 
 The simulation catalog is compiled across optimization levels and executed at `-O2`.
 The benchmark catalog is intended for repeatable compile-time and runtime comparisons.
+`artifact_mode_equivalence.rs` is the emitted artifact-mode parity suite: it
+checks that representative workloads keep the same observable
+behavior across:
+
+- default runtime-injected artifacts
+- helper-only `--no-runtime` artifacts
+- `--preserve-all-defs` artifacts
+
 `tesseract.rr` is covered as a dedicated runtime smoke because it exercises the
 largest vectorization and runtime-injection path in the example set.
+That suite is not only a runtime smoke: it also acts as a compile-output fence
+for a handful of high-value generated-R invariants that have regressed in the
+past, including:
+
+- `alloc_particles` returning the mutated vector rather than `seq_len(...)`
+- `solve_cg` seeding `rs_old` from `r` instead of a stale zero-vector replay
+- no stale whole-slice writeback at the tail of `solve_cg`
+- no duplicate `coriolis <- Sym_17(...)` reset after the field is computed
+- no hard-coded `40` face indexing in place of `N`
+- simplified `get_lat` / inlined latitude branches without stale temp chains
+- elimination of trivial `ii <- i` loop-index aliases in generated user code
+
 The perf smoke compiles the normal runtime-injected artifact; it does not use
 `--no-runtime`. Runtime timing is measured with `RR_RUNTIME_MODE=release` and
 `RR_ENABLE_MARKS=0` so the gate tracks the fast runtime path instead of debug
@@ -257,6 +298,7 @@ Measurement setup:
 - alternative runtime: Renjin `3.5-beta76` on OpenJDK `25.0.2`
 - repeated RR delta study: 5 runs per workload, median runtime with IQR in `()`
 - GNU R JIT / Renjin slices: mean runtime with standard deviation in `+-`
+- benchmark CSV/JSON assets now record both `mean_ms` and `median_ms`
 - current cross-language slice refresh: GNU R, a local NumPy venv under
   `target/tmp/bench-python`, Homebrew Julia `1.12.5`, and a local Renjin
   `3.5-beta76` install under `target/tmp/renjin-dist`
@@ -269,61 +311,130 @@ For a current end-to-end spot check, `scripts/bench_signal_pipeline.py` now:
   to RR O2 emitted R
 - benchmarks the same deterministic 250k-sample preprocessing kernel across
   scalar base R on GNU R, vectorized base R on GNU R, RR O2 on GNU R, native C,
-  NumPy, Julia, vectorized base R on Renjin, and RR O2 on Renjin
-- validates that every engine agrees on the final tail value and mean within
-  tight floating-point tolerance before timing anything
+  NumPy, Julia, and, when available, vectorized base R / RR O2 on Renjin
+- validates that every available engine agrees on the final tail value and mean
+  within tight floating-point tolerance before timing anything
 
 Reproduction command:
 
 ```bash
 target/tmp/bench-python/bin/python3 scripts/bench_signal_pipeline.py \
-  --runs 5 \
-  --warmup 1
+  --skip-renjin \
+  --runs 3 \
+  --warmup 0
+```
+
+Refresh helper:
+
+```bash
+scripts/refresh_benchmark_assets.sh --date 2026-03-24
+```
+
+The refresh helper rebuilds `target/release/RR` before timing and rewrites the
+signal-pipeline docs links/table to the selected date tag, so the published
+asset snapshot stays tied to a fresh compiler binary.
+
+Artifacts:
+
+- raw data: [`signal-pipeline-runtime-2026-03-24.csv`](./assets/signal-pipeline-runtime-2026-03-24.csv)
+- chart:
+
+![Signal pipeline runtime comparison](./assets/signal-pipeline-runtime-2026-03-24.svg)
+
+This slice used `target/release/RR` with `-O2 --no-incremental`, zero warmup
+runs, then three timed wall-clock runs per command. All non-parallel rows were
+pinned to a single thread with `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`,
+`VECLIB_MAXIMUM_THREADS=1`, and `JULIA_NUM_THREADS=1`. This refresh was run
+with `--skip-renjin`, so there is no Renjin row in the published snapshot.
+
+Notes:
+
+- This benchmark models a common preprocessing kernel with
+  clamp/threshold/nonlinear feature shaping over `250,000` samples and `16`
+  passes.
+- The script now emits a generic optimizer matrix:
+  direct base-R scalar/vector baselines, RR `-O0/-O1/-O2` cold rows, matching
+  warm rows, plus cross-language reference rows such as C, NumPy, and Julia.
+- The generated CSV/JSON now includes optimizer diagnostics for RR artifacts:
+  emitted line count, `for`/`repeat` counts, remaining `rr_index1_*` helpers,
+  helper-call counts, and `pulse_*` fields derived from `TachyonPulseStats`.
+- The intended use is no longer “backend mode horse race”.
+  This slice is meant to answer:
+  which optimization tier wins, how much of the gap is cold-start vs warm
+  steady-state, and what MIR/vectorization activity actually happened.
+
+### Diffusion Optimizer Slice
+
+For a generic optimizer spot check on stencil workloads, `scripts/bench_diffusion_backends.py` now:
+
+- compiles `heat_diffusion_bench.rr` and `reaction_diffusion_bench.rr`
+- benchmarks RR `-O0/-O1/-O2` cold rows and matching warm rows
+- validates that every optimizer tier agrees on the printed metrics before
+  timing anything
+
+Reproduction command:
+
+```bash
+python3 scripts/bench_diffusion_backends.py --runs 3 --warmup 0
 ```
 
 Artifacts:
 
-- raw data: [`signal-pipeline-runtime-2026-03-11.csv`](./assets/signal-pipeline-runtime-2026-03-11.csv)
+- raw data: [`diffusion-backend-runtime-2026-03-24.csv`](./assets/diffusion-backend-runtime-2026-03-24.csv)
 - chart:
 
-![Signal pipeline runtime comparison](./assets/signal-pipeline-runtime-2026-03-11.svg)
+![Diffusion backend runtime comparison](./assets/diffusion-backend-runtime-2026-03-24.svg)
 
-This slice used `target/release/RR` with `-O2 --no-incremental`, one warmup
-run, then five timed wall-clock runs per command. All engines were pinned to a
-single thread with `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`,
-`VECLIB_MAXIMUM_THREADS=1`, and `JULIA_NUM_THREADS=1`.
-
-| Slice | Mean ms | Std ms | Notes |
-| --- | ---: | ---: | --- |
-| direct base R (scalar) on GNU R | `1065.1` | `11.0` | loop-based scalar base-R baseline |
-| direct base R (vectorized) on GNU R | `176.9` | `2.2` | idiomatic base-R vector baseline |
-| RR O2 emitted R on GNU R | `189.9` | `2.9` | same workload compiled from RR |
-| C O3 native | `10.0` | `0.2` | `clang -O3`, single-threaded |
-| NumPy | `77.4` | `1.0` | vectorized array math on CPython + NumPy `2.4.3` |
-| Julia | `262.0` | `41.7` | Julia `1.12.5`, base loops with `@inbounds` |
-| direct base R (vectorized) on Renjin | `907.2` | `12.7` | same idiomatic base-R script on Renjin `3.5-beta76` |
-| RR O2 on Renjin | `980.6` | `5.9` | RR-emitted R on Renjin `3.5-beta76` |
+These slices use `target/release/RR` with `-O0/-O1/-O2 --no-incremental`,
+zero warmup runs, then the requested timed wall-clock runs per command. Warm
+rows still use the in-process repeated-kernel driver.
 
 Notes:
 
-- The benchmark is deliberately easier to explain than `tesseract`: it models a
-  common preprocessing kernel with clamp/threshold/nonlinear feature shaping
-  over `250,000` samples and `16` passes.
-- The GNU R baseline is now split in two on purpose:
-  a scalar loop version and an idiomatic vectorized version.
-  That makes the comparison easier to read.
-  RR O2 is faster than the scalar direct-R baseline on this workload
-  (`1065.1 ms -> 189.9 ms`, about `5.61x`) and now lands close to the
-  hand-vectorized base-R script (`176.9 ms`, about `1.07x` gap).
-- The fast direct-R row is not a naive translation.
-  It is already the shape GNU R likes best: `pmax(...)`, `ifelse(...)`,
-  whole-vector assignments, and `mean(...)` on full vectors.
-- Renjin handled the vectorized base-R script and the RR-emitted R script on
-  the same workload. On this machine RR O2 on Renjin (`980.6 ms`) now sits
-  close to vectorized base R on Renjin (`907.2 ms`), though GNU R remains the
-  faster host for this emitted program.
-- C stayed the native ceiling on this machine, and NumPy was the fastest of the
-  managed-language rows.
+- These workloads are the clearest place to track whether generic MIR
+  vectorization and emitted-R cleanup are improving real stencil loops.
+- The generated CSV/JSON carries the same emitted-code and `pulse_*`
+  diagnostics as the signal-pipeline slice, so cold/warm timings can be tied
+  back to actual optimizer activity.
+- On the current signoff snapshot, the useful `-O2` reference points are
+  roughly `170.2 ms` / `21.5 ms` for `heat_diffusion` cold/warm and
+  `178.2 ms` / `25.9 ms` for `reaction_diffusion` cold/warm.
+
+### Optimizer Candidate Slice
+
+For a broader optimizer sanity check, `scripts/bench_backend_candidates.py` now
+measures three RR-only workloads that behave very differently under the generic
+optimizer path:
+
+- `vector_fusion_bench.rr`
+- `orbital_sweep_bench.rr`
+- `bootstrap_resample_bench.rr`
+
+Reproduction command:
+
+```bash
+python3 scripts/bench_backend_candidates.py --runs 3 --warmup 0
+```
+
+Artifacts:
+
+- raw data: [`backend-candidate-runtime-2026-03-24.csv`](./assets/backend-candidate-runtime-2026-03-24.csv)
+- chart:
+
+![Backend candidate runtime comparison](./assets/backend-candidate-runtime-2026-03-24.svg)
+
+These slices use the same setup as the diffusion notes: fresh
+`target/release/RR`, RR `-O0/-O1/-O2` cold rows, matching warm rows, and the
+same emitted-code / `pulse_*` diagnostics.
+
+Notes:
+
+- `vector_fusion` should highlight “already compact emitted R” behavior.
+- `orbital_sweep` is useful for recurrence-heavy loop structure.
+- `bootstrap_resample` is the irregular gather-heavy case that often exposes
+  optimizer blind spots.
+- Together these rows answer whether `-O1/-O2` improvements are real,
+  workload-specific wins rather than benchmark-special-case effects.
 
 RR optimization-level deltas on representative workloads:
 
@@ -334,8 +445,6 @@ RR optimization-level deltas on representative workloads:
 | `orbital` | `172 (5)` | `165 (10)` | `169 (1)` | `1.04x` | `1.02x` |
 | `reaction` | `316 (17)` | `289 (12)` | `287 (9)` | `1.09x` | `1.10x` |
 | `vector` | `275 (8)` | `145 (4)` | `143 (6)` | `1.90x` | `1.92x` |
-| `tesseract` | `15147 (388)` | `2745 (136)` | `2753 (174)` | `5.52x` | `5.50x` |
-| `total` | `16366 (379)` | `3693 (200)` | `3700 (189)` | `4.43x` | `4.42x` |
 
 Notes:
 
@@ -350,14 +459,12 @@ Small GNU R bytecode/JIT comparison on emitted RR programs:
 | Workload | O0 `Rscript` | O0 + JIT | O2 `Rscript` | O2 + JIT |
 | --- | ---: | ---: | ---: | ---: |
 | `vector` | `282.4 +- 3.0` | `239.2 +- 4.2` | `138.3 +- 1.4` | `116.6 +- 1.6` |
-| `tesseract` | `14733.3 +- 171.3` | `15252.3 +- 172.6` | `2786.6 +- 21.3` | `2649.9 +- 53.4` |
 
 Small Renjin comparison on the same emitted RR programs:
 
 | Workload | O0 Renjin | O2 Renjin | O2/O0 |
 | --- | ---: | ---: | ---: |
 | `vector` | `1256.3 +- 158.6` | `528.5 +- 6.1` | `2.38x` |
-| `tesseract` | `38830.6 +- 472.5` | `8259.9 +- 21.3` | `4.70x` |
 
 Takeaways:
 

@@ -2,4 +2,4 @@ expect=compile-ok
 flag=--no-runtime
 flag=-O2
 stdout_contains=Simplified: 1
-emit_contains=acc <- (acc + (.arg_x[i] * .arg_x[i]))
+emit_contains=sum((c(1, 2, 3, 4) * c(1, 2, 3, 4)))

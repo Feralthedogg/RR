@@ -11,7 +11,7 @@ fn main() {
     )
     let grid = base.data.frame(x = c(-2, -1, 0, 1, 2, 3, 4))
 
-    let model = stats.glm(stats.as.formula("y ~ x"), data = train)
+    let model = stats.glm(y ~ x, data = train)
     let predicted = stats.predict(model, newdata = grid)
     let fit = base.data.frame(x = grid.x, predicted = predicted)
 

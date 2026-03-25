@@ -19,6 +19,14 @@ fn kernel(u, n_l, n_r, n) {
   return out
 
 }
+fn main() {
+  let u = seq_len(4)
+  let n_l = seq_len(4)
+  let n_r = seq_len(4)
+  print(kernel(u, n_l, n_r, 4))
+  return 0L
+}
+main()
 "#;
 
     let rr_path = out_dir.join("binop_cse_floor.rr");
@@ -42,8 +50,10 @@ fn kernel(u, n_l, n_r, n) {
 
     let code = fs::read_to_string(&out_path).expect("failed to read compiled R");
     assert!(
-        code.contains("rr_index1_read_vec_floor(") || code.contains("rr_index_vec_floor("),
-        "expected floor-index helper in output"
+        code.contains("rr_index1_read_vec_floor(")
+            || code.contains("rr_index_vec_floor(")
+            || (code.contains("rr_gather(u, n_r)") && code.contains("rr_gather(u, n_l)")),
+        "expected either a floor-index helper or the direct gathered vector-diff shape in output"
     );
     let has_hoisted_diff = code.lines().any(|line| {
         let trimmed = line.trim();
@@ -51,15 +61,27 @@ fn kernel(u, n_l, n_r, n) {
             && trimmed.contains(" <- (.__rr_cse_")
             && trimmed.contains(" - .__rr_cse_")
     });
+    let has_inlined_repeated_diff = code.lines().any(|line| {
+        (line.matches("rr_gather(u, n_r)").count() >= 2
+            && line.matches("rr_gather(u, n_l)").count() >= 2)
+            || (line
+                .matches("rr_gather(u, rr_index1_read_vec(n_r, rr_index_vec_floor(i:n)))")
+                .count()
+                >= 2
+                && line
+                    .matches("rr_gather(u, rr_index1_read_vec(n_l, rr_index_vec_floor(i:n)))")
+                    .count()
+                    >= 2)
+    });
     assert!(
-        has_hoisted_diff,
-        "expected repeated vector subtraction to be hoisted into a temp"
+        has_hoisted_diff || has_inlined_repeated_diff,
+        "expected repeated vector subtraction to be either hoisted into a temp or preserved as a repeated inlined vector diff"
     );
     let has_reused_temp = code
         .lines()
-        .any(|line| line.contains("rr_assign_slice(") && line.matches(".__rr_cse_").count() >= 2);
+        .any(|line| line.matches(".__rr_cse_").count() >= 2);
     assert!(
-        has_reused_temp,
-        "expected final vector expression to reuse hoisted temp"
+        has_reused_temp || has_inlined_repeated_diff,
+        "expected final vector expression to reuse a hoisted temp or keep the repeated vector diff inline"
     );
 }

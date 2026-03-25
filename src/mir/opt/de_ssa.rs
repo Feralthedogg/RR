@@ -1,7 +1,15 @@
-use crate::mir::opt::parallel_copy::{Move, emit_parallel_copy};
+use crate::mir::opt::parallel_copy::{Move, emit_parallel_copy, move_is_noop};
 use crate::mir::*;
 use crate::utils::Span;
 use std::collections::{HashMap, HashSet};
+
+#[derive(Debug)]
+struct EdgeMove {
+    pred: BlockId,
+    succ: BlockId,
+    dst: VarId,
+    src: ValueId,
+}
 
 pub fn run(fn_ir: &mut FnIR) -> bool {
     let mut changed = false;
@@ -15,55 +23,16 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
     }
 
     let mut reachable = compute_reachable(fn_ir);
+    changed |= simplify_trivial_phis(fn_ir, &reachable);
     let mut phi_blocks = collect_phi_blocks(fn_ir);
     phi_blocks.retain(|bid, _| reachable.contains(bid));
 
-    // Split edges from multi-succ blocks so we can insert per-edge copies safely.
     let succs = build_succ_map(fn_ir);
     let mut split_map: HashMap<(BlockId, BlockId), BlockId> = HashMap::new();
-
-    let mut edges_to_split: Vec<(BlockId, BlockId)> = Vec::new();
-    let mut phi_block_ids: Vec<BlockId> = phi_blocks.keys().copied().collect();
-    phi_block_ids.sort_unstable();
-    for bid in phi_block_ids {
-        let Some(phis) = phi_blocks.get(&bid) else {
-            continue;
-        };
-        for &phi in phis {
-            if let ValueKind::Phi { args } = &fn_ir.values[phi].kind {
-                for (_, pred) in args {
-                    if !reachable.contains(pred) {
-                        continue;
-                    }
-                    if succs.get(pred).map(|s| s.len()).unwrap_or(0) > 1 {
-                        edges_to_split.push((*pred, bid));
-                    }
-                }
-            }
-        }
-    }
-    edges_to_split.sort_unstable();
-    edges_to_split.dedup();
-
-    for (pred, bid) in edges_to_split {
-        let key = (pred, bid);
-        if let std::collections::hash_map::Entry::Vacant(e) = split_map.entry(key) {
-            let new_bid = split_edge(fn_ir, pred, bid);
-            e.insert(new_bid);
-            changed = true;
-        }
-    }
-
-    // Recompute reachability after splitting (new blocks may have been introduced).
-    reachable = compute_reachable(fn_ir);
-
-    // Recollect after splitting (phi args updated).
-    phi_blocks = collect_phi_blocks(fn_ir);
-    phi_blocks.retain(|bid, _| reachable.contains(bid));
-
-    let last_assign_map = build_last_assign_map(fn_ir);
+    let pred_map = build_pred_map_from_succs(&succs);
     let mut moves_by_block: HashMap<BlockId, Vec<Move>> = HashMap::new();
     let mut phi_infos: Vec<(ValueId, VarId)> = Vec::new();
+    let mut needed_moves: Vec<EdgeMove> = Vec::new();
 
     let mut phi_block_ids: Vec<BlockId> = phi_blocks.keys().copied().collect();
     phi_block_ids.sort_unstable();
@@ -81,29 +50,74 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
                         // Never synthesize phi-edge overwrites into parameter locals.
                         continue;
                     }
-                    let resolved_src =
-                        resolve_phi_source_for_pred(fn_ir, *src, bid, *pred, &mut HashSet::new());
-                    if let Some(block_map) = last_assign_map.get(pred)
-                        && let Some(existing) = block_map.get(&dest)
-                        && *existing == resolved_src
+                    let resolved_src = canonicalize_move_source_for_pred(
+                        fn_ir,
+                        *pred,
+                        resolve_phi_source_for_pred(fn_ir, *src, bid, *pred, &mut HashSet::new()),
+                    );
+                    if let Some(existing) =
+                        reaching_assign_source_for_pred(fn_ir, &pred_map, *pred, &dest)
+                        && existing == resolved_src
                     {
                         continue;
                     }
-                    moves_by_block.entry(*pred).or_default().push(Move {
+                    let move_candidate = Move {
                         dst: dest.clone(),
                         src: resolved_src,
+                    };
+                    if move_is_noop(fn_ir, &move_candidate) {
+                        continue;
+                    }
+                    needed_moves.push(EdgeMove {
+                        pred: *pred,
+                        succ: bid,
+                        dst: move_candidate.dst,
+                        src: move_candidate.src,
                     });
                 }
             }
         }
     }
 
+    let mut edges_to_split: Vec<(BlockId, BlockId)> = needed_moves
+        .iter()
+        .filter(|edge_move| succs.get(&edge_move.pred).map(|s| s.len()).unwrap_or(0) > 1)
+        .map(|edge_move| (edge_move.pred, edge_move.succ))
+        .collect();
+    edges_to_split.sort_unstable();
+    edges_to_split.dedup();
+
+    for (pred, bid) in edges_to_split {
+        let key = (pred, bid);
+        if let std::collections::hash_map::Entry::Vacant(e) = split_map.entry(key) {
+            let new_bid = split_edge(fn_ir, pred, bid);
+            e.insert(new_bid);
+            changed = true;
+        }
+    }
+
+    // Recompute reachability after splitting (new blocks may have been introduced).
+    reachable = compute_reachable(fn_ir);
+    changed |= simplify_trivial_phis(fn_ir, &reachable);
+
+    for edge_move in needed_moves {
+        let target_block = split_map
+            .get(&(edge_move.pred, edge_move.succ))
+            .copied()
+            .unwrap_or(edge_move.pred);
+        moves_by_block.entry(target_block).or_default().push(Move {
+            dst: edge_move.dst,
+            src: edge_move.src,
+        });
+    }
+
     let mut move_block_ids: Vec<BlockId> = moves_by_block.keys().copied().collect();
     move_block_ids.sort_unstable();
     for bid in move_block_ids {
-        let Some(moves) = moves_by_block.remove(&bid) else {
+        let Some(mut moves) = moves_by_block.remove(&bid) else {
             continue;
         };
+        normalize_block_moves(fn_ir, &mut moves);
         if moves.is_empty() {
             continue;
         }
@@ -165,6 +179,118 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
     changed
 }
 
+fn canonicalize_move_source_for_pred(fn_ir: &FnIR, pred: BlockId, src: ValueId) -> ValueId {
+    canonicalize_value_before_instr(fn_ir, pred, fn_ir.blocks[pred].instrs.len(), src)
+}
+
+fn canonicalize_value_before_instr(
+    fn_ir: &FnIR,
+    pred: BlockId,
+    upto: usize,
+    src: ValueId,
+) -> ValueId {
+    fn rec(
+        fn_ir: &FnIR,
+        pred: BlockId,
+        upto: usize,
+        src: ValueId,
+        seen: &mut HashSet<(ValueId, usize)>,
+    ) -> ValueId {
+        if !seen.insert((src, upto)) {
+            return src;
+        }
+        match &fn_ir.values[src].kind {
+            ValueKind::Load { var } => {
+                if let Some((idx, next)) = last_assign_to_var_before(fn_ir, pred, var, upto) {
+                    return rec(fn_ir, pred, idx, next, seen);
+                }
+                src
+            }
+            _ => phi_alias_canonical_value(fn_ir, src),
+        }
+    }
+
+    rec(fn_ir, pred, upto, src, &mut HashSet::new())
+}
+
+fn reaching_assign_source_for_pred(
+    fn_ir: &FnIR,
+    pred_map: &HashMap<BlockId, Vec<BlockId>>,
+    start: BlockId,
+    dst: &str,
+) -> Option<ValueId> {
+    fn rec(
+        fn_ir: &FnIR,
+        pred_map: &HashMap<BlockId, Vec<BlockId>>,
+        block: BlockId,
+        dst: &str,
+        seen: &mut HashSet<BlockId>,
+    ) -> Option<ValueId> {
+        if !seen.insert(block) {
+            return None;
+        }
+        if let Some((assign_idx, src)) =
+            last_assign_to_var_before(fn_ir, block, dst, fn_ir.blocks[block].instrs.len())
+        {
+            seen.remove(&block);
+            return Some(canonicalize_value_before_instr(
+                fn_ir, block, assign_idx, src,
+            ));
+        }
+        let preds = pred_map.get(&block)?;
+        if preds.is_empty() {
+            seen.remove(&block);
+            return None;
+        }
+        let mut shared: Option<ValueId> = None;
+        for pred in preds {
+            let Some(src) = rec(fn_ir, pred_map, *pred, dst, seen) else {
+                seen.remove(&block);
+                return None;
+            };
+            match shared {
+                None => shared = Some(src),
+                Some(prev) if prev == src => {}
+                Some(_) => {
+                    seen.remove(&block);
+                    return None;
+                }
+            }
+        }
+        seen.remove(&block);
+        shared
+    }
+
+    rec(fn_ir, pred_map, start, dst, &mut HashSet::new())
+}
+
+fn last_assign_to_var_before(
+    fn_ir: &FnIR,
+    block: BlockId,
+    var: &str,
+    upto: usize,
+) -> Option<(usize, ValueId)> {
+    fn_ir.blocks[block]
+        .instrs
+        .iter()
+        .take(upto)
+        .enumerate()
+        .rev()
+        .find_map(|(idx, instr)| match instr {
+            Instr::Assign { dst, src, .. } if dst == var => Some((idx, *src)),
+            _ => None,
+        })
+}
+
+fn normalize_block_moves(fn_ir: &FnIR, moves: &mut Vec<Move>) {
+    let mut seen: HashSet<(String, ValueId)> = HashSet::new();
+    moves.retain(|m| {
+        let canonical_src = phi_alias_canonical_value(fn_ir, m.src);
+        let key = (m.dst.clone(), canonical_src);
+        seen.insert(key)
+    });
+}
+
 fn ensure_phi_var(fn_ir: &mut FnIR, phi: ValueId) -> VarId {
     if let Some(name) = &fn_ir.values[phi].origin_var {
         return name.clone();
@@ -172,6 +298,71 @@ fn ensure_phi_var(fn_ir: &mut FnIR, phi: ValueId) -> VarId {
     let name = format!(".phi_{}", phi);
     fn_ir.values[phi].origin_var = Some(name.clone());
     name
+}
+
+fn simplify_trivial_phis(fn_ir: &mut FnIR, reachable: &HashSet<BlockId>) -> bool {
+    let mut changed = false;
+    let mut progress = true;
+    while progress {
+        progress = false;
+        for phi in 0..fn_ir.values.len() {
+            if !matches!(fn_ir.values[phi].kind, ValueKind::Phi { .. }) {
+                continue;
+            }
+            if let Some(bb) = fn_ir.values[phi].phi_block
+                && !reachable.contains(&bb)
+            {
+                continue;
+            }
+            let Some(src) = trivial_phi_source(fn_ir, phi, &mut HashSet::new()) else {
+                continue;
+            };
+            if src == phi {
+                continue;
+            }
+            let src_val = fn_ir.values[src].clone();
+            let dst = &mut fn_ir.values[phi];
+            dst.kind = src_val.kind;
+            dst.facts = src_val.facts;
+            dst.value_ty = src_val.value_ty;
+            dst.value_term = src_val.value_term;
+            if dst.origin_var.is_none() {
+                dst.origin_var = src_val.origin_var;
+            }
+            dst.phi_block = None;
+            dst.escape = src_val.escape;
+            progress = true;
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn trivial_phi_source(fn_ir: &FnIR, phi: ValueId, seen: &mut HashSet<ValueId>) -> Option<ValueId> {
+    if !seen.insert(phi) {
+        return None;
+    }
+    let ValueKind::Phi { args } = &fn_ir.values[phi].kind else {
+        return None;
+    };
+    let mut candidate = None;
+    for (arg, _) in args {
+        if *arg == phi {
+            continue;
+        }
+        let resolved = if matches!(fn_ir.values[*arg].kind, ValueKind::Phi { .. }) {
+            trivial_phi_source(fn_ir, *arg, seen).unwrap_or(*arg)
+        } else {
+            *arg
+        };
+        let resolved = phi_alias_canonical_value(fn_ir, resolved);
+        match candidate {
+            None => candidate = Some(resolved),
+            Some(prev) if prev == resolved => {}
+            Some(_) => return None,
+        }
+    }
+    candidate
 }
 
 fn collect_phi_blocks(fn_ir: &FnIR) -> HashMap<BlockId, Vec<ValueId>> {
@@ -251,18 +442,16 @@ fn build_succ_map(fn_ir: &FnIR) -> HashMap<BlockId, Vec<BlockId>> {
     succs
 }
 
-fn build_last_assign_map(fn_ir: &FnIR) -> HashMap<BlockId, HashMap<VarId, ValueId>> {
-    let mut map: HashMap<BlockId, HashMap<VarId, ValueId>> = HashMap::new();
-    for (bid, blk) in fn_ir.blocks.iter().enumerate() {
-        let mut last: HashMap<VarId, ValueId> = HashMap::new();
-        for instr in &blk.instrs {
-            if let Instr::Assign { dst, src, .. } = instr {
-                last.insert(dst.clone(), *src);
-            }
+fn build_pred_map_from_succs(
+    succs: &HashMap<BlockId, Vec<BlockId>>,
+) -> HashMap<BlockId, Vec<BlockId>> {
+    let mut preds: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+    for (from, tos) in succs {
+        for to in tos {
+            preds.entry(*to).or_default().push(*from);
         }
-        map.insert(bid, last);
     }
-    map
+    preds
 }
 
 fn compute_reachable(fn_ir: &FnIR) -> std::collections::HashSet<BlockId> {
@@ -377,7 +566,7 @@ fn resolve_phi_source_for_pred(
 #[cfg(test)]
 mod tests {
     use super::run;
-    use crate::mir::{Facts, FnIR, Terminator, ValueKind};
+    use crate::mir::{Facts, FnIR, Instr, Terminator, ValueKind};
     use crate::utils::Span;
 
     #[test]
@@ -402,6 +591,508 @@ mod tests {
         assert!(
             matches!(f.values[phi].kind, ValueKind::Phi { .. }),
             "dead phi should stay dead, not become NULL"
+        );
+    }
+
+    #[test]
+    fn trivial_phi_is_eliminated_before_parallel_copy() {
+        let mut f = FnIR::new("trivial_phi".to_string(), vec![]);
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(one, left), (one, right)],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].term = Terminator::If {
+            cond: one,
+            then_bb: left,
+            else_bb: right,
+        };
+        f.blocks[left].term = Terminator::Goto(merge);
+        f.blocks[right].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let changed = run(&mut f);
+        assert!(changed);
+        assert!(
+            !matches!(f.values[phi].kind, ValueKind::Phi { .. }),
+            "trivial phi should be eliminated"
+        );
+    }
+
+    #[test]
+    fn critical_edge_is_not_split_when_existing_assign_already_matches_phi_input() {
+        let mut f = FnIR::new("critical_edge_no_split".to_string(), vec![]);
+        let entry = f.add_block();
+        let other = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(2)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(one, entry), (two, other)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: merge,
+            else_bb: other,
+        };
+
+        f.blocks[other].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: two,
+            span: Span::default(),
+        });
+        f.blocks[other].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let before_blocks = f.blocks.len();
+        let changed = run(&mut f);
+        assert!(changed);
+        assert_eq!(
+            f.blocks.len(),
+            before_blocks,
+            "critical edge should not be split when no move is required"
+        );
+    }
+
+    #[test]
+    fn trivial_phi_eliminates_load_alias_inputs_with_same_canonical_source() {
+        let mut f = FnIR::new("trivial_phi_load_alias".to_string(), vec![]);
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_left = f.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_right = f.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(load_left, left), (load_right, right)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: left,
+            else_bb: right,
+        };
+        f.blocks[left].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        f.blocks[left].term = Terminator::Goto(merge);
+        f.blocks[right].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        f.blocks[right].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let changed = run(&mut f);
+        assert!(changed);
+        assert!(
+            !matches!(f.values[phi].kind, ValueKind::Phi { .. }),
+            "phi with load-alias inputs from same canonical source should be eliminated"
+        );
+    }
+
+    #[test]
+    fn critical_edge_is_not_split_when_phi_input_is_load_of_existing_assignment() {
+        let mut f = FnIR::new("critical_edge_load_alias".to_string(), vec![]);
+        let entry = f.add_block();
+        let other = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(2)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_x = f.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(load_x, entry), (two, other)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: merge,
+            else_bb: other,
+        };
+        f.blocks[other].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: two,
+            span: Span::default(),
+        });
+        f.blocks[other].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let before_blocks = f.blocks.len();
+        let changed = run(&mut f);
+        assert!(changed);
+        assert_eq!(
+            f.blocks.len(),
+            before_blocks,
+            "load-alias phi input should canonicalize to existing assignment without edge split"
+        );
+    }
+
+    #[test]
+    fn critical_edge_is_not_split_for_noop_phi_edge_move() {
+        let mut f = FnIR::new("critical_edge_noop_phi_move".to_string(), vec![]);
+        let entry = f.add_block();
+        let other = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_x = f.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(load_x, entry), (one, other)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: merge,
+            else_bb: other,
+        };
+        f.blocks[other].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        f.blocks[other].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let before_blocks = f.blocks.len();
+        let changed = run(&mut f);
+        assert!(changed);
+        assert_eq!(
+            f.blocks.len(),
+            before_blocks,
+            "critical edge should not be split for phi input that lowers to a no-op move"
+        );
+    }
+
+    #[test]
+    fn unique_predecessor_chain_existing_assign_avoids_redundant_phi_move() {
+        let mut f = FnIR::new("unique_pred_chain_phi_move".to_string(), vec![]);
+        let entry = f.add_block();
+        let body = f.add_block();
+        let then_bb = f.add_block();
+        let else_bb = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let zero = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_acc = f.add_value(
+            ValueKind::Load {
+                var: "acc".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("acc".to_string()),
+        );
+        let add = f.add_value(
+            ValueKind::Binary {
+                op: crate::syntax::ast::BinOp::Add,
+                lhs: load_acc,
+                rhs: one,
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("acc".to_string()),
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(add, then_bb), (add, else_bb)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("acc".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "acc".to_string(),
+            src: zero,
+            span: Span::default(),
+        });
+        f.blocks[entry].term = Terminator::Goto(body);
+        f.blocks[body].instrs.push(Instr::Assign {
+            dst: "acc".to_string(),
+            src: add,
+            span: Span::default(),
+        });
+        f.blocks[body].term = Terminator::If {
+            cond,
+            then_bb,
+            else_bb,
+        };
+        f.blocks[then_bb].term = Terminator::Goto(merge);
+        f.blocks[else_bb].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let before_blocks = f.blocks.len();
+        let changed = run(&mut f);
+        assert!(changed);
+        assert_eq!(
+            f.blocks.len(),
+            before_blocks,
+            "unique predecessor chain should let de-SSA see the existing carried assignment"
+        );
+    }
+
+    #[test]
+    fn critical_edge_is_split_when_existing_alias_is_stale_after_later_source_write() {
+        let mut f = FnIR::new("critical_edge_existing_stale_alias".to_string(), vec![]);
+        let entry = f.add_block();
+        let other = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let zero = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(2)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_y_for_x = f.add_value(
+            ValueKind::Load {
+                var: "y".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_y_at_end = f.add_value(
+            ValueKind::Load {
+                var: "y".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(load_y_at_end, entry), (two, other)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "y".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: load_y_for_x,
+            span: Span::default(),
+        });
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "y".to_string(),
+            src: zero,
+            span: Span::default(),
+        });
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: merge,
+            else_bb: other,
+        };
+        f.blocks[other].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: two,
+            span: Span::default(),
+        });
+        f.blocks[other].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let before_blocks = f.blocks.len();
+        let changed = run(&mut f);
+        assert!(changed);
+        assert!(
+            f.blocks.len() > before_blocks,
+            "critical edge must still split when the predecessor's existing alias is stale relative to a later source-variable write"
         );
     }
 }

@@ -83,11 +83,13 @@ rr_set_native_lib <- function(path) {
     .rr_env$native_lib <- ""
     .rr_env$native_lib_from_env <- FALSE
     .rr_env$native_loaded <- FALSE
+    .rr_env$native_dll <- NULL
     return(invisible(NULL))
   }
   .rr_env$native_lib <- normalizePath(as.character(path), winslash = "/", mustWork = FALSE)
   .rr_env$native_lib_from_env <- FALSE
   .rr_env$native_loaded <- FALSE
+  .rr_env$native_dll <- NULL
 }
 
 rr_set_native_roots <- function(paths) {
@@ -143,6 +145,35 @@ rr_native_lib_ext <- function() {
   ".so"
 }
 
+rr_native_openmp_enabled <- function() {
+  !identical(.rr_env$parallel_mode, "off") &&
+    (.rr_env$parallel_backend %in% c("auto", "openmp"))
+}
+
+rr_native_lib_stem <- function() {
+  if (rr_native_openmp_enabled()) "rr_native_omp" else "rr_native"
+}
+
+rr_native_openmp_env <- function() {
+  if (!rr_native_openmp_enabled()) return(character(0))
+  sysname <- tolower(Sys.info()[["sysname"]])
+  if (identical(sysname, "darwin")) {
+    prefixes <- c("/opt/homebrew/opt/libomp", "/usr/local/opt/libomp")
+    for (prefix in prefixes) {
+      include_dir <- file.path(prefix, "include")
+      lib_dir <- file.path(prefix, "lib")
+      if (file.exists(file.path(include_dir, "omp.h")) && dir.exists(lib_dir)) {
+        return(c(
+          sprintf("PKG_CPPFLAGS=-Xpreprocessor -fopenmp -I%s", include_dir),
+          sprintf("PKG_LIBS=-L%s -lomp", lib_dir)
+        ))
+      }
+    }
+    return(character(0))
+  }
+  c("PKG_CPPFLAGS=-fopenmp", "PKG_LIBS=-fopenmp")
+}
+
 rr_native_script_path <- function() {
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- grep("^--file=", args, value = TRUE)
@@ -181,7 +212,8 @@ rr_native_find_existing <- function() {
   ext <- rr_native_lib_ext()
   roots <- rr_native_candidate_roots()
   if (length(roots) < 1L) return("")
-  names <- c(paste0("rr_native", ext), paste0("librr_native", ext))
+  stem <- rr_native_lib_stem()
+  names <- c(paste0(stem, ext), paste0("lib", stem, ext))
   for (root in roots) {
     candidates <- c(
       file.path(root, "native", names),
@@ -217,7 +249,7 @@ rr_native_maybe_build <- function() {
 
   out_dir <- file.path(root_hit, "target", "native")
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-  out_path <- file.path(out_dir, paste0("rr_native", ext))
+  out_path <- file.path(out_dir, paste0(rr_native_lib_stem(), ext))
   if (file.exists(out_path)) {
     return(normalizePath(out_path, winslash = "/", mustWork = FALSE))
   }
@@ -231,6 +263,34 @@ rr_native_maybe_build <- function() {
   }
   if (!nzchar(r_bin)) return("")
 
+  build_env <- rr_native_openmp_env()
+  restore_env <- list()
+  if (length(build_env) > 0L) {
+    for (entry in build_env) {
+      parts <- strsplit(entry, "=", fixed = TRUE)[[1L]]
+      if (length(parts) < 2L) next
+      key <- parts[[1L]]
+      value <- paste(parts[-1L], collapse = "=")
+      restore_env[[key]] <- Sys.getenv(key, unset = NA_character_)
+      env_arg <- list(value)
+      names(env_arg) <- key
+      do.call(Sys.setenv, env_arg)
+    }
+  }
+  on.exit({
+    if (length(restore_env) > 0L) {
+      for (key in names(restore_env)) {
+        value <- restore_env[[key]]
+        if (is.na(value)) {
+          Sys.unsetenv(key)
+        } else {
+          env_arg <- list(value)
+          names(env_arg) <- key
+          do.call(Sys.setenv, env_arg)
+        }
+      }
+    }
+  }, add = TRUE)
   build_out <- tryCatch(
     suppressWarnings(system2(
       r_bin,
@@ -264,19 +324,30 @@ rr_native_resolve_lib <- function() {
 
 .rr_env$native_lib <- rr_native_resolve_lib()
 .rr_env$native_loaded <- FALSE
+.rr_env$native_dll <- NULL
 
 rr_native_try_load <- function() {
-  if (isTRUE(.rr_env$native_loaded)) return(TRUE)
+  if (isTRUE(.rr_env$native_loaded) && !is.null(.rr_env$native_dll)) return(TRUE)
   if (is.null(.rr_env$native_lib) || !nzchar(.rr_env$native_lib)) {
     .rr_env$native_lib <- rr_native_resolve_lib()
   }
   if (is.null(.rr_env$native_lib) || !nzchar(.rr_env$native_lib)) return(FALSE)
-  ok <- tryCatch({
-    dyn.load(.rr_env$native_lib)
-    TRUE
-  }, error = function(e) FALSE)
+  dll <- tryCatch(
+    dyn.load(.rr_env$native_lib),
+    error = function(e) NULL
+  )
+  ok <- !is.null(dll)
+  .rr_env$native_dll <- dll
   .rr_env$native_loaded <- isTRUE(ok)
   isTRUE(ok)
+}
+
+rr_native_symbol_info <- function(sym) {
+  if (is.null(.rr_env$native_dll)) return(NULL)
+  tryCatch(
+    getNativeSymbolInfo(sym, PACKAGE = .rr_env$native_dll),
+    error = function(e) NULL
+  )
 }
 
 rr_native_call <- function(sym, fallback, ...) {
@@ -297,8 +368,20 @@ rr_native_call <- function(sym, fallback, ...) {
     }
     return(fallback(...))
   }
+  native_sym <- rr_native_symbol_info(sym)
+  if (is.null(native_sym)) {
+    if (backend == "required") {
+      rr_fail(
+        "RR.RuntimeError",
+        "E2001",
+        paste0("native symbol not found: ", sym),
+        "native backend"
+      )
+    }
+    return(fallback(...))
+  }
   out <- tryCatch(
-    list(ok = TRUE, val = do.call(".Call", c(list(sym), list(...)))),
+    list(ok = TRUE, val = do.call(".Call", c(list(native_sym), list(...)))),
     error = function(e) list(ok = FALSE, err = conditionMessage(e))
   )
   if (!isTRUE(out$ok)) {
@@ -333,8 +416,20 @@ rr_parallel_native_call <- function(sym, fallback, ...) {
     }
     return(fallback(...))
   }
+  native_sym <- rr_native_symbol_info(sym)
+  if (is.null(native_sym)) {
+    if (mode == "required") {
+      rr_fail(
+        "RR.RuntimeError",
+        "E1031",
+        paste0("parallel native symbol not found: ", sym),
+        "parallel backend"
+      )
+    }
+    return(fallback(...))
+  }
   out <- tryCatch(
-    list(ok = TRUE, val = do.call(".Call", c(list(sym), list(...)))),
+    list(ok = TRUE, val = do.call(".Call", c(list(native_sym), list(...)))),
     error = function(e) list(ok = FALSE, err = conditionMessage(e))
   )
   if (!isTRUE(out$ok)) {
@@ -443,11 +538,29 @@ rr_parallel_typed_vec_r <- function(label, impl, slice_slots, args) {
   if (length(slice_slots) == 0L) return(NULL)
 
   lens <- integer(length(slice_slots))
+  matrix_dims <- NULL
+  matrix_dimnames <- NULL
+  matrix_rows <- NULL
+  matrix_cols <- NULL
   for (i in seq_along(slice_slots)) {
     slot <- as.integer(slice_slots[[i]])
     if (is.na(slot) || slot < 1L || slot > length(args)) return(NULL)
     v <- args[[slot]]
     if (!is.atomic(v)) return(NULL)
+    if (is.matrix(v)) {
+      dims <- dim(v)
+      if (length(dims) != 2L) return(NULL)
+      if (is.null(matrix_dims)) {
+        matrix_dims <- dims
+        matrix_dimnames <- dimnames(v)
+        matrix_rows <- dims[[1L]]
+        matrix_cols <- dims[[2L]]
+      } else if (!identical(matrix_dims, dims)) {
+        return(NULL)
+      }
+    } else if (!is.null(matrix_dims)) {
+      return(NULL)
+    }
     lens[[i]] <- length(v)
   }
   if (length(lens) == 0L || any(lens <= 0L)) return(NULL)
@@ -456,9 +569,19 @@ rr_parallel_typed_vec_r <- function(label, impl, slice_slots, args) {
 
   cores <- rr_parallel_resolve_cores(n)
   if (cores <= 1L) return(NULL)
-  breaks <- min(cores, n)
-  if (breaks <= 1L) return(NULL)
-  chunks <- split(seq_len(n), as.integer(cut(seq_len(n), breaks = breaks, labels = FALSE)))
+  if (!is.null(matrix_dims)) {
+    if (is.null(matrix_cols) || matrix_cols <= 1L) return(NULL)
+    breaks <- min(cores, matrix_cols)
+    if (breaks <= 1L) return(NULL)
+    chunks <- split(
+      seq_len(matrix_cols),
+      as.integer(cut(seq_len(matrix_cols), breaks = breaks, labels = FALSE))
+    )
+  } else {
+    breaks <- min(cores, n)
+    if (breaks <= 1L) return(NULL)
+    chunks <- split(seq_len(n), as.integer(cut(seq_len(n), breaks = breaks, labels = FALSE)))
+  }
 
   parts <- parallel::mclapply(
     chunks,
@@ -466,7 +589,11 @@ rr_parallel_typed_vec_r <- function(label, impl, slice_slots, args) {
       chunk_args <- args
       for (slot in slice_slots) {
         slot_i <- as.integer(slot)
-        chunk_args[[slot_i]] <- chunk_args[[slot_i]][ix]
+        if (!is.null(matrix_dims)) {
+          chunk_args[[slot_i]] <- chunk_args[[slot_i]][, ix, drop = FALSE]
+        } else {
+          chunk_args[[slot_i]] <- chunk_args[[slot_i]][ix]
+        }
       }
       tryCatch(
         list(ok = TRUE, val = do.call(impl, chunk_args)),
@@ -481,12 +608,41 @@ rr_parallel_typed_vec_r <- function(label, impl, slice_slots, args) {
   if (!all(ok)) return(NULL)
 
   vals <- lapply(parts, function(part) part$val)
+  if (!is.null(matrix_dims)) {
+    expected_cols <- vapply(chunks, length, integer(1))
+    vals <- Map(
+      function(part, cols) {
+        if (is.matrix(part)) {
+          dims <- dim(part)
+          if (length(dims) != 2L || dims[[1L]] != matrix_rows || dims[[2L]] != cols) return(NULL)
+          return(part)
+        }
+        if (!is.atomic(part) || length(part) != (matrix_rows * cols)) return(NULL)
+        dim(part) <- c(matrix_rows, cols)
+        part
+      },
+      vals,
+      expected_cols
+    )
+    if (any(vapply(vals, is.null, logical(1)))) return(NULL)
+    out <- do.call(cbind, unname(vals))
+    if (!identical(dim(out), matrix_dims)) return(NULL)
+    dim(out) <- matrix_dims
+    if (!is.null(matrix_dimnames)) dimnames(out) <- matrix_dimnames
+    return(out)
+  }
   expected <- vapply(chunks, length, integer(1))
   actual <- vapply(vals, length, integer(1))
   if (!all(actual == expected)) return(NULL)
   if (any(vapply(vals, function(part) !is.atomic(part), logical(1)))) return(NULL)
 
-  unlist(vals, use.names = FALSE)
+  has_names <- any(vapply(vals, function(part) !is.null(names(part)), logical(1)))
+  out <- if (has_names) {
+    do.call(c, unname(vals))
+  } else {
+    unlist(vals, use.names = FALSE)
+  }
+  out
 }
 
 rr_parallel_typed_vec_call <- function(label, impl, slice_slots, ...) {
@@ -665,11 +821,11 @@ rr_parallel_vec_sqrt_f64 <- function(a) {
 }
 
 rr_parallel_vec_pmax_f64 <- function(a, b) {
-  rr_intrinsic_base_vec_pmax_f64(a, b)
+  rr_parallel_vec2_f64("rr_vec_pmax_f64_omp", "pmax", rr_intrinsic_base_vec_pmax_f64, a, b)
 }
 
 rr_parallel_vec_pmin_f64 <- function(a, b) {
-  rr_intrinsic_base_vec_pmin_f64(a, b)
+  rr_parallel_vec2_f64("rr_vec_pmin_f64_omp", "pmin", rr_intrinsic_base_vec_pmin_f64, a, b)
 }
 
 rr_intrinsic_vec_add_f64 <- function(a, b) {

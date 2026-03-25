@@ -70,6 +70,18 @@ print(sum(z))
         compiled.contains("rr_parallel_vec_add_f64 <- function"),
         "runtime must define parallel wrapper helper"
     );
+    assert!(
+        compiled.contains("!identical(.rr_env$parallel_mode, \"off\")"),
+        "OpenMP native selection should remain available outside required mode"
+    );
+    assert!(
+        compiled.contains("(.rr_env$parallel_backend %in% c(\"auto\", \"openmp\"))"),
+        "OpenMP native selection should cover auto and explicit openmp backends"
+    );
+    assert!(
+        compiled.contains("getNativeSymbolInfo(sym, PACKAGE = .rr_env$native_dll)"),
+        "native symbol lookup should stay scoped to the loaded DLL"
+    );
 
     let tmp = unique_tmp_dir("proj");
     let compiled_path = tmp.join("compiled.R");

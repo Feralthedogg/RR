@@ -1,4 +1,8 @@
-use super::*;
+use super::analysis::canonical_value;
+use crate::mir::opt::loop_analysis::LoopInfo;
+use crate::mir::{BlockId, FnIR, Instr, Terminator, ValueId, ValueKind};
+use rustc_hash::FxHashSet;
+use std::env;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum VectorizeSkipReason {

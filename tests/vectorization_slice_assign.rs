@@ -33,6 +33,7 @@ fn slice_map(n) {
         .arg("-o")
         .arg(&out_path)
         .arg("--no-runtime")
+        .arg("--preserve-all-defs")
         .arg("-O1")
         .status()
         .expect("failed to run RR compiler");

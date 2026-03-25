@@ -1,14 +1,16 @@
 use RR::compiler::{
     CliLog, CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel,
-    ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs,
-    compile_with_configs_incremental, compile_with_configs_incremental_with_output_options,
-    compile_with_configs_with_options, parallel_config_from_env, type_config_from_env,
+    ParallelBackend, ParallelConfig, ParallelMode,
+    compile_with_configs_incremental_with_output_options, compile_with_configs_with_options,
+    module_tree_fingerprint, module_tree_snapshot, parallel_config_from_env, type_config_from_env,
 };
 use RR::runtime::runner::Runner;
 use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rustc_hash::FxHashMap;
 use std::any::Any;
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -76,12 +78,12 @@ fn panic_payload_is_broken_pipe(payload: &(dyn Any + Send)) -> bool {
 
 fn print_usage() {
     eprintln!("Usage:");
-    eprintln!("  rr --version");
-    eprintln!("  rr version");
-    eprintln!("  rr <input.rr> [options]");
-    eprintln!("  rr run [main.rr|dir|.] [options]");
-    eprintln!("  rr build [dir|file.rr] [options]");
-    eprintln!("  rr watch [main.rr|dir|.] [options]");
+    eprintln!("  RR --version");
+    eprintln!("  RR version");
+    eprintln!("  RR <input.rr> [options]");
+    eprintln!("  RR run [main.rr|dir|.] [options]");
+    eprintln!("  RR build [dir|file.rr] [options]");
+    eprintln!("  RR watch [main.rr|dir|.] [options]");
     eprintln!("Options:");
     eprintln!("  -o <file> / --out-dir <dir>   Output file (legacy) or build output dir");
     eprintln!("  -O0, -O1, -O2                 Optimization level (default O1)");
@@ -102,10 +104,87 @@ fn print_usage() {
     eprintln!("  --once                                    Run a single watch tick and exit");
     eprintln!("  --keep-r                      Keep generated .gen.R when running");
     eprintln!("  --no-runtime                  Emit helper-only R without source/native bootstrap");
+    eprintln!("  --preserve-all-defs          Keep all top-level Sym_* definitions in emitted R");
+    eprintln!("  --preserve-all-def           Alias for --preserve-all-defs");
 }
 
 fn print_version() {
     println!("RR Tachyon v{}", env!("CARGO_PKG_VERSION"));
+}
+
+#[derive(Clone, Debug)]
+struct TargetResolutionError {
+    message: String,
+    help: Option<String>,
+}
+
+fn report_path_read_failure(ui: &CliLog, path: &Path, err: &std::io::Error, role: &str) {
+    ui.error(&format!("Failed to read '{}': {}", path.display(), err));
+    match err.kind() {
+        ErrorKind::PermissionDenied => ui.warn(&format!(
+            "make the {role} readable, or adjust file and parent-directory permissions before retrying"
+        )),
+        ErrorKind::NotFound => ui.warn(&format!(
+            "make sure the {role} exists and points to a readable .rr source file"
+        )),
+        _ => ui.warn(&format!(
+            "check that the {role} is readable and not locked or replaced by another process"
+        )),
+    }
+}
+
+fn report_dir_create_failure(ui: &CliLog, path: &Path, err: &std::io::Error, role: &str) {
+    ui.error(&format!("Failed to create '{}': {}", path.display(), err));
+    match err.kind() {
+        ErrorKind::PermissionDenied => ui.warn(&format!(
+            "choose a writable {role}, or adjust parent-directory permissions before retrying"
+        )),
+        ErrorKind::NotFound => ui.warn(&format!(
+            "create the parent directories first, or point {role} at an existing writable parent"
+        )),
+        _ => ui.warn(&format!(
+            "choose a different {role}, or fix the destination path before retrying"
+        )),
+    }
+}
+
+fn report_file_write_failure(ui: &CliLog, path: &Path, err: &std::io::Error, role: &str) {
+    ui.error(&format!("Failed to write '{}': {}", path.display(), err));
+    match err.kind() {
+        ErrorKind::PermissionDenied => ui.warn(&format!(
+            "choose a writable {role}, or adjust file and parent-directory permissions before retrying"
+        )),
+        ErrorKind::NotFound => ui.warn(&format!(
+            "create the destination directory first, or point {role} at an existing writable path"
+        )),
+        _ => ui.warn(&format!(
+            "check that the {role} is writable and not blocked by another process"
+        )),
+    }
+}
+
+fn stable_hash_bytes(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET_BASIS;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn watch_output_hash(content: &str) -> u64 {
+    stable_hash_bytes(content.as_bytes())
+}
+
+fn watch_output_matches_hash(path: &Path, expected_hash: Option<u64>) -> bool {
+    let Some(expected_hash) = expected_hash else {
+        return false;
+    };
+    fs::read_to_string(path)
+        .map(|content| watch_output_hash(&content) == expected_hash)
+        .unwrap_or(false)
 }
 
 fn apply_opt_flag(arg: &str, level: &mut OptLevel) -> bool {
@@ -304,6 +383,7 @@ struct CommonOpts {
     output_path: Option<String>,
     keep_r: bool,
     no_runtime: bool,
+    preserve_all_defs: bool,
     opt_level: OptLevel,
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
@@ -319,6 +399,7 @@ impl CommonOpts {
             output_path: mode.default_output_path(),
             keep_r: false,
             no_runtime: false,
+            preserve_all_defs: false,
             opt_level: OptLevel::O1,
             type_cfg: type_config_from_env(),
             parallel_cfg: parallel_config_from_env(),
@@ -404,6 +485,8 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
                         opts.keep_r = true;
                     } else if mode.allow_no_runtime() && arg == "--no-runtime" {
                         opts.no_runtime = true;
+                    } else if arg == "--preserve-all-defs" || arg == "--preserve-all-def" {
+                        opts.preserve_all_defs = true;
                     } else if arg == "--no-incremental" {
                         opts.incremental = IncrementalOptions::disabled();
                     } else if arg == "--incremental" {
@@ -502,16 +585,14 @@ fn cmd_legacy(args: &[String]) -> i32 {
     let input = match fs::read_to_string(&input_path) {
         Ok(s) => s,
         Err(e) => {
-            ui.error(&format!(
-                "Failed to read input file '{}': {}",
-                input_path, e
-            ));
+            report_path_read_failure(&ui, Path::new(&input_path), &e, "input path");
             return 1;
         }
     };
 
     let output_opts = CompileOutputOptions {
         inject_runtime: !opts.no_runtime,
+        preserve_all_defs: opts.preserve_all_defs,
     };
     let result = if opts.incremental.enabled {
         compile_with_configs_incremental_with_output_options(
@@ -539,10 +620,7 @@ fn cmd_legacy(args: &[String]) -> i32 {
         Ok((r_code, source_map)) => {
             if let Some(out_path) = opts.output_path {
                 if let Err(e) = fs::write(&out_path, &r_code) {
-                    ui.error(&format!(
-                        "Failed to write output file '{}': {}",
-                        out_path, e
-                    ));
+                    report_file_write_failure(&ui, Path::new(&out_path), &e, "legacy output path");
                     return 1;
                 }
                 ui.success(&format!("Compiled to {}", out_path));
@@ -561,23 +639,38 @@ fn cmd_legacy(args: &[String]) -> i32 {
     }
 }
 
-fn resolve_run_input(raw: &str) -> Result<PathBuf, String> {
+fn resolve_command_input(raw: &str, command: &str) -> Result<PathBuf, TargetResolutionError> {
     let path = PathBuf::from(raw);
     if path.is_dir() || raw == "." {
         let entry = path.join("main.rr");
         if entry.is_file() {
             Ok(entry)
         } else {
-            Err(format!("main.rr not found in '{}'", path.to_string_lossy()))
+            Err(TargetResolutionError {
+                message: format!("main.rr not found in '{}'", path.to_string_lossy()),
+                help: Some(format!(
+                    "add a main.rr entry file in that directory, or run RR {command} with an explicit .rr file path"
+                )),
+            })
         }
     } else if path.is_file() {
         if path.extension().and_then(|s| s.to_str()) == Some("rr") {
             Ok(path)
         } else {
-            Err("run target must be a .rr file or directory".to_string())
+            Err(TargetResolutionError {
+                message: format!("{command} target must be a .rr file or directory"),
+                help: Some(format!(
+                    "pass a .rr file directly, or point RR {command} at a directory containing main.rr"
+                )),
+            })
         }
     } else {
-        Err(format!("run target not found: '{}'", raw))
+        Err(TargetResolutionError {
+            message: format!("{command} target not found: '{}'", raw),
+            help: Some(format!(
+                "use RR {command} . inside a project directory, or pass an existing .rr file path"
+            )),
+        })
     }
 }
 
@@ -587,10 +680,13 @@ fn cmd_run(args: &[String]) -> i32 {
         Ok(v) => v,
         Err(code) => return code,
     };
-    let input_path = match resolve_run_input(&opts.target) {
+    let input_path = match resolve_command_input(&opts.target, "run") {
         Ok(p) => p,
-        Err(msg) => {
-            ui.error(&msg);
+        Err(err) => {
+            ui.error(&err.message);
+            if let Some(help) = err.help {
+                ui.warn(&help);
+            }
             return 1;
         }
     };
@@ -598,29 +694,37 @@ fn cmd_run(args: &[String]) -> i32 {
     let input = match fs::read_to_string(&input_path) {
         Ok(s) => s,
         Err(e) => {
-            ui.error(&format!("Failed to read '{}': {}", input_path_str, e));
+            report_path_read_failure(&ui, &input_path, &e, "run input");
             return 1;
         }
     };
 
     let result = if opts.incremental.enabled {
-        compile_with_configs_incremental(
+        compile_with_configs_incremental_with_output_options(
             &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
             opts.incremental,
+            CompileOutputOptions {
+                inject_runtime: true,
+                preserve_all_defs: opts.preserve_all_defs,
+            },
             None,
         )
         .map(|v| (v.r_code, v.source_map))
     } else {
-        compile_with_configs(
+        compile_with_configs_with_options(
             &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
+            CompileOutputOptions {
+                inject_runtime: true,
+                preserve_all_defs: opts.preserve_all_defs,
+            },
         )
     };
 
@@ -669,15 +773,13 @@ fn cmd_build(args: &[String]) -> i32 {
     let target_path = PathBuf::from(&target);
     if !target_path.exists() {
         ui.error(&format!("build target not found: '{}'", target));
+        ui.warn("pass an existing directory or .rr file; use --out-dir to choose where emitted R files go");
         return 1;
     }
 
     let out_root = PathBuf::from(&out_dir);
     if let Err(e) = fs::create_dir_all(&out_root) {
-        ui.error(&format!(
-            "Failed to create output directory '{}': {}",
-            out_dir, e
-        ));
+        report_dir_create_failure(&ui, &out_root, &e, "build --out-dir destination");
         return 1;
     }
     println!("{} {}", ui.yellow_bold("[+]"), ui.red_bold("RR Build"));
@@ -697,18 +799,25 @@ fn cmd_build(args: &[String]) -> i32 {
     if dir_mode {
         if let Err(e) = collect_rr_files(&target_path, &mut rr_files) {
             ui.error(&format!("Failed while scanning '{}': {}", target, e));
+            ui.warn(
+                "make sure the build target directory is readable, and that RR can descend into its source tree",
+            );
             return 1;
         }
     } else if target_path.extension().and_then(|s| s.to_str()) == Some("rr") {
         rr_files.push(target_path.clone());
     } else {
         ui.error("build target must be a directory or .rr file");
+        ui.warn("use RR build <dir> to compile a project tree, or RR build path/to/file.rr for a single file");
         return 1;
     }
 
     rr_files.sort();
     if rr_files.is_empty() {
         ui.error(&format!("no .rr files found under '{}'", target));
+        ui.warn(
+            "add at least one .rr source file under that directory, or point RR build at a specific .rr file instead",
+        );
         return 1;
     }
 
@@ -725,29 +834,37 @@ fn cmd_build(args: &[String]) -> i32 {
         let input = match fs::read_to_string(&rr_abs) {
             Ok(s) => s,
             Err(e) => {
-                ui.error(&format!("Failed to read '{}': {}", rr_path_str, e));
+                report_path_read_failure(&ui, &rr_abs, &e, "build input");
                 return 1;
             }
         };
 
         let build_out = if opts.incremental.enabled {
-            compile_with_configs_incremental(
+            compile_with_configs_incremental_with_output_options(
                 &rr_path_str,
                 &input,
                 opts.opt_level,
                 opts.type_cfg,
                 opts.parallel_cfg,
                 opts.incremental,
+                CompileOutputOptions {
+                    inject_runtime: true,
+                    preserve_all_defs: opts.preserve_all_defs,
+                },
                 None,
             )
             .map(|v| (v.r_code, v.source_map))
         } else {
-            compile_with_configs(
+            compile_with_configs_with_options(
                 &rr_path_str,
                 &input,
                 opts.opt_level,
                 opts.type_cfg,
                 opts.parallel_cfg,
+                CompileOutputOptions {
+                    inject_runtime: true,
+                    preserve_all_defs: opts.preserve_all_defs,
+                },
             )
         };
 
@@ -785,11 +902,11 @@ fn cmd_build(args: &[String]) -> i32 {
         if let Some(parent) = out_file.parent()
             && let Err(e) = fs::create_dir_all(parent)
         {
-            ui.error(&format!("Failed to create '{}': {}", parent.display(), e));
+            report_dir_create_failure(&ui, parent, &e, "build output directory");
             return 1;
         }
         if let Err(e) = fs::write(&out_file, r_code) {
-            ui.error(&format!("Failed to write '{}': {}", out_file.display(), e));
+            report_file_write_failure(&ui, &out_file, &e, "build output path");
             return 1;
         }
 
@@ -816,10 +933,13 @@ fn cmd_watch(args: &[String]) -> i32 {
         opts.incremental.phase3 = true;
     }
 
-    let input_path = match resolve_run_input(&opts.target) {
+    let input_path = match resolve_command_input(&opts.target, "watch") {
         Ok(p) => p,
-        Err(msg) => {
-            ui.error(&msg);
+        Err(err) => {
+            ui.error(&err.message);
+            if let Some(help) = err.help {
+                ui.warn(&help);
+            }
             return 1;
         }
     };
@@ -840,7 +960,7 @@ fn cmd_watch(args: &[String]) -> i32 {
     if let Some(parent) = out_file.parent()
         && let Err(e) = fs::create_dir_all(parent)
     {
-        ui.error(&format!("Failed to create '{}': {}", parent.display(), e));
+        report_dir_create_failure(&ui, parent, &e, "watch output directory");
         return 1;
     }
 
@@ -851,29 +971,91 @@ fn cmd_watch(args: &[String]) -> i32 {
     ));
 
     let mut session = IncrementalSession::default();
+    let mut last_successful_snapshot: Option<Vec<(PathBuf, u64)>> = None;
+    let mut last_successful_fingerprint: Option<u64> = None;
+    let mut last_successful_output_hash: Option<u64> = None;
+    let mut last_announced_fingerprint: Option<u64> = None;
+    let mut reported_idle_wait = false;
     loop {
         let input = match fs::read_to_string(&input_path) {
             Ok(s) => s,
             Err(e) => {
-                ui.error(&format!("Failed to read '{}': {}", input_path.display(), e));
+                report_path_read_failure(&ui, &input_path, &e, "watch input");
                 return 1;
             }
         };
+        let snapshot = match module_tree_snapshot(&input_path_str, &input) {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                e.display(Some(&input), Some(&input_path_str));
+                if opts.watch_once {
+                    return 1;
+                }
+                thread::sleep(Duration::from_millis(opts.watch_poll_ms));
+                continue;
+            }
+        };
+        let fingerprint = match module_tree_fingerprint(&input_path_str, &input) {
+            Ok(fp) => fp,
+            Err(e) => {
+                e.display(Some(&input), Some(&input_path_str));
+                if opts.watch_once {
+                    return 1;
+                }
+                thread::sleep(Duration::from_millis(opts.watch_poll_ms));
+                continue;
+            }
+        };
+        let output_current = watch_output_matches_hash(&out_file, last_successful_output_hash);
+        if last_successful_fingerprint == Some(fingerprint) && output_current {
+            if opts.watch_once {
+                return 0;
+            }
+            if !reported_idle_wait {
+                ui.success("unchanged module tree; waiting for changes");
+                reported_idle_wait = true;
+            }
+            thread::sleep(Duration::from_millis(opts.watch_poll_ms));
+            continue;
+        }
+        reported_idle_wait = false;
+        if last_announced_fingerprint != Some(fingerprint) {
+            if let Some(prev) = &last_successful_snapshot
+                && let Some(summary) = summarize_watch_changes(prev, &snapshot)
+            {
+                ui.success(&format!("change detected in {summary}"));
+            }
+            last_announced_fingerprint = Some(fingerprint);
+        }
+        if last_successful_fingerprint == Some(fingerprint)
+            && last_successful_output_hash.is_some()
+            && !output_current
+        {
+            ui.success("watch output missing or changed; restoring");
+        }
 
-        match compile_with_configs_incremental(
+        match compile_with_configs_incremental_with_output_options(
             &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
             opts.incremental,
+            CompileOutputOptions {
+                inject_runtime: true,
+                preserve_all_defs: opts.preserve_all_defs,
+            },
             Some(&mut session),
         ) {
             Ok(out) => {
+                let output_hash = watch_output_hash(&out.r_code);
                 if let Err(e) = fs::write(&out_file, out.r_code.as_bytes()) {
-                    ui.error(&format!("Failed to write '{}': {}", out_file.display(), e));
+                    report_file_write_failure(&ui, &out_file, &e, "watch output path");
                     return 1;
                 }
+                last_successful_snapshot = Some(snapshot);
+                last_successful_fingerprint = Some(fingerprint);
+                last_successful_output_hash = Some(output_hash);
                 if out.stats.phase3_memory_hit || out.stats.phase1_artifact_hit {
                     ui.success(&format!(
                         "cache hit (phase1_hit={}, phase3_hit={}) -> {}",
@@ -892,6 +1074,9 @@ fn cmd_watch(args: &[String]) -> i32 {
             }
             Err(e) => {
                 e.display(Some(&input), Some(&input_path_str));
+                if opts.watch_once {
+                    return 1;
+                }
             }
         }
 
@@ -899,5 +1084,90 @@ fn cmd_watch(args: &[String]) -> i32 {
             return 0;
         }
         thread::sleep(Duration::from_millis(opts.watch_poll_ms));
+    }
+}
+
+fn summarize_watch_changes(prev: &[(PathBuf, u64)], next: &[(PathBuf, u64)]) -> Option<String> {
+    let prev_map: FxHashMap<&PathBuf, u64> =
+        prev.iter().map(|(path, hash)| (path, *hash)).collect();
+    let next_map: FxHashMap<&PathBuf, u64> =
+        next.iter().map(|(path, hash)| (path, *hash)).collect();
+
+    let mut changed = Vec::new();
+    for (path, hash) in &next_map {
+        match prev_map.get(path) {
+            Some(prev_hash) if prev_hash == hash => {}
+            Some(_) | None => changed.push(display_watch_path(path)),
+        }
+    }
+    for path in prev_map.keys() {
+        if !next_map.contains_key(path) {
+            changed.push(display_watch_path(path));
+        }
+    }
+
+    changed.sort();
+    changed.dedup();
+    if changed.is_empty() {
+        return None;
+    }
+    let first = changed[0].clone();
+    if changed.len() == 1 {
+        Some(first)
+    } else {
+        Some(format!("{first} (+{} more)", changed.len() - 1))
+    }
+}
+
+fn display_watch_path(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_watch_path, summarize_watch_changes};
+    use std::path::PathBuf;
+
+    #[test]
+    fn summarize_watch_changes_reports_single_changed_module() {
+        let prev = vec![
+            (PathBuf::from("/tmp/main.rr"), 1_u64),
+            (PathBuf::from("/tmp/module.rr"), 2_u64),
+        ];
+        let next = vec![
+            (PathBuf::from("/tmp/main.rr"), 1_u64),
+            (PathBuf::from("/tmp/module.rr"), 3_u64),
+        ];
+        assert_eq!(
+            summarize_watch_changes(&prev, &next),
+            Some("module.rr".to_string())
+        );
+    }
+
+    #[test]
+    fn summarize_watch_changes_reports_added_and_removed_modules_compactly() {
+        let prev = vec![
+            (PathBuf::from("/tmp/main.rr"), 1_u64),
+            (PathBuf::from("/tmp/old.rr"), 2_u64),
+        ];
+        let next = vec![
+            (PathBuf::from("/tmp/main.rr"), 1_u64),
+            (PathBuf::from("/tmp/new.rr"), 9_u64),
+        ];
+        assert_eq!(
+            summarize_watch_changes(&prev, &next),
+            Some("new.rr (+1 more)".to_string())
+        );
+    }
+
+    #[test]
+    fn display_watch_path_prefers_file_name() {
+        assert_eq!(
+            display_watch_path(&PathBuf::from("/tmp/sub/module.rr")),
+            "module.rr".to_string()
+        );
     }
 }

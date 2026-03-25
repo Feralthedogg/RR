@@ -1,4 +1,22 @@
-use super::*;
+use super::analysis::{
+    choose_call_map_lowering, estimate_loop_trip_count_hint, estimate_vector_plan_helper_cost,
+    induction_origin_var, loop_vectorize_skip_reason, match_2d_col_map, match_2d_row_map,
+    match_3d_axis_map,
+};
+use super::debug::{VectorizeSkipReason, trace_no_iv_context, vectorize_trace_enabled};
+use super::planning::{
+    Axis3D, ReduceKind, VectorPlan, match_2d_col_reduction_sum, match_2d_row_reduction_sum,
+    match_3d_axis_reduction, match_call_map, match_call_map_3d, match_conditional_map,
+    match_conditional_map_3d, match_cube_slice_expr_map, match_expr_map, match_expr_map_3d,
+    match_map, match_multi_expr_map_3d, match_recurrence_add_const, match_recurrence_add_const_3d,
+    match_reduction, match_scatter_expr_map, match_scatter_expr_map_3d, match_shifted_map,
+    match_shifted_map_3d,
+};
+use super::transform::apply_vectorization;
+use super::types::CallMapLoweringMode;
+use crate::mir::opt::loop_analysis::{LoopAnalyzer, LoopInfo};
+use crate::mir::{BlockId, FnIR};
+use rustc_hash::FxHashSet;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct VOptStats {
@@ -12,6 +30,40 @@ pub struct VOptStats {
     pub skip_indirect_index_access: usize,
     pub skip_store_effects: usize,
     pub skip_no_supported_pattern: usize,
+    pub candidate_total: usize,
+    pub candidate_reductions: usize,
+    pub candidate_conditionals: usize,
+    pub candidate_recurrences: usize,
+    pub candidate_shifted: usize,
+    pub candidate_call_maps: usize,
+    pub candidate_expr_maps: usize,
+    pub candidate_scatters: usize,
+    pub candidate_cube_slices: usize,
+    pub candidate_basic_maps: usize,
+    pub candidate_multi_exprs: usize,
+    pub candidate_2d: usize,
+    pub candidate_3d: usize,
+    pub candidate_call_map_direct: usize,
+    pub candidate_call_map_runtime: usize,
+    pub applied_total: usize,
+    pub applied_reductions: usize,
+    pub applied_conditionals: usize,
+    pub applied_recurrences: usize,
+    pub applied_shifted: usize,
+    pub applied_call_maps: usize,
+    pub applied_expr_maps: usize,
+    pub applied_scatters: usize,
+    pub applied_cube_slices: usize,
+    pub applied_basic_maps: usize,
+    pub applied_multi_exprs: usize,
+    pub applied_2d: usize,
+    pub applied_3d: usize,
+    pub applied_call_map_direct: usize,
+    pub applied_call_map_runtime: usize,
+    pub trip_tier_tiny: usize,
+    pub trip_tier_small: usize,
+    pub trip_tier_medium: usize,
+    pub trip_tier_large: usize,
 }
 
 impl VOptStats {
@@ -30,6 +82,36 @@ impl VOptStats {
             VectorizeSkipReason::NoSupportedPattern => self.skip_no_supported_pattern += 1,
         }
     }
+
+    fn record_trip_tier(&mut self, tier: u8) {
+        match tier {
+            0 => self.trip_tier_tiny += 1,
+            1 => self.trip_tier_small += 1,
+            2 => self.trip_tier_medium += 1,
+            _ => self.trip_tier_large += 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum VectorPlanFamily {
+    Reduction,
+    Conditional,
+    Recurrence,
+    Shifted,
+    CallMap,
+    ExprMap,
+    Scatter,
+    CubeSlice,
+    BasicMap,
+    MultiExpr,
+}
+
+#[derive(Clone, Copy)]
+enum VectorPlanShape {
+    General,
+    TwoD,
+    ThreeD,
 }
 
 pub fn optimize(fn_ir: &mut FnIR) -> bool {
@@ -51,6 +133,7 @@ pub fn optimize_with_stats_with_whitelist(
 
     for lp in loops {
         stats.loops_seen += 1;
+        stats.record_trip_tier(trip_count_tier(fn_ir, &lp));
         let before = stats;
         if trace_enabled {
             let mut body_ids: Vec<BlockId> = lp.body.iter().copied().collect();
@@ -60,25 +143,58 @@ pub fn optimize_with_stats_with_whitelist(
                 .as_ref()
                 .and_then(|iv| induction_origin_var(fn_ir, iv.phi_val));
             eprintln!(
-                "   [vec-loop] {} header={} latch={} exits={:?} iv_origin={:?} body={:?}",
-                fn_ir.name, lp.header, lp.latch, lp.exits, iv_origin, body_ids
+                "   [vec-loop] {} header={} latch={} exits={:?} iv_origin={:?} limit={:?} limit_adjust={} body={:?}",
+                fn_ir.name,
+                lp.header,
+                lp.latch,
+                lp.exits,
+                iv_origin,
+                lp.limit.map(|v| &fn_ir.values[v].kind),
+                lp.limit_adjust,
+                body_ids
             );
         }
         let mut reduction_candidates =
             collect_reduction_candidates(fn_ir, &lp, user_call_whitelist);
+        for plan in &reduction_candidates {
+            record_plan_counts(&mut stats, fn_ir, plan, false);
+        }
         rank_vector_plans_for_loop(fn_ir, &lp, &mut reduction_candidates);
         let mut vector_candidates = collect_vector_candidates(fn_ir, &lp, user_call_whitelist);
+        for plan in &vector_candidates {
+            record_plan_counts(&mut stats, fn_ir, plan, false);
+        }
         rank_vector_plans_for_loop(fn_ir, &lp, &mut vector_candidates);
+        if trace_enabled && (!reduction_candidates.is_empty() || !vector_candidates.is_empty()) {
+            let reductions = reduction_candidates
+                .iter()
+                .map(|plan| vector_plan_trace_label_with_lowering(fn_ir, plan))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let vectors = vector_candidates
+                .iter()
+                .map(|plan| vector_plan_trace_label_with_lowering(fn_ir, plan))
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!(
+                "   [vec-candidates] {} trip_hint={:?} reductions=[{}] vectors=[{}]",
+                fn_ir.name,
+                estimate_loop_trip_count_hint(fn_ir, &lp),
+                reductions,
+                vectors
+            );
+        }
 
         if let Some(plan) = reduction_candidates
             .into_iter()
             .find(|plan| apply_vectorization(fn_ir, &lp, plan.clone()))
         {
+            record_plan_counts(&mut stats, fn_ir, &plan, true);
             if trace_enabled {
                 eprintln!(
                     "   [vec-choose] {} reduction={}",
                     fn_ir.name,
-                    vector_plan_label(&plan)
+                    vector_plan_trace_label_with_lowering(fn_ir, &plan)
                 );
             }
             stats.reduced += 1;
@@ -86,11 +202,12 @@ pub fn optimize_with_stats_with_whitelist(
             .into_iter()
             .find(|plan| apply_vectorization(fn_ir, &lp, plan.clone()))
         {
+            record_plan_counts(&mut stats, fn_ir, &plan, true);
             if trace_enabled {
                 eprintln!(
                     "   [vec-choose] {} vector={}",
                     fn_ir.name,
-                    vector_plan_label(&plan)
+                    vector_plan_trace_label_with_lowering(fn_ir, &plan)
                 );
             }
             stats.vectorized += 1;
@@ -110,6 +227,173 @@ pub fn optimize_with_stats_with_whitelist(
     }
 
     stats
+}
+
+fn vector_plan_family(plan: &VectorPlan) -> VectorPlanFamily {
+    match plan {
+        VectorPlan::Reduce { .. }
+        | VectorPlan::Reduce2DRowSum { .. }
+        | VectorPlan::Reduce2DColSum { .. }
+        | VectorPlan::Reduce3D { .. } => VectorPlanFamily::Reduction,
+        VectorPlan::CondMap { .. }
+        | VectorPlan::CondMap3D { .. }
+        | VectorPlan::CondMap3DGeneral { .. } => VectorPlanFamily::Conditional,
+        VectorPlan::RecurrenceAddConst { .. } | VectorPlan::RecurrenceAddConst3D { .. } => {
+            VectorPlanFamily::Recurrence
+        }
+        VectorPlan::ShiftedMap { .. } | VectorPlan::ShiftedMap3D { .. } => {
+            VectorPlanFamily::Shifted
+        }
+        VectorPlan::CallMap { .. }
+        | VectorPlan::CallMap3D { .. }
+        | VectorPlan::CallMap3DGeneral { .. } => VectorPlanFamily::CallMap,
+        VectorPlan::ExprMap { .. } | VectorPlan::ExprMap3D { .. } => VectorPlanFamily::ExprMap,
+        VectorPlan::ScatterExprMap { .. }
+        | VectorPlan::ScatterExprMap3D { .. }
+        | VectorPlan::ScatterExprMap3DGeneral { .. } => VectorPlanFamily::Scatter,
+        VectorPlan::CubeSliceExprMap { .. } => VectorPlanFamily::CubeSlice,
+        VectorPlan::Map { .. }
+        | VectorPlan::Map2DRow { .. }
+        | VectorPlan::Map2DCol { .. }
+        | VectorPlan::Map3D { .. } => VectorPlanFamily::BasicMap,
+        VectorPlan::MultiExprMap { .. } | VectorPlan::MultiExprMap3D { .. } => {
+            VectorPlanFamily::MultiExpr
+        }
+    }
+}
+
+fn vector_plan_shape(plan: &VectorPlan) -> VectorPlanShape {
+    match plan {
+        VectorPlan::Reduce2DRowSum { .. }
+        | VectorPlan::Reduce2DColSum { .. }
+        | VectorPlan::Map2DRow { .. }
+        | VectorPlan::Map2DCol { .. } => VectorPlanShape::TwoD,
+        VectorPlan::Reduce3D { .. }
+        | VectorPlan::CondMap3D { .. }
+        | VectorPlan::CondMap3DGeneral { .. }
+        | VectorPlan::RecurrenceAddConst3D { .. }
+        | VectorPlan::ShiftedMap3D { .. }
+        | VectorPlan::CallMap3D { .. }
+        | VectorPlan::CallMap3DGeneral { .. }
+        | VectorPlan::CubeSliceExprMap { .. }
+        | VectorPlan::ExprMap3D { .. }
+        | VectorPlan::MultiExprMap3D { .. }
+        | VectorPlan::ScatterExprMap3D { .. }
+        | VectorPlan::ScatterExprMap3DGeneral { .. }
+        | VectorPlan::Map3D { .. } => VectorPlanShape::ThreeD,
+        _ => VectorPlanShape::General,
+    }
+}
+
+fn vector_plan_call_map_lowering(fn_ir: &FnIR, plan: &VectorPlan) -> Option<CallMapLoweringMode> {
+    match plan {
+        VectorPlan::CallMap {
+            callee,
+            args,
+            whole_dest,
+            shadow_vars,
+            ..
+        } => Some(choose_call_map_lowering(
+            fn_ir,
+            callee,
+            args,
+            *whole_dest,
+            shadow_vars,
+        )),
+        _ => None,
+    }
+}
+
+fn record_plan_counts(stats: &mut VOptStats, fn_ir: &FnIR, plan: &VectorPlan, applied: bool) {
+    let (
+        total,
+        reductions,
+        conditionals,
+        recurrences,
+        shifted,
+        call_maps,
+        expr_maps,
+        scatters,
+        cube_slices,
+        basic_maps,
+        multi_exprs,
+        dims_2d,
+        dims_3d,
+        callmap_direct,
+        callmap_runtime,
+    ) = if applied {
+        (
+            &mut stats.applied_total,
+            &mut stats.applied_reductions,
+            &mut stats.applied_conditionals,
+            &mut stats.applied_recurrences,
+            &mut stats.applied_shifted,
+            &mut stats.applied_call_maps,
+            &mut stats.applied_expr_maps,
+            &mut stats.applied_scatters,
+            &mut stats.applied_cube_slices,
+            &mut stats.applied_basic_maps,
+            &mut stats.applied_multi_exprs,
+            &mut stats.applied_2d,
+            &mut stats.applied_3d,
+            &mut stats.applied_call_map_direct,
+            &mut stats.applied_call_map_runtime,
+        )
+    } else {
+        (
+            &mut stats.candidate_total,
+            &mut stats.candidate_reductions,
+            &mut stats.candidate_conditionals,
+            &mut stats.candidate_recurrences,
+            &mut stats.candidate_shifted,
+            &mut stats.candidate_call_maps,
+            &mut stats.candidate_expr_maps,
+            &mut stats.candidate_scatters,
+            &mut stats.candidate_cube_slices,
+            &mut stats.candidate_basic_maps,
+            &mut stats.candidate_multi_exprs,
+            &mut stats.candidate_2d,
+            &mut stats.candidate_3d,
+            &mut stats.candidate_call_map_direct,
+            &mut stats.candidate_call_map_runtime,
+        )
+    };
+
+    *total += 1;
+    match vector_plan_family(plan) {
+        VectorPlanFamily::Reduction => *reductions += 1,
+        VectorPlanFamily::Conditional => *conditionals += 1,
+        VectorPlanFamily::Recurrence => *recurrences += 1,
+        VectorPlanFamily::Shifted => *shifted += 1,
+        VectorPlanFamily::CallMap => *call_maps += 1,
+        VectorPlanFamily::ExprMap => *expr_maps += 1,
+        VectorPlanFamily::Scatter => *scatters += 1,
+        VectorPlanFamily::CubeSlice => *cube_slices += 1,
+        VectorPlanFamily::BasicMap => *basic_maps += 1,
+        VectorPlanFamily::MultiExpr => *multi_exprs += 1,
+    }
+    match vector_plan_shape(plan) {
+        VectorPlanShape::TwoD => *dims_2d += 1,
+        VectorPlanShape::ThreeD => *dims_3d += 1,
+        VectorPlanShape::General => {}
+    }
+    if let Some(lowering) = vector_plan_call_map_lowering(fn_ir, plan) {
+        match lowering {
+            CallMapLoweringMode::DirectVector => *callmap_direct += 1,
+            CallMapLoweringMode::RuntimeAuto { .. } => *callmap_runtime += 1,
+        }
+    }
+}
+
+fn vector_plan_trace_label_with_lowering(fn_ir: &FnIR, plan: &VectorPlan) -> String {
+    let base = vector_plan_label(plan);
+    match vector_plan_call_map_lowering(fn_ir, plan) {
+        Some(CallMapLoweringMode::DirectVector) => format!("{base}[direct]"),
+        Some(CallMapLoweringMode::RuntimeAuto { helper_cost }) => {
+            format!("{base}[runtime:{helper_cost}]")
+        }
+        None => base.to_string(),
+    }
 }
 
 pub(super) fn collect_reduction_candidates(
@@ -199,8 +483,6 @@ pub(super) fn collect_vector_candidates(
 pub(super) fn rank_vector_plans(plans: &mut [VectorPlan]) {
     plans.sort_by_key(|plan| std::cmp::Reverse(vector_plan_score(plan)));
 }
-
-pub(super) const CALL_MAP_AUTO_HELPER_COST_THRESHOLD: u32 = 6;
 
 pub(super) fn rank_vector_plans_for_loop(fn_ir: &FnIR, lp: &LoopInfo, plans: &mut [VectorPlan]) {
     plans.sort_by_key(|plan| {

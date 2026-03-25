@@ -1,0 +1,25 @@
+fn main() {
+    let y = 50.0
+    let vy = 0.0
+    let g = -9.81
+    let dt = 0.1
+    let restitution = 0.8
+    let time = 0.0
+
+    print("Simple Bouncing Ball Simulation:")
+    while (time <= 5.0) {
+        vy = vy + g * dt
+        y = y + vy * dt
+
+        if (y < 0.0) {
+            y = 0.0
+            vy = -vy * restitution
+        }
+        
+        print(y)
+        
+        time = time + dt
+    }
+}
+
+main()

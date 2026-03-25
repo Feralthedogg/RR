@@ -77,6 +77,9 @@ Rules:
 - `MUST` avoid unnecessary `clone()` in performance-sensitive code.
 - `SHOULD` keep large data structures out of tight loop copies.
 - `SHOULD` choose contiguous layouts (`Vec`) for sequential pass-heavy workloads.
+- `SHOULD` use interning or arena-style allocation for long-lived compiler data
+  such as symbols, type metadata, or repeated semantic descriptors when that
+  materially reduces copy churn or allocation pressure.
 
 ### 5) Error Model (User Error vs Compiler Fault)
 
@@ -91,6 +94,11 @@ Rules:
 - `MUST` make overflow behavior explicit (`checked_*`, `saturating_*`, `wrapping_*`) where relevant.
 - `MUST` avoid unchecked casts when truncation/sign changes are possible.
 - `SHOULD` keep integer widths intentional in IR and optimizer logic.
+- `MUST` preserve RR language semantics when simulating target-language
+  arithmetic in compiler code, including constant folding and evaluator helpers.
+- `SHOULD` document when compiler-side arithmetic intentionally differs from
+  target-program arithmetic because it is implementing compiler bookkeeping
+  rather than RR program semantics.
 
 ### 7) Module Boundaries and Naming
 
@@ -124,6 +132,9 @@ For performance-sensitive changes, contributors `SHOULD` attach benchmark eviden
 
 ### 9) IR Debuggability and Developer Ergonomics
 
+- `MUST` preserve stage-specific IR invariants across each pass boundary.
+- `MUST` use existing `validate_*` or verifier-style checks after non-trivial IR
+  rewrites, and add focused validation when a new invariant is introduced.
 - `SHOULD` keep IR structs readable via `Debug` output suitable for troubleshooting.
 - `SHOULD` add or maintain pretty-print paths for complex IR dumps used in debugging/review.
 - `MUST` keep IR dump ordering deterministic when used by tests or regression artifacts.
@@ -138,6 +149,8 @@ For performance-sensitive changes, contributors `SHOULD` attach benchmark eviden
 ### 11) Review Readability
 
 - `MUST` favor code that a reviewer can reason about quickly.
+- `SHOULD` use Rustdoc comments (`///`) on public APIs and on core IR
+  transformation entrypoints whose design intent is not obvious from local code.
 - `SHOULD` add brief comments only for non-obvious invariants or performance constraints.
 - `MUST NOT` add comments that restate obvious syntax.
 
@@ -155,10 +168,14 @@ If you must break a `MUST`/`SHOULD` rule:
 - Control flow remains readable and explicit.
 - No accidental hot-path allocation regressions.
 - Benchmark evidence is attached when touching hot-path performance.
+- IR invariants still hold and relevant `validate_*`/verifier paths were exercised.
 - IR dumps/Debug output remain readable and deterministic for debugging.
+- Long-lived compiler data does not introduce avoidable clone/allocation churn where interning or arenas are more appropriate.
 - `unsafe` blocks (if any) include `// SAFETY:` rationale and narrow scope.
 - Error type/category is correct (user error vs ICE).
+- Compiler-side constant folding and evaluator logic still match RR numeric/overflow semantics.
 - Relevant tests and checks were executed.
+- Public API or core transform docs were updated when design intent changed.
 - Docs updated if CLI/runtime/error semantics changed.
 
 For a concrete post-change verification pass, use

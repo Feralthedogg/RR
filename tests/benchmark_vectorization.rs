@@ -49,7 +49,13 @@ print(vec_map(8))
             || code.contains("y <- (y + y)")
             || code.contains("y <- rr_intrinsic_vec_add_f64(x, x)")
             || code.contains("y <- rr_intrinsic_vec_add_f64(y, y)")
-            || code.contains("rr_assign_slice(y, i, length(x), rr_intrinsic_vec_add_f64(x, x))"),
+            || code.contains("rr_assign_slice(y, i, length(x), rr_intrinsic_vec_add_f64(x, x))")
+            || code.contains("print(((seq_len(8L) + seq_len(8L))))")
+            || code.contains("print((seq_len(8L) + seq_len(8L)))"),
         "expected vectorized map body (direct add, intrinsic add helper, or slice assign form)"
+    );
+    assert!(
+        !code.contains("rr_index1_read("),
+        "expected vectorized output to stay free of scalar rr_index1_read checks"
     );
 }

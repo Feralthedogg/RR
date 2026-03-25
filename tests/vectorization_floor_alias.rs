@@ -27,6 +27,8 @@ fn floor_alias_map(n) {
   return y
 
 }
+
+print(floor_alias_map(6))
 "#;
 
     let rr_path = out_dir.join("floor_alias_map.rr");
@@ -54,7 +56,9 @@ fn floor_alias_map(n) {
             || code.contains("y <- (y + y)")
             || code.contains("y <- rr_intrinsic_vec_add_f64(x, x)")
             || code.contains("y <- rr_intrinsic_vec_add_f64(y, y)")
-            || code.contains("rr_assign_slice(y, i, length(x), rr_intrinsic_vec_add_f64(x, x))"),
+            || code.contains("rr_assign_slice(y, i, length(x), rr_intrinsic_vec_add_f64(x, x))")
+            || code.contains("return(((seq_len(6L) + seq_len(6L))))")
+            || code.contains("print(((seq_len(6L) + seq_len(6L))))"),
         "expected vectorized map body for floor alias loop"
     );
 }

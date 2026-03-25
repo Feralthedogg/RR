@@ -1,12 +1,21 @@
 mod common;
 
 use RR::compiler::{
-    IncrementalOptions, OptLevel, compile_with_configs_incremental, parallel_config_from_env,
-    type_config_from_env,
+    IncrementalOptions, OptLevel, compile_with_configs_incremental, module_tree_fingerprint,
+    module_tree_snapshot, parallel_config_from_env, type_config_from_env,
 };
 use common::unique_dir;
 use std::fs;
 use std::path::PathBuf;
+
+#[test]
+fn compiler_build_hash_env_is_set_for_incremental_cache_keys() {
+    let build_hash = option_env!("RR_COMPILER_BUILD_HASH");
+    assert!(
+        matches!(build_hash, Some(value) if !value.is_empty()),
+        "compiler build hash must be present so compiler changes invalidate incremental caches"
+    );
+}
 
 #[test]
 fn incremental_phase1_reuses_artifact_when_inputs_unchanged() {
@@ -164,4 +173,105 @@ fn answer() {
     unsafe {
         std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
     }
+}
+
+#[test]
+fn module_tree_fingerprint_tracks_imported_module_changes() {
+    let _env_guard = common::env_lock().lock().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("incremental_phase1");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "watch_fp");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = proj_dir.join("main.rr");
+    let module_path = proj_dir.join("module.rr");
+    let main_source = r#"
+import "./module.rr"
+
+fn main() {
+  print(answer())
+}
+main()
+"#;
+    fs::write(&main_path, main_source).expect("failed to write main.rr");
+    fs::write(
+        &module_path,
+        r#"
+fn answer() {
+  return 1L
+}
+"#,
+    )
+    .expect("failed to write module.rr");
+
+    let first = module_tree_fingerprint(&main_path.to_string_lossy(), main_source)
+        .expect("failed to compute first module tree fingerprint");
+    let unchanged = module_tree_fingerprint(&main_path.to_string_lossy(), main_source)
+        .expect("failed to recompute unchanged module tree fingerprint");
+    assert_eq!(
+        first, unchanged,
+        "module tree fingerprint should remain stable when inputs are unchanged"
+    );
+
+    fs::write(
+        &module_path,
+        r#"
+fn answer() {
+  return 2L
+}
+"#,
+    )
+    .expect("failed to update module.rr");
+
+    let changed = module_tree_fingerprint(&main_path.to_string_lossy(), main_source)
+        .expect("failed to compute changed module tree fingerprint");
+    assert_ne!(
+        first, changed,
+        "module tree fingerprint should change when an imported module changes"
+    );
+}
+
+#[test]
+fn module_tree_snapshot_includes_imported_modules() {
+    let _env_guard = common::env_lock().lock().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("incremental_phase1");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "snapshot");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = proj_dir.join("main.rr");
+    let module_path = proj_dir.join("module.rr");
+    let main_source = r#"
+import "./module.rr"
+
+fn main() {
+  print(answer())
+}
+main()
+"#;
+    fs::write(&main_path, main_source).expect("failed to write main.rr");
+    fs::write(
+        &module_path,
+        r#"
+fn answer() {
+  return 1L
+}
+"#,
+    )
+    .expect("failed to write module.rr");
+
+    let snapshot = module_tree_snapshot(&main_path.to_string_lossy(), main_source)
+        .expect("failed to collect module tree snapshot");
+    let mut names: Vec<String> = snapshot
+        .iter()
+        .filter_map(|(path, _)| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["main.rr".to_string(), "module.rr".to_string()]);
 }

@@ -30,6 +30,7 @@ compiler change?” separate instead of mixing them into one page.
 If you are using RR:
 
 - [Getting Started](getting-started.md)
+- [RR for R Users](r-for-r-users.md)
 - [Writing RR for Performance and Safety](writing-rr.md)
 - [CLI Reference](cli.md)
 - [Language Reference](language.md)

@@ -4,6 +4,14 @@ This page is the R package interop manual for RR.
 
 It describes the supported interop surface as implemented today.
 
+## Audience
+
+Read this page when you need to decide whether a package call should be:
+
+- kept on RR's direct typed surface
+- preserved as opaque namespaced interop
+- treated as dynamic fallback
+
 ## Interop Model
 
 RR uses three interop tiers.
@@ -13,6 +21,17 @@ RR uses three interop tiers.
 | direct interop | RR understands and preserves the call shape intentionally | normal compile path | `graphics::plot`, `ggplot2::aes`, selected `dplyr`/`stats` |
 | opaque interop | RR preserves the namespaced call but does not reason deeply about it | conservative optimization | unsupported namespaced package calls |
 | hybrid fallback | RR must defer dynamic behavior to runtime | aggressive optimization disabled | `eval`, `parse`, `get`, `assign`, `do.call` |
+
+The lists later on this page are authoritative for the direct tier. If a call is
+not listed there, do not assume RR models it deeply even if it still emits runnable R.
+
+## Practical Rule
+
+Prefer the most explicit tier RR can still reason about:
+
+1. direct namespaced interop
+2. opaque namespaced interop
+3. hybrid fallback only when dynamic behavior is truly required
 
 ## Import Forms
 
@@ -45,9 +64,17 @@ RR uses three interop tiers.
 ### IO / Reshape
 
 - `readr::read_csv`
+- `readr::read_delim`
+- `readr::read_rds`
+- `readr::read_tsv`
 - `readr::write_csv`
+- `readr::write_delim`
+- `readr::write_rds`
+- `readr::write_tsv`
+- `tidyr::separate`
 - `tidyr::pivot_longer`
 - `tidyr::pivot_wider`
+- `tidyr::unite`
 
 ### Graphics / Visualization
 
@@ -58,9 +85,15 @@ RR uses three interop tiers.
 - `grDevices::dev.off`
 - `ggplot2::aes`
 - `ggplot2::ggplot`
+- `ggplot2::geom_col`
+- `ggplot2::geom_bar`
+- `ggplot2::facet_grid`
 - `ggplot2::geom_line`
 - `ggplot2::geom_point`
+- `ggplot2::facet_wrap`
 - `ggplot2::ggtitle`
+- `ggplot2::labs`
+- `ggplot2::theme_bw`
 - `ggplot2::theme_minimal`
 - `ggplot2::ggsave`
 
@@ -68,11 +101,18 @@ RR uses three interop tiers.
 
 - `dplyr::mutate`
 - `dplyr::filter`
+- `dplyr::full_join`
+- `dplyr::inner_join`
+- `dplyr::right_join`
 - `dplyr::select`
 - `dplyr::summarise`
 - `dplyr::arrange`
+- `dplyr::anti_join`
+- `dplyr::bind_rows`
 - `dplyr::group_by`
+- `dplyr::left_join`
 - `dplyr::rename`
+- `dplyr::semi_join`
 
 ## Tidy-Eval Surface
 
@@ -91,6 +131,13 @@ Currently supported tidy-aware calls:
 - `dplyr::rename`
 - `tidyr::pivot_longer`
 - `tidyr::pivot_wider`
+- `tidyr::separate`
+- `tidyr::unite`
+
+That list is exact, not illustrative.
+Implicit bare symbols are only preserved inside those calls. Outside that exact
+surface, use normal RR expressions, force a raw R symbol with `@name`, or force
+an RR environment value with `^expr`.
 
 Currently supported tidy helpers:
 
@@ -113,12 +160,20 @@ Special forms:
   - force a raw R symbol
 - `^expr`
   - force an RR environment expression
+- `~name`
+  - formula shorthand currently lowered as `stats::as.formula("~name")`
+  - intended for direct interop cases such as `ggplot2::facet_wrap(~name)`
+- `lhs ~ rhs`
+  - model/faceting formula shorthand is also supported
+  - lowered as `stats::as.formula("lhs ~ rhs")`
+- `~a + b`
+  - simple infix formula shorthand is also supported
+  - currently limited to `+`, `-`, `*`, `/` over names, columns, dotted field paths, and string literals
 
 ## Stability Rules
 
 - Supported direct interop should not force whole-function hybrid fallback.
 - Unsupported namespaced calls should prefer opaque interop over hybrid fallback.
-- Dynamic metaprogramming remains hybrid fallback by design.
 
 ## Conflict Rules
 
@@ -145,5 +200,6 @@ let main <- function() {
 ## Related Manuals
 
 - [Language Reference](language.md)
+- [RR for R Users](r-for-r-users.md)
 - [Compatibility and Limits](compatibility.md)
 - [Runtime and Error Model](runtime-and-errors.md)

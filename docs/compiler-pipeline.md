@@ -8,6 +8,14 @@ Primary implementation entrypoint:
 
 CLI entrypoints in `src/main.rs` call into this pipeline API.
 
+## Audience
+
+Read this page when you need to understand:
+
+- where a diagnostic originated
+- which phase owns a transformation
+- which invariants must hold between phases
+
 ## Pipeline Synopsis
 
 `RR source`
@@ -43,6 +51,15 @@ Hard rules:
 - codegen must see phi-free MIR
 - runtime injection must emit only referenced helper subsets plus required bootstrap
 - incremental reuse must not silently change final emitted semantics
+
+## Phase Boundary Invariants
+
+Important boundaries to keep in mind:
+
+- HIR canonicalization should remove surface sugar before MIR lowering
+- MIR verification and type analysis operate on SSA-like MIR, not emitted R
+- codegen should only see de-SSA, structurized MIR
+- runtime injection should never invent semantics that are absent from emitted R
 
 ## Phase Table
 
@@ -141,11 +158,38 @@ Emission is split into:
 - CFG structurization
 - expression/instruction lowering
 - source-map generation
+- emitted-R cleanup and shape canonicalization
 
 Relevant paths:
 
 - `src/mir/structurizer.rs`
 - `src/codegen/mir_emit.rs`
+- `src/compiler/r_peephole.rs`
+
+The final emitted-R cleanup stage is intentionally conservative. It exists to
+improve readability and stabilize artifact shape without changing meaning. In
+practice this stage is where RR now fixes or canonicalizes items such as:
+
+- stale tail writebacks after loop-carried whole-slice updates
+- repeated fresh-allocation replays that would overwrite computed state
+- dead `.arg_*` parameter aliases in helper-style wrappers
+- immediate scalar/index temporaries that are used once and can be inlined
+- trivial loop index aliases such as `ii <- i`
+
+This stage is also where many emitted-artifact regression fences are anchored,
+so a change that regresses generated R shape should usually be documented and
+covered here rather than treated as an optimizer-only issue.
+
+By default the emitted artifact is treated as a whole-program result rather than
+a definition-preserving transpilation dump. That means:
+
+- the pipeline may trim unreachable top-level `Sym_*` definitions
+- emitted-R cleanup may strip helper definitions that are not reachable from the
+  synthesized entry closure
+
+If the caller needs a source-preserving artifact, use
+`CompileOutputOptions { preserve_all_defs: true, .. }` or the CLI flag
+`--preserve-all-defs`.
 
 ### 7. Runtime Injection
 
@@ -187,8 +231,10 @@ Configuration resolves in this order:
 2. environment variables
 3. defaults
 
-The emitted artifact then appends compile-time policy assignments so the final
-runtime behavior matches the compile that produced it.
+The emitted artifact then appends compile-time policy defaults so the final
+runtime behavior matches the compile that produced it unless the runner
+explicitly overrides backend or parallel settings through the documented
+environment variables.
 
 ## Incremental Compile
 

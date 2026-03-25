@@ -1,7 +1,9 @@
 mod common;
 
 use common::random_rr::{generate_cases, suite_summary};
-use common::{compile_rr_env, normalize, rscript_available, rscript_path, run_rscript, unique_dir};
+use common::{
+    compile_rr_env_with_args, normalize, rscript_available, rscript_path, run_rscript, unique_dir,
+};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -194,11 +196,12 @@ fn generated_rr_programs_match_reference_r_across_opt_levels() {
 
         for (flag, tag) in [("-O0", "o0"), ("-O1", "o1"), ("-O2", "o2")] {
             let out_path = proj_dir.join(format!("{}_{}.R", case.name, tag));
-            compile_rr_env(
+            compile_rr_env_with_args(
                 &rr_bin,
                 &rr_path,
                 &out_path,
                 flag,
+                &["--no-incremental"],
                 &[("RR_VERIFY_EACH_PASS", "1")],
             );
             let compiled = run_rscript(&rscript, &out_path);
