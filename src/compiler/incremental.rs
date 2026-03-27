@@ -262,8 +262,16 @@ pub fn compile_with_configs_incremental_with_output_options(
     output_options: CompileOutputOptions,
     session: Option<&mut IncrementalSession>,
 ) -> RR<IncrementalCompileOutput> {
-    let resolved = options.resolve(session.is_some());
-    if !resolved.enabled {
+    let mut resolved = options.resolve(session.is_some());
+    if raw_r_debug_dump_requested() {
+        // Raw debug dumps are emitted during the normal pipeline before the
+        // peephole pass. Cached final artifacts cannot reproduce that side
+        // output, so bypass the artifact-hit tiers while keeping phase2 emit
+        // cache reuse available.
+        resolved.phase1 = false;
+        resolved.phase3 = false;
+    }
+    if !resolved.enabled || (!resolved.phase1 && !resolved.phase2 && !resolved.phase3) {
         let (r_code, source_map) = compile_with_configs_with_options(
             entry_path,
             entry_input,
@@ -280,20 +288,25 @@ pub fn compile_with_configs_incremental_with_output_options(
     }
 
     let mut stats = IncrementalStats::default();
-    let fingerprint = collect_module_fingerprints(entry_path, entry_input)?;
-    let cache_key = build_artifact_key(
-        &fingerprint,
-        opt_level,
-        type_cfg,
-        parallel_cfg,
-        resolved,
-        output_options,
-    );
     let mut strict_expected = Vec::new();
+    let cache_key = if resolved.phase1 || resolved.phase3 {
+        let fingerprint = collect_module_fingerprints(entry_path, entry_input)?;
+        Some(build_artifact_key(
+            &fingerprint,
+            opt_level,
+            type_cfg,
+            parallel_cfg,
+            resolved,
+            output_options,
+        ))
+    } else {
+        None
+    };
 
     if resolved.phase3
+        && let Some(cache_key) = cache_key.as_ref()
         && let Some(s) = session.as_ref()
-        && let Some(hit) = s.phase3_artifacts.get(&cache_key)
+        && let Some(hit) = s.phase3_artifacts.get(cache_key)
     {
         stats.phase3_memory_hit = true;
         if resolved.strict_verify {
@@ -309,7 +322,8 @@ pub fn compile_with_configs_incremental_with_output_options(
 
     let cache_root = cache_root_for_entry(entry_path);
     if resolved.phase1
-        && let Some(hit) = load_artifact(&cache_root, &cache_key)?
+        && let Some(cache_key) = cache_key.as_ref()
+        && let Some(hit) = load_artifact(&cache_root, cache_key)?
     {
         stats.phase1_artifact_hit = true;
         if resolved.strict_verify {
@@ -318,7 +332,7 @@ pub fn compile_with_configs_incremental_with_output_options(
             if resolved.phase3
                 && let Some(s) = session
             {
-                s.phase3_artifacts.insert(cache_key, hit.clone());
+                s.phase3_artifacts.insert(cache_key.clone(), hit.clone());
             }
             return Ok(IncrementalCompileOutput {
                 r_code: hit.r_code,
@@ -355,12 +369,18 @@ pub fn compile_with_configs_incremental_with_output_options(
     let built = CachedArtifact { r_code, source_map };
 
     if resolved.phase1 {
-        store_artifact(&cache_root, &cache_key, &built)?;
+        let cache_key = cache_key
+            .as_ref()
+            .expect("phase1 incremental artifact store requires cache key");
+        store_artifact(&cache_root, cache_key, &built)?;
     }
     if resolved.phase3
         && let Some(s) = session
     {
-        s.phase3_artifacts.insert(cache_key, built.clone());
+        let cache_key = cache_key
+            .as_ref()
+            .expect("phase3 incremental artifact store requires cache key");
+        s.phase3_artifacts.insert(cache_key.clone(), built.clone());
     }
     if resolved.strict_verify {
         stats.strict_verification_checked = !strict_expected.is_empty();
@@ -374,6 +394,10 @@ pub fn compile_with_configs_incremental_with_output_options(
         source_map: built.source_map,
         stats,
     })
+}
+
+fn raw_r_debug_dump_requested() -> bool {
+    env::var_os("RR_DEBUG_RAW_R_PATH").is_some()
 }
 
 fn collect_module_fingerprints(entry_path: &str, entry_input: &str) -> RR<Vec<ModuleFingerprint>> {
