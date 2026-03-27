@@ -4800,7 +4800,10 @@ fn expr_is_floor_clamped_scalar_index_source(expr: &str) -> bool {
     if compact.starts_with('(') && compact.ends_with(')') {
         compact = compact[1..compact.len() - 1].to_string();
     }
-    compact.starts_with("pmin(pmax((1+floor(") || compact.starts_with("pmin(pmax(1+floor(")
+    compact.starts_with("pmin(pmax((1+floor(")
+        || compact.starts_with("pmin(pmax(1+floor(")
+        || compact.starts_with("pmin(pmax((1.0+floor(")
+        || compact.starts_with("pmin(pmax(1.0+floor(")
 }
 
 fn rewrite_safe_named_index_read_calls(lines: Vec<String>) -> Vec<String> {
@@ -6471,7 +6474,6 @@ fn inline_single_use_named_scalar_index_reads_within_straight_line_region(
             || lhs.starts_with(".arg_")
             || lhs.starts_with(".__rr_cse_")
             || !expr_is_inlineable_named_scalar_rhs(rhs, pure_user_calls)
-            || line_is_within_loop_body(&out, idx)
         {
             continue;
         }
@@ -8958,6 +8960,24 @@ fn strip_dead_temps(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> (Vec<String>, Vec<u32>) {
+    fn loop_body_references_var_before(lines: &[String], idx: usize, var: &str) -> bool {
+        (0..idx)
+            .rev()
+            .find_map(|start_idx| {
+                is_loop_open_boundary(lines[start_idx].trim())
+                    .then(|| find_matching_block_end(lines, start_idx).map(|end| (start_idx, end)))
+                    .flatten()
+                    .filter(|(_, end)| idx < *end)
+            })
+            .is_some_and(|(start, _end)| {
+                lines
+                    .iter()
+                    .take(idx)
+                    .skip(start + 1)
+                    .any(|line| expr_idents(line).iter().any(|ident| ident == var))
+            })
+    }
+
     let overwritten_dead = mark_overwritten_dead_assignments(&lines, pure_user_calls);
     let branch_local_dead = mark_branch_local_dead_inits(&lines);
     let redundant_temp_reassign = mark_redundant_identical_temp_reassigns(&lines);
@@ -8993,29 +9013,30 @@ fn strip_dead_temps(
     let mut out = lines;
     let mut removed = vec![false; out.len()];
     for idx in (0..out.len()).rev() {
-        let line = &mut out[idx];
+        let line = out[idx].clone();
         if line.trim().is_empty() {
             removed[idx] = true;
+            out[idx] = String::new();
             continue;
         }
-        if is_dead_plain_ident_eval_line(line) {
+        if is_dead_plain_ident_eval_line(&line) {
             removed[idx] = true;
-            *line = String::new();
+            out[idx] = String::new();
             continue;
         }
-        if is_dead_parenthesized_eval_line(line) {
+        if is_dead_parenthesized_eval_line(&line) {
             removed[idx] = true;
-            *line = String::new();
+            out[idx] = String::new();
             continue;
         }
         if overwritten_dead[idx] || branch_local_dead[idx] || redundant_temp_reassign[idx] {
             removed[idx] = true;
-            *line = String::new();
+            out[idx] = String::new();
             continue;
         }
         if line.trim() == "# rr-cse-pruned" {
             removed[idx] = true;
-            *line = String::new();
+            out[idx] = String::new();
             continue;
         }
         if line.contains("<- function") {
@@ -9038,8 +9059,11 @@ fn strip_dead_temps(
             || lhs.starts_with("i_")
             || lhs.starts_with(".__rr_tmp_");
         let is_dead_helper_local = lhs.starts_with("licm_");
+        let is_loop_carried_state_update =
+            line_is_within_loop_body(&out, idx) && loop_body_references_var_before(&out, idx, lhs);
         let is_dead_simple_assign =
             is_dead_pure_expr_assignment_candidate(lhs, rhs, pure_user_calls)
+                && !is_loop_carried_state_update
                 && !ever_read_per_line[idx].contains(lhs);
         if ((is_temp || is_dead_helper_local)
             && !live.contains(lhs)
@@ -9047,7 +9071,7 @@ fn strip_dead_temps(
             || is_dead_simple_assign
         {
             removed[idx] = true;
-            *line = String::new();
+            out[idx] = String::new();
             continue;
         }
         live.remove(lhs);

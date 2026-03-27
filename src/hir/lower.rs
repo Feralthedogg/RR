@@ -3,7 +3,6 @@ use crate::hir::def::*;
 use crate::syntax::ast;
 use crate::utils::{Span, did_you_mean};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::env;
 
 pub struct Lowerer {
     // Symbol resolution state
@@ -16,6 +15,7 @@ pub struct Lowerer {
 
     // Mapping for current function's locals
     local_names: FxHashMap<LocalId, String>,
+    local_emitted_names: FxHashSet<String>,
 
     // Global Symbol Table
     symbols: FxHashMap<SymbolId, String>,
@@ -45,16 +45,17 @@ impl Default for Lowerer {
 
 impl Lowerer {
     pub fn new() -> Self {
-        let strict_let = Self::env_bool("RR_STRICT_LET")
-            .or_else(|| Self::env_bool("RR_STRICT_ASSIGN"))
-            .unwrap_or(true);
-        let warn_implicit_decl = Self::env_bool("RR_WARN_IMPLICIT_DECL").unwrap_or(false);
+        Self::with_policy(true, false)
+    }
+
+    pub fn with_policy(strict_let: bool, warn_implicit_decl: bool) -> Self {
         Self {
             scopes: vec![FxHashMap::default()], // Global scope?
             next_local_id: 0,
             next_sym_id: 0,
             in_tidy: false,
             local_names: FxHashMap::default(),
+            local_emitted_names: FxHashSet::default(),
             symbols: FxHashMap::default(),
             symbols_rev: FxHashMap::default(),
             warnings: Vec::new(),
@@ -67,24 +68,12 @@ impl Lowerer {
         }
     }
 
-    fn env_bool(key: &str) -> Option<bool> {
-        match env::var(key) {
-            Ok(v) => match v.trim().to_ascii_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => Some(true),
-                "0" | "false" | "no" | "off" => Some(false),
-                _ => None,
-            },
-            Err(_) => None,
-        }
-    }
-
     pub fn take_warnings(&mut self) -> Vec<String> {
         std::mem::take(&mut self.warnings)
     }
 
-    // Persistent symbol table
-    pub fn get_symbols(&self) -> FxHashMap<SymbolId, String> {
-        self.symbols.clone()
+    pub fn into_symbols(self) -> FxHashMap<SymbolId, String> {
+        self.symbols
     }
 
     fn enter_scope(&mut self) {
@@ -98,11 +87,19 @@ impl Lowerer {
     fn declare_local(&mut self, name: &str) -> LocalId {
         let id = LocalId(self.next_local_id);
         self.next_local_id += 1;
-        let emitted_name = if self.local_names.values().any(|n| n == name) {
-            format!("{}_{}", name, id.0)
-        } else {
-            name.to_string()
-        };
+        let mut emitted_name = name.to_string();
+        if self.local_emitted_names.contains(&emitted_name) {
+            let mut suffix = id.0;
+            loop {
+                let candidate = format!("{}_{}", name, suffix);
+                if !self.local_emitted_names.contains(&candidate) {
+                    emitted_name = candidate;
+                    break;
+                }
+                suffix += 1;
+            }
+        }
+        self.local_emitted_names.insert(emitted_name.clone());
         self.local_names.insert(id, emitted_name);
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), id);
@@ -244,7 +241,7 @@ impl Lowerer {
                 "unknown".to_string()
             };
             self.warnings.push(format!(
-                "implicit declaration via assignment: '{}' at {} (treated as `let {} = ...;`). Set RR_STRICT_LET=1 or unset RR_STRICT_LET to forbid this; set RR_STRICT_LET=0 to allow this legacy behavior.",
+                "implicit declaration via assignment: '{}' at {} (treated as `let {} = ...;`). Use an explicit lowering policy to forbid or allow this legacy behavior.",
                 name, where_msg, name
             ));
         }
@@ -564,6 +561,7 @@ impl Lowerer {
 
         let saved_scopes = std::mem::replace(&mut self.scopes, vec![FxHashMap::default()]);
         let saved_local_names = std::mem::take(&mut self.local_names);
+        let saved_local_emitted_names = std::mem::take(&mut self.local_emitted_names);
         let saved_next_local = self.next_local_id;
         self.next_local_id = 0;
 
@@ -607,6 +605,7 @@ impl Lowerer {
 
         self.scopes = saved_scopes;
         self.local_names = saved_local_names;
+        self.local_emitted_names = saved_local_emitted_names;
         self.next_local_id = saved_next_local;
 
         self.pending_fns.push(HirFn {
@@ -717,11 +716,7 @@ impl Lowerer {
         .at(span)
     }
 
-    pub fn lower_module(
-        &mut self,
-        prog: ast::Program,
-        mod_id: ModuleId,
-    ) -> RR<(HirModule, FxHashMap<SymbolId, String>)> {
+    pub fn lower_module(&mut self, prog: ast::Program, mod_id: ModuleId) -> RR<HirModule> {
         let mut items = Vec::new();
         // println!("Lowering module {:?} with {} statements", mod_id, prog.stmts.len());
         for stmt in prog.stmts {
@@ -898,15 +893,11 @@ impl Lowerer {
             }
         }
 
-        let symbols = self.symbols.clone();
-        Ok((
-            HirModule {
-                id: mod_id,
-                path: vec![],
-                items,
-            },
-            symbols,
-        ))
+        Ok(HirModule {
+            id: mod_id,
+            path: vec![],
+            items,
+        })
     }
 
     fn lower_fn(
@@ -924,6 +915,7 @@ impl Lowerer {
         // Names not declared in the function should lower as globals.
         let saved_scopes = std::mem::replace(&mut self.scopes, vec![FxHashMap::default()]);
         let saved_local_names = std::mem::take(&mut self.local_names);
+        let saved_local_emitted_names = std::mem::take(&mut self.local_emitted_names);
         let saved_next_local = self.next_local_id;
         self.next_local_id = 0;
 
@@ -961,6 +953,7 @@ impl Lowerer {
 
         self.scopes = saved_scopes;
         self.local_names = saved_local_names;
+        self.local_emitted_names = saved_local_emitted_names;
         self.next_local_id = saved_next_local;
 
         // These variables are not defined in the original code,

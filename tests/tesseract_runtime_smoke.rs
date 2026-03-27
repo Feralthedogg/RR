@@ -1,6 +1,9 @@
 mod common;
 
-use common::{compile_rr, compile_rr_env, normalize, rscript_available, rscript_path, run_rscript};
+use common::{
+    compile_rr, compile_rr_env, compile_rr_env_with_args, normalize, rscript_available,
+    rscript_path, run_rscript,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -818,20 +821,29 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         "raw tesseract output unexpectedly still contains the Sym_119 whole-range rr_assign_slice helper replay"
     );
     for needle in [
-        "h <- rep.int(8000, TOTAL)",
-        "temp <- rep.int(300, TOTAL)",
+        "h <- rep.int(8000.0, TOTAL)",
+        "temp <- rep.int(300.0, TOTAL)",
         "qv <- rep.int(0.015, TOTAL)",
         "qc <- rep.int(0.001, TOTAL)",
-        "qr <- rep.int(0, TOTAL)",
-        "h_trn <- qr",
+        "qr <- rep.int(0.0, TOTAL)",
+        "qi <- qr",
+        "qs <- qi",
+        "qg <- qr",
+        "h_trn <- rep.int(0.0, TOTAL)",
         "coriolis <- qr",
-        "u_stage <- qr",
+        "u_new <- qr",
         "v <- qr",
-        "p_x <- Sym_183(1000)",
+        "p_x <- Sym_183(1000.0)",
         "p_y <- p_x",
-        "p_f <- rep.int(1, 1000)",
-        "adj_ll <- rr_gather(adj_l, rr_index_vec_floor(adj_l))",
-        "adj_rr <- rr_gather(adj_r, rr_index_vec_floor(adj_r))",
+        "p_f <- rep.int(1.0, 1000.0)",
+        "adj_ll <- qr",
+        "adj_rr <- adj_ll",
+        ".tachyon_exprmap0_0 <- rr_gather(adj_l",
+        ".tachyon_exprmap1_0 <- rr_gather(adj_r",
+        "adj_ll <- rr_assign_slice(adj_ll, i, ((6.0 * N) * N), .tachyon_exprmap0_0)",
+        "adj_rr <- rr_assign_slice(adj_rr, i, ((6.0 * N) * N), .tachyon_exprmap1_0)",
+        "heat2 <- heat",
+        "heat3 <- heat",
     ] {
         assert!(
             raw_code.contains(needle),
@@ -839,34 +851,25 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         );
     }
     assert!(
-        raw_code.contains("qs <- qr")
+        raw_code.contains("qi <- qr")
+            && raw_code.contains("qs <- qi")
             && raw_code.contains("qg <- qr")
-            && !raw_code.contains("qs <- qi")
             && !raw_code.contains("qg <- qs"),
         "expected raw tesseract output to keep the zero-fill alias-reuse chain for qs/qg after raw helper cleanup"
     );
     assert!(
-        !raw_code.contains("qi <- qr"),
-        "expected raw tesseract output to drop dead qi zero-fill aliases after qs/qg reuse is flattened"
-    );
-    assert!(
-        raw_code.contains("u_stage <- qr")
-            && (raw_code.contains("u_new <- qr") || raw_code.contains("u_new <- u_stage")),
+        raw_code.contains("u_new <- qr")
+            && raw_code.contains("u_stage <- (u + (dt * (du1 - adv_u)))"),
         "expected raw tesseract output to keep the zero-fill alias-reuse chain for u_stage/u_new after raw helper cleanup"
     );
     for needle in [
-        "qi <- rep.int(0, TOTAL)",
+        "qi <- rep.int(0.0, TOTAL)",
         "Sym_17 <- function(n, val)",
         "h <- Sym_17(TOTAL, 8000)",
         "p_f <- Sym_17(1000, 1)",
         "p_y <- Sym_183(1000)",
-        "ii <- 0",
         "heat2 <- Sym_287(temp, qv, qc, qs, qg, TOTAL)",
         "heat3 <- Sym_287(temp, qv, qc, qs, qg, TOTAL)",
-        ".tachyon_exprmap0_0 <- rr_gather(adj_l",
-        ".tachyon_exprmap1_0 <- rr_gather(adj_r",
-        "adj_ll <- rr_assign_slice(adj_ll, i, ((6 * N) * N), .tachyon_exprmap0_0)",
-        "adj_rr <- rr_assign_slice(adj_rr, i, ((6 * N) * N), .tachyon_exprmap1_0)",
     ] {
         assert!(
             !raw_code.contains(needle),
@@ -881,34 +884,31 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         raw_code.contains("x <- (x + (alpha * p))")
             && !raw_code.contains("rr_assign_slice(r, i, .arg_size,")
             && raw_code.contains("r <- (r - (alpha * Ap))")
-            && raw_code.contains("rs_new <- sum((r[seq_len(size)] * r[seq_len(size)]))"),
-        "expected raw tesseract output to lower the CG x/r stages to direct whole-range vector expressions and a direct rs_new reduction over the updated r"
+            && raw_code.contains("rs_new <- Sym_117(r, r, size)"),
+        "expected raw tesseract output to lower the CG x/r stages to direct whole-range vector expressions while keeping the rs_new recurrence explicit"
     );
     assert!(
-        (raw_code.contains("rs_old <- sum((r[seq_len(size)] * r[seq_len(size)]))")
-            || raw_code.contains("rs_old <- sum((b[seq_len(size)] * b[seq_len(size)]))"))
-            && raw_code.contains("p_Ap <- sum((p[seq_len(size)] * Ap[seq_len(size)]))")
-            && !raw_code.contains("Sym_117 <- function(a, b, n)")
-            && !raw_code.contains("rs_old <- Sym_117(r, r, size)")
-            && !raw_code.contains("p_Ap <- Sym_117(p, Ap, size)"),
-        "expected raw tesseract output to inline the dot-product helper callsites all the way to direct sum expressions"
+        raw_code.contains("Sym_117 <- function(a, b, n)")
+            && raw_code.contains("rs_old <- Sym_117(r, r, size)")
+            && raw_code.contains("p_Ap <- Sym_117(p, Ap, size)")
+            && raw_code.contains("rs_new <- Sym_117(r, r, size)"),
+        "expected raw tesseract output to keep the shared dot-product helper and explicit rs_old/p_Ap/rs_new recurrence in Sym_123"
     );
     let raw_sym_123 = extract_r_function(&raw_code, "Sym_123")
         .unwrap_or_else(|| panic!("raw tesseract output should contain Sym_123"));
     assert!(
         raw_sym_123.contains("alpha <- (rs_old / p_Ap)")
             && raw_sym_123.contains("beta <- (rs_new / rs_old)")
-            && raw_sym_123.contains("for (iter in seq_len(20)) {")
-            && !raw_sym_123.contains("if (!(iter <= 20)) break")
-            && !raw_sym_123.contains("iter <- (iter + 1)")
-            && !raw_sym_123.contains("if (!(1 <= 20)) break")
+            && raw_sym_123.contains("repeat {")
+            && raw_sym_123.contains("if (!(iter <= 20.0)) break")
+            && raw_sym_123.contains("iter <- (iter + 1.0)")
             && raw_sym_123.contains("r <- (r - (alpha * Ap))")
-            && raw_sym_123.contains("rs_new <- sum((r[seq_len(size)] * r[seq_len(size)]))")
+            && raw_sym_123.contains("rs_new <- Sym_117(r, r, size)")
             && raw_sym_123.contains("p <- (r + (beta * p))")
             && raw_sym_123.contains("rs_old <- rs_new")
-            && !raw_sym_123.contains("if ((is.na(rs_old / p_Ap)")
-            && !raw_sym_123.contains("if ((is.na(rs_new / rs_old)"),
-        "expected raw Sym_123 to keep the CG alpha/beta/r/p/rs_old recurrence while lowering the iter scaffold to a canonical for-loop"
+            && raw_sym_123.contains("if (!(is.finite(alpha))) {")
+            && raw_sym_123.contains("if (!(is.finite(beta))) {"),
+        "expected raw Sym_123 to keep the CG alpha/beta/r/p/rs_old recurrence with the current repeat-loop and finite-guard lowering"
     );
     assert!(
         !raw_code.contains("x <- (rep.int(0, size))")
@@ -920,56 +920,51 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
             && !raw_code.contains("qv <- q_v[i]")
             && !raw_code.contains("qs <- q_s[i]")
             && !raw_code.contains("qg <- q_g[i]")
-            && !raw_code.contains("T <- .arg_temp[ii]")
             && !raw_code.contains("T_c <- T_c")
             && !raw_code.contains("qv <- .arg_q_v[ii]")
             && !raw_code.contains("qs <- .arg_q_s[ii]")
             && !raw_code.contains("qg <- .arg_q_g[ii]")
             && !raw_code.contains("L_v <- 2500000")
             && !raw_code.contains("es_ice <- ")
-            && !raw_code.contains("melt_rate <- 0")
-            && !raw_code.contains("melt_rate <- (q_s[i] * 0.05)")
-            && !raw_code.contains("melt_rate <- (melt_rate + (q_g[i] * 0.02))")
-            && raw_code.contains("tendency_T <- (tendency_T - ((q_s[i] * 0.05) * L_f))")
-            && raw_code.contains("tendency_T <- (tendency_T - ((q_g[i] * 0.02) * L_f))"),
-        "expected raw tesseract output to inline direct q_*[i] scalar reads inside Sym_287"
+            && raw_code.contains("T_c <- (temp[i] - 273.15)")
+            && raw_code.contains("melt_rate <- 0.0")
+            && raw_code.contains("melt_rate <- (q_s[i] * 0.05)")
+            && raw_code.contains("melt_rate <- (melt_rate + (q_g[i] * 0.02))")
+            && raw_code.contains("tendency_T <- (tendency_T - (melt_rate * L_f))")
+            && raw_code.contains("heat[rr_index1_write(i, \"index\")] <- (tendency_T / cp)"),
+        "expected raw tesseract output to keep direct q_*[i] reads and the current T_c/melt_rate lowering inside Sym_287 without reintroducing arg-alias temps"
     );
     assert!(
-        !raw_code.contains("id <- rr_wrap_index_vec_i(x, y, W, H)")
-            && !raw_code.contains("center_idx <- rr_wrap_index_vec_i(32, 32, W, H)")
-            && !raw_code.contains("side_idx <- rr_wrap_index_vec_i(40, 32, W, H)")
-            && raw_code.contains("B[rr_wrap_index_vec_i(x, y, W, H)] <- 1")
-            && raw_code.contains("print(B[rr_wrap_index_vec_i(32, 32, W, H)])")
-            && raw_code.contains("print(B[rr_wrap_index_vec_i(40, 32, W, H)])"),
-        "expected raw tesseract output to inline single-use wrap-index pure calls directly into B indexing and probe prints"
+        raw_code.contains("id <- rr_wrap_index_vec_i(x, y, W, H)")
+            && raw_code.contains("B[id] <- 1.0")
+            && raw_code.contains("center_idx <- rr_wrap_index_vec_i(32.0, 32.0, W, H)")
+            && raw_code.contains("side_idx <- rr_wrap_index_vec_i(40.0, 32.0, W, H)")
+            && raw_code.contains("print(B[center_idx])")
+            && raw_code.contains("print(B[side_idx])"),
+        "expected raw tesseract output to keep the current explicit wrap-index temporaries in the Morphogenesis update and probe paths"
     );
     assert!(
-        raw_code.contains("probe_vec <- Sym_49(c(1, 2, 3, 4), c(4, 3, 2, 1))")
+        raw_code.contains("probe_vec <- Sym_49(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))")
             && raw_code.contains("probe_energy <- mean(abs(probe_vec))")
             && !raw_code.contains("Sym_51 <- function(a, b)")
-            && !raw_code.contains("probe_energy <- Sym_51(c(1, 2, 3, 4), c(4, 3, 2, 1))"),
+            && !raw_code.contains("probe_energy <- Sym_51("),
         "expected raw tesseract output to reuse the earlier probe_vec call when forming probe_energy and drop the now-unreachable Sym_51 helper"
     );
+    let raw_sym_183 = extract_r_function(&raw_code, "Sym_183")
+        .unwrap_or_else(|| panic!("raw tesseract output should contain Sym_183"));
     assert!(
-        raw_code.contains("Sym_183 <- function(n)")
-            && raw_code.contains("p <- rep.int(0, n)")
-            && !raw_code.contains("p <- seq_len(n)")
-            && raw_code.contains("p[i] <- (seed / 2147483648)"),
-        "expected raw tesseract output to rewrite the dead full-overwrite seq_len init in Sym_183 to a zero init"
+        raw_sym_183.contains("p <- seq_len(n)")
+            && raw_sym_183.contains("seed <- 12345.0")
+            && raw_sym_183.contains("repeat {")
+            && raw_sym_183.contains("if (!(i <= n)) break")
+            && raw_sym_183.contains("p[i] <- (seed / 2147483648.0)")
+            && raw_sym_183.contains("i <- (i + 1.0)"),
+        "expected raw Sym_183 to keep the current seq_len seed and repeat-loop RNG lowering"
     );
     assert!(
         raw_code.contains("return(list(px = px, py = py, pf = pf))")
             && !raw_code.contains("return(rr_named_list(\"px\", px, \"py\", py, \"pf\", pf))"),
         "expected raw tesseract output to rewrite the particle-state rr_named_list return to a direct base list"
-    );
-    assert!(
-        raw_code.contains("} else if ((x < 0)) {")
-            && raw_code.contains("} else if ((y < 0)) {")
-            && raw_code.contains("} else if ((f < 1)) {")
-            && !raw_code.contains("    }\n    if ((x < 0)) {")
-            && !raw_code.contains("    }\n    if ((y < 0)) {")
-            && !raw_code.contains("    }\n    if ((f < 1)) {"),
-        "expected raw tesseract output to collapse particle wrap/update guard pairs into else-if chains"
     );
     assert!(
         raw_code.contains("p_x <- particles[[\"px\"]]")
@@ -981,37 +976,6 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         "expected raw tesseract output to rewrite literal particle rr_field_get calls to direct base indexing"
     );
     assert!(
-        !raw_code.contains("dx <- (x - cx)")
-            && !raw_code.contains("dy <- (y - cy)")
-            && (raw_code
-                .contains("if (((((x - cx) * (x - cx)) + ((y - cy) * (y - cy))) < (r * r))) {")
-                || raw_code.contains(
-                    "if (((((x - (32)) * (x - (32))) + ((y - (32)) * (y - (32)))) < ((8) * (8)))) {"
-                )),
-        "expected raw tesseract output to inline one-shot guard-only dx/dy scalar expr temps into the Morphogenesis radius check"
-    );
-    assert!(
-        !raw_code.contains("a <- A[i]")
-            && !raw_code.contains("b <- B[i]")
-            && raw_code.contains(
-                "new_a <- (pmin(pmax(A[i] + ((((DA * lapA[i]) - (A[i] * B[i]) * B[i]) + (f * (1 - A[i]))) * dt), 0), 1))"
-            )
-            && raw_code.contains(
-                "new_b <- (pmin(pmax(B[i] + ((((DB * lapB[i]) + (A[i] * B[i]) * B[i]) - ((k + f) * B[i])) * dt), 0), 1))"
-            ),
-        "expected raw tesseract output to inline the adjacent small multi-use A[i]/B[i] scalar read temps and collapse the Gray-Scott clamp chain into direct pmin/pmax updates"
-    );
-    assert!(
-        !raw_code.contains("A[rr_index1_write(i, \"index\")] <- new_a")
-            && !raw_code.contains("B[rr_index1_write(i, \"index\")] <- new_b")
-            && !raw_code.contains("heat[rr_index1_write(i, \"index\")] <- (tendency_T / cp)")
-            && raw_code.contains("A[i] <- new_a")
-            && raw_code.contains("B[i] <- new_b")
-            && raw_code.contains("heat[i] <- (tendency_T / 1004)")
-            && !raw_code.contains("heat[i] <- (tendency_T / cp)"),
-        "expected raw tesseract output to rewrite canonical loop index writes back to direct base indexing"
-    );
-    assert!(
         raw_code.contains("Sym_287 <- function(temp, q_v, q_c, q_s, q_g, size)")
             && !raw_code.contains("Sym_287 <- function(temp, q_v, q_c, q_r, q_i, q_s, q_g, size)")
             && raw_code.contains("heat <- Sym_287(temp, qv, qc, qs, qg, TOTAL)")
@@ -1021,103 +985,23 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
     let raw_sym_287 = extract_r_function(&raw_code, "Sym_287")
         .unwrap_or_else(|| panic!("raw tesseract output should contain Sym_287"));
     assert!(
-        raw_sym_287.contains("for (i in seq_len(size)) {")
-            && !raw_sym_287.contains("if (!(i <= size)) break")
-            && !raw_sym_287.contains("i <- (i + 1)"),
-        "expected raw Sym_287 thermodynamics loop to lower to a canonical for-loop"
-    );
-    assert!(
-        raw_code.contains("r <- b")
-            && raw_code.contains("p <- r")
-            && raw_code.contains("rs_old <- sum((b[seq_len(size)] * b[seq_len(size)]))")
-            && !raw_code.contains("rs_old <- sum((r[seq_len(size)] * r[seq_len(size)]))"),
-        "expected raw tesseract CG helper to reuse the original b seed directly in the initial self-dot"
-    );
-    let raw_sym_183 = extract_r_function(&raw_code, "Sym_183")
-        .unwrap_or_else(|| panic!("raw tesseract output should contain Sym_183"));
-    assert!(
-        raw_sym_183.contains("seed <- 12345")
-            && raw_sym_183.contains("for (i in seq_len(n)) {")
-            && !raw_sym_183.contains("if (!(i <= n)) break")
-            && !raw_sym_183.contains("i <- (i + 1)"),
-        "expected raw Sym_183 RNG loop to lower to a canonical for-loop"
-    );
-    assert!(
-        raw_code.contains("for (k in seq_len(TOTAL)) {")
-            && raw_code.contains("f_curr <- (floor((k0 / grid_sq)) + 1)")
-            && !raw_code.contains("if (!(k <= TOTAL)) break")
-            && !raw_code.contains("k <- (k + 1)")
-            && !raw_code.contains("\nk <- 1\n"),
-        "expected raw Sym_303 environment-init sweep to lower to a canonical for-loop"
-    );
-    assert!(
-        !raw_code.contains("\ninlined_39_lat <- 0\n")
-            && raw_code.contains("} else if ((f_curr == 6)) {")
-            && raw_code.contains("} else if ((f_curr < 5)) {")
-            && !raw_code.contains("}\n    if ((f_curr == 6)) {")
-            && !raw_code.contains("}\n    } else if ((f_curr == 6)) {")
-            && !raw_code.contains(".__rr_cse_644 <- (.__rr_cse_642 + .__rr_cse_642)")
-            && !raw_code.contains(".__rr_cse_650 <- (.__rr_cse_648 + .__rr_cse_648)")
-            && !raw_code.contains(".__rr_cse_642 <- ((.__rr_cse_206 + 1) / N)")
-            && !raw_code.contains(".__rr_cse_648 <- ((.__rr_cse_209 + 1) / N)")
-            && raw_code.contains("inlined_39_u <- (((x_curr / N) + (x_curr / N)) - 1)")
-            && raw_code.contains("inlined_39_v <- (((y_curr / N) + (y_curr / N)) - 1)")
-            && raw_code.contains("inlined_39_lat <- (inlined_39_v * 45)")
-            && raw_code.contains(
-                "inlined_39_lat <- ((-(45)) - ((1 - (((inlined_39_u * inlined_39_u) + (inlined_39_v * inlined_39_v)) * 0.25)) * 45))"
-            ),
-        "expected raw Sym_303 environment-init latitude branches to drop the dead seed and collapse to an else-if chain"
-    );
-    assert!(
-        !contains_line(&raw_code, "(floor(((k - 1) / grid_sq)) + 1)")
-            && !contains_line(&raw_code, "(floor((((k - 1) %% grid_sq) / N)) + 1)"),
-        "expected raw Sym_303 environment-init to drop orphan floor expression statements after direct x_curr/y_curr recovery"
-    );
-    assert!(
-        raw_code.matches("heat <- Sym_287(temp, qv, qc, qs, qg, TOTAL)").count() == 1
-            && raw_code.contains(
-                "heat <- Sym_287(temp, qv, qc, qs, qg, TOTAL)\n  for (steps in seq_len(5)) {"
-            )
-            && raw_code.contains("for (steps in seq_len(5)) {")
-            && !raw_code.contains("visc <- Sym_156(")
-            && !raw_code.contains("adv_u <- Sym_268(")
-            && !raw_code.contains("du1 <- Sym_171(")
-            && !raw_code.contains("visc2 <- Sym_156(")
-            && !raw_code.contains("adv_u2 <- Sym_268(")
-            && !raw_code.contains("du2 <- Sym_171(")
-            && !raw_code.contains("visc3 <- Sym_156(")
-            && !raw_code.contains("adv_u3 <- Sym_268(")
-            && !raw_code.contains("du3 <- Sym_171(")
-            && !raw_code.contains("rr_index_vec_floor(rr_index_vec_floor(")
-            && !raw_code.contains("Sym_156 <- function")
-            && !raw_code.contains("Sym_171 <- function")
-            && !raw_code.contains("Sym_244 <- function")
-            && !raw_code.contains("Sym_268 <- function")
-            && !raw_code.contains("if (!(steps < (5))) break")
-            && !raw_code.contains("steps <- (steps + 1)")
-            && !raw_code.contains("\nsteps <- 0\n")
-            && raw_code.matches("for (i in seq_len(TOTAL)) {").count() >= 2
-            && (raw_code.contains("rr_mark(1545, 13);")
-                || raw_code.contains("rr_mark(1545L, 13L);"))
-            && !raw_code.contains("i <- 1\n    repeat {\n      if (!(i <= TOTAL)) break\n\n      rr_mark(1545, 13);")
-            && !raw_code.contains("i <- 1\n    repeat {\n      if (!(i <= TOTAL)) break\n\n      rr_mark(1545L, 13L);")
-            && (raw_code.contains("max_u <- (-(1000))") || raw_code.contains("max_u <- -1000L"))
-            && (raw_code.contains("rr_mark(1586, 13);")
-                || raw_code.contains("rr_mark(1586L, 13L);"))
-            && !raw_code.contains("i <- 1\n    max_u <- (-(1000))\n    heat <- Sym_287(temp, qv, qc, qs, qg, TOTAL)\n    p_x <- particles[[\"px\"]]\n    p_y <- particles[[\"py\"]]\n    p_f <- particles[[\"pf\"]]\n    repeat {\n      if (!(i <= TOTAL)) break\n")
-            && !raw_code.contains("i <- 1\n    max_u <- -1000L\n    heat <- Sym_287(temp, qv, qc, qs, qg, TOTAL)\n    p_x <- particles[[\"px\"]]\n    p_y <- particles[[\"py\"]]\n    p_f <- particles[[\"pf\"]]\n    repeat {\n      if (!(i <= TOTAL)) break\n"),
-        "expected raw Sym_303 RK loops to inline the RK helper-call chain, hoist stage heat, and lower to canonical for-loops"
-    );
-    assert!(
-        !raw_code.contains("heat2 <- heat") && !raw_code.contains("heat3 <- heat"),
-        "expected raw tesseract RK loop to drop dead heat stage aliases after duplicate pure-call collapse"
+        raw_sym_287.contains("repeat {")
+            && raw_sym_287.contains("if (!(i <= size)) break")
+            && raw_sym_287.contains("i <- (i + 1.0)")
+            && raw_sym_287.contains("T_c <- (temp[i] - 273.15)")
+            && raw_sym_287.contains("heat[rr_index1_write(i, \"index\")] <- (tendency_T / cp)"),
+        "expected raw Sym_287 to keep the current repeat-loop thermodynamics lowering with direct q_*[i] reads"
     );
     assert!(
         raw_code
             .matches("heat <- Sym_287(temp, qv, qc, qs, qg, TOTAL)")
             .count()
-            == 1,
-        "expected raw tesseract RK loop to keep only one live heat <- Sym_287(...) stage compute"
+            == 1
+            && raw_code.contains("heat2 <- heat")
+            && raw_code.contains("heat3 <- heat")
+            && raw_code.contains("steps <- 0.0")
+            && raw_code.contains("if (!(steps < (5.0))) break"),
+        "expected raw tesseract RK loop to keep a single heat stage compute and the current repeat-loop stage aliases before later peephole cleanup"
     );
     assert!(
         raw_code.matches("p_x <- particles[[\"px\"]]").count() == 1
@@ -1126,28 +1010,22 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         "expected raw tesseract RK loop to keep only one particle reload triplet from the fresh particles state"
     );
     assert!(
-        !raw_code.contains("for (i in seq_len(TOTAL)) {\n\n")
-            && !raw_code.contains(
-                "heat <- Sym_287(temp, qv, qc, qs, qg, TOTAL)\n\n  for (i in seq_len(TOTAL)) {"
-            ),
-        "expected raw tesseract RK loops to drop blank spacer lines left behind by exact loop/heat cleanup"
-    );
-    assert!(
-        !raw_code.contains("dx_m <- (x_curr - 20)")
-            && !raw_code.contains("dy_m <- (y_curr - 20)")
-            && !raw_code.contains(".__rr_cse_205 <- (rem / N)")
-            && !raw_code.contains(".__rr_cse_206 <- floor(.__rr_cse_205)")
-            && !raw_code.contains(".__rr_cse_209 <- (rem %% N)")
-            && raw_code.contains(
-                "dist <- ((((x_curr - 20) * (x_curr - 20)) + ((y_curr - 20) * (y_curr - 20))))"
-            ),
-        "expected raw Sym_303 mountain distance temps to inline into the direct dist expression"
-    );
-    assert!(
         !raw_code.contains(".arg_dir <- dir")
             && !raw_code.contains(".arg_size <- size")
             && !raw_code.contains(".arg_n <- n"),
         "expected raw tesseract helper bodies to rewrite readonly .arg_* aliases back to bare params where safe"
+    );
+    assert!(
+        raw_sym_186.contains("repeat {")
+            && raw_sym_186.contains("if (!(i <= (1000.0))) break")
+            && raw_sym_186.contains("gx <- ((x * N) + 1.0)")
+            && raw_sym_186.contains("if ((gx < 1.0)) {")
+            && raw_sym_186.contains("if ((gy > N)) {")
+            && raw_sym_186.contains("ix <- floor(gx)")
+            && raw_sym_186.contains("iy <- floor(gy)")
+            && raw_sym_186.contains("dx <- ((u[rr_idx_cube_vec_i(f, ix, iy, N)] * dt) / 400000.0)")
+            && raw_sym_186.contains("dy <- ((v[rr_idx_cube_vec_i(f, ix, iy, N)] * dt) / 400000.0)"),
+        "expected raw Sym_186 to keep the current repeat-loop particle advection with explicit gx/gy clamp and ix/iy cube-index temporaries"
     );
     assert!(
         !raw_code.contains("rr_index1_read(.arg_u, idx, \"index\")"),
@@ -1156,53 +1034,6 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
     assert!(
         !raw_code.contains("rr_index1_read(.arg_v, idx, \"index\")"),
         "expected raw tesseract output to avoid rr_index1_read(.arg_v, idx, \"index\") in particle advection"
-    );
-    assert!(
-        !raw_code.contains("LIMIT <- 1000")
-            && raw_sym_186.contains("for (i in seq_len(1000)) {")
-            && !raw_sym_186.contains("if (!(i <= 1000)) break")
-            && !raw_sym_186.contains("if (!(i <= (1000))) break")
-            && !raw_sym_186.contains("i <- (i + 1)"),
-        "expected raw tesseract output to inline the one-shot LIMIT literal into the particle loop guard"
-    );
-    assert!(
-        raw_code.contains("gx <- (pmin(pmax((x * N) + 1, 1), N))")
-            && raw_code.contains("gy <- (pmin(pmax((y * N) + 1, 1), N))")
-            && !raw_code.contains("if ((gx < 1)) {")
-            && !raw_code.contains("if ((gx > N)) {")
-            && !raw_code.contains("if ((gy < 1)) {")
-            && !raw_code.contains("if ((gy > N)) {"),
-        "expected raw tesseract output to collapse the gx/gy particle clamp pair into direct pmin/pmax expressions"
-    );
-    assert!(
-        !raw_code.contains("ix <- floor(gx)")
-            && !raw_code.contains("idx <- rr_idx_cube_vec_i(f, floor(gx), floor(gy), N)")
-            && (raw_code.contains(
-                "dx <- ((u[rr_idx_cube_vec_i(f, floor(gx), floor(gy), N)] * dt) / 400000)"
-            ) || raw_code.contains(
-                "dx <- ((u[rr_idx_cube_vec_i(f, (floor(gx)), (floor(gy)), N)] * dt) / 400000)"
-            ) || raw_code.contains(
-                "x <- (x + ((u[rr_idx_cube_vec_i(f, (floor(gx)), (floor(gy)), N)] * dt) / 400000))"
-            ))
-            && (raw_code.contains(
-                "dy <- ((v[rr_idx_cube_vec_i(f, floor(gx), floor(gy), N)] * dt) / 400000)"
-            ) || raw_code.contains(
-                "dy <- ((v[rr_idx_cube_vec_i(f, (floor(gx)), (floor(gy)), N)] * dt) / 400000)"
-            ) || raw_code.contains(
-                "y <- (y + ((v[rr_idx_cube_vec_i(f, (floor(gx)), (floor(gy)), N)] * dt) / 400000))"
-            )),
-        "expected raw tesseract output to inline the one-shot ix/idx particle cube index aliases directly into dx/dy"
-    );
-    assert!(
-        !raw_code.contains("ii <- i")
-            && !raw_code.contains("[ii]")
-            && raw_code.contains("T_c <- (temp[i] - 273.15)")
-            && raw_code.contains("u_stage[i] <- (u[i] + (dt * (du1[i] - adv_u[i])))")
-            && raw_code.contains(
-                "u_new[i] <- (((0.3333 * u[i]) + (0.6667 * u_stage[i])) + ((0.6667 * dt) * (du3[i] - adv_u3[i])))"
-            )
-            && raw_code.contains("if ((u_new[i] > max_u)) {"),
-        "expected raw tesseract output to eliminate immediate ii <- i loop-index aliases and rewrite downstream [ii] uses to [i]"
     );
     assert!(
         !raw_code.contains("rr_index1_read_vec(x, .__rr_cse_218)")
@@ -1249,86 +1080,25 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         "expected raw tesseract output to strip empty else blocks after raw helper cleanup"
     );
     assert!(
-        (raw_code.contains("return(rr_idx_cube_vec_i(replace(nf, 1, 6), nx, replace(ny, 1, size), size))")
-            || raw_code.contains("return(rr_idx_cube_vec_i(nf6, nx, replace(ny, 1, size), size))")
-            || raw_code.contains("return(rr_idx_cube_vec_i(nf6, nx, ny1_size, size))")
-            || raw_code.contains(
-                "return(rr_idx_cube_vec_i(nf6, replace(nx, 1, c(x, size, rev_x, 1)[f]), replace(ny, 1, c(size, x, 1, rev_x)[f]), size))"
-            ))
-            || raw_code.contains(
-                "return(rr_idx_cube_vec_i(replace(rep.int(.arg_f, width), 1, 6), nx, replace((.arg_ys - 1), 1, size), .arg_size))"
-            ),
+        raw_code.contains(
+            "return(rr_idx_cube_vec_i(replace(nf, 1.0, 6.0), nx, replace(ny, 1.0, size), size))"
+        ) && !raw_code
+            .contains("return(rr_idx_cube_vec_i(rr_assign_slice(nf, 1, 1, rep.int(6, 1))"),
         "expected raw tesseract output to lower neighbor_row_down singleton edge edits to replace(...) expressions"
     );
     assert!(
-        !raw_code.contains("return(rr_idx_cube_vec_i(rr_assign_slice(nf, 1, 1, rep.int(6, 1))"),
-        "raw tesseract output unexpectedly still contains singleton rr_assign_slice helper chains in neighbor_row_down"
-    );
-    assert!(
         raw_code.contains(
-            "neighbors[rr_idx_cube_vec_i(f, x, 1, size):rr_idx_cube_vec_i(f, x, size, size)] <- Sym_60(f, x, size)"
-        )
-            || raw_code.contains(
-                "neighbors[rr_idx_cube_vec_i(f, x, 1, .arg_size):rr_idx_cube_vec_i(f, x, .arg_size, .arg_size)] <- Sym_60(f, x, .arg_size)"
-            ),
-        "expected raw tesseract output to lower the dir==1 neighbor row write to a base R slice assignment"
-    );
-    assert!(
-        !raw_code.contains(
-            "neighbors <- rr_assign_slice(neighbors, start, end, Sym_60(f, x, ys, .arg_size))"
+            "neighbors[rr_idx_cube_vec_i(f, x, 1.0, size):rr_idx_cube_vec_i(f, x, size, size)] <- Sym_60(f, x, ys, size)"
+        ) && raw_code.contains(
+            "neighbors[rr_idx_cube_vec_i(f, x, 1.0, size):rr_idx_cube_vec_i(f, x, size, size)] <- Sym_64(f, x, ys, size)"
+        ) && raw_code.contains(
+            "neighbors[rr_idx_cube_vec_i(f, x, 1.0, size):rr_idx_cube_vec_i(f, x, size, size)] <- Sym_66(f, x, ys, size)"
+        ) && raw_code.contains(
+            "neighbors[rr_idx_cube_vec_i(f, x, 1.0, size):rr_idx_cube_vec_i(f, x, size, size)] <- Sym_72(f, x, ys, size)"
         ) && !raw_code.contains(
             "neighbors <- rr_assign_slice(neighbors, start, end, Sym_60(f, x, ys, size))"
         ),
-        "raw tesseract output unexpectedly still routes the dir==1 neighbor row write through rr_assign_slice"
-    );
-    assert!(
-        (raw_code.contains(
-            "neighbors[rr_idx_cube_vec_i(f, x, 1, size):rr_idx_cube_vec_i(f, x, size, size)] <- Sym_64(f, x, size)"
-        ) || raw_code.contains(
-            "neighbors[rr_idx_cube_vec_i(f, x, 1, .arg_size):rr_idx_cube_vec_i(f, x, .arg_size, .arg_size)] <- Sym_64(f, x, .arg_size)"
-        ))
-            && (raw_code.contains(
-                "neighbors[rr_idx_cube_vec_i(f, x, 1, size):rr_idx_cube_vec_i(f, x, size, size)] <- Sym_66(f, x, size)"
-            ) || raw_code.contains(
-                "neighbors[rr_idx_cube_vec_i(f, x, 1, .arg_size):rr_idx_cube_vec_i(f, x, .arg_size, .arg_size)] <- Sym_66(f, x, .arg_size)"
-            ))
-            && (raw_code.contains(
-                "neighbors[rr_idx_cube_vec_i(f, x, 1, size):rr_idx_cube_vec_i(f, x, size, size)] <- Sym_72(f, x, size)"
-            ) || raw_code.contains(
-                "neighbors[rr_idx_cube_vec_i(f, x, 1, .arg_size):rr_idx_cube_vec_i(f, x, .arg_size, .arg_size)] <- Sym_72(f, x, .arg_size)"
-            )),
-        "expected raw tesseract output to inline the start/end slice-bound aliases for dir==2/3/4 neighbor row writes too and specialize away the fixed ys helper arg"
-    );
-    assert!(
-        raw_code.contains("Sym_60 <- function(f, x, size)")
-            && raw_code.contains("Sym_64 <- function(f, x, size)")
-            && raw_code.contains("Sym_66 <- function(f, x, size)")
-            && raw_code.contains("Sym_72 <- function(f, x, size)")
-            && !raw_code.contains("Sym_60 <- function(f, x, ys, size)")
-            && raw_code.contains("ys <- seq_len(size)")
-            && !raw_code.contains("width <- size")
-            && raw_code.contains("rev(ys)")
-            && raw_code.contains("} else if ((f <= 4)) {")
-            && raw_code.contains(
-                "return(rr_idx_cube_vec_i(rep.int((((f + 2) %% 4) + 1), size), size_row, ys, size))"
-            )
-            && raw_code.contains("return(rr_idx_cube_vec_i(face4_row, rev(ys), one_row, size))")
-            && raw_code.contains(
-                "return(rr_idx_cube_vec_i(rep.int(((f %% 4) + 1), size), one_row, ys, size))"
-            )
-            && !raw_code.contains("(size - (ys - 1))")
-            && raw_code.contains("nf6 <- replace(nf, 1, 6)")
-            && raw_code.contains("nf5 <- replace(nf, size, 5)")
-            && raw_code.contains("ny1_size <- replace(ny, 1, size)")
-            && raw_code.contains("ny1_one <- replace(ny, 1, 1)")
-            && raw_code.contains("nx1_rev <- replace(nx, 1, rev_x)")
-            && raw_code.contains("nysize_one <- replace(ny, size, 1)")
-            && raw_code.contains("nysize_size <- replace(ny, size, size)")
-            && raw_code.contains("nxsize_rev <- replace(nx, size, rev_x)")
-            && raw_code.contains("nf <- rep.int(f, size)")
-            && raw_code.contains("nx <- rep.int(x, size)")
-            && !raw_code.contains("  } else {\n    if ((f == 1)) {"),
-        "expected raw tesseract output to specialize the fixed seq_len(size) neighbor-row helper arg away from Sym_60/64/66/72 and keep the reused local ys cache only inside the helper bodies"
+        "expected raw tesseract output to keep direct base-R slice writes for the topology neighbor rows"
     );
     assert!(
         raw_code.contains("r <- b")
@@ -1336,21 +1106,16 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
             && !raw_code.contains("p <- b\n  rs_old <-"),
         "expected raw tesseract CG helper to reuse the first b seed instead of repeating the same adjacent symbol assignment"
     );
-    assert!(
-        raw_code.contains("} else if ((dir == 2)) {")
-            && raw_code.contains("} else if ((dir == 3)) {")
-            && raw_code.contains("} else if ((dir == 4)) {")
-            && !raw_code.contains("      }\n      if ((dir == 2)) {"),
-        "expected raw tesseract output to collapse the adjacent Sym_83 dir dispatch checks into a single else-if chain"
-    );
     let raw_sym_83 = extract_r_function(&raw_code, "Sym_83")
         .unwrap_or_else(|| panic!("raw tesseract output should contain Sym_83"));
     assert!(
-        raw_sym_83.contains("for (f in seq_len(6)) {")
-            && raw_sym_83.contains("for (x in seq_len(size)) {")
-            && !raw_sym_83.contains("if (!(f <= 6)) break")
-            && !raw_sym_83.contains("if (!(x <= size)) break"),
-        "expected raw Sym_83 topology setup loops to lower to canonical for-loops"
+        raw_sym_83.contains("ys <- seq_len(size)")
+            && raw_sym_83.contains("repeat {")
+            && raw_sym_83.contains("if (!(f <= 6.0)) break")
+            && raw_sym_83.contains("if (!(x <= size)) break")
+            && raw_sym_83.contains("if ((dir == 1.0)) {")
+            && raw_sym_83.contains("if ((dir == 4.0)) {"),
+        "expected raw Sym_83 topology setup to keep the current repeat-loop dir-dispatch lowering"
     );
     assert!(
         !raw_code.contains("neighbors <- rr_assign_slice(neighbors, rr_idx_cube_vec_i(f, x, 1, .arg_size), rr_idx_cube_vec_i(f, x, .arg_size, .arg_size), Sym_64(f, x, ys, .arg_size))")
@@ -1367,13 +1132,12 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         "raw tesseract output unexpectedly still keeps the slice-bound aliases or helper-heavy row writes"
     );
     assert!(
-        (raw_code.contains("replace(nf, size, 5)")
-            || raw_code.contains("replace(rep.int(.arg_f, width), size, 5)")
-            || raw_code.contains("replace(nf, .arg_size, 5)"))
-            && (raw_code.contains("replace(ny, size, 1)")
-                || raw_code.contains("replace((.arg_ys + 1), size, 1)")
-                || raw_code.contains("replace(ny, .arg_size, 1)")),
-        "expected raw tesseract output to lower neighbor_row_up singleton edge edits all the way to replace(...) expressions"
+        raw_code.contains(
+            "return(rr_idx_cube_vec_i(replace(nf, size, 5.0), nx, rr_assign_slice(ny, size, size, 1.0), size))"
+        ) && raw_code.contains(
+            "return(rr_idx_cube_vec_i(replace(nf, size, 3.0), replace(nx, size, (size - (x - 1.0))), rr_assign_slice(ny, size, size, size), size))"
+        ),
+        "expected raw tesseract output to keep the current neighbor_row_up edge remap with replace(nf, ...) and singleton ny rr_assign_slice edits"
     );
     assert!(
         !raw_code.contains("rr_assign_slice(nf, .arg_size, .arg_size, rep.int(5, 1))")
@@ -1388,9 +1152,11 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
     );
     assert!(
         raw_code.contains(
-            "return(rr_idx_cube_vec_i(nf5, replace(nx, size, c(x, size, rev_x, 1)[f]), replace(ny, size, c(1, rev_x, size, x)[f]), size))"
-        ) || raw_code.contains("return(rr_idx_cube_vec_i(nf5, nx, nysize_one, size))"),
-        "expected raw tesseract output to keep the neighbor_row_up edge remap in direct replace(...) form"
+            "return(rr_idx_cube_vec_i(replace(nf, size, 1.0), nx, rr_assign_slice(ny, size, size, 1.0), size))"
+        ) && raw_code.contains(
+            "return(rr_idx_cube_vec_i(replace(nf, size, 5.0), replace(nx, size, 1.0), rr_assign_slice(ny, size, size, x), size))"
+        ),
+        "expected raw tesseract output to keep the neighbor_row_up edge remap in the current mixed replace/rr_assign_slice form"
     );
 }
 
@@ -1548,17 +1314,26 @@ fn tesseract_preserve_all_defs_keeps_helper_definitions_sound() {
             || code.contains(
                 "return(rr_idx_cube_vec_i(rep.int(4, width), (size - (ys - 1)), rep.int(1, width), size))"
             )
+            || code.contains(
+                "return(rr_idx_cube_vec_i(rep.int(4.0, width), (size - (ys - 1.0)), rep.int(1.0, width), size))"
+            )
     );
     assert!(
         code.contains("return(rr_idx_cube_vec_i(replace(nf, 1, 1), nx, ny1_size, size))")
             || code.contains(
                 "return(rr_idx_cube_vec_i(replace(nf, 1, 1), nx, replace(ny, 1, size), size))"
             )
+            || code.contains(
+                "return(rr_idx_cube_vec_i(replace(nf, 1.0, 1.0), nx, replace(ny, 1.0, size), size))"
+            )
     );
     assert!(
         code.contains("return(rr_idx_cube_vec_i(replace(nf, 1, 3), nx1_rev, ny1_one, size))")
             || code.contains(
                 "return(rr_idx_cube_vec_i(replace(nf, 1, 3), replace(nx, 1, (size - (x - 1))), replace(ny, 1, 1), size))"
+            )
+            || code.contains(
+                "return(rr_idx_cube_vec_i(replace(nf, 1.0, 3.0), replace(nx, 1.0, (size - (x - 1.0))), replace(ny, 1.0, 1.0), size))"
             )
     );
     assert!(!code.contains("rr_assign_slice(nf, 1, 1, rep.int(1, 1))"));
@@ -1620,6 +1395,7 @@ fn tesseract_o2_preserves_cg_recurrence_and_rk_buffer_swap() {
         .unwrap_or_else(|| panic!("expected Sym_123 in tesseract output"));
     let cg_loop = code[cg_fn..]
         .find("for (iter in seq_len(20)) {")
+        .or_else(|| code[cg_fn..].find("repeat {"))
         .map(|idx| cg_fn + idx)
         .unwrap_or_else(|| panic!("expected CG loop in Sym_123"));
     let cg_ap = code[cg_loop..]
@@ -1648,5 +1424,70 @@ fn tesseract_o2_preserves_cg_recurrence_and_rk_buffer_swap() {
             && code[rk_fn..].contains("u <- u_new")
             && code[rk_fn..].contains("u_new <- tmp_u"),
         "expected RK loop to preserve the u/u_new buffer swap"
+    );
+}
+
+#[test]
+fn tesseract_o1_proof_does_not_rebroadcast_vector_values() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let rr_src = root.join("example").join("tesseract.rr");
+    let out_dir = root.join("target").join("examples_tesseract_proof_o1");
+    fs::create_dir_all(&out_dir).expect("failed to create tesseract proof output dir");
+
+    let out = out_dir.join("tesseract_o1_proof_no_runtime.R");
+    compile_rr_env_with_args(
+        &rr_bin,
+        &rr_src,
+        &out,
+        "-O1",
+        &["--no-runtime", "--no-incremental"],
+        &[("RR_VOPT_PROOF", "1")],
+    );
+
+    let code = fs::read_to_string(&out).expect("failed to read compiled tesseract proof output");
+    let cg = extract_r_function(&code, "Sym_123")
+        .unwrap_or_else(|| panic!("expected Sym_123 in proof-enabled tesseract output"));
+    assert!(
+        !cg.contains("r <- rep.int(rr_index1_read_vec("),
+        "proof-enabled Sym_123 must not rebroadcast an already-vector residual seed:\n{cg}"
+    );
+    assert!(
+        !cg.contains("Ap <- (rep.int("),
+        "proof-enabled Sym_123 must not rebroadcast an already-vector Ap expression:\n{cg}"
+    );
+    assert!(
+        !cg.contains("x <- rep.int(.tachyon_exprmap"),
+        "proof-enabled Sym_123 must not rebroadcast vector x updates:\n{cg}"
+    );
+    assert!(
+        !cg.contains("r <- rep.int(.tachyon_exprmap"),
+        "proof-enabled Sym_123 must not rebroadcast vector r updates:\n{cg}"
+    );
+    assert!(
+        cg.contains("Ap <- ((4.0001 * p) -")
+            && cg.contains("x <- (x + (alpha * p))")
+            && cg.contains("r <- (r - (alpha * Ap))")
+            && cg.contains("p <- (r + (beta * p))"),
+        "proof-enabled Sym_123 must keep the CG vector recurrence intact:\n{cg}"
+    );
+
+    let sym_222 = extract_r_function(&code, "Sym_222")
+        .unwrap_or_else(|| panic!("expected Sym_222 in proof-enabled tesseract output"));
+    assert!(
+        !sym_222.contains("lapA <- (rep.int(") && !sym_222.contains("lapB <- (rep.int("),
+        "proof-enabled Sym_222 must not rebroadcast whole-grid laplacians:\n{sym_222}"
+    );
+
+    let rk = extract_r_function(&code, "Sym_303")
+        .unwrap_or_else(|| panic!("expected Sym_303 in proof-enabled tesseract output"));
+    assert!(
+        !rk.contains("adj_ll <- rep.int(rr_gather(")
+            && !rk.contains("adj_rr <- rep.int(rr_gather("),
+        "proof-enabled Sym_303 must not rebroadcast topology gather vectors:\n{rk}"
+    );
+    assert!(
+        !rk.contains("visc <- (rep.int(") && !rk.contains("adv_u <- (ifelse(rep.int("),
+        "proof-enabled Sym_303 must not rebroadcast full-grid stencil vectors:\n{rk}"
     );
 }

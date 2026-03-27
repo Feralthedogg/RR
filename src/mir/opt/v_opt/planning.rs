@@ -2,7 +2,7 @@ use super::analysis::{
     affine_iv_offset, as_safe_loop_index, axis3_operand_source, axis3_vector_operand_source,
     canonical_value, classify_3d_general_vector_access, classify_3d_map_axis,
     classify_3d_vector_access_axis, classify_store_1d_in_block, classify_store_3d_in_block,
-    collect_loop_shadow_vars_for_dest, expr_contains_index3d, expr_has_iv_dependency,
+    collect_loop_shadow_vars_for_dest, expr_has_iv_dependency,
     expr_has_non_vector_safe_call_in_vector_context, expr_reads_base, expr_reads_base_non_iv,
     induction_origin_var, is_condition_vectorizable, is_floor_like_iv_expr, is_iv_equivalent,
     is_loop_compatible_base, is_loop_invariant_axis, is_loop_invariant_scalar_expr,
@@ -27,7 +27,7 @@ use crate::mir::*;
 use crate::syntax::ast::BinOp;
 use rustc_hash::FxHashSet;
 
-fn expr_has_non_iv_loop_state_load(
+pub(super) fn expr_has_non_iv_loop_state_load(
     fn_ir: &FnIR,
     lp: &LoopInfo,
     root: ValueId,
@@ -109,7 +109,7 @@ fn expr_has_non_iv_loop_state_load(
     )
 }
 
-fn reduction_has_non_acc_loop_state_assignments(
+pub(super) fn reduction_has_non_acc_loop_state_assignments(
     fn_ir: &FnIR,
     lp: &LoopInfo,
     acc_phi: ValueId,
@@ -137,7 +137,7 @@ fn reduction_has_non_acc_loop_state_assignments(
     false
 }
 
-fn reduction_has_extra_state_phi(
+pub(super) fn reduction_has_extra_state_phi(
     fn_ir: &FnIR,
     lp: &LoopInfo,
     acc_phi: ValueId,
@@ -174,19 +174,19 @@ pub(super) fn match_reduction(
 ) -> Option<VectorPlan> {
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
-    let reduction_rhs_vectorizable = |root: ValueId| {
-        if expr_contains_index3d(fn_ir, root) {
-            is_vectorizable_expr(fn_ir, root, iv_phi, lp, true, false)
-        } else {
-            is_vectorizable_expr(fn_ir, root, iv_phi, lp, false, true)
-        }
-    };
+    let reduction_rhs_vectorizable =
+        |root: ValueId| is_vectorizable_expr(fn_ir, root, iv_phi, lp, true, false);
     if loop_has_store_effect(fn_ir, lp) {
         // Conservative: do not fold reductions if loop writes memory.
         return None;
     }
 
     for (id, val) in fn_ir.values.iter().enumerate() {
+        if is_iv_equivalent(fn_ir, id, iv_phi)
+            || is_origin_var_iv_alias_in_loop(fn_ir, lp, id, iv_phi)
+        {
+            continue;
+        }
         if let ValueKind::Phi { args } = &val.kind
             && args.len() == 2
             && args.iter().any(|(_, b)| *b == lp.latch)
@@ -1800,10 +1800,10 @@ pub(super) enum ExprMapStoreCandidate {
 
 #[derive(Clone, Copy)]
 pub(super) struct ExprMapStoreSpec {
-    base: ValueId,
-    idx: ValueId,
-    expr: ValueId,
-    is_vector: bool,
+    pub(super) base: ValueId,
+    pub(super) idx: ValueId,
+    pub(super) expr: ValueId,
+    pub(super) is_vector: bool,
 }
 
 pub(super) fn is_canonical_expr_map_store_index(

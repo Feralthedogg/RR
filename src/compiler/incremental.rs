@@ -389,6 +389,17 @@ fn collect_module_fingerprints(entry_path: &str, entry_input: &str) -> RR<Vec<Mo
 
     while let Some(path) = queue.pop() {
         let canonical = normalize_module_path(&path);
+        if !canonical.is_absolute() {
+            return Err(RRException::new(
+                "RR.ParseError",
+                RRCode::E0001,
+                Stage::Parse,
+                format!(
+                    "relative import resolution requires an absolute entry path; normalize '{}' before incremental compilation",
+                    entry_path
+                ),
+            ));
+        }
         if !visited.insert(canonical.clone()) {
             continue;
         }
@@ -507,6 +518,18 @@ fn build_artifact_key(
         "preserve-defs"
     } else {
         "strip-defs"
+    });
+    payload.push('|');
+    payload.push_str(if output_options.strict_let {
+        "strict-let"
+    } else {
+        "legacy-implicit-decl"
+    });
+    payload.push('|');
+    payload.push_str(if output_options.warn_implicit_decl {
+        "warn-implicit-decl"
+    } else {
+        "silent-implicit-decl"
     });
     payload.push('|');
     payload.push_str(&compile_output_cache_salt().to_string());

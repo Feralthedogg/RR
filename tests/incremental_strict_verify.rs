@@ -3,7 +3,7 @@ mod common;
 use RR::compiler::{
     CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel,
     compile_with_configs_incremental, compile_with_configs_incremental_with_output_options,
-    parallel_config_from_env, type_config_from_env,
+    default_parallel_config, default_type_config,
 };
 use common::unique_dir;
 use std::fs;
@@ -89,7 +89,7 @@ fn code_artifacts(cache_dir: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn strict_incremental_verify_checks_cached_outputs() {
-    let _guard = lock_env_guard();
+    let env_guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -99,15 +99,12 @@ fn strict_incremental_verify_checks_cached_outputs() {
     let proj_dir = unique_dir(&sandbox_root, "proj");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    // SAFETY: Scoped test setup; value is removed at the end of this test.
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let (main_path, source) = write_basic_project(&proj_dir);
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
     let opts = strict_opts();
 
     let mut session = IncrementalSession::default();
@@ -157,15 +154,12 @@ fn strict_incremental_verify_checks_cached_outputs() {
     );
     assert_eq!(first.source_map, second.source_map);
 
-    // SAFETY: Paired with scoped set_var above to restore environment state.
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn strict_incremental_verify_rejects_source_map_drift() {
-    let _guard = lock_env_guard();
+    let env_guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -175,15 +169,12 @@ fn strict_incremental_verify_rejects_source_map_drift() {
     let proj_dir = unique_dir(&sandbox_root, "proj");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    // SAFETY: Scoped test setup; value is removed at the end of this test.
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let (main_path, source) = write_basic_project(&proj_dir);
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
     let opts = strict_opts();
 
     compile_with_configs_incremental(
@@ -235,15 +226,12 @@ fn strict_incremental_verify_rejects_source_map_drift() {
         "strict verify error should suggest clearing the cache:\n{err:?}"
     );
 
-    // SAFETY: Paired with scoped set_var above to restore environment state.
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn incremental_cache_separates_runtime_injection_mode() {
-    let _guard = lock_env_guard();
+    let env_guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -253,15 +241,12 @@ fn incremental_cache_separates_runtime_injection_mode() {
     let proj_dir = unique_dir(&sandbox_root, "output_mode");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    // SAFETY: Scoped test setup; value is removed at the end of this test.
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let (main_path, source) = write_basic_project(&proj_dir);
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
     let opts = phase1_only_opts();
 
     let helper_only = compile_with_configs_incremental_with_output_options(
@@ -274,6 +259,7 @@ fn incremental_cache_separates_runtime_injection_mode() {
         CompileOutputOptions {
             inject_runtime: false,
             preserve_all_defs: false,
+            ..Default::default()
         },
         None,
     )
@@ -297,6 +283,7 @@ fn incremental_cache_separates_runtime_injection_mode() {
         CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: false,
+            ..Default::default()
         },
         None,
     )
@@ -322,6 +309,7 @@ fn incremental_cache_separates_runtime_injection_mode() {
         CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: false,
+            ..Default::default()
         },
         None,
     )
@@ -341,6 +329,7 @@ fn incremental_cache_separates_runtime_injection_mode() {
         CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: true,
+            ..Default::default()
         },
         None,
     )
@@ -350,15 +339,12 @@ fn incremental_cache_separates_runtime_injection_mode() {
         "phase1 artifact key must distinguish preserve-all-defs mode"
     );
 
-    // SAFETY: Paired with scoped set_var above to restore environment state.
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn malformed_incremental_source_map_surfaces_recovery_guidance() {
-    let _guard = lock_env_guard();
+    let env_guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -368,14 +354,12 @@ fn malformed_incremental_source_map_surfaces_recovery_guidance() {
     let proj_dir = unique_dir(&sandbox_root, "malformed_map");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let (main_path, source) = write_basic_project(&proj_dir);
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
     let opts = phase1_only_opts();
 
     compile_with_configs_incremental(
@@ -423,14 +407,12 @@ fn malformed_incremental_source_map_surfaces_recovery_guidance() {
         "malformed map error should suggest clearing the cache:\n{err:?}"
     );
 
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn unreadable_incremental_artifact_surfaces_recovery_guidance() {
-    let _guard = lock_env_guard();
+    let env_guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -440,14 +422,12 @@ fn unreadable_incremental_artifact_surfaces_recovery_guidance() {
     let proj_dir = unique_dir(&sandbox_root, "invalid_utf8_artifact");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let (main_path, source) = write_basic_project(&proj_dir);
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
     let opts = phase1_only_opts();
 
     compile_with_configs_incremental(
@@ -499,14 +479,12 @@ fn unreadable_incremental_artifact_surfaces_recovery_guidance() {
         "unreadable artifact error should suggest clearing the cache:\n{err:?}"
     );
 
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn incremental_cache_write_failure_surfaces_recovery_guidance() {
-    let _guard = lock_env_guard();
+    let env_guard = lock_env_guard();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -517,14 +495,12 @@ fn incremental_cache_write_failure_surfaces_recovery_guidance() {
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_root_file = proj_dir.join("cache-root-file");
     fs::write(&cache_root_file, "not-a-directory").expect("failed to write cache root file");
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_root_file);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_root_file);
 
     let (main_path, source) = write_basic_project(&proj_dir);
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
     let opts = phase1_only_opts();
 
     let err = compile_with_configs_incremental(
@@ -561,7 +537,5 @@ fn incremental_cache_write_failure_surfaces_recovery_guidance() {
         "incremental write failure should suggest clearing the cache:\n{err:?}"
     );
 
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }

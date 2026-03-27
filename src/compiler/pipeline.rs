@@ -146,6 +146,8 @@ impl Default for ParallelConfig {
 pub struct CompileOutputOptions {
     pub inject_runtime: bool,
     pub preserve_all_defs: bool,
+    pub strict_let: bool,
+    pub warn_implicit_decl: bool,
 }
 
 impl Default for CompileOutputOptions {
@@ -153,6 +155,8 @@ impl Default for CompileOutputOptions {
         Self {
             inject_runtime: true,
             preserve_all_defs: false,
+            strict_let: true,
+            warn_implicit_decl: false,
         }
     }
 }
@@ -208,18 +212,10 @@ impl Drop for CliStep {
     }
 }
 
-pub fn type_config_from_env() -> TypeConfig {
-    let mode = env::var("RR_TYPE_MODE")
-        .ok()
-        .and_then(|v| v.parse::<TypeMode>().ok())
-        .unwrap_or(TypeMode::Strict);
-    let native_backend = env::var("RR_NATIVE_BACKEND")
-        .ok()
-        .and_then(|v| v.parse::<NativeBackend>().ok())
-        .unwrap_or(NativeBackend::Off);
+pub fn default_type_config() -> TypeConfig {
     TypeConfig {
-        mode,
-        native_backend,
+        mode: TypeMode::Strict,
+        native_backend: NativeBackend::Off,
     }
 }
 
@@ -252,22 +248,12 @@ fn maybe_write_pulse_stats_json(stats: &crate::mir::opt::TachyonPulseStats) {
     let _ = fs::write(path, stats.to_json_string());
 }
 
-pub fn parallel_config_from_env() -> ParallelConfig {
-    let mode = env::var("RR_PARALLEL_MODE")
-        .ok()
-        .and_then(|v| v.parse::<ParallelMode>().ok())
-        .unwrap_or(ParallelMode::Off);
-    let backend = env::var("RR_PARALLEL_BACKEND")
-        .ok()
-        .and_then(|v| v.parse::<ParallelBackend>().ok())
-        .unwrap_or(ParallelBackend::Auto);
-    let threads = parse_nonnegative_usize_env("RR_PARALLEL_THREADS").unwrap_or(0);
-    let min_trip = parse_nonnegative_usize_env("RR_PARALLEL_MIN_TRIP").unwrap_or(4096);
+pub fn default_parallel_config() -> ParallelConfig {
     ParallelConfig {
-        mode,
-        backend,
-        threads,
-        min_trip,
+        mode: ParallelMode::Off,
+        backend: ParallelBackend::Auto,
+        threads: 0,
+        min_trip: 4096,
     }
 }
 
@@ -811,6 +797,7 @@ pub(crate) fn run_source_analysis_and_canonicalization(
     entry_path: &str,
     entry_input: &str,
     total_steps: usize,
+    output_opts: CompileOutputOptions,
 ) -> crate::error::RR<SourceAnalysisOutput> {
     // Module Loader State
     let mut loaded_paths: FxHashSet<PathBuf> = FxHashSet::default();
@@ -831,8 +818,10 @@ pub(crate) fn run_source_analysis_and_canonicalization(
         "parse + scope resolution",
     );
     let mut hir_modules = Vec::new();
-    let mut hir_lowerer = crate::hir::lower::Lowerer::new();
-    let mut global_symbols = FxHashMap::default();
+    let mut hir_lowerer = crate::hir::lower::Lowerer::with_policy(
+        output_opts.strict_let,
+        output_opts.warn_implicit_decl,
+    );
     let mut load_errors: Vec<crate::error::RRException> = Vec::new();
 
     while let Some((curr_path, content, mod_id)) = queue.pop_front() {
@@ -848,7 +837,7 @@ pub(crate) fn run_source_analysis_and_canonicalization(
             }
         };
 
-        let (hir_mod, symbols) =
+        let hir_mod =
             match hir_lowerer.lower_module(ast_prog, crate::hir::def::ModuleId(mod_id as u32)) {
                 Ok(v) => v,
                 Err(e) => {
@@ -859,7 +848,6 @@ pub(crate) fn run_source_analysis_and_canonicalization(
         for w in hir_lowerer.take_warnings() {
             ui.warn(&format!("{}: {}", curr_path_str, w));
         }
-        global_symbols.extend(symbols);
 
         // Scan for imports
         for item in &hir_mod.items {
@@ -870,6 +858,17 @@ pub(crate) fn run_source_analysis_and_canonicalization(
 
                 // Simple cycle detection / deduplication
                 if !loaded_paths.contains(&target) {
+                    if !target.is_absolute() {
+                        return Err(crate::error::RRException::new(
+                            "RR.ParseError",
+                            crate::error::RRCode::E0001,
+                            crate::error::Stage::Parse,
+                            format!(
+                                "relative import resolution requires an absolute entry path; normalize '{}' before compiling",
+                                curr_path_str
+                            ),
+                        ));
+                    }
                     let target_lossy = target.to_string_lossy().to_string();
                     ui.trace("import", &target_lossy);
                     match fs::read_to_string(&target) {
@@ -913,6 +912,7 @@ pub(crate) fn run_source_analysis_and_canonicalization(
     let hir_prog = crate::hir::def::HirProgram {
         modules: hir_modules,
     };
+    let global_symbols = hir_lowerer.into_symbols();
 
     let step_desugar = ui.step_start(
         2,
@@ -1155,6 +1155,7 @@ pub(crate) fn emit_r_functions_cached(
         );
     final_output = rewrite_single_assignment_loop_seed_literals_in_raw_emitted_r(&final_output);
     final_output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&final_output);
+    final_output = strip_noop_temp_copy_roundtrips_in_raw_emitted_r(&final_output);
     final_output = collapse_gray_scott_clamp_pair_in_raw_emitted_r(&final_output);
     final_output = strip_unused_helper_params_in_raw_emitted_r(&final_output);
     final_output = collapse_nested_else_if_blocks_in_raw_emitted_r(&final_output);
@@ -1172,6 +1173,7 @@ pub(crate) fn emit_r_functions_cached(
         );
     final_output = rewrite_single_assignment_loop_seed_literals_in_raw_emitted_r(&final_output);
     final_output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&final_output);
+    final_output = strip_noop_temp_copy_roundtrips_in_raw_emitted_r(&final_output);
     final_output = collapse_gray_scott_clamp_pair_in_raw_emitted_r(&final_output);
     final_output = rewrite_two_use_named_scalar_pure_calls_in_raw_emitted_r(&final_output);
     final_output = rewrite_single_use_named_scalar_pure_calls_in_raw_emitted_r(&final_output);
@@ -1219,6 +1221,8 @@ pub(crate) fn emit_r_functions_cached(
     final_output = simplify_not_finite_or_zero_guard_parens_in_raw_emitted_r(&final_output);
     final_output = simplify_wrapped_not_finite_parens_in_raw_emitted_r(&final_output);
     final_output = restore_constant_one_guard_repeat_loop_counters_in_raw_emitted_r(&final_output);
+    final_output = restore_cg_loop_carried_updates_in_raw_emitted_r(&final_output);
+    final_output = strip_noop_temp_copy_roundtrips_in_raw_emitted_r(&final_output);
     final_output = strip_single_blank_spacers_in_raw_emitted_r(&final_output);
     final_output = collapse_nested_else_if_blocks_in_raw_emitted_r(&final_output);
     final_output = compact_blank_lines_in_raw_emitted_r(&final_output);
@@ -1645,7 +1649,6 @@ fn rewrite_single_use_scalar_index_aliases_in_raw_emitted_r(output: &str) -> Str
             || lhs.starts_with(".__rr_cse_")
             || lhs.starts_with(".tachyon_")
             || !is_inlineable_raw_scalar_index_rhs(&rhs)
-            || raw_line_is_within_loop_body(&lines, idx)
         {
             continue;
         }
@@ -2427,6 +2430,14 @@ fn collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(output: &str) -> Stri
 }
 
 fn collapse_gray_scott_clamp_pair_in_raw_emitted_r(output: &str) -> String {
+    fn raw_zero_like_assign(lhs: &str, rhs: &str, target: &str) -> bool {
+        lhs == target && matches!(rhs, "0" | "0.0" | "0L" | "0.0L")
+    }
+
+    fn raw_one_like_assign(lhs: &str, rhs: &str, target: &str) -> bool {
+        lhs == target && matches!(rhs, "1" | "1.0" | "1L" | "1.0L")
+    }
+
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return output.to_string();
@@ -2544,17 +2555,21 @@ fn collapse_gray_scott_clamp_pair_in_raw_emitted_r(output: &str) -> String {
         let b_gt_assign = lines[b_gt_assign_idx].trim();
         let b_gt_close = lines[b_gt_close_idx].trim();
 
-        if a_lt_guard != "if ((new_a < 0)) {"
-            || a_lt_assign != "new_a <- 0"
+        if !(a_lt_guard == "if ((new_a < 0)) {" || a_lt_guard == "if ((new_a < 0.0)) {")
+            || !parse_raw_assign_line(a_lt_assign)
+                .is_some_and(|(lhs, rhs)| raw_zero_like_assign(lhs, rhs, "new_a"))
             || a_lt_close != "}"
-            || a_gt_guard != "if ((new_a > 1)) {"
-            || a_gt_assign != "new_a <- 1"
+            || !(a_gt_guard == "if ((new_a > 1)) {" || a_gt_guard == "if ((new_a > 1.0)) {")
+            || !parse_raw_assign_line(a_gt_assign)
+                .is_some_and(|(lhs, rhs)| raw_one_like_assign(lhs, rhs, "new_a"))
             || a_gt_close != "}"
-            || b_lt_guard != "if ((new_b < 0)) {"
-            || b_lt_assign != "new_b <- 0"
+            || !(b_lt_guard == "if ((new_b < 0)) {" || b_lt_guard == "if ((new_b < 0.0)) {")
+            || !parse_raw_assign_line(b_lt_assign)
+                .is_some_and(|(lhs, rhs)| raw_zero_like_assign(lhs, rhs, "new_b"))
             || b_lt_close != "}"
-            || b_gt_guard != "if ((new_b > 1)) {"
-            || b_gt_assign != "new_b <- 1"
+            || !(b_gt_guard == "if ((new_b > 1)) {" || b_gt_guard == "if ((new_b > 1.0)) {")
+            || !parse_raw_assign_line(b_gt_assign)
+                .is_some_and(|(lhs, rhs)| raw_one_like_assign(lhs, rhs, "new_b"))
             || b_gt_close != "}"
         {
             idx += 1;
@@ -2608,6 +2623,13 @@ fn restore_cg_loop_carried_updates_in_raw_emitted_r(output: &str) -> String {
         (start..lines.len()).find(|idx| !lines[*idx].trim().is_empty())
     }
 
+    fn find_enclosing_repeat_start(lines: &[String], idx: usize) -> Option<usize> {
+        (0..idx).rev().find(|line_idx| {
+            lines[*line_idx].trim() == "repeat {"
+                && find_raw_block_end(lines, *line_idx).is_some_and(|end| idx < end)
+        })
+    }
+
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return output.to_string();
@@ -2645,6 +2667,32 @@ fn restore_cg_loop_carried_updates_in_raw_emitted_r(output: &str) -> String {
             .take_while(|ch| ch.is_ascii_whitespace())
             .collect::<String>();
 
+        let repeat_start = find_enclosing_repeat_start(&lines, idx);
+        let repeat_end = repeat_start.and_then(|start| find_raw_block_end(&lines, start));
+        let ap_line_idx = repeat_start.and_then(|repeat_start| {
+            (0..repeat_start).rev().find(|line_idx| {
+                let trimmed = lines[*line_idx].trim();
+                trimmed == "Ap <- ((4.0001 * p) - (((rr_gather(p, rr_index_vec_floor(n_l)) + rr_gather(p, rr_index_vec_floor(n_r))) + rr_gather(p, rr_index_vec_floor(n_d))) + rr_gather(p, rr_index_vec_floor(n_u))))"
+                    || trimmed == "Ap <- Sym_119(p, n_l, n_r, n_d, n_u, size)"
+            })
+        });
+        let p_ap_idx =
+            next_significant_line(&lines, repeat_start.map_or(idx + 1, |start| start + 1))
+                .filter(|line_idx| lines[*line_idx].trim().starts_with("p_Ap <- "));
+        if let (Some(ap_line_idx), Some(p_ap_idx)) = (ap_line_idx, p_ap_idx) {
+            let has_ap_in_loop = lines
+                .iter()
+                .take(p_ap_idx)
+                .skip(repeat_start.map_or(0, |start| start + 1))
+                .any(|line| line.trim().starts_with("Ap <- "));
+            if !has_ap_in_loop {
+                lines.insert(p_ap_idx, format!("{indent}{}", lines[ap_line_idx].trim()));
+                if rs_new_idx >= p_ap_idx {
+                    rs_new_idx += 1;
+                }
+            }
+        }
+
         if !has_r_update {
             lines.insert(rs_new_idx, format!("{indent}r <- (r - (alpha * Ap))"));
             rs_new_idx += 1;
@@ -2675,38 +2723,90 @@ fn restore_cg_loop_carried_updates_in_raw_emitted_r(output: &str) -> String {
             }
         }
 
-        let Some(beta_idx) = ((rs_new_idx + 1)..lines.len()).find(|i| {
-            !lines[*i].trim().is_empty() && lines[*i].trim() == "beta <- (rs_new / rs_old)"
+        let search_end = repeat_end.unwrap_or(lines.len());
+        let Some(beta_idx) = ((rs_new_idx + 1)..search_end).find(|i| {
+            let trimmed = lines[*i].trim();
+            !trimmed.is_empty() && trimmed == "beta <- (rs_new / rs_old)"
         }) else {
             continue;
         };
-        let Some(iter_idx) = ((beta_idx + 1)..lines.len()).find(|i| {
+        let Some(mut iter_idx) = ((beta_idx + 1)..search_end).find(|i| {
             let trimmed = lines[*i].trim();
-            !trimmed.is_empty() && trimmed == "iter <- (iter + 1)"
+            !trimmed.is_empty()
+                && (trimmed == "iter <- (iter + 1)" || trimmed == "iter <- (iter + 1.0)")
         }) else {
             continue;
         };
 
-        let has_p_update = lines
-            .iter()
-            .take(iter_idx)
-            .skip(beta_idx + 1)
-            .any(|line| line.trim() == "p <- (r + (beta * p))");
+        let has_p_update = ((beta_idx + 1)..iter_idx)
+            .any(|line_idx| lines[line_idx].trim() == "p <- (r + (beta * p))");
         if !has_p_update {
             lines.insert(iter_idx, format!("{indent}p <- (r + (beta * p))"));
+            iter_idx += 1;
         }
-        let iter_idx = ((beta_idx + 1)..lines.len())
-            .find(|i| lines[*i].trim() == "iter <- (iter + 1)")
-            .unwrap_or(iter_idx);
-        let has_rs_old_update = lines
-            .iter()
-            .take(iter_idx)
-            .skip(beta_idx + 1)
-            .any(|line| line.trim() == "rs_old <- rs_new");
+        let has_rs_old_update =
+            ((beta_idx + 1)..iter_idx).any(|line_idx| lines[line_idx].trim() == "rs_old <- rs_new");
         if !has_rs_old_update {
             lines.insert(iter_idx, format!("{indent}rs_old <- rs_new"));
         }
         break;
+    }
+
+    let mut repeat_idx = 0usize;
+    while repeat_idx < lines.len() {
+        let Some(loop_start) =
+            (repeat_idx..lines.len()).find(|idx| lines[*idx].trim() == "repeat {")
+        else {
+            break;
+        };
+        let Some(loop_end) = find_raw_block_end(&lines, loop_start) else {
+            break;
+        };
+        let has_cg_shape = lines
+            .iter()
+            .take(loop_end)
+            .skip(loop_start + 1)
+            .any(|line| line.trim() == "x <- (x + (alpha * p))")
+            && lines
+                .iter()
+                .take(loop_end)
+                .skip(loop_start + 1)
+                .any(|line| line.trim() == "beta <- (rs_new / rs_old)");
+        if !has_cg_shape {
+            repeat_idx = loop_end + 1;
+            continue;
+        }
+
+        let Some(beta_idx) = ((loop_start + 1)..loop_end)
+            .find(|idx| lines[*idx].trim() == "beta <- (rs_new / rs_old)")
+        else {
+            repeat_idx = loop_end + 1;
+            continue;
+        };
+        let Some(mut iter_idx) = ((beta_idx + 1)..loop_end).find(|idx| {
+            let trimmed = lines[*idx].trim();
+            trimmed == "iter <- (iter + 1)" || trimmed == "iter <- (iter + 1.0)"
+        }) else {
+            repeat_idx = loop_end + 1;
+            continue;
+        };
+
+        let indent = lines[beta_idx]
+            .chars()
+            .take_while(|ch| ch.is_ascii_whitespace())
+            .collect::<String>();
+        let has_p_update =
+            ((beta_idx + 1)..iter_idx).any(|idx| lines[idx].trim() == "p <- (r + (beta * p))");
+        if !has_p_update {
+            lines.insert(iter_idx, format!("{indent}p <- (r + (beta * p))"));
+            iter_idx += 1;
+        }
+        let has_rs_old_update =
+            ((beta_idx + 1)..iter_idx).any(|idx| lines[idx].trim() == "rs_old <- rs_new");
+        if !has_rs_old_update {
+            lines.insert(iter_idx, format!("{indent}rs_old <- rs_new"));
+        }
+        repeat_idx = loop_end + 1;
     }
 
     let mut out = lines.join("\n");
@@ -5357,6 +5457,87 @@ fn strip_noop_self_assignments_in_raw_emitted_r(output: &str) -> String {
     out
 }
 
+fn strip_noop_temp_copy_roundtrips_in_raw_emitted_r(output: &str) -> String {
+    let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
+    if lines.is_empty() {
+        return output.to_string();
+    }
+
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        let Some((tmp_lhs, tmp_rhs)) = parse_raw_assign_line(lines[idx].trim()) else {
+            idx += 1;
+            continue;
+        };
+        let tmp_lhs = tmp_lhs.to_string();
+        let tmp_rhs = tmp_rhs.to_string();
+        if !(tmp_lhs.starts_with(".__pc_src_tmp") || tmp_lhs.starts_with(".__rr_cse_"))
+            || !tmp_rhs.chars().all(is_symbol_char)
+        {
+            idx += 1;
+            continue;
+        }
+
+        let Some(next_idx) = ((idx + 1)..lines.len()).find(|i| !lines[*i].trim().is_empty()) else {
+            lines[idx].clear();
+            break;
+        };
+        let Some((next_lhs, next_rhs)) = parse_raw_assign_line(lines[next_idx].trim()) else {
+            let used_later = lines
+                .iter()
+                .skip(next_idx)
+                .any(|line| line_contains_symbol(line.trim(), &tmp_lhs));
+            if !used_later {
+                lines[idx].clear();
+            }
+            idx += 1;
+            continue;
+        };
+        if next_lhs != tmp_rhs || next_rhs != tmp_lhs {
+            let mut used_later = false;
+            for later_line in lines.iter().skip(idx + 1) {
+                let later_trimmed = later_line.trim();
+                if later_trimmed.is_empty() {
+                    continue;
+                }
+                if later_trimmed.contains("<- function") {
+                    break;
+                }
+                if let Some((later_lhs, _)) = parse_raw_assign_line(later_trimmed)
+                    && later_lhs == tmp_lhs
+                {
+                    break;
+                }
+                if line_contains_symbol(later_trimmed, &tmp_lhs) {
+                    used_later = true;
+                    break;
+                }
+            }
+            if !used_later {
+                lines[idx].clear();
+            }
+            idx += 1;
+            continue;
+        }
+
+        lines[next_idx].clear();
+        let used_later = lines
+            .iter()
+            .skip(next_idx + 1)
+            .any(|line| line_contains_symbol(line.trim(), &tmp_lhs));
+        if !used_later {
+            lines[idx].clear();
+        }
+        idx = next_idx + 1;
+    }
+
+    let mut out = lines.join("\n");
+    if output.ends_with('\n') || !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
 fn strip_empty_else_blocks_in_raw_emitted_r(output: &str) -> String {
     let lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
@@ -7354,6 +7535,25 @@ pub(crate) fn run_tachyon_phase(
                 ));
             }
         }
+        if pulse_stats.proof_certified > 0
+            || pulse_stats.proof_applied > 0
+            || pulse_stats.proof_apply_failed > 0
+            || pulse_stats.proof_fallback_pattern > 0
+        {
+            ui.step_line_ok(&format!(
+                "Proof: cert {} | apply {} | fail {} | fallback {}",
+                pulse_stats.proof_certified,
+                pulse_stats.proof_applied,
+                pulse_stats.proof_apply_failed,
+                pulse_stats.proof_fallback_pattern
+            ));
+            let proof_reason_detail = crate::mir::opt::v_opt::format_proof_fallback_counts(
+                &pulse_stats.proof_fallback_reason_counts,
+            );
+            if !proof_reason_detail.is_empty() {
+                ui.step_line_ok(&format!("ProofWhy: {}", proof_reason_detail));
+            }
+        }
         ui.step_line_ok(&format!(
             "Passes: SCCP {} | GVN {} | LICM {} | BCE {} | TCO {} | DCE {}",
             pulse_stats.sccp_hits,
@@ -7494,21 +7694,7 @@ fn append_runtime_configuration(
             ".rr_env$file <- \"{}\";\n",
             escape_r_string(source_label)
         ));
-        let native_roots = compile_time_native_roots(entry_path);
-        if !native_roots.is_empty() {
-            out.push_str(".rr_env$native_anchor_roots <- unique(vapply(c(");
-            for (idx, root) in native_roots.iter().enumerate() {
-                if idx > 0 {
-                    out.push_str(", ");
-                }
-                out.push('"');
-                out.push_str(&escape_r_string(root));
-                out.push('"');
-            }
-            out.push_str(
-                "), function(p) normalizePath(as.character(p), winslash = \"/\", mustWork = FALSE), character(1)));\n",
-            );
-        }
+        out.push_str(".rr_env$native_anchor_roots <- character(0);\n");
     }
     if roots_need_strict_index_config(runtime_roots) {
         out.push_str(
@@ -7517,23 +7703,23 @@ fn append_runtime_configuration(
     }
     if roots_need_native_parallel_config(runtime_roots) {
         out.push_str(&format!(
-            "if (!nzchar(Sys.getenv(\"RR_NATIVE_BACKEND\", \"\"))) .rr_env$native_backend <- \"{}\";\n",
+            ".rr_env$native_backend <- \"{}\";\n",
             type_cfg.native_backend.as_str()
         ));
         out.push_str(&format!(
-            "if (!nzchar(Sys.getenv(\"RR_PARALLEL_MODE\", \"\"))) .rr_env$parallel_mode <- \"{}\";\n",
+            ".rr_env$parallel_mode <- \"{}\";\n",
             parallel_cfg.mode.as_str()
         ));
         out.push_str(&format!(
-            "if (!nzchar(Sys.getenv(\"RR_PARALLEL_BACKEND\", \"\"))) .rr_env$parallel_backend <- \"{}\";\n",
+            ".rr_env$parallel_backend <- \"{}\";\n",
             parallel_cfg.backend.as_str()
         ));
         out.push_str(&format!(
-            "if (!nzchar(Sys.getenv(\"RR_PARALLEL_THREADS\", \"\"))) .rr_env$parallel_threads <- as.integer({});\n",
+            ".rr_env$parallel_threads <- as.integer({});\n",
             parallel_cfg.threads
         ));
         out.push_str(&format!(
-            "if (!nzchar(Sys.getenv(\"RR_PARALLEL_MIN_TRIP\", \"\"))) .rr_env$parallel_min_trip <- as.integer({});\n",
+            ".rr_env$parallel_min_trip <- as.integer({});\n",
             parallel_cfg.min_trip
         ));
         out.push_str(
@@ -7553,33 +7739,7 @@ fn append_runtime_configuration(
         );
         out.push_str(".rr_env$native_lib <- \"\";\n");
         out.push_str(".rr_env$native_loaded <- FALSE;\n");
-        if !include_source_bootstrap {
-            out.push_str(".rr_env$native_anchor_roots <- character(0);\n");
-        }
     }
-}
-
-fn compile_time_native_roots(entry_path: &str) -> Vec<String> {
-    let entry = Path::new(entry_path);
-    let canonical = fs::canonicalize(entry).unwrap_or_else(|_| entry.to_path_buf());
-    let Some(entry_dir) = canonical.parent().map(Path::to_path_buf) else {
-        return Vec::new();
-    };
-    let mut cur = entry_dir.clone();
-    loop {
-        let probe = cur.join("Cargo.toml");
-        if probe.is_file() {
-            return vec![cur.to_string_lossy().replace('\\', "/")];
-        }
-        let Some(parent) = cur.parent() else {
-            break;
-        };
-        if parent == cur {
-            break;
-        }
-        cur = parent.to_path_buf();
-    }
-    vec![entry_dir.to_string_lossy().replace('\\', "/")]
 }
 
 pub fn compile(
@@ -7591,8 +7751,8 @@ pub fn compile(
         entry_path,
         entry_input,
         opt_level,
-        type_config_from_env(),
-        parallel_config_from_env(),
+        TypeConfig::default(),
+        ParallelConfig::default(),
     )
 }
 
@@ -7607,7 +7767,7 @@ pub fn compile_with_config(
         entry_input,
         opt_level,
         type_cfg,
-        parallel_config_from_env(),
+        ParallelConfig::default(),
     )
 }
 
@@ -7670,7 +7830,13 @@ pub(crate) fn compile_with_configs_using_emit_cache(
     let SourceAnalysisOutput {
         desugared_hir,
         global_symbols,
-    } = run_source_analysis_and_canonicalization(&ui, entry_path, entry_input, TOTAL_STEPS)?;
+    } = run_source_analysis_and_canonicalization(
+        &ui,
+        entry_path,
+        entry_input,
+        TOTAL_STEPS,
+        output_opts,
+    )?;
 
     let MirSynthesisOutput {
         mut all_fns,
@@ -8062,6 +8228,98 @@ mod tests {
         assert!(out.contains("new_b <- (pmin(pmax(B[i] + ((((DB * lapB[i]) + (A[i] * B[i]) * B[i]) - ((k + f) * B[i])) * dt), 0), 1))"), "{out}");
         assert!(!out.contains("if ((new_a < 0)) {"), "{out}");
         assert!(!out.contains("if ((new_b > 1)) {"), "{out}");
+    }
+
+    #[test]
+    fn raw_emitted_gray_scott_clamp_pair_collapses_float_literal_bounds() {
+        let input = [
+            "Sym_222 <- function(A, B, lapA, lapB, DA, DB, f, k, dt, i) ",
+            "{",
+            "  new_a <- expr_a",
+            "  new_b <- expr_b",
+            "  if ((new_a < 0.0)) {",
+            "    new_a <- 0.0",
+            "  }",
+            "  if ((new_a > 1.0)) {",
+            "    new_a <- 1.0",
+            "  }",
+            "  if ((new_b < 0.0)) {",
+            "    new_b <- 0.0",
+            "  }",
+            "  if ((new_b > 1.0)) {",
+            "    new_b <- 1.0",
+            "  }",
+            "  return(new_b)",
+            "}",
+            "",
+        ]
+        .join("\n");
+
+        let out = collapse_gray_scott_clamp_pair_in_raw_emitted_r(&input);
+
+        assert!(out.contains("new_a <- (pmin(pmax(expr_a, 0), 1))"), "{out}");
+        assert!(out.contains("new_b <- (pmin(pmax(expr_b, 0), 1))"), "{out}");
+        assert!(!out.contains("if ((new_a < 0.0)) {"), "{out}");
+        assert!(!out.contains("if ((new_b > 1.0)) {"), "{out}");
+    }
+
+    #[test]
+    fn raw_emitted_temp_copy_roundtrip_strips_before_gray_scott_clamp_collapse() {
+        let input = [
+            "Sym_222 <- function(A, B, lapA, lapB, DA, DB, f, k, dt, i) ",
+            "{",
+            "  new_a <- (A[i] + ((((DA * lapA[i]) - (A[i] * B[i]) * B[i]) + (f * (1 - A[i]))) * dt))",
+            "  new_b <- (B[i] + ((((DB * lapB[i]) + (A[i] * B[i]) * B[i]) - ((k + f) * B[i])) * dt))",
+            "  if ((new_a < 0)) {",
+            "    new_a <- 0",
+            "  }",
+            "  if ((new_a > 1)) {",
+            "    new_a <- 1",
+            "    .__pc_src_tmp0 <- new_b",
+            "    new_b <- .__pc_src_tmp0",
+            "  }",
+            "  if ((new_b < 0)) {",
+            "    new_b <- 0",
+            "  }",
+            "  if ((new_b > 1)) {",
+            "    new_b <- 1",
+            "  }",
+            "  return(new_b)",
+            "}",
+            "",
+        ]
+        .join("\n");
+
+        let out = collapse_gray_scott_clamp_pair_in_raw_emitted_r(
+            &strip_noop_temp_copy_roundtrips_in_raw_emitted_r(&input),
+        );
+
+        assert!(!out.contains(".__pc_src_tmp0 <- new_b"), "{out}");
+        assert!(!out.contains("new_b <- .__pc_src_tmp0"), "{out}");
+        assert!(out.contains("new_a <- (pmin(pmax("), "{out}");
+        assert!(out.contains("new_b <- (pmin(pmax("), "{out}");
+    }
+
+    #[test]
+    fn raw_emitted_dead_temp_alias_strips_without_roundtrip_use() {
+        let input = [
+            "Sym_222 <- function(A, B) ",
+            "{",
+            "  new_b <- (A + B)",
+            "  .__pc_src_tmp0 <- new_b",
+            "  if ((new_b > 1.0)) {",
+            "    new_b <- 1.0",
+            "  }",
+            "  return(new_b)",
+            "}",
+            "",
+        ]
+        .join("\n");
+
+        let out = strip_noop_temp_copy_roundtrips_in_raw_emitted_r(&input);
+
+        assert!(!out.contains(".__pc_src_tmp0 <- new_b"), "{out}");
+        assert!(out.contains("new_b <- (A + B)"), "{out}");
     }
 
     #[test]

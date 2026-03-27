@@ -2,7 +2,7 @@ mod common;
 
 use RR::compiler::{OptLevel, compile};
 use RR::error::{RRCode, Stage};
-use common::unique_dir;
+use common::{env_lock, set_current_dir_for_test, unique_dir};
 use std::fs;
 use std::path::PathBuf;
 
@@ -124,5 +124,43 @@ import r { median as graphics } from "stats"
         ),
         "unexpected message: {}",
         err.message
+    );
+}
+
+#[test]
+fn relative_entry_path_public_compile_api_resolves_imports_from_cwd() {
+    let env_guard = env_lock().lock().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("import_error_flow");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "relative_compile");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let entry_path = proj_dir.join("main.rr");
+    let helper_path = proj_dir.join("helper.rr");
+    let source = r#"
+import "./helper.rr"
+
+fn main() {
+  return answer()
+}
+main()
+"#;
+    fs::write(&entry_path, source).expect("failed to write main.rr");
+    fs::write(
+        &helper_path,
+        r#"
+fn answer() {
+  return 7L
+}
+"#,
+    )
+    .expect("failed to write helper.rr");
+
+    let _cwd = set_current_dir_for_test(&env_guard, &proj_dir);
+    let compiled = compile("main.rr", source, OptLevel::O0).expect("relative compile should work");
+    assert!(
+        compiled.0.contains("return(7L)"),
+        "compiled artifact should include imported helper body"
     );
 }

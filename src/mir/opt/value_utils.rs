@@ -51,6 +51,15 @@ impl TachyonEngine {
         }
     }
 
+    pub(super) fn value_is_const_zero(fn_ir: &FnIR, vid: ValueId) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        match fn_ir.values[v].kind {
+            ValueKind::Const(Lit::Int(n)) => n == 0,
+            ValueKind::Const(Lit::Float(f)) => f.abs() < f64::EPSILON,
+            _ => false,
+        }
+    }
+
     pub(super) fn value_is_const_six(fn_ir: &FnIR, vid: ValueId) -> bool {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         match fn_ir.values[v].kind {

@@ -4,7 +4,6 @@ use crate::mir::analyze::range::{analyze_ranges, ensure_value_range, transfer_in
 use crate::mir::opt::loop_analysis::LoopAnalyzer;
 use crate::mir::*;
 use rustc_hash::FxHashSet;
-use std::env;
 
 #[derive(Clone)]
 struct CanonicalIvRule {
@@ -280,11 +279,7 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
 }
 
 fn bce_visit_limit() -> usize {
-    env::var("RR_BCE_VISIT_LIMIT")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .unwrap_or(200_000)
-        .max(10_000)
+    200_000
 }
 
 fn canonical_loop_ivs(fn_ir: &FnIR) -> Vec<CanonicalIvRule> {

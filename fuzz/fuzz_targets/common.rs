@@ -91,7 +91,8 @@ pub fn build_mir(src: &str) -> Option<FxHashMap<String, FnIR>> {
     let ast = parser.parse_program().ok()?;
 
     let mut lowerer = Lowerer::new();
-    let (hir_mod, symbols) = lowerer.lower_module(ast, ModuleId(0)).ok()?;
+    let hir_mod = lowerer.lower_module(ast, ModuleId(0)).ok()?;
+    let symbols = lowerer.into_symbols();
 
     let mut known_fn_arities: FxHashMap<String, usize> = FxHashMap::default();
     for item in &hir_mod.items {

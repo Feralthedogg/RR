@@ -3,7 +3,10 @@ use super::analysis::{
     induction_origin_var, loop_vectorize_skip_reason, match_2d_col_map, match_2d_row_map,
     match_3d_axis_map,
 };
-use super::debug::{VectorizeSkipReason, trace_no_iv_context, vectorize_trace_enabled};
+use super::debug::{
+    VectorizeSkipReason, proof_engine_enabled, trace_no_iv_context, trace_proof_apply_result,
+    vectorize_trace_enabled,
+};
 use super::planning::{
     Axis3D, ReduceKind, VectorPlan, match_2d_col_reduction_sum, match_2d_row_reduction_sum,
     match_3d_axis_reduction, match_call_map, match_call_map_3d, match_conditional_map,
@@ -12,8 +15,9 @@ use super::planning::{
     match_reduction, match_scatter_expr_map, match_scatter_expr_map_3d, match_shifted_map,
     match_shifted_map_3d,
 };
-use super::transform::apply_vectorization;
-use super::types::CallMapLoweringMode;
+use super::proof;
+use super::transform::{apply_vectorization, try_apply_vectorization_transactionally};
+use super::types::{CallMapLoweringMode, ProofFallbackReason, ProofOutcome};
 use crate::mir::opt::loop_analysis::{LoopAnalyzer, LoopInfo};
 use crate::mir::{BlockId, FnIR};
 use rustc_hash::FxHashSet;
@@ -64,6 +68,11 @@ pub struct VOptStats {
     pub trip_tier_small: usize,
     pub trip_tier_medium: usize,
     pub trip_tier_large: usize,
+    pub proof_certified: usize,
+    pub proof_applied: usize,
+    pub proof_apply_failed: usize,
+    pub proof_fallback_pattern: usize,
+    pub proof_fallback_reason_counts: [usize; super::PROOF_FALLBACK_REASON_COUNT],
 }
 
 impl VOptStats {
@@ -128,12 +137,13 @@ pub fn optimize_with_stats_with_whitelist(
 ) -> VOptStats {
     let mut stats = VOptStats::default();
     let trace_enabled = vectorize_trace_enabled();
+    let proof_enabled = proof_engine_enabled();
     let analyzer = LoopAnalyzer::new(fn_ir);
     let loops = analyzer.find_loops();
 
-    for lp in loops {
+    for (loop_idx, lp) in loops.iter().enumerate() {
         stats.loops_seen += 1;
-        stats.record_trip_tier(trip_count_tier(fn_ir, &lp));
+        stats.record_trip_tier(trip_count_tier(fn_ir, lp));
         let before = stats;
         if trace_enabled {
             let mut body_ids: Vec<BlockId> = lp.body.iter().copied().collect();
@@ -154,17 +164,43 @@ pub fn optimize_with_stats_with_whitelist(
                 body_ids
             );
         }
-        let mut reduction_candidates =
-            collect_reduction_candidates(fn_ir, &lp, user_call_whitelist);
+        let has_nested_loop = loops.iter().enumerate().any(|(other_idx, other)| {
+            other_idx != loop_idx
+                && other.header != lp.header
+                && lp.body.contains(&other.header)
+                && other.body.len() < lp.body.len()
+        });
+        let proof_outcome = if has_nested_loop {
+            ProofOutcome::NotApplicable {
+                reason: ProofFallbackReason::UnsupportedLoopShape,
+            }
+        } else {
+            proof::analyze_loop(fn_ir, lp, user_call_whitelist)
+        };
+        trace_proof_outcome(fn_ir, lp, &proof_outcome);
+        if proof_enabled {
+            match &proof_outcome {
+                ProofOutcome::Certified(_) => stats.proof_certified += 1,
+                ProofOutcome::NotApplicable { .. } => {}
+                ProofOutcome::FallbackToPattern { reason } => {
+                    stats.proof_fallback_pattern += 1;
+                    stats.proof_fallback_reason_counts[reason.index()] += 1;
+                }
+            }
+        }
+        if try_apply_proof_plan(fn_ir, lp, &proof_outcome, &mut stats) {
+            continue;
+        }
+        let mut reduction_candidates = collect_reduction_candidates(fn_ir, lp, user_call_whitelist);
         for plan in &reduction_candidates {
             record_plan_counts(&mut stats, fn_ir, plan, false);
         }
-        rank_vector_plans_for_loop(fn_ir, &lp, &mut reduction_candidates);
-        let mut vector_candidates = collect_vector_candidates(fn_ir, &lp, user_call_whitelist);
+        rank_vector_plans_for_loop(fn_ir, lp, &mut reduction_candidates);
+        let mut vector_candidates = collect_vector_candidates(fn_ir, lp, user_call_whitelist);
         for plan in &vector_candidates {
             record_plan_counts(&mut stats, fn_ir, plan, false);
         }
-        rank_vector_plans_for_loop(fn_ir, &lp, &mut vector_candidates);
+        rank_vector_plans_for_loop(fn_ir, lp, &mut vector_candidates);
         if trace_enabled && (!reduction_candidates.is_empty() || !vector_candidates.is_empty()) {
             let reductions = reduction_candidates
                 .iter()
@@ -179,7 +215,7 @@ pub fn optimize_with_stats_with_whitelist(
             eprintln!(
                 "   [vec-candidates] {} trip_hint={:?} reductions=[{}] vectors=[{}]",
                 fn_ir.name,
-                estimate_loop_trip_count_hint(fn_ir, &lp),
+                estimate_loop_trip_count_hint(fn_ir, lp),
                 reductions,
                 vectors
             );
@@ -187,7 +223,7 @@ pub fn optimize_with_stats_with_whitelist(
 
         if let Some(plan) = reduction_candidates
             .into_iter()
-            .find(|plan| apply_vectorization(fn_ir, &lp, plan.clone()))
+            .find(|plan| apply_vectorization(fn_ir, lp, plan.clone()))
         {
             record_plan_counts(&mut stats, fn_ir, &plan, true);
             if trace_enabled {
@@ -200,7 +236,7 @@ pub fn optimize_with_stats_with_whitelist(
             stats.reduced += 1;
         } else if let Some(plan) = vector_candidates
             .into_iter()
-            .find(|plan| apply_vectorization(fn_ir, &lp, plan.clone()))
+            .find(|plan| apply_vectorization(fn_ir, lp, plan.clone()))
         {
             record_plan_counts(&mut stats, fn_ir, &plan, true);
             if trace_enabled {
@@ -215,23 +251,81 @@ pub fn optimize_with_stats_with_whitelist(
 
         let applied = stats.vectorized != before.vectorized || stats.reduced != before.reduced;
         if trace_enabled && !applied {
-            let reason = loop_vectorize_skip_reason(fn_ir, &lp);
+            let reason = loop_vectorize_skip_reason(fn_ir, lp);
             eprintln!("   [vec-skip] {}: {}", fn_ir.name, reason.label());
             if reason == VectorizeSkipReason::NoIv {
-                trace_no_iv_context(fn_ir, &lp);
+                trace_no_iv_context(fn_ir, lp);
             }
         }
         if !applied {
-            stats.record_skip(loop_vectorize_skip_reason(fn_ir, &lp));
+            stats.record_skip(loop_vectorize_skip_reason(fn_ir, lp));
         }
     }
 
     stats
 }
 
+fn trace_proof_outcome(fn_ir: &FnIR, lp: &LoopInfo, outcome: &ProofOutcome) {
+    match outcome {
+        ProofOutcome::Certified(certified) => super::debug::trace_proof_status(
+            fn_ir,
+            lp,
+            &format!(
+                "certified={} attempting-transactional-apply",
+                vector_plan_label(&certified.plan)
+            ),
+        ),
+        ProofOutcome::NotApplicable { reason } => super::debug::trace_proof_status(
+            fn_ir,
+            lp,
+            &format!("not-applicable: {}", reason.label()),
+        ),
+        ProofOutcome::FallbackToPattern { reason } => super::debug::trace_proof_status(
+            fn_ir,
+            lp,
+            &format!("fallback-pattern: {}", reason.label()),
+        ),
+    }
+}
+
+fn try_apply_proof_plan(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    outcome: &ProofOutcome,
+    stats: &mut VOptStats,
+) -> bool {
+    let ProofOutcome::Certified(certified) = outcome else {
+        return false;
+    };
+
+    let plan = certified.plan.clone();
+    let applied = try_apply_vectorization_transactionally(fn_ir, lp, plan.clone());
+    trace_proof_apply_result(
+        fn_ir,
+        lp,
+        applied,
+        &format!("plan={}", vector_plan_label(&plan)),
+    );
+    if !applied {
+        stats.proof_apply_failed += 1;
+        return false;
+    }
+
+    stats.proof_applied += 1;
+    record_plan_counts(stats, fn_ir, &plan, true);
+    if matches!(vector_plan_family(&plan), VectorPlanFamily::Reduction) {
+        stats.reduced += 1;
+    } else {
+        stats.vectorized += 1;
+    }
+    true
+}
+
 fn vector_plan_family(plan: &VectorPlan) -> VectorPlanFamily {
     match plan {
         VectorPlan::Reduce { .. }
+        | VectorPlan::ReduceCond { .. }
+        | VectorPlan::MultiReduceCond { .. }
         | VectorPlan::Reduce2DRowSum { .. }
         | VectorPlan::Reduce2DColSum { .. }
         | VectorPlan::Reduce3D { .. } => VectorPlanFamily::Reduction,
@@ -508,7 +602,9 @@ fn vector_plan_base_tier(plan: &VectorPlan) -> u8 {
         VectorPlan::Reduce2DRowSum { .. }
         | VectorPlan::Reduce2DColSum { .. }
         | VectorPlan::Reduce3D { .. } => 6,
-        VectorPlan::Reduce { .. } => 5,
+        VectorPlan::Reduce { .. }
+        | VectorPlan::ReduceCond { .. }
+        | VectorPlan::MultiReduceCond { .. } => 5,
         VectorPlan::Map { .. }
         | VectorPlan::RecurrenceAddConst { .. }
         | VectorPlan::RecurrenceAddConst3D { .. } => 4,
@@ -623,6 +719,8 @@ pub(super) fn vector_plan_score(plan: &VectorPlan) -> (u8, u8, u8) {
             axis: Axis3D::Dim3,
             ..
         } => (107, 1, 0),
+        VectorPlan::ReduceCond { .. } => (119, 0, 0),
+        VectorPlan::MultiReduceCond { entries, .. } => (119, entries.len().min(255) as u8, 0),
         VectorPlan::Reduce { .. } => (118, 0, 0),
         VectorPlan::CondMap { .. } => (100, 0, 0),
         VectorPlan::CondMap3D {
@@ -749,6 +847,8 @@ pub(super) fn vector_plan_score(plan: &VectorPlan) -> (u8, u8, u8) {
 
 pub(super) fn vector_plan_label(plan: &VectorPlan) -> &'static str {
     match plan {
+        VectorPlan::ReduceCond { .. } => "reduce_cond",
+        VectorPlan::MultiReduceCond { .. } => "multi_reduce_cond",
         VectorPlan::Reduce { .. } => "reduce",
         VectorPlan::Reduce2DRowSum { .. } => "reduce2d_row_sum",
         VectorPlan::Reduce2DColSum { .. } => "reduce2d_col_sum",

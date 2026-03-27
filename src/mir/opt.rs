@@ -731,6 +731,18 @@ impl TachyonEngine {
         if !floor_helpers.is_empty() {
             let _ = Self::rewrite_floor_helper_calls(all_fns, &floor_helpers);
         }
+        let abs_helpers = Self::collect_trivial_abs_helpers(all_fns);
+        if !abs_helpers.is_empty() {
+            let _ = Self::rewrite_trivial_abs_helper_calls(all_fns, &abs_helpers);
+        }
+        let unit_index_helpers = Self::collect_unit_index_helpers(all_fns);
+        if !unit_index_helpers.is_empty() {
+            let _ = Self::rewrite_unit_index_helper_calls(all_fns, &unit_index_helpers);
+        }
+        let minmax_helpers = Self::collect_trivial_minmax_helpers(all_fns);
+        if !minmax_helpers.is_empty() {
+            let _ = Self::rewrite_trivial_minmax_helper_calls(all_fns, &minmax_helpers);
+        }
         let clamp_helpers = Self::collect_trivial_clamp_helpers(all_fns);
         if !clamp_helpers.is_empty() {
             let _ = Self::rewrite_trivial_clamp_helper_calls(all_fns, &clamp_helpers);
@@ -738,6 +750,10 @@ impl TachyonEngine {
         let wrap_index_helpers = Self::collect_wrap_index_helpers(all_fns);
         if !wrap_index_helpers.is_empty() {
             let _ = Self::rewrite_wrap_index_helper_calls(all_fns, &wrap_index_helpers);
+        }
+        let periodic_index_helpers = Self::collect_periodic_index_helpers(all_fns);
+        if !periodic_index_helpers.is_empty() {
+            let _ = Self::rewrite_periodic_index_helper_calls(all_fns, &periodic_index_helpers);
         }
         let cube_index_helpers = Self::collect_cube_index_helpers(all_fns);
         if !cube_index_helpers.is_empty() {
@@ -967,6 +983,40 @@ impl TachyonEngine {
                 );
             }
         }
+        let abs_helpers = Self::collect_trivial_abs_helpers(all_fns);
+        if !abs_helpers.is_empty() {
+            let rewrites = Self::rewrite_trivial_abs_helper_calls(all_fns, &abs_helpers);
+            if Self::wrap_trace_enabled() && rewrites > 0 {
+                let helper_names = Self::sorted_names(&abs_helpers).join(", ");
+                eprintln!(
+                    "   [abs] rewrote {} call site(s) using helper(s): {}",
+                    rewrites, helper_names
+                );
+            }
+        }
+        let unit_index_helpers = Self::collect_unit_index_helpers(all_fns);
+        if !unit_index_helpers.is_empty() {
+            let rewrites = Self::rewrite_unit_index_helper_calls(all_fns, &unit_index_helpers);
+            if Self::wrap_trace_enabled() && rewrites > 0 {
+                let helper_names = Self::sorted_names(&unit_index_helpers).join(", ");
+                eprintln!(
+                    "   [unit-index] rewrote {} call site(s) using helper(s): {}",
+                    rewrites, helper_names
+                );
+            }
+        }
+        let minmax_helpers = Self::collect_trivial_minmax_helpers(all_fns);
+        if !minmax_helpers.is_empty() {
+            let rewrites = Self::rewrite_trivial_minmax_helper_calls(all_fns, &minmax_helpers);
+            if Self::wrap_trace_enabled() && rewrites > 0 {
+                let helper_names: FxHashSet<String> = minmax_helpers.keys().cloned().collect();
+                let helper_names = Self::sorted_names(&helper_names).join(", ");
+                eprintln!(
+                    "   [minmax] rewrote {} call site(s) using helper(s): {}",
+                    rewrites, helper_names
+                );
+            }
+        }
         let clamp_helpers = Self::collect_trivial_clamp_helpers(all_fns);
         if !clamp_helpers.is_empty() {
             let rewrites = Self::rewrite_trivial_clamp_helper_calls(all_fns, &clamp_helpers);
@@ -1011,6 +1061,24 @@ impl TachyonEngine {
                 let helper_names = Self::sorted_names(&wrap_index_helpers).join(", ");
                 eprintln!(
                     "   [wrap] rewrote {} call site(s) using helper(s): {}",
+                    rewrites, helper_names
+                );
+            }
+        }
+        let periodic_index_helpers = if run_heavy_tier {
+            Self::collect_periodic_index_helpers(all_fns)
+        } else {
+            FxHashMap::default()
+        };
+        if !periodic_index_helpers.is_empty() {
+            let rewrites =
+                Self::rewrite_periodic_index_helper_calls(all_fns, &periodic_index_helpers);
+            if Self::wrap_trace_enabled() && rewrites > 0 {
+                let helper_names: FxHashSet<String> =
+                    periodic_index_helpers.keys().cloned().collect();
+                let helper_names = Self::sorted_names(&helper_names).join(", ");
+                eprintln!(
+                    "   [wrap1d] rewrote {} call site(s) using helper(s): {}",
                     rewrites, helper_names
                 );
             }
@@ -1343,6 +1411,17 @@ impl TachyonEngine {
                 stats.vector_trip_tier_small += v_stats.trip_tier_small;
                 stats.vector_trip_tier_medium += v_stats.trip_tier_medium;
                 stats.vector_trip_tier_large += v_stats.trip_tier_large;
+                stats.proof_certified += v_stats.proof_certified;
+                stats.proof_applied += v_stats.proof_applied;
+                stats.proof_apply_failed += v_stats.proof_apply_failed;
+                stats.proof_fallback_pattern += v_stats.proof_fallback_pattern;
+                for (dst, src) in stats
+                    .proof_fallback_reason_counts
+                    .iter_mut()
+                    .zip(v_stats.proof_fallback_reason_counts)
+                {
+                    *dst += src;
+                }
                 let v_changed = v_stats.changed();
                 Self::maybe_verify(fn_ir, "After Vectorization");
                 Self::debug_stage_dump(fn_ir, "After Vectorization");

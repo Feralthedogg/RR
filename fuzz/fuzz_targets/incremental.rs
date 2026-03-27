@@ -110,7 +110,7 @@ fn incremental_scenarios() -> [IncrementalScenario; 6] {
             },
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         IncrementalScenario {
@@ -125,7 +125,7 @@ fn incremental_scenarios() -> [IncrementalScenario; 6] {
             },
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         IncrementalScenario {
@@ -140,7 +140,7 @@ fn incremental_scenarios() -> [IncrementalScenario; 6] {
             },
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         IncrementalScenario {
@@ -148,7 +148,7 @@ fn incremental_scenarios() -> [IncrementalScenario; 6] {
             options: IncrementalOptions::all_phases(),
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         IncrementalScenario {
@@ -156,7 +156,7 @@ fn incremental_scenarios() -> [IncrementalScenario; 6] {
             options: IncrementalOptions::all_phases(),
             output_opts: CompileOutputOptions {
                 inject_runtime: false,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         IncrementalScenario {
@@ -167,7 +167,7 @@ fn incremental_scenarios() -> [IncrementalScenario; 6] {
             },
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
     ]

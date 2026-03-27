@@ -2,7 +2,7 @@ use RR::compiler::{
     CliLog, CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel,
     ParallelBackend, ParallelConfig, ParallelMode,
     compile_with_configs_incremental_with_output_options, compile_with_configs_with_options,
-    module_tree_fingerprint, module_tree_snapshot, parallel_config_from_env, type_config_from_env,
+    default_parallel_config, default_type_config, module_tree_fingerprint, module_tree_snapshot,
 };
 use RR::runtime::runner::Runner;
 use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
@@ -94,6 +94,8 @@ fn print_usage() {
     eprintln!("  --parallel-backend <auto|r|openmp>        Parallel backend selection");
     eprintln!("  --parallel-threads <N>                    Parallel worker threads (0=auto)");
     eprintln!("  --parallel-min-trip <N>                   Minimum trip-count for parallel path");
+    eprintln!("  --strict-let <on|off>                     Require explicit let before assignment");
+    eprintln!("  --warn-implicit-decl <on|off>             Warn on legacy implicit declaration");
     eprintln!("  --incremental[=auto|off|1|1,2|1,2,3|all] Enable incremental compile phases");
     eprintln!("  --incremental-phases <...>                Same as above (separate arg form)");
     eprintln!("  --no-incremental                          Disable automatic incremental compile");
@@ -206,6 +208,14 @@ fn parse_nonnegative_usize(raw: &str) -> Option<usize> {
     raw.trim().parse::<usize>().ok()
 }
 
+fn parse_bool_flag(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CommonCompileFlag {
     TypeMode,
@@ -214,6 +224,8 @@ enum CommonCompileFlag {
     ParallelBackend,
     ParallelThreads,
     ParallelMinTrip,
+    StrictLet,
+    WarnImplicitDecl,
 }
 
 impl CommonCompileFlag {
@@ -225,6 +237,8 @@ impl CommonCompileFlag {
             "--parallel-backend" => Some(Self::ParallelBackend),
             "--parallel-threads" => Some(Self::ParallelThreads),
             "--parallel-min-trip" => Some(Self::ParallelMinTrip),
+            "--strict-let" => Some(Self::StrictLet),
+            "--warn-implicit-decl" => Some(Self::WarnImplicitDecl),
             _ => None,
         }
     }
@@ -237,6 +251,8 @@ impl CommonCompileFlag {
             Self::ParallelBackend => "Missing value after --parallel-backend (auto|r|openmp)",
             Self::ParallelThreads => "Missing value after --parallel-threads",
             Self::ParallelMinTrip => "Missing value after --parallel-min-trip",
+            Self::StrictLet => "Missing value after --strict-let (on|off)",
+            Self::WarnImplicitDecl => "Missing value after --warn-implicit-decl (on|off)",
         }
     }
 }
@@ -249,16 +265,22 @@ fn next_flag_value<'a>(args: &'a [String], i: &mut usize, _ui: &CliLog) -> Resul
     Ok(&args[*i])
 }
 
+struct CommonCompileFlagState<'a> {
+    opt_level: &'a mut OptLevel,
+    type_cfg: &'a mut TypeConfig,
+    parallel_cfg: &'a mut ParallelConfig,
+    strict_let: &'a mut bool,
+    warn_implicit_decl: &'a mut bool,
+}
+
 fn apply_common_compile_flags(
     args: &[String],
     i: &mut usize,
-    opt_level: &mut OptLevel,
-    type_cfg: &mut TypeConfig,
-    parallel_cfg: &mut ParallelConfig,
+    state: &mut CommonCompileFlagState<'_>,
     ui: &CliLog,
 ) -> Result<bool, i32> {
     let arg = &args[*i];
-    if apply_opt_flag(arg, opt_level) {
+    if apply_opt_flag(arg, state.opt_level) {
         return Ok(true);
     }
     let Some(flag) = CommonCompileFlag::from_arg(arg) else {
@@ -275,7 +297,7 @@ fn apply_common_compile_flags(
 
     match flag {
         CommonCompileFlag::TypeMode => {
-            type_cfg.mode = match v.parse::<TypeMode>() {
+            state.type_cfg.mode = match v.parse::<TypeMode>() {
                 Ok(m) => m,
                 Err(()) => {
                     ui.error("Invalid --type-mode. Use strict|gradual");
@@ -284,7 +306,7 @@ fn apply_common_compile_flags(
             };
         }
         CommonCompileFlag::NativeBackend => {
-            type_cfg.native_backend = match v.parse::<NativeBackend>() {
+            state.type_cfg.native_backend = match v.parse::<NativeBackend>() {
                 Ok(m) => m,
                 Err(()) => {
                     ui.error("Invalid --native-backend. Use off|optional|required");
@@ -293,7 +315,7 @@ fn apply_common_compile_flags(
             };
         }
         CommonCompileFlag::ParallelMode => {
-            parallel_cfg.mode = match v.parse::<ParallelMode>() {
+            state.parallel_cfg.mode = match v.parse::<ParallelMode>() {
                 Ok(m) => m,
                 Err(()) => {
                     ui.error("Invalid --parallel-mode. Use off|optional|required");
@@ -302,7 +324,7 @@ fn apply_common_compile_flags(
             };
         }
         CommonCompileFlag::ParallelBackend => {
-            parallel_cfg.backend = match v.parse::<ParallelBackend>() {
+            state.parallel_cfg.backend = match v.parse::<ParallelBackend>() {
                 Ok(m) => m,
                 Err(()) => {
                     ui.error("Invalid --parallel-backend. Use auto|r|openmp");
@@ -311,7 +333,7 @@ fn apply_common_compile_flags(
             };
         }
         CommonCompileFlag::ParallelThreads => {
-            parallel_cfg.threads = match parse_nonnegative_usize(v) {
+            state.parallel_cfg.threads = match parse_nonnegative_usize(v) {
                 Some(n) => n,
                 None => {
                     ui.error("Invalid --parallel-threads. Use a non-negative integer.");
@@ -320,10 +342,28 @@ fn apply_common_compile_flags(
             };
         }
         CommonCompileFlag::ParallelMinTrip => {
-            parallel_cfg.min_trip = match parse_nonnegative_usize(v) {
+            state.parallel_cfg.min_trip = match parse_nonnegative_usize(v) {
                 Some(n) => n,
                 None => {
                     ui.error("Invalid --parallel-min-trip. Use a non-negative integer.");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::StrictLet => {
+            *state.strict_let = match parse_bool_flag(v) {
+                Some(value) => value,
+                None => {
+                    ui.error("Invalid --strict-let. Use on|off.");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::WarnImplicitDecl => {
+            *state.warn_implicit_decl = match parse_bool_flag(v) {
+                Some(value) => value,
+                None => {
+                    ui.error("Invalid --warn-implicit-decl. Use on|off.");
                     return Err(1);
                 }
             };
@@ -387,6 +427,8 @@ struct CommonOpts {
     opt_level: OptLevel,
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
+    strict_let: bool,
+    warn_implicit_decl: bool,
     incremental: IncrementalOptions,
     watch_poll_ms: u64,
     watch_once: bool,
@@ -401,8 +443,10 @@ impl CommonOpts {
             no_runtime: false,
             preserve_all_defs: false,
             opt_level: OptLevel::O1,
-            type_cfg: type_config_from_env(),
-            parallel_cfg: parallel_config_from_env(),
+            type_cfg: default_type_config(),
+            parallel_cfg: default_parallel_config(),
+            strict_let: true,
+            warn_implicit_decl: false,
             incremental: IncrementalOptions::auto(),
             watch_poll_ms: 500,
             watch_once: false,
@@ -471,14 +515,14 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
             opts.output_path = Some(args[i + 1].clone());
             i += 1;
         } else {
-            match apply_common_compile_flags(
-                args,
-                &mut i,
-                &mut opts.opt_level,
-                &mut opts.type_cfg,
-                &mut opts.parallel_cfg,
-                ui,
-            ) {
+            let mut compile_flag_state = CommonCompileFlagState {
+                opt_level: &mut opts.opt_level,
+                type_cfg: &mut opts.type_cfg,
+                parallel_cfg: &mut opts.parallel_cfg,
+                strict_let: &mut opts.strict_let,
+                warn_implicit_decl: &mut opts.warn_implicit_decl,
+            };
+            match apply_common_compile_flags(args, &mut i, &mut compile_flag_state, ui) {
                 Ok(true) => {}
                 Ok(false) => {
                     if mode.allow_keep_r() && arg == "--keep-r" {
@@ -571,13 +615,13 @@ fn cmd_legacy(args: &[String]) -> i32 {
         Ok(v) => v,
         Err(code) => return code,
     };
-    let input_path = opts.target;
+    let input_path = PathBuf::from(&opts.target);
 
-    if input_path.is_empty() {
+    if opts.target.is_empty() {
         print_usage();
         return 1;
     }
-    if !input_path.ends_with(".rr") {
+    if input_path.extension().and_then(|s| s.to_str()) != Some("rr") {
         ui.error("Input file must end with .rr");
         return 1;
     }
@@ -585,18 +629,22 @@ fn cmd_legacy(args: &[String]) -> i32 {
     let input = match fs::read_to_string(&input_path) {
         Ok(s) => s,
         Err(e) => {
-            report_path_read_failure(&ui, Path::new(&input_path), &e, "input path");
+            report_path_read_failure(&ui, &input_path, &e, "input path");
             return 1;
         }
     };
+    let input_path = fs::canonicalize(&input_path).unwrap_or(input_path);
+    let input_path_str = input_path.to_string_lossy().to_string();
 
     let output_opts = CompileOutputOptions {
         inject_runtime: !opts.no_runtime,
         preserve_all_defs: opts.preserve_all_defs,
+        strict_let: opts.strict_let,
+        warn_implicit_decl: opts.warn_implicit_decl,
     };
     let result = if opts.incremental.enabled {
         compile_with_configs_incremental_with_output_options(
-            &input_path,
+            &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
@@ -608,7 +656,7 @@ fn cmd_legacy(args: &[String]) -> i32 {
         .map(|v| (v.r_code, v.source_map))
     } else {
         compile_with_configs_with_options(
-            &input_path,
+            &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
@@ -626,14 +674,21 @@ fn cmd_legacy(args: &[String]) -> i32 {
                 ui.success(&format!("Compiled to {}", out_path));
                 0
             } else if !opts.no_runtime {
-                Runner::run(&input_path, &input, &r_code, &source_map, None, opts.keep_r)
+                Runner::run(
+                    &input_path_str,
+                    &input,
+                    &r_code,
+                    &source_map,
+                    None,
+                    opts.keep_r,
+                )
             } else {
                 ui.success("Compilation successful (helper-only emission)");
                 0
             }
         }
         Err(e) => {
-            e.display(Some(&input), Some(&input_path));
+            e.display(Some(&input), Some(&input_path_str));
             1
         }
     }
@@ -644,7 +699,7 @@ fn resolve_command_input(raw: &str, command: &str) -> Result<PathBuf, TargetReso
     if path.is_dir() || raw == "." {
         let entry = path.join("main.rr");
         if entry.is_file() {
-            Ok(entry)
+            Ok(fs::canonicalize(&entry).unwrap_or(entry))
         } else {
             Err(TargetResolutionError {
                 message: format!("main.rr not found in '{}'", path.to_string_lossy()),
@@ -655,7 +710,7 @@ fn resolve_command_input(raw: &str, command: &str) -> Result<PathBuf, TargetReso
         }
     } else if path.is_file() {
         if path.extension().and_then(|s| s.to_str()) == Some("rr") {
-            Ok(path)
+            Ok(fs::canonicalize(&path).unwrap_or(path))
         } else {
             Err(TargetResolutionError {
                 message: format!("{command} target must be a .rr file or directory"),
@@ -710,6 +765,8 @@ fn cmd_run(args: &[String]) -> i32 {
             CompileOutputOptions {
                 inject_runtime: true,
                 preserve_all_defs: opts.preserve_all_defs,
+                strict_let: opts.strict_let,
+                warn_implicit_decl: opts.warn_implicit_decl,
             },
             None,
         )
@@ -724,6 +781,8 @@ fn cmd_run(args: &[String]) -> i32 {
             CompileOutputOptions {
                 inject_runtime: true,
                 preserve_all_defs: opts.preserve_all_defs,
+                strict_let: opts.strict_let,
+                warn_implicit_decl: opts.warn_implicit_decl,
             },
         )
     };
@@ -850,6 +909,8 @@ fn cmd_build(args: &[String]) -> i32 {
                 CompileOutputOptions {
                     inject_runtime: true,
                     preserve_all_defs: opts.preserve_all_defs,
+                    strict_let: opts.strict_let,
+                    warn_implicit_decl: opts.warn_implicit_decl,
                 },
                 None,
             )
@@ -864,6 +925,8 @@ fn cmd_build(args: &[String]) -> i32 {
                 CompileOutputOptions {
                     inject_runtime: true,
                     preserve_all_defs: opts.preserve_all_defs,
+                    strict_let: opts.strict_let,
+                    warn_implicit_decl: opts.warn_implicit_decl,
                 },
             )
         };
@@ -1044,6 +1107,8 @@ fn cmd_watch(args: &[String]) -> i32 {
             CompileOutputOptions {
                 inject_runtime: true,
                 preserve_all_defs: opts.preserve_all_defs,
+                strict_let: opts.strict_let,
+                warn_implicit_decl: opts.warn_implicit_decl,
             },
             Some(&mut session),
         ) {

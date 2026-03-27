@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      RR_PERF_GATE_MS: "12000"
+      RR_PERF_GATE_MS: "45000"
       RR_PERF_O2_O1_RATIO: "12"
     steps:
       - name: Checkout

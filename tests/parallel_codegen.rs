@@ -30,7 +30,7 @@ print(addv(c(1.0, 2.0), c(3.0, 4.0)))
     )
     .expect("compile should succeed");
 
-    assert!(code.contains("if (!nzchar(Sys.getenv(\"RR_PARALLEL_MODE\", \"\")))"));
+    assert!(!code.contains("if (!nzchar(Sys.getenv(\"RR_PARALLEL_MODE\", \"\")))"));
     assert!(code.contains(".rr_env$parallel_mode <- \"optional\";"));
     assert!(code.contains(".rr_env$parallel_backend <- \"openmp\";"));
     assert!(code.contains(".rr_env$parallel_threads <- as.integer(4);"));

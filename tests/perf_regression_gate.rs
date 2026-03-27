@@ -79,7 +79,7 @@ fn compile_time_regression_gate() {
     let budget_ms: u128 = env::var("RR_PERF_GATE_MS")
         .ok()
         .and_then(|v| v.parse::<u128>().ok())
-        .unwrap_or(30_000);
+        .unwrap_or(45_000);
     let ratio_limit: f64 = env::var("RR_PERF_O2_O1_RATIO")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())

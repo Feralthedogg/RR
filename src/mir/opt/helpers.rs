@@ -4,6 +4,18 @@ use crate::mir::*;
 use crate::syntax::ast::BinOp;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PeriodicIndexHelperKind {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TrivialMinMaxHelperKind {
+    Min,
+    Max,
+}
+
 impl TachyonEngine {
     pub(super) fn collect_wrap_index_helpers(
         all_fns: &FxHashMap<String, FnIR>,
@@ -40,6 +52,79 @@ impl TachyonEngine {
                     continue;
                 }
                 *callee = "rr_wrap_index_vec_i".to_string();
+                *names = vec![None, None, None, None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    pub(super) fn collect_periodic_index_helpers(
+        all_fns: &FxHashMap<String, FnIR>,
+    ) -> FxHashMap<String, PeriodicIndexHelperKind> {
+        let mut helpers = FxHashMap::default();
+        let ordered = Self::sorted_fn_names(all_fns);
+        for name in ordered {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            let Some(kind) = Self::periodic_index_helper_kind(fn_ir) else {
+                continue;
+            };
+            helpers.insert(name, kind);
+        }
+        helpers
+    }
+
+    pub(super) fn rewrite_periodic_index_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashMap<String, PeriodicIndexHelperKind>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            let original_len = fn_ir.values.len();
+            for vid in 0..original_len {
+                let (callee, args) = match &fn_ir.values[vid].kind {
+                    ValueKind::Call { callee, args, .. } => (callee.clone(), args.clone()),
+                    _ => continue,
+                };
+                let Some(kind) = helpers.get(callee.as_str()).copied() else {
+                    continue;
+                };
+                if args.len() != 2 {
+                    continue;
+                }
+                let bound = args[1];
+                let one = fn_ir.add_value(
+                    ValueKind::Const(Lit::Float(1.0)),
+                    crate::utils::Span::dummy(),
+                    Facts::empty(),
+                    None,
+                );
+                let shifted = fn_ir.add_value(
+                    ValueKind::Binary {
+                        op: match kind {
+                            PeriodicIndexHelperKind::Left => BinOp::Sub,
+                            PeriodicIndexHelperKind::Right => BinOp::Add,
+                        },
+                        lhs: args[0],
+                        rhs: one,
+                    },
+                    crate::utils::Span::dummy(),
+                    Facts::empty(),
+                    None,
+                );
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                    ..
+                } = &mut fn_ir.values[vid].kind
+                else {
+                    continue;
+                };
+                *callee = "rr_wrap_index_vec_i".to_string();
+                *args = vec![shifted, one, bound, one];
                 *names = vec![None, None, None, None];
                 rewrites += 1;
             }
@@ -153,6 +238,127 @@ impl TachyonEngine {
             eprintln!("   [wrap-detect] {}: matched", fn_ir.name);
         }
         true
+    }
+
+    pub(super) fn periodic_index_helper_kind(fn_ir: &FnIR) -> Option<PeriodicIndexHelperKind> {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [wrap1d-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return None;
+            }};
+        }
+
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 2 {
+            return None;
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let reachable = Self::reachable_blocks(fn_ir);
+        let mut branch: Option<(ValueId, BlockId, BlockId)> = None;
+        for bb in &fn_ir.blocks {
+            if !reachable.contains(&bb.id) {
+                continue;
+            }
+            let Terminator::If {
+                cond,
+                then_bb,
+                else_bb,
+            } = bb.term
+            else {
+                continue;
+            };
+            if branch.is_some() {
+                fail!("multiple branches");
+            }
+            branch = Some((cond, then_bb, else_bb));
+        }
+        let Some((cond, then_bb, else_bb)) = branch else {
+            fail!("missing branch");
+        };
+        let Some(then_ret) = Self::simple_return_value_through_gotos(fn_ir, then_bb) else {
+            fail!("then branch does not lead to simple return");
+        };
+        let Some(else_ret) = Self::simple_return_value_through_gotos(fn_ir, else_bb) else {
+            fail!("else branch does not lead to simple return");
+        };
+
+        let kind = match Self::parse_periodic_index_cond(fn_ir, cond) {
+            Some(PeriodicIndexHelperKind::Left)
+                if Self::value_param_index(fn_ir, then_ret) == Some(1)
+                    && Self::returns_param_plus_minus_one_expr(fn_ir, else_ret, 0, false) =>
+            {
+                PeriodicIndexHelperKind::Left
+            }
+            Some(PeriodicIndexHelperKind::Right)
+                if Self::value_is_const_one(fn_ir, then_ret)
+                    && Self::returns_param_plus_minus_one_expr(fn_ir, else_ret, 0, true) =>
+            {
+                PeriodicIndexHelperKind::Right
+            }
+            _ => fail!("cond/return shape mismatch"),
+        };
+
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [wrap1d-detect] {}: matched {:?}", fn_ir.name, kind);
+        }
+        Some(kind)
+    }
+
+    fn simple_return_value_through_gotos(fn_ir: &FnIR, start: BlockId) -> Option<ValueId> {
+        let mut current = start;
+        let mut seen = FxHashSet::default();
+        loop {
+            if !seen.insert(current) {
+                return None;
+            }
+            let bb = &fn_ir.blocks[current];
+            match bb.term {
+                Terminator::Return(Some(ret)) => {
+                    return Some(Self::resolve_load_alias_value(fn_ir, ret));
+                }
+                Terminator::Goto(next) if bb.instrs.is_empty() => current = next,
+                _ => return None,
+            }
+        }
+    }
+
+    fn parse_periodic_index_cond(fn_ir: &FnIR, cond: ValueId) -> Option<PeriodicIndexHelperKind> {
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            return None;
+        };
+        let lhs_param = Self::value_param_index(fn_ir, *lhs);
+        let rhs_param = Self::value_param_index(fn_ir, *rhs);
+        let lhs_is_one = Self::value_is_const_one(fn_ir, *lhs);
+        let rhs_is_one = Self::value_is_const_one(fn_ir, *rhs);
+
+        match op {
+            BinOp::Le | BinOp::Lt if lhs_param == Some(0) && rhs_is_one => {
+                Some(PeriodicIndexHelperKind::Left)
+            }
+            BinOp::Ge | BinOp::Gt if rhs_param == Some(0) && lhs_is_one => {
+                Some(PeriodicIndexHelperKind::Left)
+            }
+            BinOp::Ge | BinOp::Gt if lhs_param == Some(0) && rhs_param == Some(1) => {
+                Some(PeriodicIndexHelperKind::Right)
+            }
+            BinOp::Le | BinOp::Lt if lhs_param == Some(1) && rhs_param == Some(0) => {
+                Some(PeriodicIndexHelperKind::Right)
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn parse_wrap_if_rule(
@@ -485,6 +691,52 @@ impl TachyonEngine {
         helpers
     }
 
+    pub(super) fn collect_trivial_abs_helpers(
+        all_fns: &FxHashMap<String, FnIR>,
+    ) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        for name in Self::sorted_fn_names(all_fns) {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_trivial_abs_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    pub(super) fn collect_unit_index_helpers(
+        all_fns: &FxHashMap<String, FnIR>,
+    ) -> FxHashSet<String> {
+        let mut helpers = FxHashSet::default();
+        for name in Self::sorted_fn_names(all_fns) {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            if Self::is_unit_index_helper_fn(fn_ir) {
+                helpers.insert(name);
+            }
+        }
+        helpers
+    }
+
+    pub(super) fn collect_trivial_minmax_helpers(
+        all_fns: &FxHashMap<String, FnIR>,
+    ) -> FxHashMap<String, TrivialMinMaxHelperKind> {
+        let mut helpers = FxHashMap::default();
+        for name in Self::sorted_fn_names(all_fns) {
+            let Some(fn_ir) = all_fns.get(&name) else {
+                continue;
+            };
+            let Some(kind) = Self::trivial_minmax_helper_kind(fn_ir) else {
+                continue;
+            };
+            helpers.insert(name, kind);
+        }
+        helpers
+    }
+
     pub(super) fn rewrite_floor_helper_calls(
         all_fns: &mut FxHashMap<String, FnIR>,
         helpers: &FxHashSet<String>,
@@ -545,6 +797,138 @@ impl TachyonEngine {
                     names: vec![None, None],
                 };
                 value.origin_var = None;
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    pub(super) fn rewrite_trivial_abs_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            for value in &mut fn_ir.values {
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &mut value.kind
+                else {
+                    continue;
+                };
+                if !helpers.contains(callee.as_str()) || args.len() != 1 {
+                    continue;
+                }
+                *callee = "abs".to_string();
+                *names = vec![None];
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    pub(super) fn rewrite_unit_index_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashSet<String>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            let original_len = fn_ir.values.len();
+            for vid in 0..original_len {
+                let (callee, args, span, facts) = match &fn_ir.values[vid].kind {
+                    ValueKind::Call { callee, args, .. } if args.len() == 2 => (
+                        callee.clone(),
+                        args.clone(),
+                        fn_ir.values[vid].span,
+                        fn_ir.values[vid].facts,
+                    ),
+                    _ => continue,
+                };
+                if !helpers.contains(callee.as_str()) {
+                    continue;
+                }
+                let one = fn_ir.add_value(ValueKind::Const(Lit::Float(1.0)), span, facts, None);
+                let mul = fn_ir.add_value(
+                    ValueKind::Binary {
+                        op: BinOp::Mul,
+                        lhs: args[0],
+                        rhs: args[1],
+                    },
+                    span,
+                    facts,
+                    None,
+                );
+                let floor = fn_ir.add_value(
+                    ValueKind::Call {
+                        callee: "floor".to_string(),
+                        args: vec![mul],
+                        names: vec![None],
+                    },
+                    span,
+                    facts,
+                    None,
+                );
+                let plus_one = fn_ir.add_value(
+                    ValueKind::Binary {
+                        op: BinOp::Add,
+                        lhs: one,
+                        rhs: floor,
+                    },
+                    span,
+                    facts,
+                    None,
+                );
+                let lower = fn_ir.add_value(
+                    ValueKind::Call {
+                        callee: "pmax".to_string(),
+                        args: vec![plus_one, one],
+                        names: vec![None, None],
+                    },
+                    span,
+                    facts,
+                    None,
+                );
+                let value = &mut fn_ir.values[vid];
+                value.kind = ValueKind::Call {
+                    callee: "pmin".to_string(),
+                    args: vec![lower, args[1]],
+                    names: vec![None, None],
+                };
+                value.origin_var = None;
+                rewrites += 1;
+            }
+        }
+        rewrites
+    }
+
+    pub(super) fn rewrite_trivial_minmax_helper_calls(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        helpers: &FxHashMap<String, TrivialMinMaxHelperKind>,
+    ) -> usize {
+        let mut rewrites = 0usize;
+        for fn_ir in all_fns.values_mut() {
+            for value in &mut fn_ir.values {
+                let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &mut value.kind
+                else {
+                    continue;
+                };
+                let Some(kind) = helpers.get(callee.as_str()).copied() else {
+                    continue;
+                };
+                if args.len() != 2 {
+                    continue;
+                }
+                *callee = match kind {
+                    TrivialMinMaxHelperKind::Min => "pmin".to_string(),
+                    TrivialMinMaxHelperKind::Max => "pmax".to_string(),
+                };
+                *names = vec![None, None];
                 rewrites += 1;
             }
         }
@@ -919,6 +1303,60 @@ impl TachyonEngine {
         }
     }
 
+    pub(super) fn parse_unit_index_if_rule(
+        fn_ir: &FnIR,
+        cond: ValueId,
+        then_bb: BlockId,
+        else_bb: BlockId,
+    ) -> Option<(String, bool, bool)> {
+        let (dst, src) = Self::single_assign_block(fn_ir, then_bb)?;
+        let else_assigns = Self::block_assignments(fn_ir, else_bb)?;
+        if !else_assigns.is_empty() {
+            return None;
+        }
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            return None;
+        };
+
+        match op {
+            BinOp::Lt => {
+                if let Some(var) = Self::value_non_param_var_name(fn_ir, *lhs)
+                    && Self::value_is_const_one(fn_ir, *rhs)
+                    && dst == var
+                    && Self::value_is_const_one(fn_ir, src)
+                {
+                    return Some((var, true, false));
+                }
+                if let Some(var) = Self::value_non_param_var_name(fn_ir, *rhs)
+                    && Self::value_is_const_one(fn_ir, *lhs)
+                    && dst == var
+                    && Self::value_is_const_one(fn_ir, src)
+                {
+                    return Some((var, true, false));
+                }
+            }
+            BinOp::Gt => {
+                if let Some(var) = Self::value_non_param_var_name(fn_ir, *lhs)
+                    && Self::value_param_index(fn_ir, *rhs) == Some(1)
+                    && dst == var
+                    && Self::value_param_index(fn_ir, src) == Some(1)
+                {
+                    return Some((var, false, true));
+                }
+                if let Some(var) = Self::value_non_param_var_name(fn_ir, *rhs)
+                    && Self::value_param_index(fn_ir, *lhs) == Some(1)
+                    && dst == var
+                    && Self::value_param_index(fn_ir, src) == Some(1)
+                {
+                    return Some((var, false, true));
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
     pub(super) fn is_trivial_clamp_helper_fn(fn_ir: &FnIR) -> bool {
         macro_rules! fail {
             ($msg:expr) => {{
@@ -1046,6 +1484,265 @@ impl TachyonEngine {
             eprintln!("   [clamp-detect] {}: matched", fn_ir.name);
         }
         true
+    }
+
+    pub(super) fn is_trivial_abs_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [abs-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 1 {
+            fail!("conservative interop or arity != 1");
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let reachable = Self::reachable_blocks(fn_ir);
+        let branches = fn_ir
+            .blocks
+            .iter()
+            .filter(|bb| reachable.contains(&bb.id))
+            .filter_map(|bb| match bb.term {
+                Terminator::If {
+                    cond,
+                    then_bb,
+                    else_bb,
+                } => Some((cond, then_bb, else_bb)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if branches.len() != 1 {
+            fail!("if rule count != 1");
+        }
+        let (cond, then_bb, else_bb) = branches[0];
+        let Some(then_ret) = Self::simple_return_value_through_gotos(fn_ir, then_bb) else {
+            fail!("then branch does not lead to simple return");
+        };
+        let Some(else_ret) = Self::simple_return_value_through_gotos(fn_ir, else_bb) else {
+            fail!("else branch does not lead to simple return");
+        };
+
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            fail!("cond is not binary");
+        };
+        let lhs_param = Self::value_param_index(fn_ir, *lhs) == Some(0);
+        let rhs_param = Self::value_param_index(fn_ir, *rhs) == Some(0);
+        let lhs_zero = Self::value_is_const_zero(fn_ir, *lhs);
+        let rhs_zero = Self::value_is_const_zero(fn_ir, *rhs);
+        let cond_matches = match op {
+            BinOp::Lt | BinOp::Le => (lhs_param && rhs_zero) || (rhs_param && lhs_zero),
+            BinOp::Gt | BinOp::Ge => (lhs_zero && rhs_param) || (rhs_zero && lhs_param),
+            _ => false,
+        };
+        if !cond_matches {
+            fail!("cond is not x < 0 form");
+        }
+        if !Self::returns_zero_minus_param_expr(fn_ir, then_ret, 0) {
+            fail!("then return is not 0 - x");
+        }
+        if Self::value_param_index(fn_ir, else_ret) != Some(0) {
+            fail!("else return is not x");
+        }
+
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [abs-detect] {}: matched", fn_ir.name);
+        }
+        true
+    }
+
+    pub(super) fn is_unit_index_helper_fn(fn_ir: &FnIR) -> bool {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [unit-index-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return false;
+            }};
+        }
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 2 {
+            fail!("conservative interop or arity != 2");
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let reachable = Self::reachable_blocks(fn_ir);
+        let mut rules = Vec::new();
+        let mut return_vals = Vec::new();
+        for bb in &fn_ir.blocks {
+            if !reachable.contains(&bb.id) {
+                continue;
+            }
+            match bb.term {
+                Terminator::If {
+                    cond,
+                    then_bb,
+                    else_bb,
+                } => {
+                    let Some((var, lower_rule, uses_param_n)) =
+                        Self::parse_unit_index_if_rule(fn_ir, cond, then_bb, else_bb)
+                    else {
+                        fail!("if rule parse failed");
+                    };
+                    rules.push((var, lower_rule, uses_param_n));
+                }
+                Terminator::Return(Some(v)) => {
+                    let v = Self::resolve_load_alias_value(fn_ir, v);
+                    if !matches!(fn_ir.values[v].kind, ValueKind::Const(Lit::Null)) {
+                        return_vals.push(v);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if rules.len() != 2 {
+            fail!("if rule count != 2");
+        }
+        if return_vals.len() != 1 {
+            fail!("missing single non-null return");
+        }
+        let Some(idx_var) = Self::value_var_name(fn_ir, return_vals[0]) else {
+            fail!("return is not idx state var");
+        };
+
+        let mut saw_lower = false;
+        let mut saw_upper = false;
+        for (var, lower_rule, uses_param_n) in rules {
+            if var != idx_var {
+                fail!("if rules mutate different vars");
+            }
+            if lower_rule && !uses_param_n {
+                saw_lower = true;
+            } else if !lower_rule && uses_param_n {
+                saw_upper = true;
+            } else {
+                fail!("unexpected clamp rule shape");
+            }
+        }
+        if !(saw_lower && saw_upper) {
+            fail!("missing lower/upper clamp rules");
+        }
+
+        let mut saw_seed = false;
+        for bb in &fn_ir.blocks {
+            if !reachable.contains(&bb.id) {
+                continue;
+            }
+            for ins in &bb.instrs {
+                let Instr::Assign { dst, src, .. } = ins else {
+                    continue;
+                };
+                if dst == &idx_var && Self::is_unit_index_seed_expr(fn_ir, *src) {
+                    saw_seed = true;
+                }
+            }
+        }
+        if !saw_seed {
+            fail!("missing unit-index seed assignment");
+        }
+
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [unit-index-detect] {}: matched", fn_ir.name);
+        }
+        true
+    }
+
+    pub(super) fn trivial_minmax_helper_kind(fn_ir: &FnIR) -> Option<TrivialMinMaxHelperKind> {
+        macro_rules! fail {
+            ($msg:expr) => {{
+                if Self::wrap_trace_enabled() {
+                    eprintln!("   [minmax-detect] {}: {}", fn_ir.name, $msg);
+                }
+                return None;
+            }};
+        }
+        if fn_ir.requires_conservative_optimization() || fn_ir.params.len() != 2 {
+            fail!("conservative interop or arity != 2");
+        }
+        for bb in &fn_ir.blocks {
+            for ins in &bb.instrs {
+                match ins {
+                    Instr::Assign { .. } => {}
+                    Instr::Eval { .. }
+                    | Instr::StoreIndex1D { .. }
+                    | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. } => fail!("contains eval/store"),
+                }
+            }
+        }
+
+        let reachable = Self::reachable_blocks(fn_ir);
+        let branches = fn_ir
+            .blocks
+            .iter()
+            .filter(|bb| reachable.contains(&bb.id))
+            .filter_map(|bb| match bb.term {
+                Terminator::If {
+                    cond,
+                    then_bb,
+                    else_bb,
+                } => Some((cond, then_bb, else_bb)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if branches.len() != 1 {
+            fail!("if rule count != 1");
+        }
+        let (cond, then_bb, else_bb) = branches[0];
+        let Some(then_ret) = Self::simple_return_value_through_gotos(fn_ir, then_bb) else {
+            fail!("then branch does not lead to simple return");
+        };
+        let Some(else_ret) = Self::simple_return_value_through_gotos(fn_ir, else_bb) else {
+            fail!("else branch does not lead to simple return");
+        };
+        if Self::value_param_index(fn_ir, then_ret) != Some(0)
+            || Self::value_param_index(fn_ir, else_ret) != Some(1)
+        {
+            fail!("returns are not (a, b)");
+        }
+
+        let cond = Self::resolve_load_alias_value(fn_ir, cond);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[cond].kind else {
+            fail!("cond is not binary");
+        };
+        let lhs_a = Self::value_param_index(fn_ir, *lhs) == Some(0);
+        let lhs_b = Self::value_param_index(fn_ir, *lhs) == Some(1);
+        let rhs_a = Self::value_param_index(fn_ir, *rhs) == Some(0);
+        let rhs_b = Self::value_param_index(fn_ir, *rhs) == Some(1);
+        let kind = match op {
+            BinOp::Lt if lhs_a && rhs_b => TrivialMinMaxHelperKind::Min,
+            BinOp::Gt if lhs_a && rhs_b => TrivialMinMaxHelperKind::Max,
+            BinOp::Lt if lhs_b && rhs_a => TrivialMinMaxHelperKind::Max,
+            BinOp::Gt if lhs_b && rhs_a => TrivialMinMaxHelperKind::Min,
+            _ => fail!("cond is not min/max compare"),
+        };
+        if Self::wrap_trace_enabled() {
+            eprintln!("   [minmax-detect] {}: matched {:?}", fn_ir.name, kind);
+        }
+        Some(kind)
     }
 
     pub(super) fn is_round_call_of_param(
@@ -1292,5 +1989,88 @@ impl TachyonEngine {
         };
         Self::value_param_index(fn_ir, *lhs) == Some(param_idx)
             && Self::value_var_name(fn_ir, *rhs).as_deref() == Some(rem_var)
+    }
+
+    pub(super) fn returns_zero_minus_param_expr(
+        fn_ir: &FnIR,
+        vid: ValueId,
+        param_idx: usize,
+    ) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return false;
+        };
+        Self::value_is_const_zero(fn_ir, *lhs)
+            && Self::value_param_index(fn_ir, *rhs) == Some(param_idx)
+    }
+
+    pub(super) fn is_unit_index_seed_expr(fn_ir: &FnIR, vid: ValueId) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary {
+            op: BinOp::Add,
+            lhs,
+            rhs,
+        } = &fn_ir.values[v].kind
+        else {
+            return false;
+        };
+        let (one_side, floor_side) = if Self::value_is_const_one(fn_ir, *lhs) {
+            (*lhs, *rhs)
+        } else if Self::value_is_const_one(fn_ir, *rhs) {
+            (*rhs, *lhs)
+        } else {
+            return false;
+        };
+        let _ = one_side;
+        let floor_side = Self::resolve_load_alias_value(fn_ir, floor_side);
+        let ValueKind::Call { callee, args, .. } = &fn_ir.values[floor_side].kind else {
+            return false;
+        };
+        if callee != "floor" || args.len() != 1 {
+            return false;
+        }
+        let mul = Self::resolve_load_alias_value(fn_ir, args[0]);
+        let ValueKind::Binary {
+            op: BinOp::Mul,
+            lhs,
+            rhs,
+        } = &fn_ir.values[mul].kind
+        else {
+            return false;
+        };
+        (Self::value_param_index(fn_ir, *lhs) == Some(0)
+            && Self::value_param_index(fn_ir, *rhs) == Some(1))
+            || (Self::value_param_index(fn_ir, *lhs) == Some(1)
+                && Self::value_param_index(fn_ir, *rhs) == Some(0))
+    }
+
+    pub(super) fn returns_param_plus_minus_one_expr(
+        fn_ir: &FnIR,
+        vid: ValueId,
+        param_idx: usize,
+        is_add: bool,
+    ) -> bool {
+        let v = Self::resolve_load_alias_value(fn_ir, vid);
+        let ValueKind::Binary { op, lhs, rhs } = &fn_ir.values[v].kind else {
+            return false;
+        };
+        match (is_add, op) {
+            (true, BinOp::Add) => {
+                (Self::value_param_index(fn_ir, *lhs) == Some(param_idx)
+                    && Self::value_is_const_one(fn_ir, *rhs))
+                    || (Self::value_param_index(fn_ir, *rhs) == Some(param_idx)
+                        && Self::value_is_const_one(fn_ir, *lhs))
+            }
+            (false, BinOp::Sub) => {
+                Self::value_param_index(fn_ir, *lhs) == Some(param_idx)
+                    && Self::value_is_const_one(fn_ir, *rhs)
+            }
+            _ => false,
+        }
     }
 }

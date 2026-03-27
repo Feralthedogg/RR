@@ -136,33 +136,38 @@ print(reduce_general_dim1(a, idx_i, idx_j))
 
     let code = fs::read_to_string(&o2).expect("failed to read O2 output");
     assert!(
-        code.contains("rr_dim1_sum_range("),
+        code.contains("rr_dim1_sum_range(") || code.contains("sum(rr_dim1_read_values("),
         "expected dim1 3D reduction helper in O2 output:\n{}",
         code
     );
     assert!(
-        code.contains("rr_dim2_sum_range("),
+        code.contains("rr_dim2_sum_range(") || code.contains("sum(rr_dim2_read_values("),
         "expected dim2 3D reduction helper in O2 output:\n{}",
         code
     );
     assert!(
-        code.contains("rr_dim3_sum_range("),
+        code.contains("rr_dim3_sum_range(") || code.contains("sum(rr_dim3_read_values("),
         "expected dim3 3D reduction helper in O2 output:\n{}",
         code
     );
     assert!(
-        code.contains("rr_dim1_reduce_range("),
-        "expected generic dim1 3D reduction helper in O2 output:\n{}",
+        code.contains("rr_dim1_reduce_range(") || code.contains("prod(rr_dim1_read_values("),
+        "expected dim1 3D product reduction lowering in O2 output:\n{}",
         code
     );
     assert!(
-        code.contains("rr_dim2_reduce_range("),
-        "expected generic dim2 3D reduction helper in O2 output:\n{}",
+        code.contains("rr_dim2_reduce_range(") || code.contains("min(rr_dim2_read_values("),
+        "expected dim2 3D min reduction lowering in O2 output:\n{}",
         code
     );
     assert!(
-        code.contains("rr_dim3_reduce_range("),
-        "expected generic dim3 3D reduction helper in O2 output:\n{}",
+        code.contains("rr_dim3_reduce_range(") || code.contains("max(rr_dim3_read_values("),
+        "expected dim3 3D max reduction lowering in O2 output:\n{}",
+        code
+    );
+    assert!(
+        code.contains("sum(rr_array3_gather_values("),
+        "expected generic 3D gather reduction lowering in O2 output:\n{}",
         code
     );
     let base = run_rscript(&rscript, &o0);

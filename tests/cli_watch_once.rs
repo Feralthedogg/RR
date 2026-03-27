@@ -9,18 +9,14 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn watch_once_compiles_and_exits_successfully() {
-    let _env_guard = common::env_lock().lock().unwrap();
+    let env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "proj");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    // SAFETY: This test sets the variable for its own process scope and removes it
-    // before exit. No foreign pointers are involved; the operation is bounded to this test.
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let main_path = proj_dir.join("main.rr");
     let source = r#"
@@ -45,24 +41,19 @@ main()
         .expect("failed to run rr watch --once");
     assert!(status.success(), "watch --once command failed");
     assert!(out_file.is_file(), "watch output file was not generated");
-    // SAFETY: Matches the scoped set_var above and restores process env state for this test.
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn watch_rebuilds_when_imported_module_changes() {
-    let _env_guard = common::env_lock().lock().unwrap();
+    let env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "import_change");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let main_path = proj_dir.join("main.rr");
     let module_path = proj_dir.join("module.rr");
@@ -145,23 +136,19 @@ fn answer() {
     child.kill().expect("failed to stop rr watch");
     let _ = child.wait();
 
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn watch_once_returns_failure_on_compile_error() {
-    let _env_guard = common::env_lock().lock().unwrap();
+    let env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "compile_error");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let main_path = proj_dir.join("main.rr");
     fs::write(
@@ -196,23 +183,19 @@ main()
         "watch --once should not leave an output artifact on compile failure"
     );
 
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn watch_restores_output_when_artifact_is_missing_or_modified_without_source_changes() {
-    let _env_guard = common::env_lock().lock().unwrap();
+    let env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "restore_output");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let main_path = proj_dir.join("main.rr");
     fs::write(
@@ -278,7 +261,5 @@ print(answer())
     child.kill().expect("failed to stop rr watch");
     let _ = child.wait();
 
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }

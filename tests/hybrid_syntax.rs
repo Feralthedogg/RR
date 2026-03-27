@@ -49,7 +49,8 @@ fn main() {
     let mut parser = Parser::new(src);
     let ast = parser.parse_program().expect("parse");
     let mut lowerer = Lowerer::new();
-    let (hir_mod, symbols) = lowerer.lower_module(ast, ModuleId(0)).expect("lower");
+    let hir_mod = lowerer.lower_module(ast, ModuleId(0)).expect("lower");
+    let symbols = lowerer.into_symbols();
 
     let mut add_fn = None;
     let mut main_fn = None;
@@ -145,7 +146,8 @@ fn main(n) {
     let mut parser = Parser::new(src);
     let ast = parser.parse_program().expect("parse");
     let mut lowerer = Lowerer::new();
-    let (hir_mod, symbols) = lowerer.lower_module(ast, ModuleId(0)).expect("lower");
+    let hir_mod = lowerer.lower_module(ast, ModuleId(0)).expect("lower");
+    let symbols = lowerer.into_symbols();
 
     let main_fn = hir_mod
         .items
@@ -207,7 +209,8 @@ fn main() {
     let mut parser = Parser::new(src);
     let ast = parser.parse_program().expect("parse");
     let mut lowerer = Lowerer::new();
-    let (hir_mod, symbols) = lowerer.lower_module(ast, ModuleId(0)).expect("lower");
+    let hir_mod = lowerer.lower_module(ast, ModuleId(0)).expect("lower");
+    let symbols = lowerer.into_symbols();
 
     let main_fn = hir_mod
         .items

@@ -477,8 +477,8 @@ Important newline rule:
 From `src/hir/lower.rs`:
 
 - default: assignment to undeclared name is a compile error
-- legacy relaxed mode: `RR_STRICT_LET=0` or `RR_STRICT_ASSIGN=0` allows implicit declaration
-- warning mode: `RR_WARN_IMPLICIT_DECL=1` emits implicit-declaration warnings when relaxed mode is enabled
+- legacy relaxed mode: `--strict-let off` allows implicit declaration
+- warning mode: `--warn-implicit-decl on` emits implicit-declaration warnings when relaxed mode is enabled
 
 ## Function and Closure Semantics
 

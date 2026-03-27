@@ -1,6 +1,6 @@
 # Contributing Audit Checklist
 
-Current compiler line: `RR Tachyon v5.0.0`.
+Current compiler line: `RR Tachyon v7.0.0`.
 
 Use this checklist after meaningful compiler changes to verify that the code still matches [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 
@@ -45,6 +45,12 @@ cargo clippy --all-targets -- -D warnings
 cargo test -q
 FUZZ_SECONDS=1 ./scripts/fuzz_smoke.sh
 ```
+
+`scripts/contributing_audit.sh` also runs
+`RR_VERIFY_EACH_PASS=1 cargo test -q --test pass_verify_examples` when the
+scanned scope touches pass-sensitive compiler files such as HIR/MIR/pipeline,
+incremental, or `src/codegen/mir_emit.rs`. Use `--skip-pass-verify` when you
+are only wiring the audit script itself and want to avoid that extra smoke step.
 
 For a quick heuristic-only pass over the current worktree without running cargo/fuzz:
 
@@ -93,17 +99,33 @@ cargo test -q --test example_perf_smoke -- --ignored --nocapture
 
 - `scripts/contributing_audit.sh` reports no static `error[...]` findings on the intended scope.
 - No new production `panic!`, `unwrap()`, or `expect()` on normal compiler paths.
-- No new `unsafe` in `src/**` without adjacent `// SAFETY:` rationale.
-- Deterministic traversal is preserved where output order matters.
-- Hot loops do not add hidden allocation, path work, regex compilation, or avoidable cloning.
+- No new `unsafe` in `src/**` without adjacent `// SAFETY:` rationale and a
+  clear explanation of why safe alternatives were insufficient.
+- Deterministic traversal is preserved where output order matters, including
+  stable tie-break rules when multiple valid orders exist.
+- Hot loops do not add hidden allocation, path work, regex compilation,
+  avoidable cloning, or hidden API cost.
+- No mutable global state now affects compilation results.
+- Compilation results do not depend on wall-clock time, system randomness, or
+  environment-specific paths without explicit normalization.
 - IR invariants still hold across touched stages, and relevant `validate_*`/verifier hooks were exercised.
+- Persisted IR/debug dumps have explicit compatibility expectations when IR
+  structure changes.
 - Long-lived compiler data does not add avoidable copy churn when interning or arena allocation would be the clearer cost model.
 - Compiler faults use ICE/internal-error paths, not user-facing diagnostics.
+- Expected failure paths do not silently fall back in ways that mask
+  correctness or suppress diagnostics.
 - Constant folding and evaluator helpers still follow RR numeric and overflow semantics rather than host-language accident.
 - New emitted R behavior is covered by regression tests.
-- Incremental cache keys change when output mode or compiler/runtime salt changes.
+- Incremental cache keys change when output mode or compiler/runtime salt
+  changes, and any new cache key material captures all correctness-affecting
+  inputs.
+- Persisted cache keys include compiler version/build identity and
+  semantic-affecting flags when relevant.
 - `--no-runtime` behavior stays aligned with CLI/docs wording and selective-helper injection.
 - Native backend resolution stays anchored to the intended project root.
+- New dependencies with material performance, portability, or determinism cost
+  were explicitly approved.
 - Public APIs and non-obvious transform entrypoints document their design intent when local code shape is insufficient for review.
 
 ## Ongoing Watch Items

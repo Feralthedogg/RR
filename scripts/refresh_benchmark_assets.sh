@@ -58,10 +58,57 @@ done
 
 copy_signal_assets() {
   mkdir -p "$ROOT/docs/assets"
-  cp "$ROOT/target/signal_pipeline_bench/signal_pipeline_bench.csv" \
-    "$ROOT/docs/assets/signal-pipeline-runtime-${DATE_TAG}.csv"
-  cp "$ROOT/target/signal_pipeline_bench/signal_pipeline_bench.svg" \
-    "$ROOT/docs/assets/signal-pipeline-runtime-${DATE_TAG}.svg"
+  python3 - "$ROOT" "$DATE_TAG" <<'PY'
+import csv
+import importlib.util
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+date_tag = sys.argv[2]
+scripts = root / "scripts"
+sys.path.insert(0, str(scripts))
+
+spec = importlib.util.spec_from_file_location(
+    "bench_signal_pipeline", scripts / "bench_signal_pipeline.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+src_csv = root / "target" / "signal_pipeline_bench" / "signal_pipeline_bench.csv"
+dst_csv = root / "docs" / "assets" / f"signal-pipeline-runtime-{date_tag}.csv"
+dst_svg = root / "docs" / "assets" / f"signal-pipeline-runtime-{date_tag}.svg"
+
+rows = list(csv.DictReader(src_csv.open()))
+preferred_ids = [
+    "direct_r_scalar",
+    "direct_r_vector",
+    "direct_r_vector_warm",
+    "rr_o2_gnur",
+    "rr_o2_gnur_warm",
+    "c_o3",
+    "numpy",
+    "julia",
+    "direct_r_renjin",
+    "rr_o2_renjin",
+]
+filtered = []
+for row_id in preferred_ids:
+    row = next((entry for entry in rows if entry["id"] == row_id), None)
+    if row is not None:
+        filtered.append(row)
+
+mod.write_results_csv(dst_csv, filtered)
+mod.write_svg_chart(dst_svg, filtered)
+svg_text = dst_svg.read_text()
+svg_text = re.sub(
+    r"250,000 samples, 16 passes, Apple M4, optimizer tiers O0/O1/O2 plus direct baselines",
+    "250,000 samples, 16 passes, Apple M4, cross-language public slice with RR O2 cold/warm rows",
+    svg_text,
+)
+dst_svg.write_text(svg_text)
+PY
 }
 
 copy_diffusion_assets() {
@@ -144,82 +191,7 @@ path.write_text(text)
 PY
 }
 
-update_docs_testing_signal_table() {
-  python3 - "$ROOT/docs/testing.md" "$ROOT/docs/assets/signal-pipeline-runtime-${DATE_TAG}.csv" <<'PY'
-import csv
-import sys
-from pathlib import Path
-
-doc_path = Path(sys.argv[1])
-csv_path = Path(sys.argv[2])
-text = doc_path.read_text()
-
-with csv_path.open() as f:
-    rows = list(csv.DictReader(f))
-
-label_map = {
-    "direct_r_scalar": "direct base R (scalar) on GNU R",
-    "direct_r_vector": "direct base R (vectorized) on GNU R",
-    "direct_r_vector_warm": "direct base R (vectorized, warm avg x10) on GNU R",
-    "rr_o2_gnur": "RR O2 emitted R on GNU R",
-    "rr_o2_gnur_warm": "RR O2 emitted R (warm avg x10) on GNU R",
-    "rr_o2_native_gnur": "RR O2 native on GNU R",
-    "rr_o2_native_gnur_warm": "RR O2 native (warm avg x10) on GNU R",
-    "rr_o2_parallel_r_gnur": "RR O2 parallel R on GNU R",
-    "rr_o2_parallel_r_gnur_warm": "RR O2 parallel R (warm avg x10) on GNU R",
-    "rr_o2_native_openmp_gnur": "RR O2 native + OpenMP on GNU R",
-    "rr_o2_native_openmp_gnur_warm": "RR O2 native + OpenMP (warm avg x10) on GNU R",
-    "c_o3": "C O3 native",
-    "numpy": "NumPy",
-    "julia": "Julia",
-    "direct_r_renjin": "direct base R (vectorized) on Renjin",
-    "rr_o2_renjin": "RR O2 on Renjin",
-}
-
-note_map = {
-    "direct_r_scalar": "loop-based scalar base-R baseline",
-    "direct_r_vector": "idiomatic base-R vector baseline",
-    "direct_r_vector_warm": "same vector kernel averaged across repeated warm calls in one R process",
-    "rr_o2_gnur": "same workload compiled from RR",
-    "rr_o2_gnur_warm": "RR-emitted kernel averaged across repeated warm calls in one R process",
-    "rr_o2_native_gnur": "same workload compiled from RR with required native backend",
-    "rr_o2_native_gnur_warm": "RR native kernel averaged across repeated warm calls in one R process",
-    "rr_o2_parallel_r_gnur": "same workload compiled from RR with required R parallel backend",
-    "rr_o2_parallel_r_gnur_warm": "RR parallel-R kernel averaged across repeated warm calls in one R process",
-    "rr_o2_native_openmp_gnur": "same workload compiled from RR with required native backend plus OpenMP parallel backend",
-    "rr_o2_native_openmp_gnur_warm": "RR native+OpenMP kernel averaged across repeated warm calls in one R process",
-    "c_o3": "`clang -O3`, single-threaded",
-    "numpy": "vectorized array math on CPython + NumPy `2.4.3`",
-    "julia": "Julia `1.12.5`, base loops with `@inbounds`",
-    "direct_r_renjin": "same idiomatic base-R script on Renjin `3.5-beta76`",
-    "rr_o2_renjin": "RR-emitted R on Renjin `3.5-beta76`",
-}
-
-ordered = []
-for row in rows:
-    row_id = row["id"]
-    if row_id not in label_map:
-        continue
-    ordered.append(
-        f"| {label_map[row_id]} | `{row['mean_ms']}` | `{row['stdev_ms']}` | {note_map[row_id]} |"
-    )
-
-table = "\n".join(
-    [
-        "| Slice | Mean ms | Std ms | Notes |",
-        "| --- | ---: | ---: | --- |",
-        *ordered,
-    ]
-)
-
-start = text.index("| Slice | Mean ms | Std ms | Notes |")
-end = text.index("\n\nNotes:\n", start)
-updated = text[:start] + table + text[end:]
-doc_path.write_text(updated)
-PY
-}
-
-update_docs_testing_diffusion_tables() {
+update_docs_testing_diffusion_summary() {
   python3 - "$ROOT/docs/testing.md" "$ROOT/docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv" <<'PY'
 import csv
 import sys
@@ -230,93 +202,60 @@ csv_path = Path(sys.argv[2])
 text = doc_path.read_text()
 rows = list(csv.DictReader(csv_path.open()))
 
-section_start = text.index("### Diffusion Backend Slice")
-cold_label = "| Workload | RR O2 | Native | Parallel R | Native + OpenMP |"
-warm_label = "| Workload | RR O2 warm | Native warm | Parallel R warm | Native + OpenMP warm |"
-
 row_map = {row["id"]: row for row in rows}
-workloads = [
-    ("heat diffusion", "heat"),
-    ("reaction diffusion", "reaction"),
-]
-
-cold_table = "\n".join([
-    cold_label,
-    "| --- | ---: | ---: | ---: | ---: |",
-    *[
-        f"| {label} | `{row_map[f'{key}_rr_o2']['mean_ms']}` | `{row_map[f'{key}_native']['mean_ms']}` | `{row_map[f'{key}_parallel_r']['mean_ms']}` | `{row_map[f'{key}_native_openmp']['mean_ms']}` |"
-        for label, key in workloads
-    ],
-])
-
-warm_table = "\n".join([
-    warm_label,
-    "| --- | ---: | ---: | ---: | ---: |",
-    *[
-        f"| {label} | `{row_map[f'{key}_rr_o2_warm']['mean_ms']}` | `{row_map[f'{key}_native_warm']['mean_ms']}` | `{row_map[f'{key}_parallel_r_warm']['mean_ms']}` | `{row_map[f'{key}_native_openmp_warm']['mean_ms']}` |"
-        for label, key in workloads
-    ],
-])
-
-cold_start = text.index(cold_label, section_start)
-cold_end = text.index("\n\nWarm runtime means:\n", cold_start)
-text = text[:cold_start] + cold_table + text[cold_end:]
-
-warm_start = text.index(warm_label, section_start)
-warm_end = text.index("\n\nNotes:\n", warm_start)
-text = text[:warm_start] + warm_table + text[warm_end:]
-
+summary = (
+    f"- On the current signoff snapshot, the useful `-O2` reference points are\n"
+    f"  roughly `{row_map['heat_rr_o2']['mean_ms']} ms` / `{row_map['heat_rr_o2_warm']['mean_ms']} ms` "
+    f"for `heat_diffusion` cold/warm and\n"
+    f"  `{row_map['reaction_rr_o2']['mean_ms']} ms` / `{row_map['reaction_rr_o2_warm']['mean_ms']} ms` "
+    f"for `reaction_diffusion` cold/warm."
+)
+start = text.index("- On the current signoff snapshot, the useful `-O2` reference points are")
+end = text.index("\n\n### Optimizer Candidate Slice", start)
+text = text[:start] + summary + text[end:]
 doc_path.write_text(text)
 PY
 }
 
-update_docs_testing_backend_candidate_tables() {
-  python3 - "$ROOT/docs/testing.md" "$ROOT/docs/assets/backend-candidate-runtime-${DATE_TAG}.csv" <<'PY'
+update_docs_testing_optimizer_delta_table() {
+  python3 - "$ROOT/docs/testing.md" "$ROOT/docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv" "$ROOT/docs/assets/backend-candidate-runtime-${DATE_TAG}.csv" <<'PY'
 import csv
 import sys
 from pathlib import Path
 
 doc_path = Path(sys.argv[1])
-csv_path = Path(sys.argv[2])
+diffusion_csv = Path(sys.argv[2])
+backend_csv = Path(sys.argv[3])
 text = doc_path.read_text()
-rows = list(csv.DictReader(csv_path.open()))
+row_map = {}
+for csv_path in [diffusion_csv, backend_csv]:
+    for row in csv.DictReader(csv_path.open()):
+        row_map[row["id"]] = row
 
-section_start = text.index("### Backend Candidate Slice")
-cold_label = "| Workload | RR O2 | Native | Parallel R | Native + OpenMP |"
-warm_label = "| Workload | RR O2 warm | Native warm | Parallel R warm | Native + OpenMP warm |"
+def format_cell(row_id: str) -> str:
+    row = row_map[row_id]
+    return f"`{row['mean_ms']} ({row['stdev_ms'].rstrip('0').rstrip('.') if '.' in row['stdev_ms'] else row['stdev_ms']})`"
 
-row_map = {row["id"]: row for row in rows}
-workloads = [
-    ("vector fusion", "vector"),
-    ("orbital sweep", "orbital"),
-    ("bootstrap resample", "bootstrap"),
-]
+def ratio(o0: str, other: str) -> str:
+    base = float(row_map[o0]["mean_ms"])
+    target = float(row_map[other]["mean_ms"])
+    return f"`{base / target:.2f}x`"
 
-cold_table = "\n".join([
-    cold_label,
-    "| --- | ---: | ---: | ---: | ---: |",
-    *[
-        f"| {label} | `{row_map[f'{key}_rr_o2']['mean_ms']}` | `{row_map[f'{key}_native']['mean_ms']}` | `{row_map[f'{key}_parallel_r']['mean_ms']}` | `{row_map[f'{key}_native_openmp']['mean_ms']}` |"
-        for label, key in workloads
-    ],
-])
+table = "\n".join(
+    [
+        "| Workload | O0 ms | O1 ms | O2 ms | O1/O0 | O2/O0 |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        f"| `bootstrap` | {format_cell('bootstrap_rr_o0')} | {format_cell('bootstrap_rr_o1')} | {format_cell('bootstrap_rr_o2')} | {ratio('bootstrap_rr_o0', 'bootstrap_rr_o1')} | {ratio('bootstrap_rr_o0', 'bootstrap_rr_o2')} |",
+        f"| `heat` | {format_cell('heat_rr_o0')} | {format_cell('heat_rr_o1')} | {format_cell('heat_rr_o2')} | {ratio('heat_rr_o0', 'heat_rr_o1')} | {ratio('heat_rr_o0', 'heat_rr_o2')} |",
+        f"| `orbital` | {format_cell('orbital_rr_o0')} | {format_cell('orbital_rr_o1')} | {format_cell('orbital_rr_o2')} | {ratio('orbital_rr_o0', 'orbital_rr_o1')} | {ratio('orbital_rr_o0', 'orbital_rr_o2')} |",
+        f"| `reaction` | {format_cell('reaction_rr_o0')} | {format_cell('reaction_rr_o1')} | {format_cell('reaction_rr_o2')} | {ratio('reaction_rr_o0', 'reaction_rr_o1')} | {ratio('reaction_rr_o0', 'reaction_rr_o2')} |",
+        f"| `vector` | {format_cell('vector_rr_o0')} | {format_cell('vector_rr_o1')} | {format_cell('vector_rr_o2')} | {ratio('vector_rr_o0', 'vector_rr_o1')} | {ratio('vector_rr_o0', 'vector_rr_o2')} |",
+    ]
+)
 
-warm_table = "\n".join([
-    warm_label,
-    "| --- | ---: | ---: | ---: | ---: |",
-    *[
-        f"| {label} | `{row_map[f'{key}_rr_o2_warm']['mean_ms']}` | `{row_map[f'{key}_native_warm']['mean_ms']}` | `{row_map[f'{key}_parallel_r_warm']['mean_ms']}` | `{row_map[f'{key}_native_openmp_warm']['mean_ms']}` |"
-        for label, key in workloads
-    ],
-])
-
-cold_start = text.index(cold_label, section_start)
-cold_end = text.index("\n\nWarm runtime means:\n", cold_start)
-text = text[:cold_start] + cold_table + text[cold_end:]
-
-warm_start = text.index(warm_label, section_start)
-warm_end = text.index("\n\nNotes:\n", warm_start)
-text = text[:warm_start] + warm_table + text[warm_end:]
+start = text.index("| Workload | O0 ms | O1 ms | O2 ms | O1/O0 | O2/O0 |")
+end = text.index("\n\nNotes:\n", start)
+text = text[:start] + table + text[end:]
 
 doc_path.write_text(text)
 PY
@@ -333,7 +272,7 @@ else
 fi
 
 echo "-- refreshing signal pipeline assets"
-signal_cmd=(python3 "$ROOT/scripts/bench_signal_pipeline.py" --runs "$RUNS" --warmup "$WARMUP")
+signal_cmd=(python3 "$ROOT/scripts/bench_signal_pipeline_docs_slice.py" --runs "$RUNS" --warmup "$WARMUP")
 if [[ $SKIP_RENJIN -eq 1 ]]; then
   signal_cmd+=(--skip-renjin)
 fi
@@ -349,6 +288,8 @@ python3 "$ROOT/scripts/bench_backend_candidates.py" --runs "$RUNS" --warmup "$WA
 copy_backend_candidate_assets
 
 update_docs_testing_links
+update_docs_testing_diffusion_summary
+update_docs_testing_optimizer_delta_table
 
 echo "updated:"
 echo "  docs/assets/signal-pipeline-runtime-${DATE_TAG}.csv"

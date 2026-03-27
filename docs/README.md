@@ -3,7 +3,7 @@
 This directory is the RR manual set. It documents the compiler as implemented
 in this repository, not as an aspirational future design.
 
-Current compiler line: `RR Tachyon v5.0.0`.
+Current compiler line: `RR Tachyon v7.0.0`.
 
 ## Manual Organization
 

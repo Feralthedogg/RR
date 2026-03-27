@@ -2,7 +2,7 @@
 
 This page is the driver manual for RR.
 
-Current compiler line: `RR Tachyon v5.0.0`.
+Current compiler line: `RR Tachyon v7.0.0`.
 
 ## Audience
 
@@ -133,6 +133,11 @@ at `--keep-r` so you can inspect the generated artifact.
 - `--parallel-backend auto|r|openmp`
 - `--parallel-threads <N>`
 - `--parallel-min-trip <N>`
+
+### Language and Declaration Policy
+
+- `--strict-let on|off`
+- `--warn-implicit-decl on|off`
 
 ### Incremental and Watch
 

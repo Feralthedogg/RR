@@ -361,10 +361,15 @@ fn compile_case(case: &CaseSpec, forced_opt: Option<&str>) -> CompileResult {
     if !strict_let_overridden {
         // Most file-regression fixtures predate the strict-let default and are
         // intended to exercise parser/typeck/optimizer behavior instead.
-        cmd.env("RR_STRICT_LET", "0");
+        cmd.arg("--strict-let").arg("0");
+    }
+    for arg in compile_env_args(&case.env) {
+        cmd.arg(arg);
     }
     for (key, value) in &case.env {
-        cmd.env(key, value);
+        if !is_compile_policy_env(key) {
+            cmd.env(key, value);
+        }
     }
     let output = cmd
         .output()
@@ -382,6 +387,31 @@ fn has_opt_flag(flags: &[String]) -> bool {
     flags
         .iter()
         .any(|flag| matches!(flag.as_str(), "-O0" | "-O1" | "-O2" | "-o0" | "-o1" | "-o2"))
+}
+
+fn is_compile_policy_env(key: &str) -> bool {
+    matches!(
+        key,
+        "RR_STRICT_LET" | "RR_STRICT_ASSIGN" | "RR_WARN_IMPLICIT_DECL"
+    )
+}
+
+fn compile_env_args(env_kv: &[(String, String)]) -> Vec<&str> {
+    let mut args = Vec::new();
+    for (key, value) in env_kv {
+        match key.as_str() {
+            "RR_STRICT_LET" | "RR_STRICT_ASSIGN" => {
+                args.push("--strict-let");
+                args.push(value.as_str());
+            }
+            "RR_WARN_IMPLICIT_DECL" => {
+                args.push("--warn-implicit-decl");
+                args.push(value.as_str());
+            }
+            _ => {}
+        }
+    }
+    args
 }
 
 fn assert_compile_success(case: &CaseSpec, compile: &CompileResult) {

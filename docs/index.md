@@ -4,7 +4,7 @@ layout: home
 hero:
   name: RR
   text: RR Compiler Manual
-  tagline: RR Tachyon v5.0.0. R-oriented source, MIR-based optimization, and self-contained R artifacts documented against the implementation.
+  tagline: RR Tachyon v7.0.0. R-oriented source, MIR-based optimization, and self-contained R artifacts documented against the implementation.
   actions:
     - theme: brand
       text: Getting Started

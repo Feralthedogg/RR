@@ -227,14 +227,12 @@ It still runs mandatory codegen-safety work:
 
 Configuration resolves in this order:
 
-1. CLI flags
-2. environment variables
-3. defaults
+1. explicit CLI flags or explicit API config values
+2. defaults
 
-The emitted artifact then appends compile-time policy defaults so the final
-runtime behavior matches the compile that produced it unless the runner
-explicitly overrides backend or parallel settings through the documented
-environment variables.
+The emitted artifact then appends compile-time policy values directly so the
+final runtime behavior matches the compile that produced it without consulting
+ambient backend or parallel environment overrides.
 
 ## Incremental Compile
 

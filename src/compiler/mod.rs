@@ -10,5 +10,5 @@ pub use incremental::{
 pub use pipeline::{
     CliLog, CompileOutputOptions, OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile,
     compile_with_config, compile_with_configs, compile_with_configs_with_options,
-    parallel_config_from_env, type_config_from_env,
+    default_parallel_config, default_type_config,
 };

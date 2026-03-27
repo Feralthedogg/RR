@@ -108,7 +108,7 @@ print(add(1, 2))
 }
 
 #[test]
-fn runtime_injection_embeds_compile_time_native_roots() {
+fn runtime_injection_does_not_embed_compile_time_native_roots() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -134,23 +134,19 @@ print(addv(c(1.0, 2.0), c(3.0, 4.0)))
         rr_path.to_str().expect("non-utf8 path"),
         src,
         OptLevel::O2,
-        RR::compiler::type_config_from_env(),
-        RR::compiler::parallel_config_from_env(),
+        RR::compiler::default_type_config(),
+        RR::compiler::default_parallel_config(),
     )
     .expect("compile should succeed")
     .0;
 
-    let expected_root = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
-        .expect("failed to canonicalize repo root")
-        .to_string_lossy()
-        .replace('\\', "/");
     let sandbox_root = fs::canonicalize(&proj)
         .expect("failed to canonicalize sandbox dir")
         .to_string_lossy()
         .replace('\\', "/");
     assert!(
-        compiled.contains(".rr_env$native_anchor_roots <- unique(vapply(c("),
-        "runtime-injected output should embed compile-time native roots"
+        compiled.contains(".rr_env$native_anchor_roots <- character(0);"),
+        "runtime-injected output should avoid embedding compile-time native roots"
     );
     assert!(
         compiled.contains("# --- RR generated code (from user RR source) ---"),
@@ -159,10 +155,6 @@ print(addv(c(1.0, 2.0), c(3.0, 4.0)))
     assert!(
         compiled.contains("# --- RR synthesized entrypoints (auto-generated) ---"),
         "runtime-injected output should clearly separate synthesized entrypoints"
-    );
-    assert!(
-        compiled.contains(&expected_root),
-        "runtime-injected output should include compile-time project root"
     );
     assert!(
         !compiled.contains(&sandbox_root),
@@ -197,8 +189,8 @@ print(pick(c(4.0, 5.0, 6.0), 2.0))
         rr_path.to_str().expect("non-utf8 path"),
         src,
         OptLevel::O0,
-        RR::compiler::type_config_from_env(),
-        RR::compiler::parallel_config_from_env(),
+        RR::compiler::default_type_config(),
+        RR::compiler::default_parallel_config(),
     )
     .expect("compile should succeed")
     .0;
@@ -251,11 +243,12 @@ print(kept())
         rr_path.to_str().expect("non-utf8 path"),
         src,
         OptLevel::O1,
-        RR::compiler::type_config_from_env(),
-        RR::compiler::parallel_config_from_env(),
+        RR::compiler::default_type_config(),
+        RR::compiler::default_parallel_config(),
         CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: false,
+            ..Default::default()
         },
     )
     .expect("default compile should succeed")
@@ -265,11 +258,12 @@ print(kept())
         rr_path.to_str().expect("non-utf8 path"),
         src,
         OptLevel::O1,
-        RR::compiler::type_config_from_env(),
-        RR::compiler::parallel_config_from_env(),
+        RR::compiler::default_type_config(),
+        RR::compiler::default_parallel_config(),
         CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: true,
+            ..Default::default()
         },
     )
     .expect("preserve-all-defs compile should succeed")

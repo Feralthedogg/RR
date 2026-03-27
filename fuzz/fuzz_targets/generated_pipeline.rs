@@ -59,7 +59,7 @@ fn compile_scenarios() -> [CompileScenario; 6] {
             parallel_cfg: ParallelConfig::default(),
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         CompileScenario {
@@ -72,7 +72,7 @@ fn compile_scenarios() -> [CompileScenario; 6] {
             parallel_cfg: ParallelConfig::default(),
             output_opts: CompileOutputOptions {
                 inject_runtime: false,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         CompileScenario {
@@ -90,7 +90,7 @@ fn compile_scenarios() -> [CompileScenario; 6] {
             },
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         CompileScenario {
@@ -108,7 +108,7 @@ fn compile_scenarios() -> [CompileScenario; 6] {
             },
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         CompileScenario {
@@ -126,7 +126,7 @@ fn compile_scenarios() -> [CompileScenario; 6] {
             },
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
         CompileScenario {
@@ -144,7 +144,7 @@ fn compile_scenarios() -> [CompileScenario; 6] {
             },
             output_opts: CompileOutputOptions {
                 inject_runtime: true,
-                preserve_all_defs: false,
+                ..CompileOutputOptions::default()
             },
         },
     ]

@@ -61,7 +61,8 @@ fn tesseract_emits_expected_vectorized_kernels() {
         "expected laplacian kernel to lower to vector wrap-index gather/slice form without NULL arithmetic"
     );
     assert!(
-        code.contains("adv_u <- (ifelse((u > 0),")
+        (code.contains("adv_u <- (ifelse((u > 0),")
+            || code.contains("adv_u <- (ifelse((u > 0.0),"))
             && code.contains("rr_gather(u, rr_index_vec_floor(adj_l))")
             && code.contains("rr_gather(u, rr_index_vec_floor(adj_r))"),
         "expected WENO advection kernel to lower to vector conditional form"

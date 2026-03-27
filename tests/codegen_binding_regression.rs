@@ -502,10 +502,18 @@ main(2.0, c(0.0, 0.0))
     let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
     assert!(
         generated.contains("rot <- rr_assign_slice(rot, 1, 1, rep.int(1, 1))\n    return(rot)")
+            || generated.contains(
+                "rot <- rr_assign_slice(rot, 1.0, 1.0, rep.int(1.0, 1.0))\n    return(rot)"
+            )
             || generated
                 .contains("rot <- rr_assign_slice(rot, 1, 1, rep.int(3, 1))\n      return(rot)")
+            || generated.contains(
+                "rot <- rr_assign_slice(rot, 1.0, 1.0, rep.int(3.0, 1.0))\n      return(rot)"
+            )
             || generated.contains("rot <- replace(rot, 1, 1)")
-            || generated.contains("rot <- replace(rot, 1, 3)"),
+            || generated.contains("rot <- replace(rot, 1.0, 1.0)")
+            || generated.contains("rot <- replace(rot, 1, 3)")
+            || generated.contains("rot <- replace(rot, 1.0, 3.0)"),
         "expected branch return(assign_slice(...)) to emit assignment before return"
     );
     assert!(
@@ -563,7 +571,11 @@ main(4L)
             || generated.contains("qi <- zeros(.arg_n)")
             || generated.contains("qi <- zeros(n)")
             || generated.matches("rep.int(0, n)").count() >= 2
-            || generated.matches("rep.int(0, 4L)").count() >= 2,
+            || generated.matches("rep.int(0, 4L)").count() >= 2
+            || generated.matches("rep.int(0.0, n)").count() >= 2
+            || generated.matches("rep.int(0.0, 4L)").count() >= 2
+            || generated.contains("length(((rep.int(0.0, n)))) + length(((rep.int(0.0, n))))")
+            || generated.contains("length(((rep.int(0.0, 4L)))) + length(((rep.int(0.0, 4L))))"),
         "expected qi init to duplicate the fresh helper expression"
     );
     assert!(
@@ -572,7 +584,11 @@ main(4L)
             || generated.contains("qs <- zeros(.arg_n)")
             || generated.contains("qs <- zeros(n)")
             || generated.matches("rep.int(0, n)").count() >= 2
-            || generated.matches("rep.int(0, 4L)").count() >= 2,
+            || generated.matches("rep.int(0, 4L)").count() >= 2
+            || generated.matches("rep.int(0.0, n)").count() >= 2
+            || generated.matches("rep.int(0.0, 4L)").count() >= 2
+            || generated.contains("length(((rep.int(0.0, n)))) + length(((rep.int(0.0, n))))")
+            || generated.contains("length(((rep.int(0.0, 4L)))) + length(((rep.int(0.0, 4L))))"),
         "expected qs init to duplicate the fresh helper expression"
     );
 }
@@ -624,7 +640,8 @@ main(4L)
     let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
     assert!(
         (!generated.contains("u_stage <- qr") && !generated.contains("u_new <- qr"))
-            || generated.contains("(qr) <- rr_assign_slice((qr), (1), n, (1):n)"),
+            || generated.contains("(qr) <- rr_assign_slice((qr), (1), n, (1):n)")
+            || generated.contains("(qr) <- rr_assign_slice((qr), (1.0), n, (1.0):n)"),
         "fresh aliases before loops should be materialized as distinct fresh initializations"
     );
 }

@@ -86,6 +86,11 @@ pub struct TachyonPulseStats {
     pub vector_trip_tier_small: usize,
     pub vector_trip_tier_medium: usize,
     pub vector_trip_tier_large: usize,
+    pub proof_certified: usize,
+    pub proof_applied: usize,
+    pub proof_apply_failed: usize,
+    pub proof_fallback_pattern: usize,
+    pub proof_fallback_reason_counts: [usize; super::v_opt::PROOF_FALLBACK_REASON_COUNT],
     pub simplified_loops: usize,
     pub tco_hits: usize,
     pub sccp_hits: usize,
@@ -155,6 +160,17 @@ impl TachyonPulseStats {
         self.vector_trip_tier_small += other.vector_trip_tier_small;
         self.vector_trip_tier_medium += other.vector_trip_tier_medium;
         self.vector_trip_tier_large += other.vector_trip_tier_large;
+        self.proof_certified += other.proof_certified;
+        self.proof_applied += other.proof_applied;
+        self.proof_apply_failed += other.proof_apply_failed;
+        self.proof_fallback_pattern += other.proof_fallback_pattern;
+        for (dst, src) in self
+            .proof_fallback_reason_counts
+            .iter_mut()
+            .zip(other.proof_fallback_reason_counts)
+        {
+            *dst += src;
+        }
         self.simplified_loops += other.simplified_loops;
         self.tco_hits += other.tco_hits;
         self.sccp_hits += other.sccp_hits;
@@ -221,6 +237,10 @@ impl TachyonPulseStats {
                 "  \"vector_trip_tier_small\": {},\n",
                 "  \"vector_trip_tier_medium\": {},\n",
                 "  \"vector_trip_tier_large\": {},\n",
+                "  \"proof_certified\": {},\n",
+                "  \"proof_applied\": {},\n",
+                "  \"proof_apply_failed\": {},\n",
+                "  \"proof_fallback_pattern\": {},\n",
                 "  \"simplified_loops\": {},\n",
                 "  \"tco_hits\": {},\n",
                 "  \"sccp_hits\": {},\n",
@@ -288,6 +308,10 @@ impl TachyonPulseStats {
             self.vector_trip_tier_small,
             self.vector_trip_tier_medium,
             self.vector_trip_tier_large,
+            self.proof_certified,
+            self.proof_applied,
+            self.proof_apply_failed,
+            self.proof_fallback_pattern,
             self.simplified_loops,
             self.tco_hits,
             self.sccp_hits,

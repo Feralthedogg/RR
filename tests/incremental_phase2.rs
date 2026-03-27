@@ -1,8 +1,8 @@
 mod common;
 
 use RR::compiler::{
-    IncrementalOptions, OptLevel, compile_with_configs_incremental, parallel_config_from_env,
-    type_config_from_env,
+    IncrementalOptions, OptLevel, compile_with_configs_incremental, default_parallel_config,
+    default_type_config,
 };
 use common::unique_dir;
 use std::fs;
@@ -11,17 +11,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn incremental_phase2_reuses_function_emit_cache() {
-    let _env_guard = common::env_lock().lock().unwrap();
+    let env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("incremental_phase2");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "proj");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    // SAFETY: Scoped test setup; value is removed at the end of this test.
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let main_path = proj_dir.join("main.rr");
     let uniq = SystemTime::now()
@@ -50,8 +47,8 @@ main()
     fs::write(&main_path, &source).expect("failed to write main.rr");
 
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
 
     let opts = IncrementalOptions {
         enabled: true,
@@ -96,8 +93,5 @@ main()
         "second compile should not reduce emit cache hits"
     );
     assert_eq!(first.r_code, second.r_code);
-    // SAFETY: Paired with scoped set_var above to restore environment state.
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }

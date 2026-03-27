@@ -2,7 +2,7 @@ mod common;
 
 use RR::compiler::{
     IncrementalOptions, IncrementalSession, OptLevel, compile_with_configs_incremental,
-    parallel_config_from_env, type_config_from_env,
+    default_parallel_config, default_type_config,
 };
 use common::unique_dir;
 use std::fs;
@@ -10,17 +10,14 @@ use std::path::PathBuf;
 
 #[test]
 fn incremental_auto_reuses_disk_artifact_without_session() {
-    let _env_guard = common::env_lock().lock().unwrap();
+    let env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("incremental_auto");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "disk");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    // SAFETY: Scoped test setup; value is removed at the end of this test.
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let main_path = proj_dir.join("main.rr");
     let source = r#"
@@ -36,8 +33,8 @@ main()
     fs::write(&main_path, source).expect("failed to write main.rr");
 
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
     let opts = IncrementalOptions::auto();
 
     let first = compile_with_configs_incremental(
@@ -75,25 +72,19 @@ main()
     );
     assert_eq!(first.r_code, second.r_code);
 
-    // SAFETY: Paired with scoped set_var above to restore environment state.
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 
 #[test]
 fn incremental_auto_uses_phase3_when_session_is_available() {
-    let _env_guard = common::env_lock().lock().unwrap();
+    let env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("incremental_auto");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "session");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
     let cache_dir = proj_dir.join(".rr-cache");
-    // SAFETY: Scoped test setup; value is removed at the end of this test.
-    unsafe {
-        std::env::set_var("RR_INCREMENTAL_CACHE_DIR", &cache_dir);
-    }
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
     let main_path = proj_dir.join("main.rr");
     let source = r#"
@@ -105,8 +96,8 @@ main()
     fs::write(&main_path, source).expect("failed to write main.rr");
 
     let path_str = main_path.to_string_lossy().to_string();
-    let type_cfg = type_config_from_env();
-    let parallel_cfg = parallel_config_from_env();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
     let opts = IncrementalOptions::auto();
     let mut session = IncrementalSession::default();
 
@@ -140,8 +131,5 @@ main()
         "auto compile with a live session should reuse phase3 memory artifacts"
     );
 
-    // SAFETY: Paired with scoped set_var above to restore environment state.
-    unsafe {
-        std::env::remove_var("RR_INCREMENTAL_CACHE_DIR");
-    }
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }

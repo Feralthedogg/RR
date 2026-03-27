@@ -28,7 +28,40 @@ impl VectorizeSkipReason {
 }
 
 pub(super) fn vectorize_trace_enabled() -> bool {
-    match env::var("RR_VECTORIZE_TRACE") {
+    env_flag_enabled("RR_VECTORIZE_TRACE")
+}
+
+pub(super) fn proof_engine_enabled() -> bool {
+    env_flag_enabled("RR_VOPT_PROOF")
+}
+
+pub(super) fn proof_trace_enabled() -> bool {
+    vectorize_trace_enabled() || env_flag_enabled("RR_VOPT_PROOF_TRACE")
+}
+
+pub(super) fn trace_proof_status(fn_ir: &FnIR, lp: &LoopInfo, detail: &str) {
+    if !proof_trace_enabled() {
+        return;
+    }
+    eprintln!(
+        "   [vec-proof] {} header={} latch={} {}",
+        fn_ir.name, lp.header, lp.latch, detail
+    );
+}
+
+pub(super) fn trace_proof_apply_result(fn_ir: &FnIR, lp: &LoopInfo, applied: bool, detail: &str) {
+    if !proof_trace_enabled() {
+        return;
+    }
+    let status = if applied { "apply-ok" } else { "apply-failed" };
+    eprintln!(
+        "   [vec-proof] {} header={} latch={} {} {}",
+        fn_ir.name, lp.header, lp.latch, status, detail
+    );
+}
+
+fn env_flag_enabled(key: &str) -> bool {
+    match env::var(key) {
         Ok(v) => matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "on"),
         Err(_) => false,
     }

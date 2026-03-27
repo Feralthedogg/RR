@@ -15,9 +15,10 @@ fn build_mir_without_semantic_gate(src: &str) -> FxHashMap<String, RR::mir::FnIR
         .expect("parse must succeed for regression input");
 
     let mut lowerer = Lowerer::new();
-    let (hir_mod, symbols) = lowerer
+    let hir_mod = lowerer
         .lower_module(ast, ModuleId(0))
         .expect("hir lowering must succeed for regression input");
+    let symbols = lowerer.into_symbols();
 
     let mut known_fn_arities: FxHashMap<String, usize> = FxHashMap::default();
     for item in &hir_mod.items {

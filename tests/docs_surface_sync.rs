@@ -151,6 +151,7 @@ fn docs_configuration_envs_match_public_config_surface() {
         "src/mir/opt/config.rs",
         "src/mir/opt/inline.rs",
         "src/mir/opt/bce.rs",
+        "src/mir/opt/v_opt/debug.rs",
         "src/runtime/runtime_prelude.R",
         "tests/perf_regression_gate.rs",
         "tests/common/mod.rs",

@@ -3,7 +3,6 @@ use crate::mir::*;
 use crate::utils::Span;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
-use std::env;
 
 pub struct MirInliner;
 type InlineCall = (String, Vec<ValueId>, ValueId, Option<VarId>, Span);
@@ -245,30 +244,17 @@ impl MirInliner {
     }
 
     fn inline_disabled() -> bool {
-        match env::var("RR_DISABLE_INLINE") {
-            Ok(v) => matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            ),
-            Err(_) => false,
-        }
+        false
     }
 
     fn env_usize(key: &str, default_v: usize) -> usize {
-        env::var(key)
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(default_v)
+        let _ = key;
+        default_v
     }
 
     fn env_bool(key: &str, default_v: bool) -> bool {
-        match env::var(key) {
-            Ok(v) => matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            ),
-            Err(_) => default_v,
-        }
+        let _ = key;
+        default_v
     }
 
     fn policy() -> InlinePolicy {

@@ -107,26 +107,11 @@ rr_set_native_roots <- function(paths) {
 }
 
 .rr_env$type_mode <- "strict"
-.rr_env$native_backend <- tolower(Sys.getenv("RR_NATIVE_BACKEND", "off"))
-if (!(.rr_env$native_backend %in% c("off", "optional", "required"))) {
-  .rr_env$native_backend <- "off"
-}
-.rr_env$parallel_mode <- tolower(Sys.getenv("RR_PARALLEL_MODE", "off"))
-if (!(.rr_env$parallel_mode %in% c("off", "optional", "required"))) {
-  .rr_env$parallel_mode <- "off"
-}
-.rr_env$parallel_backend <- tolower(Sys.getenv("RR_PARALLEL_BACKEND", "auto"))
-if (!(.rr_env$parallel_backend %in% c("auto", "r", "openmp"))) {
-  .rr_env$parallel_backend <- "auto"
-}
-.rr_env$parallel_threads <- suppressWarnings(as.integer(Sys.getenv("RR_PARALLEL_THREADS", "0")))
-if (is.na(.rr_env$parallel_threads) || .rr_env$parallel_threads < 0L) {
-  .rr_env$parallel_threads <- 0L
-}
-.rr_env$parallel_min_trip <- suppressWarnings(as.integer(Sys.getenv("RR_PARALLEL_MIN_TRIP", "4096")))
-if (is.na(.rr_env$parallel_min_trip) || .rr_env$parallel_min_trip < 0L) {
-  .rr_env$parallel_min_trip <- 4096L
-}
+.rr_env$native_backend <- "off"
+.rr_env$parallel_mode <- "off"
+.rr_env$parallel_backend <- "auto"
+.rr_env$parallel_threads <- 0L
+.rr_env$parallel_min_trip <- 4096L
 .rr_env$vector_fallback_base_trip <- suppressWarnings(as.integer(Sys.getenv("RR_VECTOR_FALLBACK_BASE_TRIP", "12")))
 if (is.na(.rr_env$vector_fallback_base_trip) || .rr_env$vector_fallback_base_trip < 0L) {
   .rr_env$vector_fallback_base_trip <- 12L

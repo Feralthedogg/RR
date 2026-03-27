@@ -9,6 +9,7 @@ use super::types::{
     BlockStore1D, BlockStore1DMatch, BlockStore3D, BlockStore3DMatch, CallMapLoweringMode,
     VectorAccessOperand3D, VectorAccessPattern3D,
 };
+use crate::mir::analyze::effects;
 use crate::mir::opt::loop_analysis::{LoopInfo, build_pred_map};
 use crate::mir::*;
 use crate::syntax::ast::BinOp;
@@ -609,6 +610,23 @@ pub(super) fn estimate_vector_plan_helper_cost(fn_ir: &FnIR, plan: &VectorPlan) 
     match plan {
         VectorPlan::Reduce { vec_expr, .. } => {
             expr_runtime_helper_cost(fn_ir, *vec_expr, &mut FxHashSet::default())
+        }
+        VectorPlan::ReduceCond {
+            cond,
+            then_val,
+            else_val,
+            ..
+        } => {
+            6 + expr_runtime_helper_cost(fn_ir, *cond, &mut FxHashSet::default())
+                + expr_runtime_helper_cost(fn_ir, *then_val, &mut FxHashSet::default())
+                + expr_runtime_helper_cost(fn_ir, *else_val, &mut FxHashSet::default())
+        }
+        VectorPlan::MultiReduceCond { cond, entries, .. } => {
+            6 + expr_runtime_helper_cost(fn_ir, *cond, &mut FxHashSet::default())
+                + entries.iter().fold(0, |acc, entry| {
+                    acc + expr_runtime_helper_cost(fn_ir, entry.then_val, &mut FxHashSet::default())
+                        + expr_runtime_helper_cost(fn_ir, entry.else_val, &mut FxHashSet::default())
+                })
         }
         VectorPlan::Reduce2DRowSum { .. } | VectorPlan::Reduce2DColSum { .. } => 2,
         VectorPlan::Reduce3D { .. } => 3,
@@ -1884,6 +1902,11 @@ pub(super) fn loop_carried_phi_is_invariant_passthrough(
         seen: &mut FxHashSet<ValueId>,
     ) -> Option<String> {
         let root = preserve_phi_value(fn_ir, root);
+        if let Some(var) = fn_ir.values[root].origin_var.as_deref()
+            && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var)
+        {
+            return Some(format!("origin:{var}"));
+        }
         if !seen.insert(root) {
             if let Some(var) = fn_ir.values[root].origin_var.as_deref()
                 && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var)
@@ -1928,9 +1951,32 @@ pub(super) fn loop_carried_phi_is_invariant_passthrough(
                     None
                 }
             }
+            ValueKind::Phi { args } if args.is_empty() => {
+                if let Some(var) = fn_ir.values[root].origin_var.as_deref()
+                    && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var)
+                {
+                    Some(format!("origin:{var}"))
+                } else {
+                    None
+                }
+            }
             ValueKind::Const(lit) => Some(format!("const:{lit:?}")),
-            ValueKind::Param { index } => Some(format!("param:{index}")),
-            ValueKind::Load { var } => Some(format!("load:{var}")),
+            ValueKind::Param { index } => {
+                if let Some(var) = fn_ir.values[root].origin_var.as_deref()
+                    && !has_non_passthrough_assignment_in_loop(fn_ir, lp, var)
+                {
+                    Some(format!("origin:{var}"))
+                } else {
+                    Some(format!("param:{index}"))
+                }
+            }
+            ValueKind::Load { var } => {
+                if !has_non_passthrough_assignment_in_loop(fn_ir, lp, var) {
+                    Some(format!("origin:{var}"))
+                } else {
+                    Some(format!("load:{var}"))
+                }
+            }
             ValueKind::Call { callee, args, .. }
                 if matches!(callee.as_str(), "seq_len" | "rep.int" | "numeric") =>
             {
@@ -2375,6 +2421,9 @@ pub(super) fn expr_has_non_vector_safe_call_in_vector_context(
     seen: &mut FxHashSet<ValueId>,
 ) -> bool {
     let root = canonical_value(fn_ir, root);
+    if is_loop_invariant_pure_scalar_call_expr(fn_ir, root, iv_phi) {
+        return false;
+    }
     if !seen.insert(root) {
         return false;
     }
@@ -2549,6 +2598,101 @@ pub(super) fn expr_has_non_vector_safe_call_in_vector_context(
         | ValueKind::Param { .. }
         | ValueKind::Load { .. }
         | ValueKind::RSymbol { .. } => false,
+    }
+}
+
+fn is_loop_invariant_pure_scalar_call_expr(fn_ir: &FnIR, root: ValueId, iv_phi: ValueId) -> bool {
+    fn scalar_reducer_call(callee: &str, arity: usize) -> bool {
+        matches!(
+            (callee, arity),
+            ("sum", 1)
+                | ("mean", 1)
+                | ("var", 1)
+                | ("sd", 1)
+                | ("min", 1)
+                | ("max", 1)
+                | ("prod", 1)
+                | ("length", 1)
+                | ("nrow", 1)
+                | ("ncol", 1)
+        )
+    }
+
+    fn invariant_pure_arg_expr(
+        fn_ir: &FnIR,
+        root: ValueId,
+        iv_phi: ValueId,
+        seen: &mut FxHashSet<ValueId>,
+    ) -> bool {
+        let root = canonical_value(fn_ir, root);
+        if !seen.insert(root) {
+            return true;
+        }
+        if expr_has_iv_dependency(fn_ir, root, iv_phi) {
+            return false;
+        }
+        match &fn_ir.values[root].kind {
+            ValueKind::Const(_)
+            | ValueKind::Load { .. }
+            | ValueKind::Param { .. }
+            | ValueKind::RSymbol { .. } => true,
+            ValueKind::Unary { rhs, .. } => invariant_pure_arg_expr(fn_ir, *rhs, iv_phi, seen),
+            ValueKind::Binary { lhs, rhs, .. } => {
+                invariant_pure_arg_expr(fn_ir, *lhs, iv_phi, seen)
+                    && invariant_pure_arg_expr(fn_ir, *rhs, iv_phi, seen)
+            }
+            ValueKind::Call { callee, args, .. } => {
+                effects::call_is_pure(callee)
+                    && args
+                        .iter()
+                        .all(|arg| invariant_pure_arg_expr(fn_ir, *arg, iv_phi, seen))
+            }
+            ValueKind::Intrinsic { args, .. } => args
+                .iter()
+                .all(|arg| invariant_pure_arg_expr(fn_ir, *arg, iv_phi, seen)),
+            ValueKind::Len { base } | ValueKind::Indices { base } => {
+                invariant_pure_arg_expr(fn_ir, *base, iv_phi, seen)
+            }
+            ValueKind::Range { start, end } => {
+                invariant_pure_arg_expr(fn_ir, *start, iv_phi, seen)
+                    && invariant_pure_arg_expr(fn_ir, *end, iv_phi, seen)
+            }
+            ValueKind::Index1D { base, idx, .. } => {
+                invariant_pure_arg_expr(fn_ir, *base, iv_phi, seen)
+                    && invariant_pure_arg_expr(fn_ir, *idx, iv_phi, seen)
+            }
+            ValueKind::Index2D { base, r, c } => {
+                invariant_pure_arg_expr(fn_ir, *base, iv_phi, seen)
+                    && invariant_pure_arg_expr(fn_ir, *r, iv_phi, seen)
+                    && invariant_pure_arg_expr(fn_ir, *c, iv_phi, seen)
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                invariant_pure_arg_expr(fn_ir, *base, iv_phi, seen)
+                    && invariant_pure_arg_expr(fn_ir, *i, iv_phi, seen)
+                    && invariant_pure_arg_expr(fn_ir, *j, iv_phi, seen)
+                    && invariant_pure_arg_expr(fn_ir, *k, iv_phi, seen)
+            }
+            ValueKind::Phi { .. } => false,
+        }
+    }
+
+    if expr_has_iv_dependency(fn_ir, root, iv_phi) {
+        return false;
+    }
+    match &fn_ir.values[root].kind {
+        ValueKind::Call { callee, args, .. } => {
+            scalar_reducer_call(callee, args.len())
+                && args.iter().all(|arg| {
+                    invariant_pure_arg_expr(fn_ir, *arg, iv_phi, &mut FxHashSet::default())
+                })
+        }
+        ValueKind::Intrinsic { op, args } => {
+            matches!(op, IntrinsicOp::VecSumF64 | IntrinsicOp::VecMeanF64)
+                && args.iter().all(|arg| {
+                    invariant_pure_arg_expr(fn_ir, *arg, iv_phi, &mut FxHashSet::default())
+                })
+        }
+        _ => false,
     }
 }
 
@@ -2875,17 +3019,27 @@ pub(super) fn is_vectorizable_expr(
                         }
                     })
             }
-            ValueKind::Phi { args } => args.iter().all(|(a, _)| {
-                rec(
-                    fn_ir,
-                    *a,
-                    iv_phi,
-                    lp,
-                    allow_any_base,
-                    require_safe_index,
-                    seen,
-                )
-            }),
+            ValueKind::Phi { args } => {
+                if fn_ir.values[root]
+                    .phi_block
+                    .is_some_and(|bb| !lp.body.contains(&bb))
+                    && !expr_has_iv_dependency(fn_ir, root, iv_phi)
+                {
+                    true
+                } else {
+                    args.iter().all(|(a, _)| {
+                        rec(
+                            fn_ir,
+                            *a,
+                            iv_phi,
+                            lp,
+                            allow_any_base,
+                            require_safe_index,
+                            seen,
+                        )
+                    })
+                }
+            }
             ValueKind::Len { base } | ValueKind::Indices { base } => rec(
                 fn_ir,
                 *base,

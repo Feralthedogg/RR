@@ -55,7 +55,7 @@ fn extract_budget_limit(log: &str, marker: &str) -> Option<usize> {
 }
 
 #[test]
-fn over_budget_skips_heavy_tier_when_selective_is_explicitly_disabled() {
+fn legacy_budget_env_knobs_do_not_disable_current_budget_policy() {
     let source = build_budget_fixture();
     let (ok, stdout, stderr) = run_compile_case(
         "optimizer_budget_tiers",
@@ -76,18 +76,28 @@ fn over_budget_skips_heavy_tier_when_selective_is_explicitly_disabled() {
     );
     let log = format!("{}\n{}", stdout, stderr);
     assert!(log.contains("Budget: IR"), "missing budget line:\n{}", log);
-    let always = extract_metric(&log, "AlwaysFns").unwrap_or(0);
-    let optimized = extract_metric(&log, "OptimizedFns").unwrap_or(usize::MAX);
-    assert!(always > 0, "AlwaysFns must be > 0:\n{}", log);
-    assert_eq!(
-        optimized, 0,
-        "heavy tier should be skipped by default over-budget path:\n{}",
+    let ir_limit = extract_budget_limit(&log, "Budget: IR ").unwrap_or(0);
+    let fn_limit = extract_budget_limit(&log, " | MaxFn ").unwrap_or(0);
+    let optimized = extract_metric(&log, "OptimizedFns").unwrap_or(0);
+    assert!(
+        ir_limit > TEST_BASE_PROG_LIMIT.parse::<usize>().unwrap_or(0),
+        "legacy env knobs should not clamp the current program IR cap:\n{}",
+        log
+    );
+    assert!(
+        fn_limit > TEST_BASE_FN_LIMIT.parse::<usize>().unwrap_or(0),
+        "legacy env knobs should not clamp the current function IR cap:\n{}",
+        log
+    );
+    assert!(
+        optimized > 0,
+        "legacy env knobs should not disable heavy-tier optimization under the current fixed policy:\n{}",
         log
     );
 }
 
 #[test]
-fn selective_budget_enables_heavy_tier_for_subset() {
+fn legacy_selective_budget_env_knobs_do_not_force_selective_mode() {
     let source = build_budget_fixture();
     let (ok, stdout, stderr) = run_compile_case(
         "optimizer_budget_tiers",
@@ -108,20 +118,20 @@ fn selective_budget_enables_heavy_tier_for_subset() {
     );
     let log = format!("{}\n{}", stdout, stderr);
     assert!(
-        log.contains(" | selective"),
-        "selective marker missing:\n{}",
+        !log.contains(" | selective"),
+        "legacy selective env knobs should not force the current optimizer into selective-marker mode:\n{}",
         log
     );
     let optimized = extract_metric(&log, "OptimizedFns").unwrap_or(0);
     assert!(
         optimized > 0,
-        "selective heavy tier should optimize at least one function:\n{}",
+        "legacy selective env knobs should not prevent the current optimizer from optimizing functions:\n{}",
         log
     );
 }
 
 #[test]
-fn adaptive_budget_expands_limits_by_default() {
+fn default_budget_policy_uses_raised_caps_for_large_fixture() {
     let source = build_budget_fixture();
     let (ok, stdout, stderr) = run_compile_case(
         "optimizer_budget_tiers",
@@ -142,7 +152,6 @@ fn adaptive_budget_expands_limits_by_default() {
     let ir_limit = extract_budget_limit(&log, "Budget: IR ").unwrap_or(0);
     let fn_limit = extract_budget_limit(&log, " | MaxFn ").unwrap_or(0);
     let optimized = extract_metric(&log, "OptimizedFns").unwrap_or(0);
-    let skipped = extract_metric(&log, "SkippedFns").unwrap_or(0);
     assert!(
         ir_limit > TEST_BASE_PROG_LIMIT.parse::<usize>().unwrap_or(0),
         "adaptive budget should raise program IR cap above the fixed default:\n{}",
@@ -154,9 +163,4 @@ fn adaptive_budget_expands_limits_by_default() {
         log
     );
     assert!(optimized > 0, "optimized functions missing:\n{}", log);
-    assert!(
-        skipped > 0,
-        "large single-function workloads should still be able to stay selective under the raised cap:\n{}",
-        log
-    );
 }

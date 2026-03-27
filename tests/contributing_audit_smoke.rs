@@ -20,6 +20,7 @@ fn contributing_audit_reports_static_violations_and_skips_cfg_test_tail() {
         &bad_file,
         r#"
 fn bad() {
+    dbg!(1);
     let _ = Some(1).expect("boom");
     unsafe { side_effect(); }
 }
@@ -42,8 +43,41 @@ fn bad() {
         String::from_utf8_lossy(&bad_output.stderr)
     );
     let bad_stdout = String::from_utf8_lossy(&bad_output.stdout);
+    assert!(bad_stdout.contains("error[production-dbg]"));
     assert!(bad_stdout.contains("error[production-unwrap]"));
     assert!(bad_stdout.contains("error[unsafe-missing-safety]"));
+
+    let warn_file = sandbox.join("src").join("mir").join("warn.rs");
+    fs::create_dir_all(warn_file.parent().expect("warn parent"))
+        .expect("failed to create warn dir");
+    fs::write(
+        &warn_file,
+        r#"
+fn warn_only() {
+    // SAFETY: caller ensures the pointer is valid for this test helper.
+    unsafe { side_effect(); }
+}
+"#,
+    )
+    .expect("failed to write warn file");
+
+    let warn_output = Command::new("bash")
+        .arg(&script)
+        .arg("--scan-only")
+        .arg("--files")
+        .arg(&warn_file)
+        .output()
+        .expect("failed to execute contributing audit script for warn file");
+    assert!(
+        warn_output.status.success(),
+        "warn-only audit input should pass\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&warn_output.stdout),
+        String::from_utf8_lossy(&warn_output.stderr)
+    );
+    let warn_stdout = String::from_utf8_lossy(&warn_output.stdout);
+    assert!(warn_stdout.contains("warn[unsafe-safe-alt-review]"));
+    assert!(warn_stdout.contains("warn[tests-review]"));
+    assert!(warn_stdout.contains("confirm pass ownership, verifier timing, and IR growth bounds"));
 
     let good_file = sandbox.join("src").join("good.rs");
     fs::write(

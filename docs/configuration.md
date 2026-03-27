@@ -7,21 +7,20 @@ This page is the environment and driver policy reference for RR.
 Treat this page like a compiler-driver and runtime-policy table:
 
 - CLI flags are the primary user-facing surface
-- environment variables are mainly for automation, debugging, and controlled policy
+- environment variables are mainly for logging, runtime hooks, cache/debug
+  controls, and compatibility shims
 - many optimizer knobs are intentionally expert-only
 
 ## Precedence
 
-RR resolves configuration in this order:
+RR resolves compilation policy in this order:
 
-1. CLI flags
-2. environment variables
-3. built-in defaults
+1. explicit CLI flags or explicit API config values
+2. built-in defaults
 
-Normal runtime-injected artifacts then append compile-time policy defaults so
-the emitted `.R` preserves the compile-time backend/parallel choice unless the
-caller explicitly overrides it with `RR_NATIVE_BACKEND`, `RR_PARALLEL_MODE`,
-`RR_PARALLEL_BACKEND`, `RR_PARALLEL_THREADS`, or `RR_PARALLEL_MIN_TRIP`.
+Ambient environment variables do not select compiler type/native/parallel
+policy anymore. Runtime-injected artifacts embed the compile-time-resolved
+backend and parallel settings directly.
 
 ## Driver and Output
 
@@ -40,39 +39,30 @@ caller explicitly overrides it with `RR_NATIVE_BACKEND`, `RR_PARALLEL_MODE`,
 
 ## Language Strictness
 
-- `RR_STRICT_LET`
-  - default strict
-  - undeclared assignment is a compile error unless explicitly disabled
-- `RR_STRICT_ASSIGN`
-  - alias control for strict-let behavior
-- `RR_WARN_IMPLICIT_DECL`
-  - warn when legacy implicit declaration is permitted
+Strict-let and implicit-declaration behavior are now explicit compile inputs,
+not ambient environment-driven policy.
+
+- `--strict-let on|off`
+  - control whether assignment to an undeclared name is rejected
+- `--warn-implicit-decl on|off`
+  - warn when relaxed implicit declaration is allowed
 
 ## Type and Native Backend
 
-- `RR_TYPE_MODE`
-  - `strict` or `gradual`
-- `RR_NATIVE_BACKEND`
-  - `off`, `optional`, or `required`
+Use CLI flags or explicit API config to choose compile-time type/native policy.
+
 - `RR_NATIVE_LIB`
-  - explicit shared library path for native helpers
+  - explicit shared library path for native helpers at runtime
 - `RR_NATIVE_AUTOBUILD`
   - enable or disable runtime auto-build of `rr_native`
 
 ## Parallel Backend
 
-- `RR_PARALLEL_MODE`
-  - `off`, `optional`, or `required`
-- `RR_PARALLEL_BACKEND`
-  - `auto`, `r`, or `openmp`
-- `RR_PARALLEL_THREADS`
-  - worker count (`0` means auto)
-- `RR_PARALLEL_MIN_TRIP`
-  - minimum trip count before parallel dispatch is attempted
+Use CLI flags or explicit API config to choose compile-time parallel policy.
 
 Runtime-injected artifacts embed the compile-time-resolved values for these
-parallel knobs at the end of bootstrap, so the emitted `.R` keeps the compile
-policy unless edited manually.
+parallel knobs directly, so emitted `.R` keeps the compile policy unless edited
+manually.
 
 ## Runtime Behavior
 
@@ -104,34 +94,22 @@ policy unless edited manually.
   - write the pre-peephole emitted R artifact to a file before final cleanup/remap
 - `RR_PULSE_JSON_PATH`
   - write `TachyonPulseStats` JSON diagnostics for a compile to the given path
-- `RR_OPT_MAX_ITERS`
-- `RR_MAX_FN_OPT_MS`
-- `RR_ALWAYS_TIER_ITERS`
-- `RR_MAX_FULL_OPT_IR`
-- `RR_MAX_FULL_OPT_FN_IR`
-- `RR_HEAVY_PASS_FN_IR`
-- `RR_ALWAYS_BCE_FN_IR`
-- `RR_BCE_VISIT_LIMIT`
-- `RR_SELECTIVE_OPT_BUDGET`
-- `RR_ADAPTIVE_IR_BUDGET`
-- `RR_ENABLE_LICM`
-- `RR_ENABLE_GVN`
-- `RR_PROFILE_USE`
-- `RR_INLINE_MAX_ROUNDS`
 - `RR_VECTORIZE_TRACE`
+- `RR_VOPT_PROOF`
+  - enable proof-certified vectorization rewrites explicitly
+- `RR_VOPT_PROOF_TRACE`
+  - trace proof certification and proof-apply decisions
 - `RR_WRAP_TRACE`
 
 Use these only when:
 
 - reproducing an optimizer bug
-- calibrating compile-time budgets
 - investigating skipped vectorization
 
 They are not the normal end-user entry surface.
 
 ## Inlining Policy
 
-- `RR_DISABLE_INLINE`
 - `RR_INLINE_MAX_BLOCKS`
 - `RR_INLINE_MAX_INSTRS`
 - `RR_INLINE_MAX_COST`

@@ -2,4 +2,4 @@ expect=compile-ok
 flag=--no-runtime
 flag=-O2
 stdout_contains=Vectorized: 1
-emit_contains=rr_assign_slice(c(4, 5, 6), (1L), length(c(1, 2, 3)), ((2 * c(1, 2, 3)) + rr_index1_read_vec(c(4, 5, 6), rr_index_vec_floor((1L):length(c(1, 2, 3))))))
+emit_contains=rr_assign_slice(c(4.0, 5.0, 6.0), (1L), length(c(1.0, 2.0, 3.0)), ((2.0 * c(1.0, 2.0, 3.0)) + rr_index1_read_vec(c(4.0, 5.0, 6.0), rr_index_vec_floor((1L):length(c(1.0, 2.0, 3.0))))))

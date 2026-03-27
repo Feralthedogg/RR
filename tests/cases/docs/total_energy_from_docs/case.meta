@@ -2,4 +2,4 @@ expect=compile-ok
 flag=--no-runtime
 flag=-O2
 stdout_contains=Simplified: 1
-emit_contains=sum((c(1, 2, 3, 4) * c(1, 2, 3, 4)))
+emit_contains=sum((c(1.0, 2.0, 3.0, 4.0) * c(1.0, 2.0, 3.0, 4.0)))

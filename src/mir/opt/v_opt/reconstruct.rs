@@ -6,7 +6,7 @@ use super::analysis::{
     is_loop_compatible_base, is_passthrough_load_of_var, is_prior_origin_phi_state,
     is_runtime_vector_read_call, last_assign_to_var_in_block,
     last_effective_assign_before_value_use_in_block, loop_covers_whole_destination,
-    preserve_phi_value, resolve_materialized_value, value_depends_on,
+    preserve_phi_value, resolve_materialized_value, value_depends_on, vector_length_key,
 };
 use super::debug::{
     trace_block_instrs, trace_materialize_reject, trace_value_tree, vectorize_trace_enabled,
@@ -695,6 +695,18 @@ pub(super) fn materialize_vector_load(
     }
 
     if let Some((src, label)) = select_origin_phi_load_source(fn_ir, lp, var, use_bb, visiting) {
+        if !expr_has_iv_dependency(fn_ir, src, iv_phi)
+            && let Some(scalar_src) =
+                materialize_loop_invariant_scalar_expr(fn_ir, src, iv_phi, lp, memo, interner)
+        {
+            if vectorize_trace_enabled() {
+                eprintln!(
+                    "   [vec-materialize] {} load {} via {}-scalar {:?}",
+                    fn_ir.name, var, label, scalar_src
+                );
+            }
+            return Some(scalar_src);
+        }
         if vectorize_trace_enabled() {
             eprintln!(
                 "   [vec-materialize] {} load {} via {} {:?}",
@@ -718,6 +730,20 @@ pub(super) fn materialize_vector_load(
     }
 
     if let Some(use_bb) = use_bb {
+        if let Some(origin_phi) = nearest_origin_phi_value_in_loop(fn_ir, lp, var, use_bb)
+            .or_else(|| unique_origin_phi_value_in_loop(fn_ir, lp, var))
+            && let Some(scalar_phi) = materialize_loop_invariant_scalar_expr(
+                fn_ir, origin_phi, iv_phi, lp, memo, interner,
+            )
+        {
+            if vectorize_trace_enabled() {
+                eprintln!(
+                    "   [vec-materialize] {} load {} via origin-phi-scalar {:?}",
+                    fn_ir.name, var, scalar_phi
+                );
+            }
+            return Some(scalar_phi);
+        }
         if let Some(state_src) = materialize_independent_if_state_chain_for_load(
             fn_ir,
             root,
@@ -1166,8 +1192,27 @@ pub(super) fn is_int_index_vector_value(fn_ir: &FnIR, vid: ValueId) -> bool {
 }
 
 pub(super) fn is_scalar_broadcast_value(fn_ir: &FnIR, vid: ValueId) -> bool {
-    let v = &fn_ir.values[canonical_value(fn_ir, vid)];
-    matches!(v.kind, ValueKind::Const(_)) || v.value_ty.shape == ShapeTy::Scalar
+    let root = canonical_value(fn_ir, vid);
+    let v = &fn_ir.values[root];
+    matches!(v.kind, ValueKind::Const(_))
+        || v.value_ty.shape == ShapeTy::Scalar
+        || v.facts.has(Facts::INT_SCALAR)
+        || v.facts.has(Facts::BOOL_SCALAR)
+}
+
+fn value_is_definitely_scalar_like(fn_ir: &FnIR, vid: ValueId) -> bool {
+    let root = canonical_value(fn_ir, vid);
+    let value = &fn_ir.values[root];
+    value.value_ty.shape == ShapeTy::Scalar
+        || value.facts.has(Facts::INT_SCALAR)
+        || value.facts.has(Facts::BOOL_SCALAR)
+        || matches!(
+            value.kind,
+            ValueKind::Const(_)
+                | ValueKind::Param { .. }
+                | ValueKind::Load { .. }
+                | ValueKind::Len { .. }
+        ) && vector_length_key(fn_ir, root).is_none()
 }
 
 pub(super) fn has_assignment_in_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> bool {
@@ -2106,30 +2151,33 @@ pub(super) fn materialize_vector_binary(
     require_safe_index: bool,
     recurse: MaterializeRecurseFn,
 ) -> Option<ValueId> {
-    let lhs_vec = recurse(
-        fn_ir,
-        lhs,
-        iv_phi,
-        idx_vec,
-        lp,
-        memo,
-        interner,
-        visiting,
-        allow_any_base,
-        require_safe_index,
-    )?;
-    let rhs_vec = recurse(
-        fn_ir,
-        rhs,
-        iv_phi,
-        idx_vec,
-        lp,
-        memo,
-        interner,
-        visiting,
-        allow_any_base,
-        require_safe_index,
-    )?;
+    let materialize_operand = |operand: ValueId,
+                               fn_ir: &mut FnIR,
+                               memo: &mut FxHashMap<ValueId, ValueId>,
+                               interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+                               visiting: &mut FxHashSet<ValueId>| {
+        if !expr_has_iv_dependency(fn_ir, operand, iv_phi)
+            && let Some(scalar) =
+                materialize_loop_invariant_scalar_expr(fn_ir, operand, iv_phi, lp, memo, interner)
+        {
+            Some(scalar)
+        } else {
+            recurse(
+                fn_ir,
+                operand,
+                iv_phi,
+                idx_vec,
+                lp,
+                memo,
+                interner,
+                visiting,
+                allow_any_base,
+                require_safe_index,
+            )
+        }
+    };
+    let lhs_vec = materialize_operand(lhs, fn_ir, memo, interner, visiting)?;
+    let rhs_vec = materialize_operand(rhs, fn_ir, memo, interner, visiting)?;
     if lhs_vec == lhs && rhs_vec == rhs {
         return Some(root);
     }
@@ -3289,6 +3337,17 @@ pub(super) fn materialize_vector_expr_impl(
             visiting.remove(&root);
             return Some(idx_vec);
         }
+        if fn_ir.values[root]
+            .phi_block
+            .is_some_and(|phi_bb| !lp.body.contains(&phi_bb))
+            && value_is_definitely_scalar_like(fn_ir, root)
+            && let Some(scalar) =
+                materialize_loop_invariant_scalar_expr(fn_ir, root, iv_phi, lp, memo, interner)
+        {
+            memo.insert(root, scalar);
+            visiting.remove(&root);
+            return Some(scalar);
+        }
         if is_scalar_broadcast_value(fn_ir, root) && !expr_has_iv_dependency(fn_ir, root, iv_phi) {
             memo.insert(root, root);
             visiting.remove(&root);
@@ -3511,6 +3570,14 @@ pub(super) fn materialize_loop_invariant_scalar_expr(
         if let Some(v) = memo.get(&root) {
             return Some(*v);
         }
+        if fn_ir.values[root]
+            .phi_block
+            .is_some_and(|phi_bb| !lp.body.contains(&phi_bb))
+            && value_is_definitely_scalar_like(fn_ir, root)
+        {
+            memo.insert(root, root);
+            return Some(root);
+        }
         if expr_has_iv_dependency(fn_ir, root, iv_phi) {
             return None;
         }
@@ -3621,7 +3688,13 @@ pub(super) fn materialize_loop_invariant_scalar_expr(
                 }
             }
             ValueKind::Phi { args } => {
-                if let Some(var) = fn_ir.values[root].origin_var.clone()
+                if fn_ir.values[root]
+                    .phi_block
+                    .is_some_and(|phi_bb| !lp.body.contains(&phi_bb))
+                    && value_is_definitely_scalar_like(fn_ir, root)
+                {
+                    root
+                } else if let Some(var) = fn_ir.values[root].origin_var.clone()
                     && let Some(v) = materialize_passthrough_origin_phi_state_scalar(
                         fn_ir, root, &var, iv_phi, lp, memo, interner,
                     )

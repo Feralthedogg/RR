@@ -85,48 +85,47 @@ impl TachyonEngine {
     }
 
     pub(super) fn max_opt_iterations() -> usize {
-        Self::env_usize("RR_OPT_MAX_ITERS", 24)
+        24
     }
 
     pub(super) fn max_inline_rounds() -> usize {
-        Self::env_usize("RR_INLINE_MAX_ROUNDS", 3)
+        3
     }
 
     pub(super) fn max_full_opt_ir() -> usize {
-        Self::env_usize("RR_MAX_FULL_OPT_IR", 2500)
+        2500
     }
 
     pub(super) fn max_full_opt_fn_ir() -> usize {
-        Self::env_usize("RR_MAX_FULL_OPT_FN_IR", 900)
+        900
     }
 
     pub(super) fn adaptive_ir_budget_enabled() -> bool {
-        Self::env_bool("RR_ADAPTIVE_IR_BUDGET", true)
+        true
     }
 
     pub(super) fn selective_budget_enabled() -> bool {
-        Self::env_bool("RR_SELECTIVE_OPT_BUDGET", true) || Self::adaptive_ir_budget_enabled()
+        true
     }
 
     pub(super) fn heavy_pass_fn_ir() -> usize {
-        Self::env_usize("RR_HEAVY_PASS_FN_IR", 650)
+        650
     }
 
     pub(super) fn always_bce_fn_ir() -> usize {
-        let default_limit = Self::heavy_pass_fn_ir().max(64);
-        Self::env_usize("RR_ALWAYS_BCE_FN_IR", default_limit)
+        Self::heavy_pass_fn_ir().max(64)
     }
 
     pub(super) fn max_fn_opt_ms() -> u128 {
-        Self::env_usize("RR_MAX_FN_OPT_MS", 250) as u128
+        250
     }
 
     pub(super) fn always_tier_max_iters() -> usize {
-        Self::env_usize("RR_ALWAYS_TIER_ITERS", 2).clamp(1, 6)
+        2
     }
 
     pub(super) fn licm_enabled() -> bool {
-        Self::env_bool("RR_ENABLE_LICM", true)
+        true
     }
 
     pub(super) fn licm_allowed_for_fn(fn_ir: &FnIR) -> bool {
@@ -141,18 +140,11 @@ impl TachyonEngine {
     }
 
     pub(super) fn gvn_enabled() -> bool {
-        Self::env_bool("RR_ENABLE_GVN", true)
+        true
     }
 
     pub(super) fn profile_use_path() -> Option<String> {
-        env::var("RR_PROFILE_USE").ok().and_then(|v| {
-            let p = v.trim();
-            if p.is_empty() {
-                None
-            } else {
-                Some(p.to_string())
-            }
-        })
+        None
     }
 
     pub(super) fn wrap_trace_enabled() -> bool {

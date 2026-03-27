@@ -448,8 +448,8 @@ Language and runtime safety settings:
 | Setting | Use it for |
 | --- | --- |
 | `--type-mode strict` | keep static typing in the stricter mode during development; this is the normal default |
-| `RR_STRICT_LET=1` | explicit spelling of the default strict-let behavior: assignment to an undeclared name is a compile error |
-| `RR_WARN_IMPLICIT_DECL=1` | warns when assignment would implicitly declare a variable; mainly useful if you temporarily opt out with `RR_STRICT_LET=0` |
+| `--strict-let on` | explicit spelling of the default strict-let behavior: assignment to an undeclared name is a compile error |
+| `--strict-let off --warn-implicit-decl on` | temporarily allow legacy implicit declaration while keeping a warning signal |
 | `RR_RUNTIME_MODE=debug` | enables the fuller runtime safety path |
 | `RR_STRICT_INDEX_READ=1` | turns NA read-index behavior into a hard runtime error |
 
@@ -497,7 +497,7 @@ RR_VECTOR_FALLBACK_BASE_TRIP=0 RR_VECTOR_FALLBACK_HELPER_SCALE=0 \
 If you are porting older RR code that still relies on implicit declaration, use:
 
 ```bash
-RR_STRICT_LET=0 RR_WARN_IMPLICIT_DECL=1 cargo run -- example/tesseract.rr -O0 --type-mode strict
+cargo run -- example/tesseract.rr -O0 --type-mode strict --strict-let off --warn-implicit-decl on
 ```
 
 The last two commands serve different purposes:

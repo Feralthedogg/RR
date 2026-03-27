@@ -1,6 +1,4 @@
-use RR::compiler::{
-    OptLevel, compile_with_configs, parallel_config_from_env, type_config_from_env,
-};
+use RR::compiler::{OptLevel, compile_with_configs, default_parallel_config, default_type_config};
 use RR::error::RRCode;
 
 #[test]
@@ -21,8 +19,8 @@ print(classify(2))
         "non_exhaustive_match.rr",
         source,
         OptLevel::O0,
-        type_config_from_env(),
-        parallel_config_from_env(),
+        default_type_config(),
+        default_parallel_config(),
     )
     .expect_err("non-exhaustive match must fail during compilation");
 

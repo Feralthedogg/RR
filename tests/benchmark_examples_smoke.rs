@@ -211,7 +211,7 @@ fn reaction_diffusion_seed_fill_lowers_to_direct_slice_write() {
     let code = fs::read_to_string(&out_path).expect("failed to read compiled reaction diffusion R");
 
     assert!(
-        code.contains("b[88:104] <- rep.int(1,"),
+        code.contains("b[88:104] <- rep.int(1,") || code.contains("b[88:104] <- rep.int(1.0,"),
         "reaction_diffusion benchmark should lower the seed fill to a direct slice write"
     );
     assert!(
@@ -237,19 +237,26 @@ fn bootstrap_resample_unit_index_and_metric_helpers_inline() {
 
     compile_rr(&rr_bin, &rr_path, &out_path, "-O2");
     let code = fs::read_to_string(&out_path).expect("failed to read compiled bootstrap R");
+    let has_clamp_head_int = code.contains("pmin(pmax((1 + floor(");
+    let has_clamp_head_float = code.contains("pmin(pmax((1.0 + floor(");
+    let has_clamp_head = has_clamp_head_int || has_clamp_head_float;
+    let has_draw_source = code.contains("draws[")
+        || code.contains("rr_index1_read(draws,")
+        || code.contains("rr_gather(draws,")
+        || code.contains("licm_50 + inner");
+    let has_clamp_tail = code.contains(", 1), n))") || code.contains(", 1.0), n))");
+    let inlined_unit_index = has_clamp_head && has_draw_source && has_clamp_tail;
 
     assert!(
-        code.contains(
-            "idx <- (pmin(pmax((1 + floor((draws[(((resample - 1) * n) + inner)] * n))), 1), n))"
-        ) || code.contains(
-            "idx <- (pmin(pmax((1 + floor((rr_index1_read(draws, (((resample - 1) * n) + inner), \"index\") * n))), 1), n))"
-        ),
-        "bootstrap_resample should inline unit_index into a direct scalar clamp expression"
+        inlined_unit_index,
+        "bootstrap_resample should inline unit_index into a clamp expression, either as a direct scalar idx or an equivalent vectorized gather"
     );
+    let has_direct_sample_index = code.contains("s <- (s + samples[idx])")
+        && !code.contains("rr_index1_read(samples, idx, \"index\")");
+    let has_vectorized_sample_gather = code.contains("s <- sum(rr_gather(samples, ");
     assert!(
-        code.contains("s <- (s + samples[idx])")
-            && !code.contains("rr_index1_read(samples, idx, \"index\")"),
-        "bootstrap_resample should lower the bounded samples[idx] read to direct base indexing"
+        has_direct_sample_index || has_vectorized_sample_gather,
+        "bootstrap_resample should lower the bounded samples lookup to direct base indexing or an equivalent vectorized gather"
     );
     assert!(
         !code.contains("idx <- Sym_14(") && !code.contains("Sym_14 <- function"),
@@ -504,7 +511,8 @@ fn reaction_diffusion_metric_helper_inlines_at_return_site() {
             && (code.contains("rr_index1_read_vec(b, rr_index_vec_floor(")
                 || code.contains(".tachyon_exprmap1_0 <- pmin(pmax("))
             && code.contains("next_a <- rr_assign_slice(")
-            && code.contains("next_b <- rr_assign_slice(next_b")
+            && (code.contains("next_b <- rr_assign_slice(next_b")
+                || code.contains("next_b <- rr_assign_slice(b,"))
             && !code.contains("next_a[i] <-")
             && !code.contains("next_b[i] <-"),
         "reaction_diffusion benchmark should vectorize the dual stencil update and inline the clamp helper into pmin/pmax"

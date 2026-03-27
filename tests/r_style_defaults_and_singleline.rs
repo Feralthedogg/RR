@@ -46,7 +46,7 @@ let f = function(a = 0.0, b = 0L, c = TRUE, d = "x") {
     let mut parser = Parser::new(src);
     let ast = parser.parse_program().expect("parse");
     let mut lowerer = Lowerer::new();
-    let (hir_mod, _symbols) = lowerer.lower_module(ast, ModuleId(0)).expect("lower");
+    let hir_mod = lowerer.lower_module(ast, ModuleId(0)).expect("lower");
 
     let f = hir_mod
         .items

@@ -38,6 +38,19 @@ pub enum VectorPlan {
         vec_expr: ValueId,
         iv_phi: ValueId,
     },
+    ReduceCond {
+        kind: ReduceKind,
+        acc_phi: ValueId,
+        cond: ValueId,
+        then_val: ValueId,
+        else_val: ValueId,
+        iv_phi: ValueId,
+    },
+    MultiReduceCond {
+        cond: ValueId,
+        entries: Vec<ReduceCondEntry>,
+        iv_phi: ValueId,
+    },
     Reduce2DRowSum {
         acc_phi: ValueId,
         base: ValueId,
@@ -275,6 +288,14 @@ pub struct CallMapArg {
     pub(super) vectorized: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReduceCondEntry {
+    pub(super) kind: ReduceKind,
+    pub(super) acc_phi: ValueId,
+    pub(super) then_val: ValueId,
+    pub(super) else_val: ValueId,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExprMapEntry {
     pub(super) dest: ValueId,
@@ -347,6 +368,150 @@ pub enum ReduceKind {
     Prod,
     Min,
     Max,
+}
+
+#[repr(usize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ProofFallbackReason {
+    Disabled,
+    NotYetImplemented,
+    StorelessConditionalLoop,
+    StorelessReductionLoop,
+    StorelessStateLoop,
+    StorelessPlainLoop,
+    StorefulStateLoop,
+    MissingInductionVar,
+    UnsupportedLoopShape,
+    MissingStore,
+    MultipleStores,
+    NonCanonicalStore,
+    UnresolvableDestination,
+    NotWholeDestination,
+    NotSimpleMap,
+    NotSimpleCondMap,
+    NotSimpleReduction,
+    NotSimpleExprMap,
+    NotSimpleCallMap,
+    UnsupportedCondition,
+    BranchLeavesLoopBody,
+    BranchStoreShape,
+    MismatchedBranchDestinations,
+    UnsupportedConditionalValues,
+    ReductionExtraState,
+    UnsupportedReductionExpr,
+    UnsupportedMapOperands,
+    UnsupportedCallMapArgs,
+    ShadowState,
+}
+
+impl ProofFallbackReason {
+    pub(super) const ALL: [Self; 29] = [
+        Self::Disabled,
+        Self::NotYetImplemented,
+        Self::StorelessConditionalLoop,
+        Self::StorelessReductionLoop,
+        Self::StorelessStateLoop,
+        Self::StorelessPlainLoop,
+        Self::StorefulStateLoop,
+        Self::MissingInductionVar,
+        Self::UnsupportedLoopShape,
+        Self::MissingStore,
+        Self::MultipleStores,
+        Self::NonCanonicalStore,
+        Self::UnresolvableDestination,
+        Self::NotWholeDestination,
+        Self::NotSimpleMap,
+        Self::NotSimpleCondMap,
+        Self::NotSimpleReduction,
+        Self::NotSimpleExprMap,
+        Self::NotSimpleCallMap,
+        Self::UnsupportedCondition,
+        Self::BranchLeavesLoopBody,
+        Self::BranchStoreShape,
+        Self::MismatchedBranchDestinations,
+        Self::UnsupportedConditionalValues,
+        Self::ReductionExtraState,
+        Self::UnsupportedReductionExpr,
+        Self::UnsupportedMapOperands,
+        Self::UnsupportedCallMapArgs,
+        Self::ShadowState,
+    ];
+    pub(super) const COUNT: usize = Self::ALL.len();
+
+    pub(super) const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::NotYetImplemented => "not-yet-implemented",
+            Self::StorelessConditionalLoop => "storeless-conditional-loop",
+            Self::StorelessReductionLoop => "storeless-reduction-loop",
+            Self::StorelessStateLoop => "storeless-state-loop",
+            Self::StorelessPlainLoop => "storeless-plain-loop",
+            Self::StorefulStateLoop => "storeful-state-loop",
+            Self::MissingInductionVar => "missing-induction-var",
+            Self::UnsupportedLoopShape => "unsupported-loop-shape",
+            Self::MissingStore => "missing-store",
+            Self::MultipleStores => "multiple-stores",
+            Self::NonCanonicalStore => "non-canonical-store",
+            Self::UnresolvableDestination => "unresolvable-destination",
+            Self::NotWholeDestination => "not-whole-destination",
+            Self::NotSimpleMap => "not-simple-map",
+            Self::NotSimpleCondMap => "not-simple-cond-map",
+            Self::NotSimpleReduction => "not-simple-reduction",
+            Self::NotSimpleExprMap => "not-simple-expr-map",
+            Self::NotSimpleCallMap => "not-simple-call-map",
+            Self::UnsupportedCondition => "unsupported-condition",
+            Self::BranchLeavesLoopBody => "branch-leaves-loop-body",
+            Self::BranchStoreShape => "branch-store-shape",
+            Self::MismatchedBranchDestinations => "mismatched-branch-destinations",
+            Self::UnsupportedConditionalValues => "unsupported-conditional-values",
+            Self::ReductionExtraState => "reduction-extra-state",
+            Self::UnsupportedReductionExpr => "unsupported-reduction-expr",
+            Self::UnsupportedMapOperands => "unsupported-map-operands",
+            Self::UnsupportedCallMapArgs => "unsupported-call-map-args",
+            Self::ShadowState => "shadow-state",
+        }
+    }
+}
+
+pub(crate) const PROOF_FALLBACK_REASON_COUNT: usize = ProofFallbackReason::COUNT;
+
+pub(crate) fn format_proof_fallback_counts(
+    counts: &[usize; PROOF_FALLBACK_REASON_COUNT],
+) -> String {
+    let mut entries = ProofFallbackReason::ALL
+        .iter()
+        .filter_map(|reason| {
+            let count = counts[reason.index()];
+            (count > 0).then_some((reason.label(), count))
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|(lhs_label, lhs_count), (rhs_label, rhs_count)| {
+        rhs_count
+            .cmp(lhs_count)
+            .then_with(|| lhs_label.cmp(rhs_label))
+    });
+    entries
+        .into_iter()
+        .take(6)
+        .map(|(label, count)| format!("{label} {count}"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct CertifiedPlan {
+    pub(super) plan: VectorPlan,
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum ProofOutcome {
+    Certified(CertifiedPlan),
+    NotApplicable { reason: ProofFallbackReason },
+    FallbackToPattern { reason: ProofFallbackReason },
 }
 
 #[derive(Clone, Copy)]

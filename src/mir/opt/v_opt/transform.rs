@@ -1,10 +1,10 @@
 use super::analysis::{
-    as_safe_loop_index, canonical_value, choose_call_map_lowering, expr_contains_index3d,
-    expr_has_iv_dependency, hoist_vector_expr_temp, induction_origin_var, intrinsic_for_call,
-    is_const_number, is_const_one, is_invariant_reduce_scalar, is_iv_equivalent,
-    is_loop_invariant_scalar_expr, loop_entry_seed_source_in_loop, maybe_hoist_callmap_arg_expr,
-    resolve_base_var, resolve_materialized_value, rewrite_returns_for_var, same_length_proven,
-    value_depends_on, vector_length_key,
+    as_safe_loop_index, canonical_value, choose_call_map_lowering, expr_has_iv_dependency,
+    hoist_vector_expr_temp, induction_origin_var, intrinsic_for_call, is_const_number,
+    is_const_one, is_invariant_reduce_scalar, is_iv_equivalent, is_loop_invariant_scalar_expr,
+    loop_entry_seed_source_in_loop, maybe_hoist_callmap_arg_expr, resolve_base_var,
+    resolve_materialized_value, rewrite_returns_for_var, same_length_proven, value_depends_on,
+    vector_length_key,
 };
 use super::debug::vectorize_trace_enabled;
 use super::reconstruct::{
@@ -19,9 +19,9 @@ use super::types::{
     CondMap3DApplyPlan, CondMap3DGeneralApplyPlan, ExprMap3DApplyPlan, ExprMapEntry,
     ExprMapEntry3D, Map2DApplyPlan, Map3DApplyPlan, PreparedVectorAssignment,
     RecurrenceAddConst3DApplyPlan, RecurrenceAddConstApplyPlan, Reduce2DApplyPlan,
-    Reduce3DApplyPlan, ReduceKind, ScatterExprMap3DApplyPlan, ScatterExprMap3DGeneralApplyPlan,
-    ShiftedMap3DApplyPlan, ShiftedMapApplyPlan, VectorAccessOperand3D, VectorApplySite,
-    VectorLoopRange, VectorPlan,
+    Reduce3DApplyPlan, ReduceCondEntry, ReduceKind, ScatterExprMap3DApplyPlan,
+    ScatterExprMap3DGeneralApplyPlan, ShiftedMap3DApplyPlan, ShiftedMapApplyPlan,
+    VectorAccessOperand3D, VectorApplySite, VectorLoopRange, VectorPlan,
 };
 use crate::mir::opt::loop_analysis::{LoopInfo, build_pred_map};
 use crate::mir::*;
@@ -788,8 +788,8 @@ pub(super) fn apply_reduce_plan(
     vec_expr: ValueId,
     iv_phi: ValueId,
 ) -> bool {
-    let allow_any_base = expr_contains_index3d(fn_ir, vec_expr);
-    let require_safe_index = !allow_any_base;
+    let allow_any_base = true;
+    let require_safe_index = false;
     let reduce_val = if kind == ReduceKind::Sum {
         if let Some(v) = rewrite_sum_add_const(fn_ir, lp, vec_expr, iv_phi) {
             v
@@ -839,6 +839,182 @@ pub(super) fn apply_reduce_plan(
     };
 
     finish_vector_phi_assignment(fn_ir, site, acc_phi, reduce_val)
+}
+
+pub(super) fn apply_reduce_cond_plan(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    site: VectorApplySite,
+    cond: ValueId,
+    entry: ReduceCondEntry,
+    iv_phi: ValueId,
+) -> bool {
+    let idx_vec = match build_loop_index_vector(fn_ir, lp) {
+        Some(v) => v,
+        None => return false,
+    };
+    let mut memo = FxHashMap::default();
+    let mut interner = FxHashMap::default();
+    let cond_vec = match materialize_vector_expr(
+        fn_ir,
+        cond,
+        iv_phi,
+        idx_vec,
+        lp,
+        &mut memo,
+        &mut interner,
+        true,
+        true,
+    ) {
+        Some(v) => v,
+        None => return false,
+    };
+    let then_vec = match materialize_vector_expr(
+        fn_ir,
+        entry.then_val,
+        iv_phi,
+        idx_vec,
+        lp,
+        &mut memo,
+        &mut interner,
+        true,
+        false,
+    ) {
+        Some(v) => v,
+        None => return false,
+    };
+    let else_vec = match materialize_vector_expr(
+        fn_ir,
+        entry.else_val,
+        iv_phi,
+        idx_vec,
+        lp,
+        &mut memo,
+        &mut interner,
+        true,
+        false,
+    ) {
+        Some(v) => v,
+        None => return false,
+    };
+    emit_same_or_scalar_guard(fn_ir, site.preheader, cond_vec, then_vec);
+    emit_same_or_scalar_guard(fn_ir, site.preheader, cond_vec, else_vec);
+    let ifelse_val = fn_ir.add_value(
+        ValueKind::Call {
+            callee: "rr_ifelse_strict".to_string(),
+            args: vec![cond_vec, then_vec, else_vec],
+            names: vec![None, None, None],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    let reduce_val = fn_ir.add_value(
+        ValueKind::Call {
+            callee: reduce_function_name(entry.kind).to_string(),
+            args: vec![ifelse_val],
+            names: vec![None],
+        },
+        crate::utils::Span::dummy(),
+        crate::mir::def::Facts::empty(),
+        None,
+    );
+    finish_vector_phi_assignment(fn_ir, site, entry.acc_phi, reduce_val)
+}
+
+pub(super) fn apply_multi_reduce_cond_plan(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    site: VectorApplySite,
+    cond: ValueId,
+    entries: &[ReduceCondEntry],
+    iv_phi: ValueId,
+) -> bool {
+    let idx_vec = match build_loop_index_vector(fn_ir, lp) {
+        Some(v) => v,
+        None => return false,
+    };
+    let mut memo = FxHashMap::default();
+    let mut interner = FxHashMap::default();
+    let cond_vec = match materialize_vector_expr(
+        fn_ir,
+        cond,
+        iv_phi,
+        idx_vec,
+        lp,
+        &mut memo,
+        &mut interner,
+        true,
+        true,
+    ) {
+        Some(v) => v,
+        None => return false,
+    };
+
+    let mut staged = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let then_vec = match materialize_vector_expr(
+            fn_ir,
+            entry.then_val,
+            iv_phi,
+            idx_vec,
+            lp,
+            &mut memo,
+            &mut interner,
+            true,
+            false,
+        ) {
+            Some(v) => v,
+            None => return false,
+        };
+        let else_vec = match materialize_vector_expr(
+            fn_ir,
+            entry.else_val,
+            iv_phi,
+            idx_vec,
+            lp,
+            &mut memo,
+            &mut interner,
+            true,
+            false,
+        ) {
+            Some(v) => v,
+            None => return false,
+        };
+        emit_same_or_scalar_guard(fn_ir, site.preheader, cond_vec, then_vec);
+        emit_same_or_scalar_guard(fn_ir, site.preheader, cond_vec, else_vec);
+        let ifelse_val = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "rr_ifelse_strict".to_string(),
+                args: vec![cond_vec, then_vec, else_vec],
+                names: vec![None, None, None],
+            },
+            crate::utils::Span::dummy(),
+            crate::mir::def::Facts::empty(),
+            None,
+        );
+        let reduce_val = fn_ir.add_value(
+            ValueKind::Call {
+                callee: reduce_function_name(entry.kind).to_string(),
+                args: vec![ifelse_val],
+                names: vec![None],
+            },
+            crate::utils::Span::dummy(),
+            crate::mir::def::Facts::empty(),
+            None,
+        );
+        let Some(dest_var) = fn_ir.values[entry.acc_phi].origin_var.clone() else {
+            return false;
+        };
+        staged.push(PreparedVectorAssignment {
+            dest_var,
+            out_val: reduce_val,
+            shadow_vars: Vec::new(),
+            shadow_idx: None,
+        });
+    }
+
+    emit_prepared_vector_assignments(fn_ir, site, staged)
 }
 
 pub(super) fn apply_reduce_2d_row_sum_plan(
@@ -3230,6 +3406,31 @@ pub(super) fn apply_reduce_vector_plan(
             vec_expr,
             iv_phi,
         } => apply_reduce_plan(fn_ir, lp, site, kind, acc_phi, vec_expr, iv_phi),
+        VectorPlan::ReduceCond {
+            kind,
+            acc_phi,
+            cond,
+            then_val,
+            else_val,
+            iv_phi,
+        } => apply_reduce_cond_plan(
+            fn_ir,
+            lp,
+            site,
+            cond,
+            ReduceCondEntry {
+                kind,
+                acc_phi,
+                then_val,
+                else_val,
+            },
+            iv_phi,
+        ),
+        VectorPlan::MultiReduceCond {
+            cond,
+            entries,
+            iv_phi,
+        } => apply_multi_reduce_cond_plan(fn_ir, lp, site, cond, &entries, iv_phi),
         VectorPlan::Reduce2DRowSum {
             acc_phi,
             base,
@@ -3768,6 +3969,8 @@ pub(super) fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorP
 
     match plan {
         plan @ VectorPlan::Reduce { .. }
+        | plan @ VectorPlan::ReduceCond { .. }
+        | plan @ VectorPlan::MultiReduceCond { .. }
         | plan @ VectorPlan::Reduce2DRowSum { .. }
         | plan @ VectorPlan::Reduce2DColSum { .. }
         | plan @ VectorPlan::Reduce3D { .. } => apply_reduce_vector_plan(fn_ir, lp, site, plan),
@@ -3796,6 +3999,22 @@ pub(super) fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorP
         | plan @ VectorPlan::Map2DCol { .. }
         | plan @ VectorPlan::Map3D { .. } => apply_structured_vector_plan(fn_ir, lp, site, plan),
     }
+}
+
+pub(super) fn try_apply_vectorization_transactionally(
+    fn_ir: &mut FnIR,
+    lp: &LoopInfo,
+    plan: VectorPlan,
+) -> bool {
+    let mut cloned = fn_ir.clone();
+    if !apply_vectorization(&mut cloned, lp, plan) {
+        return false;
+    }
+    if crate::mir::verify::verify_ir(&cloned).is_err() {
+        return false;
+    }
+    *fn_ir = cloned;
+    true
 }
 
 pub(super) fn rewrite_sum_add_const(
@@ -3871,4 +4090,58 @@ pub(super) fn rewrite_sum_add_const(
         crate::mir::def::Facts::empty(),
         None,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mir::opt::loop_analysis::LoopInfo;
+    use crate::utils::Span;
+
+    fn simple_non_vectorizable_fn() -> FnIR {
+        let mut fn_ir = FnIR::new("tx_fail".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+        let ret = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(ret));
+        fn_ir
+    }
+
+    fn loop_info_without_apply_site() -> LoopInfo {
+        LoopInfo {
+            header: 0,
+            latch: 0,
+            exits: Vec::new(),
+            body: FxHashSet::default(),
+            is_seq_len: None,
+            is_seq_along: None,
+            iv: None,
+            limit: None,
+            limit_adjust: 0,
+        }
+    }
+
+    #[test]
+    fn transactional_apply_preserves_original_ir_on_failure() {
+        let mut fn_ir = simple_non_vectorizable_fn();
+        let original = format!("{:?}", fn_ir);
+        let lp = loop_info_without_apply_site();
+        let plan = VectorPlan::Map {
+            dest: 0,
+            src: 0,
+            op: BinOp::Add,
+            other: 0,
+            shadow_vars: Vec::new(),
+        };
+
+        let applied = try_apply_vectorization_transactionally(&mut fn_ir, &lp, plan);
+        assert!(!applied);
+        assert_eq!(original, format!("{:?}", fn_ir));
+    }
 }
