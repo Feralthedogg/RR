@@ -36,12 +36,12 @@ import r * as utils from "utils"
 
 fn use_tools() -> char {
   let titled = tools.toTitleCase("hello world")
-  let tools_ns = base.asNamespace("tools")
   let abs = tools.file_path_as_absolute("__A_TXT__")
   let user_dir = tools.R_user_dir("RR", "cache")
   let hash = tools.md5sum(abs)
-  let has_sha256 = base.exists("sha256sum", where = tools_ns, inherits = false)
-  let has_parse_uri_reference = base.exists("parse_URI_reference", where = tools_ns, inherits = false)
+  let tools_exports = base.getNamespaceExports("tools")
+  let has_sha256 = base.any(tools_exports == "sha256sum")
+  let has_parse_uri_reference = base.any(tools_exports == "parse_URI_reference")
   let ext = tools.file_ext(c("a.txt", "b.csv"))
   let sans = tools.file_path_sans_ext(c("a.txt", "b.csv"))
   let listed_exts = tools.list_files_with_exts("__ROOT__", c("txt", "csv"))
