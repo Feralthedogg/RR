@@ -36,10 +36,12 @@ import r * as utils from "utils"
 
 fn use_tools() -> char {
   let titled = tools.toTitleCase("hello world")
+  let tools_ns = base.asNamespace("tools")
   let abs = tools.file_path_as_absolute("__A_TXT__")
   let user_dir = tools.R_user_dir("RR", "cache")
   let hash = tools.md5sum(abs)
-  let has_sha256 = base.exists("sha256sum", where = base.asNamespace("tools"), inherits = false)
+  let has_sha256 = base.exists("sha256sum", where = tools_ns, inherits = false)
+  let has_parse_uri_reference = base.exists("parse_URI_reference", where = tools_ns, inherits = false)
   let ext = tools.file_ext(c("a.txt", "b.csv"))
   let sans = tools.file_path_sans_ext(c("a.txt", "b.csv"))
   let listed_exts = tools.list_files_with_exts("__ROOT__", c("txt", "csv"))
@@ -48,7 +50,6 @@ fn use_tools() -> char {
   let vignette_info = tools.getVignetteInfo("stats")
   let pkg_vigs = tools.pkgVignettes(package = "stats")
   let match_pos = tools.delimMatch("a[b[c]d]e", c("[", "]"))
-  let parsed_uri = tools.parse_URI_reference("https://example.com/path?a=1#frag")
   let parsed_rd = tools.parse_Rd("__SAMPLE_RD__")
   let rd_text = tools.Rd2txt(parsed_rd)
   let rd_html = utils.capture.output(tools.Rd2HTML(parsed_rd))
@@ -104,7 +105,11 @@ fn use_tools() -> char {
   print(dim(vignette_info))
   print(length(pkg_vigs))
   print(match_pos)
-  print(dim(parsed_uri))
+  if (has_parse_uri_reference) {
+    print(dim(tools.parse_URI_reference("https://example.com/path?a=1#frag")))
+  } else {
+    print(base.c(0L, 0L))
+  }
   print(length(parsed_rd))
   print(length(rd_text))
   print(length(rd_html))
