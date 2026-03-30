@@ -256,15 +256,17 @@ fn rewrite_helper_subcalls(expr: &str, enabled: bool) -> String {
     let mut out = expr.trim().to_string();
     loop {
         let mut changed = false;
-        let bytes = out.as_bytes();
         let mut i = 0usize;
-        while i < bytes.len() {
+        while i < out.len() {
             let slice = &out[i..];
             let Some(prefix) = helper_call_prefixes()
                 .iter()
                 .find(|prefix| slice.starts_with(**prefix))
             else {
-                i += 1;
+                let Some(ch) = slice.chars().next() else {
+                    break;
+                };
+                i += ch.len_utf8();
                 continue;
             };
             let call_start = i;

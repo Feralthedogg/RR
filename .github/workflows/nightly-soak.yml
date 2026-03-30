@@ -6,6 +6,38 @@ on:
   workflow_dispatch:
 
 jobs:
+  recommended-package-coverage:
+    name: Recommended Package Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install R + Recommended Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core r-recommended
+
+      - name: Build Recommended Package Coverage
+        run: bash scripts/recommended_package_coverage.sh .artifacts/recommended-package-coverage
+
+      - name: Publish Recommended Package Coverage
+        run: cat .artifacts/recommended-package-coverage/recommended-package-coverage.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Recommended Package Coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-recommended-package-coverage
+          path: .artifacts/recommended-package-coverage
+          if-no-files-found: error
+
   differential-soak:
     name: Differential Soak
     runs-on: ubuntu-latest
@@ -197,6 +229,7 @@ jobs:
     name: Verification Summary
     runs-on: ubuntu-latest
     needs:
+      - recommended-package-coverage
       - differential-soak
       - fuzz-soak
     if: always()
@@ -228,6 +261,13 @@ jobs:
           path: .artifacts/fuzz-triage
           if-no-files-found: warn
 
+      - name: Download Recommended Package Coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-recommended-package-coverage
+          path: .artifacts/recommended-package-coverage
+          if-no-files-found: warn
+
       - name: Build Verification Summary
         run: bash scripts/verification_summary.sh .artifacts .artifacts/nightly-soak
 
@@ -237,6 +277,12 @@ jobs:
       - name: Publish Top Promotion Candidates
         run: cat .artifacts/nightly-soak/top-promotion-candidates.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Publish Recommended Package Coverage
+        run: |
+          if [ -f .artifacts/recommended-package-coverage/recommended-package-coverage.md ]; then
+            cat .artifacts/recommended-package-coverage/recommended-package-coverage.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload Verification Summary
         uses: actions/upload-artifact@v4
         with:
@@ -244,4 +290,5 @@ jobs:
           path: |
             .artifacts/nightly-soak/verification-summary.*
             .artifacts/nightly-soak/top-promotion-candidates.*
+            .artifacts/recommended-package-coverage/*
           if-no-files-found: error

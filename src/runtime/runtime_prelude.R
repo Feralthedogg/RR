@@ -2079,6 +2079,17 @@ rr_dim3_recur_add_const <- function(base, fixed_a, fixed_b, start, end, delta, c
 rr_field_get <- function(base, name) {
   if (length(name) != 1) rr_type_error("field name must be scalar", "E1002", "field access")
   if (!is.character(name)) rr_type_error("field name must be character", "E1002", "field access")
+  nms <- names(base)
+  if (!is.null(nms) && isTRUE(name %in% nms)) {
+    return(base[[name]])
+  }
+  attrs <- attributes(base)
+  if (!is.null(attrs)) {
+    attr_names <- names(attrs)
+    if (!is.null(attr_names) && isTRUE(name %in% attr_names)) {
+      return(attrs[[name]])
+    }
+  }
   base[[name]]
 }
 
@@ -2086,8 +2097,12 @@ rr_field_exists <- function(base, name) {
   if (length(name) != 1) rr_type_error("field name must be scalar", "E1002", "field access")
   if (!is.character(name)) rr_type_error("field name must be character", "E1002", "field access")
   nms <- names(base)
-  if (is.null(nms)) return(FALSE)
-  isTRUE(name %in% nms)
+  if (!is.null(nms) && isTRUE(name %in% nms)) return(TRUE)
+  attrs <- attributes(base)
+  if (is.null(attrs)) return(FALSE)
+  attr_names <- names(attrs)
+  if (is.null(attr_names)) return(FALSE)
+  isTRUE(name %in% attr_names)
 }
 
 rr_field_set <- function(base, name, value) {

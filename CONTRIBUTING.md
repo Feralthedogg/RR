@@ -326,4 +326,4 @@ If you must break a `MUST`/`SHOULD` rule:
 - Docs updated if CLI/runtime/error semantics changed.
 
 For a concrete post-change verification pass, use
-[`docs/contributing-audit.md`](docs/contributing-audit.md).
+[`docs/compiler/contributing-audit.md`](docs/compiler/contributing-audit.md).

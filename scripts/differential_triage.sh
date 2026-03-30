@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib/triage_common.sh"
 FAIL_ROOT="${RR_DIFFERENTIAL_FAILURE_ROOT:-$ROOT/target/tests/random_differential_failures}"
 OUT_DIR="${RR_DIFFERENTIAL_TRIAGE_OUT_DIR:-$ROOT/.artifacts/differential-triage}"
+RR_BIN_DEFAULT="${RR_BIN:-$ROOT/target/debug/RR}"
+RSCRIPT_BIN_DEFAULT="${RSCRIPT_BIN:-$(command -v Rscript || true)}"
 mkdir -p "$OUT_DIR"
 SUMMARY="$OUT_DIR/summary.md"
 JOB_SUMMARY="$OUT_DIR/job-summary.md"
@@ -201,6 +203,55 @@ MD
 
   regression_name="$(triage_rust_test_name "$case_name")"
   generate_regression_rs "$regression_name" "$case_dir/regression.rs"
+  cat > "$case_dir/replay.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+RR_BIN="\${RR_BIN:-$RR_BIN_DEFAULT}"
+RSCRIPT_BIN="\${RSCRIPT_BIN:-$RSCRIPT_BIN_DEFAULT}"
+WORK_DIR="\${WORK_DIR:-\$(mktemp -d)}"
+echo "[replay] case: $case_name ($opt_tag)"
+echo "[replay] work: \$WORK_DIR"
+set +e
+"\$RSCRIPT_BIN" --vanilla "$case_dir/reference.R" >"\$WORK_DIR/reference.stdout" 2>"\$WORK_DIR/reference.stderr"
+ref_status=\$?
+"\$RR_BIN" "$case_dir/case.rr" -o "\$WORK_DIR/compiled.R" "-$opt_tag" >"\$WORK_DIR/compiler.stdout" 2>"\$WORK_DIR/compiler.stderr"
+compile_status=\$?
+if [[ \$compile_status -eq 0 ]]; then
+  "\$RSCRIPT_BIN" --vanilla "\$WORK_DIR/compiled.R" >"\$WORK_DIR/compiled.stdout" 2>"\$WORK_DIR/compiled.stderr"
+  compiled_status=\$?
+else
+  compiled_status=\$compile_status
+fi
+set -e
+echo "[replay] reference status: \$ref_status"
+echo "[replay] compiled status: \$compiled_status"
+echo "[replay] original reference status: $ref_status"
+echo "[replay] original compiled status: $compiled_status"
+echo "[replay] outputs captured in \$WORK_DIR"
+SH
+  chmod +x "$case_dir/replay.sh"
+  cat > "$case_dir/reduce.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+RR_BIN="\${RR_BIN:-$RR_BIN_DEFAULT}" RSCRIPT_BIN="\${RSCRIPT_BIN:-$RSCRIPT_BIN_DEFAULT}" \
+  "$ROOT/scripts/triage_driver.sh" reduce differential "$case_dir" "\${1:-$case_dir/reduced.rr}"
+SH
+  chmod +x "$case_dir/reduce.sh"
+  cat > "$case_dir/meta.json" <<JSON
+{
+  "schema": "rr-triage-case",
+  "version": 1,
+  "kind": "differential",
+  "case": "$case_name",
+  "opt": "$opt_tag",
+  "reference_status": "$ref_status",
+  "compiled_status": "$compiled_status",
+  "case_dir": "$case_dir",
+  "replay_script": "$case_dir/replay.sh",
+  "reduce_script": "$case_dir/reduce.sh",
+  "regression": "$case_dir/regression.rs"
+}
+JSON
   TEXT_SKELETONS=$((TEXT_SKELETONS + 1))
 
   printf '%s\t%s\t%s\t%s\t%s\n' "$case_name" "$opt_tag" "$ref_status" "$compiled_status" "$case_dir" >> "$INDEX"
@@ -220,6 +271,9 @@ MD
   - \`$case_dir/compiled.stdout\`
   - \`$case_dir/compiled.stderr\`
   - \`$case_dir/regression.rs\`
+  - \`$case_dir/replay.sh\`
+  - \`$case_dir/reduce.sh\`
+  - \`$case_dir/meta.json\`
 
 MD
 

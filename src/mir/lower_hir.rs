@@ -59,6 +59,8 @@ impl<'a> MirLowerer<'a> {
             "list",
             "sum",
             "mean",
+            "var",
+            "prod",
             "min",
             "max",
             "abs",
@@ -87,9 +89,30 @@ impl<'a> MirLowerer<'a> {
             "pmax",
             "pmin",
             "print",
+            "paste",
+            "paste0",
+            "sprintf",
+            "cat",
+            "names",
+            "rownames",
+            "colnames",
+            "sort",
+            "order",
+            "match",
+            "unique",
+            "duplicated",
+            "anyDuplicated",
+            "any",
+            "all",
+            "which",
             "is.na",
             "is.finite",
             "numeric",
+            "character",
+            "logical",
+            "integer",
+            "double",
+            "rep",
             "rep.int",
             "vector",
             "matrix",
@@ -1064,6 +1087,8 @@ impl<'a> MirLowerer<'a> {
                                     | "list"
                                     | "sum"
                                     | "mean"
+                                    | "var"
+                                    | "prod"
                                     | "min"
                                     | "max"
                                     | "abs"
@@ -1092,9 +1117,30 @@ impl<'a> MirLowerer<'a> {
                                     | "pmax"
                                     | "pmin"
                                     | "print"
+                                    | "paste"
+                                    | "paste0"
+                                    | "sprintf"
+                                    | "cat"
+                                    | "names"
+                                    | "rownames"
+                                    | "colnames"
+                                    | "sort"
+                                    | "order"
+                                    | "match"
+                                    | "unique"
+                                    | "duplicated"
+                                    | "anyDuplicated"
+                                    | "any"
+                                    | "all"
+                                    | "which"
                                     | "is.na"
                                     | "is.finite"
                                     | "numeric"
+                                    | "character"
+                                    | "logical"
+                                    | "integer"
+                                    | "double"
+                                    | "rep"
                                     | "rep.int"
                                     | "vector"
                                     | "matrix"
@@ -1480,6 +1526,8 @@ impl<'a> MirLowerer<'a> {
                     | "list"
                     | "sum"
                     | "mean"
+                    | "var"
+                    | "prod"
                     | "min"
                     | "max"
                     | "abs"
@@ -1508,9 +1556,30 @@ impl<'a> MirLowerer<'a> {
                     | "pmax"
                     | "pmin"
                     | "print"
+                    | "paste"
+                    | "paste0"
+                    | "sprintf"
+                    | "cat"
+                    | "names"
+                    | "rownames"
+                    | "colnames"
+                    | "sort"
+                    | "order"
+                    | "match"
+                    | "unique"
+                    | "duplicated"
+                    | "anyDuplicated"
+                    | "any"
+                    | "all"
+                    | "which"
                     | "is.na"
                     | "is.finite"
                     | "numeric"
+                    | "character"
+                    | "logical"
+                    | "integer"
+                    | "double"
+                    | "rep"
                     | "rep.int"
                     | "vector"
                     | "matrix"

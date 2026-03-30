@@ -33,6 +33,7 @@ impl<'a> Parser<'a> {
     fn dotted_segment_name(kind: &TokenKind) -> Option<String> {
         match kind {
             TokenKind::Ident(n) => Some(n.clone()),
+            TokenKind::Match => Some("match".to_string()),
             // Allow common R-style dotted names like `is.na` / `is.null`.
             TokenKind::Na => Some("na".to_string()),
             TokenKind::Null => Some("null".to_string()),
@@ -78,9 +79,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_dotted_ident(&mut self, err_context: &str) -> RR<String> {
-        let mut out = match &self.current.kind {
-            TokenKind::Ident(n) => n.clone(),
-            _ => bail_at!(
+        let mut out = match Self::dotted_segment_name(&self.current.kind) {
+            Some(name) => name,
+            None => bail_at!(
                 self.current.span,
                 "RR.ParseError",
                 RRCode::E0001,

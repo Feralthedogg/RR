@@ -149,47 +149,48 @@ pub(super) fn eval_const(
     if !visiting.insert(vid) {
         return None;
     }
-    let out =
-        match &fn_ir.values[vid].kind {
-            ValueKind::Const(l) => Some(l.clone()),
-            ValueKind::Unary { op, rhs } => {
-                let r = eval_const(fn_ir, *rhs, memo, visiting)?;
-                match (op, r) {
-                    (crate::syntax::ast::UnaryOp::Neg, Lit::Int(i)) => Some(Lit::Int(-i)),
-                    (crate::syntax::ast::UnaryOp::Neg, Lit::Float(f)) => Some(Lit::Float(-f)),
-                    (crate::syntax::ast::UnaryOp::Not, Lit::Bool(b)) => Some(Lit::Bool(!b)),
-                    (crate::syntax::ast::UnaryOp::Formula, _) => None,
-                    _ => None,
-                }
-            }
-            ValueKind::Binary { op, lhs, rhs } => {
-                let l = eval_const(fn_ir, *lhs, memo, visiting)?;
-                let r = eval_const(fn_ir, *rhs, memo, visiting)?;
-                eval_binary_const(*op, l, r)
-            }
-            ValueKind::Phi { args } => {
-                if args.is_empty() {
-                    None
-                } else {
-                    let first = eval_const(fn_ir, args[0].0, memo, visiting)?;
-                    for (v, _) in &args[1..] {
-                        if eval_const(fn_ir, *v, memo, visiting) != Some(first.clone()) {
-                            return None;
-                        }
-                    }
-                    Some(first)
-                }
-            }
-            ValueKind::Call { callee, args, .. } => match callee.as_str() {
-                "nrow" if args.len() == 1 => matrix_known_dims(fn_ir, args[0], memo, visiting)
-                    .map(|(rows, _)| Lit::Int(rows)),
-                "ncol" if args.len() == 1 => matrix_known_dims(fn_ir, args[0], memo, visiting)
-                    .map(|(_, cols)| Lit::Int(cols)),
+    let out = match &fn_ir.values[vid].kind {
+        ValueKind::Const(l) => Some(l.clone()),
+        ValueKind::Unary { op, rhs } => {
+            let r = eval_const(fn_ir, *rhs, memo, visiting)?;
+            match (op, r) {
+                (crate::syntax::ast::UnaryOp::Neg, Lit::Int(i)) => Some(Lit::Int(-i)),
+                (crate::syntax::ast::UnaryOp::Neg, Lit::Float(f)) => Some(Lit::Float(-f)),
+                (crate::syntax::ast::UnaryOp::Not, Lit::Bool(b)) => Some(Lit::Bool(!b)),
+                (crate::syntax::ast::UnaryOp::Formula, _) => None,
                 _ => None,
-            },
-            ValueKind::Intrinsic { .. } => None,
+            }
+        }
+        ValueKind::Binary { op, lhs, rhs } => {
+            let l = eval_const(fn_ir, *lhs, memo, visiting)?;
+            let r = eval_const(fn_ir, *rhs, memo, visiting)?;
+            eval_binary_const(*op, l, r)
+        }
+        ValueKind::Phi { args } => {
+            if args.is_empty() {
+                None
+            } else {
+                let first = eval_const(fn_ir, args[0].0, memo, visiting)?;
+                for (v, _) in &args[1..] {
+                    if eval_const(fn_ir, *v, memo, visiting) != Some(first.clone()) {
+                        return None;
+                    }
+                }
+                Some(first)
+            }
+        }
+        ValueKind::Call { callee, args, .. } => match callee.as_str() {
+            "nrow" if args.len() == 1 => {
+                matrix_known_rows(fn_ir, args[0], memo, visiting).map(Lit::Int)
+            }
+            "ncol" if args.len() == 1 => {
+                matrix_known_cols(fn_ir, args[0], memo, visiting).map(Lit::Int)
+            }
             _ => None,
-        };
+        },
+        ValueKind::Intrinsic { .. } => None,
+        _ => None,
+    };
     visiting.remove(&vid);
     memo.insert(vid, out.clone());
     out
@@ -203,6 +204,26 @@ pub(super) fn matrix_known_dims(
 ) -> Option<(i64, i64)> {
     let mut seen = FxHashSet::default();
     matrix_known_dims_inner(fn_ir, vid, memo, visiting, &mut seen)
+}
+
+fn matrix_known_rows(
+    fn_ir: &FnIR,
+    vid: ValueId,
+    memo: &mut FxHashMap<ValueId, Option<Lit>>,
+    visiting: &mut FxHashSet<ValueId>,
+) -> Option<i64> {
+    let mut seen = FxHashSet::default();
+    matrix_known_axis_inner(fn_ir, vid, memo, visiting, &mut seen, true)
+}
+
+fn matrix_known_cols(
+    fn_ir: &FnIR,
+    vid: ValueId,
+    memo: &mut FxHashMap<ValueId, Option<Lit>>,
+    visiting: &mut FxHashSet<ValueId>,
+) -> Option<i64> {
+    let mut seen = FxHashSet::default();
+    matrix_known_axis_inner(fn_ir, vid, memo, visiting, &mut seen, false)
 }
 
 fn matrix_known_dims_inner(
@@ -229,6 +250,49 @@ fn matrix_known_dims_inner(
             let first = matrix_known_dims_inner(fn_ir, args.first()?.0, memo, visiting, seen)?;
             for (src, _) in &args[1..] {
                 if matrix_known_dims_inner(fn_ir, *src, memo, visiting, seen)? != first {
+                    return None;
+                }
+            }
+            Some(first)
+        }
+        _ => None,
+    }
+}
+
+fn matrix_known_axis_inner(
+    fn_ir: &FnIR,
+    vid: ValueId,
+    memo: &mut FxHashMap<ValueId, Option<Lit>>,
+    visiting: &mut FxHashSet<ValueId>,
+    seen: &mut FxHashSet<ValueId>,
+    rows: bool,
+) -> Option<i64> {
+    if !seen.insert(vid) {
+        return None;
+    }
+    if let Some((_, known_rows, known_cols)) = fn_ir.values[vid].value_term.matrix_parts() {
+        if rows {
+            if let Some(dim) = known_rows {
+                return Some(dim);
+            }
+        } else if let Some(dim) = known_cols {
+            return Some(dim);
+        }
+    }
+    match &fn_ir.values[vid].kind {
+        ValueKind::Call { callee, args, .. } if callee == "matrix" && args.len() >= 3 => {
+            let dim_arg = if rows { args[1] } else { args[2] };
+            as_integral(&eval_const(fn_ir, dim_arg, memo, visiting)?)
+        }
+        ValueKind::Load { var } => {
+            let src = unique_assign_source_for_var(fn_ir, var)?;
+            matrix_known_axis_inner(fn_ir, src, memo, visiting, seen, rows)
+        }
+        ValueKind::Phi { args } => {
+            let first =
+                matrix_known_axis_inner(fn_ir, args.first()?.0, memo, visiting, seen, rows)?;
+            for (src, _) in &args[1..] {
+                if matrix_known_axis_inner(fn_ir, *src, memo, visiting, seen, rows)? != first {
                     return None;
                 }
             }
@@ -430,5 +494,66 @@ pub(super) fn is_zero_number(lit: &Lit) -> bool {
         Lit::Int(i) => *i == 0,
         Lit::Float(f) => *f == 0.0,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mir::def::{Facts, FnIR, Terminator, ValueKind};
+    use crate::typeck::TypeTerm;
+
+    #[test]
+    fn eval_const_reads_partial_matrix_dims_from_value_terms() {
+        let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
+        let b0 = fn_ir.add_block();
+        fn_ir.entry = b0;
+        fn_ir.body_head = b0;
+
+        let mat = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "stats::model.matrix".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.values[mat].value_term =
+            TypeTerm::MatrixDim(Box::new(TypeTerm::Double), Some(3), None);
+
+        let nrow_v = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "nrow".to_string(),
+                args: vec![mat],
+                names: vec![None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let ncol_v = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "ncol".to_string(),
+                args: vec![mat],
+                names: vec![None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[b0].term = Terminator::Return(Some(nrow_v));
+
+        let mut memo = FxHashMap::default();
+        let mut visiting = FxHashSet::default();
+        assert_eq!(
+            eval_const(&fn_ir, nrow_v, &mut memo, &mut visiting),
+            Some(Lit::Int(3))
+        );
+
+        let mut memo = FxHashMap::default();
+        let mut visiting = FxHashSet::default();
+        assert_eq!(eval_const(&fn_ir, ncol_v, &mut memo, &mut visiting), None);
     }
 }

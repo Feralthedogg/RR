@@ -1,0 +1,627 @@
+# Stats
+
+Stats package direct interop surface.
+Part of the [R Interop](../r-interop.md) reference.
+
+## Direct Surface
+
+- `stats::median`
+- `stats::median.default`
+- `stats::sd`
+- `stats::lm`
+- `stats::glm`
+- `stats::predict`
+- `stats::predict.lm`
+- `stats::predict.glm`
+- `stats::simulate`
+- `stats::summary.manova`
+- `stats::summary.lm`
+- `stats::summary.glm`
+- `stats::summary.aov`
+- `stats::summary.stepfun`
+- `stats::quantile`
+- `stats::as.formula`
+- `stats::coef`
+- `stats::coefficients`
+- `stats::fitted`
+- `stats::fitted.values`
+- `stats::resid`
+- `stats::residuals`
+- `stats::residuals.lm`
+- `stats::residuals.glm`
+- `stats::hatvalues`
+- `stats::hat`
+- `stats::cooks.distance`
+- `stats::covratio`
+- `stats::dfbeta`
+- `stats::dfbetas`
+- `stats::dffits`
+- `stats::rstandard`
+- `stats::rstudent`
+- `stats::weighted.residuals`
+- `stats::influence`
+- `stats::influence.measures`
+- `stats::qr.influence`
+- `stats::lm.influence`
+- `stats::vcov`
+- `stats::confint`
+- `stats::confint.lm`
+- `stats::confint.default`
+- `stats::model.matrix`
+- `stats::AIC`
+- `stats::BIC`
+- `stats::logLik`
+- `stats::deviance`
+- `stats::sigma`
+- `stats::nobs`
+- `stats::df.residual`
+- `stats::anova`
+- `stats::update`
+- `stats::terms`
+- `stats::getCall`
+- `stats::model.frame`
+- `stats::model.frame.default`
+- `stats::glm.fit`
+- `stats::lm.fit`
+- `stats::lm.wfit`
+- `stats::lsfit`
+- `stats::loadings`
+- `stats::makepredictcall`
+- `stats::na.contiguous`
+- `stats::na.action`
+- `stats::napredict`
+- `stats::naresid`
+- `stats::naprint`
+- `stats::weights`
+- `stats::model.weights`
+- `stats::offset`
+- `stats::model.offset`
+- `stats::na.omit`
+- `stats::na.exclude`
+- `stats::na.pass`
+- `stats::na.fail`
+- `stats::model.matrix.default`
+- `stats::model.matrix.lm`
+- `stats::update.default`
+- `stats::update.formula`
+- `stats::glm.control`
+- `stats::drop.terms`
+- `stats::is.empty.model`
+- `stats::binomial`
+- `stats::gaussian`
+- `stats::poisson`
+- `stats::formula`
+- `stats::reformulate`
+- `stats::terms.formula`
+- `stats::delete.response`
+- `stats::get_all_vars`
+- `stats::model.response`
+- `stats::model.extract`
+- `stats::case.names`
+- `stats::complete.cases`
+- `stats::replications`
+- `stats::fivenum`
+- `stats::symnum`
+- `stats::sortedXyData`
+- `stats::contrasts`
+- `stats::contr.treatment`
+- `stats::contr.sum`
+- `stats::contr.helmert`
+- `stats::contr.SAS`
+- `stats::contr.poly`
+- `stats::dnorm`
+- `stats::pnorm`
+- `stats::qnorm`
+- `stats::rnorm`
+- `stats::dbinom`
+- `stats::pbinom`
+- `stats::qbinom`
+- `stats::rbinom`
+- `stats::dpois`
+- `stats::ppois`
+- `stats::qpois`
+- `stats::rpois`
+- `stats::dunif`
+- `stats::punif`
+- `stats::qunif`
+- `stats::runif`
+- `stats::dgamma`
+- `stats::pgamma`
+- `stats::qgamma`
+- `stats::rgamma`
+- `stats::dbeta`
+- `stats::pbeta`
+- `stats::qbeta`
+- `stats::rbeta`
+- `stats::dt`
+- `stats::pt`
+- `stats::qt`
+- `stats::rt`
+- `stats::df`
+- `stats::pf`
+- `stats::qf`
+- `stats::rf`
+- `stats::dchisq`
+- `stats::pchisq`
+- `stats::qchisq`
+- `stats::rchisq`
+- `stats::dexp`
+- `stats::pexp`
+- `stats::qexp`
+- `stats::rexp`
+- `stats::dlnorm`
+- `stats::plnorm`
+- `stats::qlnorm`
+- `stats::rlnorm`
+- `stats::dweibull`
+- `stats::pweibull`
+- `stats::qweibull`
+- `stats::rweibull`
+- `stats::dcauchy`
+- `stats::pcauchy`
+- `stats::qcauchy`
+- `stats::rcauchy`
+- `stats::dgeom`
+- `stats::pgeom`
+- `stats::qgeom`
+- `stats::rgeom`
+- `stats::dhyper`
+- `stats::phyper`
+- `stats::qhyper`
+- `stats::rhyper`
+- `stats::dnbinom`
+- `stats::pnbinom`
+- `stats::qnbinom`
+- `stats::rnbinom`
+- `stats::dlogis`
+- `stats::plogis`
+- `stats::qlogis`
+- `stats::rlogis`
+- `stats::pbirthday`
+- `stats::qbirthday`
+- `stats::ptukey`
+- `stats::qtukey`
+- `stats::psmirnov`
+- `stats::qsmirnov`
+- `stats::rsmirnov`
+- `stats::acf2AR`
+- `stats::dsignrank`
+- `stats::psignrank`
+- `stats::qsignrank`
+- `stats::rsignrank`
+- `stats::dwilcox`
+- `stats::pwilcox`
+- `stats::qwilcox`
+- `stats::rwilcox`
+- `stats::p.adjust`
+- `stats::ppoints`
+- `stats::qqnorm`
+- `stats::qqplot`
+- `stats::qqline`
+- `stats::dist`
+- `stats::toeplitz`
+- `stats::toeplitz2`
+- `stats::diffinv`
+- `stats::polym`
+- `stats::asOneSidedFormula`
+- `stats::variable.names`
+- `stats::addmargins`
+- `stats::ftable`
+- `stats::xtabs`
+- `stats::isoreg`
+- `stats::smooth`
+- `stats::smoothEnds`
+- `stats::line`
+- `stats::varimax`
+- `stats::promax`
+- `stats::density`
+- `stats::ecdf`
+- `stats::poly`
+- `stats::prcomp`
+- `stats::cmdscale`
+- `stats::princomp`
+- `stats::cancor`
+- `stats::power.anova.test`
+- `stats::power.prop.test`
+- `stats::power.t.test`
+- `stats::cov`
+- `stats::cor`
+- `stats::var`
+- `stats::cov.wt`
+- `stats::cov2cor`
+- `stats::mahalanobis`
+- `stats::rWishart`
+- `stats::r2dtable`
+- `stats::dmultinom`
+- `stats::rmultinom`
+- `stats::IQR`
+- `stats::mad`
+- `stats::weighted.mean`
+- `stats::runmed`
+- `stats::filter`
+- `stats::decompose`
+- `stats::spectrum`
+- `stats::spec.pgram`
+- `stats::spec.taper`
+- `stats::plot.spec.coherency`
+- `stats::plot.spec.phase`
+- `stats::stl`
+- `stats::t.test`
+- `stats::wilcox.test`
+- `stats::binom.test`
+- `stats::prop.test`
+- `stats::poisson.test`
+- `stats::chisq.test`
+- `stats::fisher.test`
+- `stats::cor.test`
+- `stats::ks.test`
+- `stats::shapiro.test`
+- `stats::ansari.test`
+- `stats::bartlett.test`
+- `stats::mauchly.test`
+- `stats::Box.test`
+- `stats::fligner.test`
+- `stats::friedman.test`
+- `stats::kruskal.test`
+- `stats::mantelhaen.test`
+- `stats::mcnemar.test`
+- `stats::mood.test`
+- `stats::oneway.test`
+- `stats::prop.trend.test`
+- `stats::quade.test`
+- `stats::var.test`
+- `stats::termplot`
+- `stats::pairwise.t.test`
+- `stats::pairwise.wilcox.test`
+- `stats::pairwise.prop.test`
+- `stats::approx`
+- `stats::approxfun`
+- `stats::ksmooth`
+- `stats::lowess`
+- `stats::loess`
+- `stats::loess.control`
+- `stats::loess.smooth`
+- `stats::spline`
+- `stats::splinefun`
+- `stats::smooth.spline`
+- `stats::supsmu`
+- `stats::interaction.plot`
+- `stats::lag.plot`
+- `stats::monthplot`
+- `stats::scatter.smooth`
+- `stats::biplot`
+- `stats::aggregate`
+- `stats::aggregate.data.frame`
+- `stats::aggregate.ts`
+- `stats::ave`
+- `stats::reorder`
+- `stats::relevel`
+- `stats::aov`
+- `stats::manova`
+- `stats::TukeyHSD`
+- `stats::alias`
+- `stats::proj`
+- `stats::loglin`
+- `stats::model.tables`
+- `stats::factanal`
+- `stats::heatmap`
+- `stats::add1`
+- `stats::drop1`
+- `stats::extractAIC`
+- `stats::add.scope`
+- `stats::drop.scope`
+- `stats::factor.scope`
+- `stats::dummy.coef`
+- `stats::dummy.coef.lm`
+- `stats::effects`
+- `stats::setNames`
+- `stats::step`
+- `stats::optim`
+- `stats::optimHess`
+- `stats::optimize`
+- `stats::optimise`
+- `stats::nlm`
+- `stats::nlminb`
+- `stats::constrOptim`
+- `stats::uniroot`
+- `stats::integrate`
+- `stats::HoltWinters`
+- `stats::StructTS`
+- `stats::KalmanForecast`
+- `stats::KalmanRun`
+- `stats::KalmanSmooth`
+- `stats::arima`
+- `stats::arima0`
+- `stats::tsdiag`
+- `stats::family`
+- `stats::make.link`
+- `stats::quasi`
+- `stats::quasibinomial`
+- `stats::quasipoisson`
+- `stats::inverse.gaussian`
+- `stats::SSasymp`
+- `stats::SSasympOff`
+- `stats::SSasympOrig`
+- `stats::SSbiexp`
+- `stats::SSfol`
+- `stats::SSfpl`
+- `stats::SSgompertz`
+- `stats::SSlogis`
+- `stats::SSmicmen`
+- `stats::SSweibull`
+- `stats::selfStart`
+- `stats::numericDeriv`
+- `stats::deriv`
+- `stats::deriv3`
+- `stats::nls`
+- `stats::nls.control`
+- `stats::getInitial`
+- `stats::ls.diag`
+- `stats::ls.print`
+- `stats::ar`
+- `stats::ar.yw`
+- `stats::ar.mle`
+- `stats::ar.burg`
+- `stats::ar.ols`
+- `stats::arima.sim`
+- `stats::ARMAacf`
+- `stats::ARMAtoMA`
+- `stats::spec.ar`
+- `stats::kernel`
+- `stats::is.tskernel`
+- `stats::df.kernel`
+- `stats::bandwidth.kernel`
+- `stats::kernapply`
+- `stats::convolve`
+- `stats::fft`
+- `stats::mvfft`
+- `stats::nextn`
+- `stats::density.default`
+- `stats::bw.nrd`
+- `stats::bw.nrd0`
+- `stats::bw.ucv`
+- `stats::bw.bcv`
+- `stats::bw.SJ`
+- `stats::ts`
+- `stats::as.ts`
+- `stats::ts.intersect`
+- `stats::ts.union`
+- `stats::frequency`
+- `stats::time`
+- `stats::cycle`
+- `stats::is.ts`
+- `stats::is.mts`
+- `stats::hasTsp`
+- `stats::tsp`
+- `stats::start`
+- `stats::end`
+- `stats::deltat`
+- `stats::window`
+- `stats::lag`
+- `stats::embed`
+- `stats::as.dist`
+- `stats::as.hclust`
+- `stats::as.dendrogram`
+- `stats::cophenetic`
+- `stats::rect.hclust`
+- `stats::stepfun`
+- `stats::as.stepfun`
+- `stats::is.stepfun`
+- `stats::plot.stepfun`
+- `stats::plot.ecdf`
+- `stats::plot.ts`
+- `stats::screeplot`
+- `stats::dendrapply`
+- `stats::is.leaf`
+- `stats::order.dendrogram`
+- `stats::kmeans`
+- `stats::hclust`
+- `stats::cutree`
+- `stats::acf`
+- `stats::pacf`
+- `stats::ccf`
+
+Selected stats calls now also keep direct type information at the RR call boundary:
+
+- `stats::median`, `stats::median.default` -> scalar double
+- `stats::sd` -> scalar double
+- `stats::quantile` -> vector double
+- `stats::predict` -> vector double
+- `stats::predict.lm`, `stats::predict.glm` -> vector double
+- `stats::simulate` -> dataframe-like result
+- `stats::summary.lm` -> named linear-model summary object with fields like `coefficients`, `sigma`, `r.squared`
+- `stats::summary.glm` -> named generalized-linear-model summary object with fields like `family`, `deviance`, `coefficients`, `dispersion`
+- `stats::summary.manova` -> named multivariate summary object with fields like `row.names`, `SS`, `Eigenvalues`, `stats`
+- `stats::summary.aov` -> list of ANOVA-table objects
+- `stats::summary.stepfun` -> null
+- `stats::coef`, `stats::coefficients`, `stats::fitted`, `stats::fitted.values`, `stats::resid`, `stats::residuals`, `stats::residuals.lm`, `stats::residuals.glm`, `stats::hatvalues`, `stats::hat`, `stats::cooks.distance`, `stats::covratio`, `stats::dffits`, `stats::rstandard`, `stats::rstudent`, `stats::weighted.residuals` -> vector double
+- `stats::dfbeta`, `stats::dfbetas` -> matrix double
+- `stats::influence` -> named diagnostics object with fields like `hat`, `coefficients`, `sigma`, `wt.res`
+- `stats::influence.measures` -> named diagnostics object with fields like `infmat`, `is.inf`, `call`
+- `stats::qr.influence` -> named diagnostics object with fields like `hat`, `sigma`
+- `stats::lm.influence` -> named diagnostics object with fields like `hat`, `coefficients`, `sigma`, `wt.res`
+- `stats::vcov`, `stats::confint`, `stats::confint.lm`, `stats::confint.default`, `stats::model.matrix` -> matrix double; `model.matrix(...)` preserves locally-known row counts for visible RR `data.frame` inputs and models built from them, and for simple visible additive formulas plus intercept toggles like `y ~ x`, `y ~ x + z`, `y ~ 0 + x + z`, `y ~ -1 + x + z`, `y ~ x + 0 + z`, `y ~ x + z - 1`, `y ~ x + z - 0`, or `y ~ -1 + 1 + x + z` it also preserves the design-matrix column count
+- `stats::AIC`, `stats::BIC`, `stats::logLik`, `stats::deviance`, `stats::sigma` -> scalar double
+- `stats::nobs`, `stats::df.residual` -> scalar int
+- `base::summary` -> list-like opaque object by default; `summary(stats::lm(...))` and `summary(stats::glm(...))` narrow to named summary lists with fields like `coefficients`, residual vectors, scalar score fields, and `summary(glm).family.family` / `summary(glm).family.link`
+- `stats::update` -> list-like opaque object
+- `stats::terms` -> list-like opaque object by default; `terms(stats::lm(...))` and `terms(stats::glm(...))` narrow to a named metadata object with fields like `term.labels`, `order`, `factors`, and list-like `variables` / `predvars`
+- `stats::getCall` -> opaque call/language object
+- `stats::model.frame`, `stats::model.frame.default` -> dataframe-like result; when `data=` is a visible RR dataframe, or when called on an `lm`/`glm` or `update(model, ...)` result built from visible RR data, the named schema is preserved
+- `stats::glm.fit`, `stats::lm.fit`, `stats::lm.wfit`, `stats::lsfit` -> named fit-result object with coefficient, residual, fitted-value, and rank/deviance metadata
+- `stats::loadings` -> matrix double
+- `stats::makepredictcall` -> opaque call object
+- `stats::na.contiguous` -> first-argument preserving broad shape
+- `stats::na.action` -> vector int action descriptor
+- `stats::napredict`, `stats::naresid` -> second-argument preserving broad shape
+- `stats::naprint` -> scalar char
+- `stats::weights`, `stats::model.weights`, `stats::model.offset` -> vector double
+- `stats::offset` -> first-argument preserving numeric shape
+- `stats::na.omit`, `stats::na.exclude`, `stats::na.pass`, `stats::na.fail` -> first-argument preserving broad shape
+- `stats::model.matrix.default`, `stats::model.matrix.lm` -> matrix double; the same local row/column precision rules as `stats::model.matrix` apply
+- `stats::update.default` -> model-like result preserving the input model family broadly enough for follow-up helpers
+- `stats::update.formula`, `stats::drop.terms` -> formula/terms-like opaque object
+- `stats::glm.control` -> named list with fields like `epsilon`, `maxit`, `trace`
+- `stats::is.empty.model` -> scalar logical
+- `stats::anova` -> matrix-like opaque table
+- `stats::lm` / `stats::glm` -> list-like opaque model object
+- `stats::binomial`, `stats::gaussian`, `stats::poisson` -> list-like family object
+Distribution helpers on the current direct surface behave like this:
+- density / probability / quantile helpers such as `stats::dnorm`, `stats::pnorm`, `stats::qnorm`, `stats::dbinom`, `stats::pbinom`, `stats::qbinom`, `stats::dpois`, `stats::ppois`, `stats::qpois`, `stats::dunif`, `stats::punif`, `stats::qunif`, `stats::dgamma`, `stats::pgamma`, `stats::qgamma`, `stats::dbeta`, `stats::pbeta`, `stats::qbeta`, `stats::dt`, `stats::pt`, `stats::qt`, `stats::df`, `stats::pf`, `stats::qf`, `stats::dchisq`, `stats::pchisq`, `stats::qchisq`, `stats::dexp`, `stats::pexp`, `stats::qexp`, `stats::dlnorm`, `stats::plnorm`, `stats::qlnorm`, `stats::dweibull`, `stats::pweibull`, `stats::qweibull`, `stats::dcauchy`, `stats::pcauchy`, `stats::qcauchy`, `stats::dgeom`, `stats::pgeom`, `stats::qgeom`, `stats::dhyper`, `stats::phyper`, `stats::qhyper`, `stats::dnbinom`, `stats::pnbinom`, `stats::qnbinom`, `stats::dlogis`, `stats::plogis`, `stats::qlogis`, `stats::dsignrank`, `stats::psignrank`, `stats::qsignrank`, `stats::dwilcox`, `stats::pwilcox`, `stats::qwilcox` narrow to scalar-or-vector double results depending on vectorization
+- `stats::pbirthday`, `stats::qbirthday`, `stats::ptukey`, `stats::qtukey`, `stats::psmirnov`, `stats::qsmirnov` also narrow to scalar-or-vector double results depending on vectorization
+- `stats::rnorm`, `stats::runif`, `stats::rgamma`, `stats::rbeta`, `stats::rt`, `stats::rf`, `stats::rchisq`, `stats::rexp`, `stats::rlnorm`, `stats::rweibull`, `stats::rcauchy`, `stats::rlogis` -> vector double
+- `stats::rsmirnov` -> vector double
+- `stats::rpois`, `stats::rbinom`, `stats::rgeom`, `stats::rhyper`, `stats::rnbinom`, `stats::rsignrank`, `stats::rwilcox` -> vector int
+- `stats::acf2AR` -> matrix double
+- `stats::p.adjust` -> scalar-or-vector double depending on input vectorization
+- `stats::ppoints` -> vector double
+- `stats::dist` -> vector double `dist` object
+- `stats::toeplitz`, `stats::toeplitz2`, `stats::polym` -> matrix double
+- `stats::diffinv` -> vector double
+- `stats::asOneSidedFormula` -> formula-like opaque object
+- `stats::variable.names` -> null
+- `stats::addmargins`, `stats::ftable`, `stats::xtabs` -> matrix double
+- `stats::isoreg` -> named isotonic-regression result with fields like `x`, `y`, `yf`, `yc`, `iKnots`, `isOrd`
+- `stats::medpolish` -> named list with fields like `overall`, `row`, `col`, `residuals`, `name`
+- `stats::smooth`, `stats::smoothEnds` -> vector double
+- `stats::line` -> named Tukey-line result with fields like `coefficients`, `residuals`, `fitted.values`
+- `stats::varimax`, `stats::promax` -> named rotation result with fields `loadings`, `rotmat`
+- `stats::density` -> named list with fields like `x`, `y`, `bw`, `n`
+- `stats::qqnorm` -> named list with `x` and `y`
+- `stats::qqplot` -> named list with `x` and `y`
+- `stats::qqline` -> null
+- `stats::ecdf` -> opaque callable object
+- `stats::poly` -> matrix double
+- `stats::prcomp` -> named list with fields like `sdev`, `rotation`, and `x`
+- `stats::cmdscale` -> matrix double
+- `stats::princomp` -> named list with fields like `sdev`, `loadings`, `scores`, `center`, `scale`
+- `stats::cancor` -> named list with fields like `cor`, `xcoef`, `ycoef`, `xcenter`, `ycenter`
+- `stats::power.anova.test`, `stats::power.prop.test`, `stats::power.t.test` -> named power-analysis result with scalar numeric fields and text metadata like `method` / `note`
+- `stats::cov`, `stats::cor`, `stats::var` -> scalar double for vector inputs and matrix double for matrix-like inputs
+- `stats::cov.wt` -> named list with fields like `cov`, `center`, `n.obs`
+- `stats::cov2cor` -> matrix double
+- `stats::mahalanobis` -> vector double
+- `stats::rWishart` -> array-like double result
+- `stats::r2dtable` -> list of integer matrices
+- `stats::dmultinom` -> scalar double
+- `stats::rmultinom` -> matrix int
+- `stats::IQR`, `stats::mad` -> scalar double
+- `stats::weighted.mean` -> scalar double
+- `stats::runmed` -> vector double
+- `stats::filter` -> ts-like vector/matrix preserving the first argument's broad numeric shape
+- `stats::decompose` -> named list with fields like `x`, `seasonal`, `trend`, `random`, `figure`, `type`
+- `stats::spectrum` -> named list with fields like `freq`, `spec`, `df`, `bandwidth`, `method`
+- `stats::spec.pgram` -> named spectral-analysis result with fields like `freq`, `spec`, `coh`, `phase`, `df`, `bandwidth`, `method`
+- `stats::spec.taper` -> first-argument preserving broad shape
+- `stats::plot.spec.coherency`, `stats::plot.spec.phase` -> null
+- `stats::stl` -> named list with fields like `time.series`, `weights`, `win`, `deg`, `inner`, `outer`
+- `stats::t.test`, `stats::wilcox.test`, `stats::binom.test`, `stats::prop.test`, `stats::poisson.test`, `stats::chisq.test`, `stats::fisher.test`, `stats::cor.test`, `stats::ks.test`, `stats::shapiro.test`, `stats::ansari.test`, `stats::bartlett.test`, `stats::mauchly.test`, `stats::Box.test`, `stats::fligner.test`, `stats::friedman.test`, `stats::kruskal.test`, `stats::mantelhaen.test`, `stats::mcnemar.test`, `stats::mood.test`, `stats::oneway.test`, `stats::prop.trend.test`, `stats::quade.test`, `stats::var.test` -> named test-result objects with fields like `statistic`, `p.value`, `estimate`, `method`
+- `stats::pairwise.t.test`, `stats::pairwise.wilcox.test`, `stats::pairwise.prop.test` -> named objects with fields like `p.value`, `method`, `p.adjust.method`
+- `stats::termplot` -> list-like result; `plot = false` yields per-term data-frame-like `x`/`y` pairs
+- `stats::approx`, `stats::ksmooth`, `stats::lowess`, `stats::loess.smooth`, `stats::spline`, `stats::supsmu` -> named lists with `x` and `y`
+- `stats::interaction.plot`, `stats::lag.plot`, `stats::monthplot`, `stats::scatter.smooth`, `stats::biplot` -> null
+- `stats::loess` -> named model-like list with fields like `n`, `fitted`, `residuals`, `s`, `divisor`, `xnames`, `weights`
+- `stats::loess.control` -> named list with fields like `surface`, `statistics`, `cell`, `iterations`, `iterTrace`
+- `stats::smooth.spline` -> named list with fields like `x`, `y`, `w`, `yin`, `df`, `lambda`
+- `stats::approxfun`, `stats::splinefun` -> opaque callable objects
+- `stats::aggregate`, `stats::aggregate.data.frame` -> dataframe-like result
+- `stats::aggregate.ts` -> ts-like vector/matrix preserving the first argument's broad numeric shape
+- `stats::reshape` -> dataframe-like result
+- `stats::ave` -> vector preserving the first argument's broad element kind
+- `stats::reorder`, `stats::relevel` -> factor-like int vectors
+- `stats::aov` -> named model-like list with fields like `coefficients`, `residuals`, `fitted.values`, `rank`, `df.residual`
+- `stats::manova` -> named multivariate model object with matrix-valued coefficients, residuals, effects, and fitted values
+- `stats::TukeyHSD` -> list-like object of double matrices
+- `stats::alias` -> named list with fields like `Model`
+- `stats::proj` -> matrix double
+- `stats::loglin` -> named log-linear fit result with fields like `lrt`, `pearson`, `df`, `margin`, `fit`, `param`
+- `stats::model.tables` -> named list with fields like `tables` and `n`
+- `stats::factanal` -> named multivariate-analysis result with fields like `loadings`, `uniquenesses`, `correlation`, `STATISTIC`, `PVAL`
+- `stats::heatmap` -> named list with fields like `rowInd`, `colInd`, `Rowv`, `Colv`
+- `stats::add1`, `stats::drop1` -> anova-like dataframe result
+- `stats::extractAIC` -> vector double of length 2
+- `stats::add.scope`, `stats::drop.scope` -> vector char
+- `stats::factor.scope` -> named list with `drop` and `add` character vectors
+- `stats::dummy.coef`, `stats::dummy.coef.lm` -> list-like numeric coefficient object
+- `stats::effects` -> vector double
+- `stats::setNames` -> first-argument preserving broad shape
+- `stats::printCoefmat` -> matrix double
+- `stats::step` -> model-like result preserving the input model family broadly enough for follow-up helpers like `terms` and `model.frame`
+- `stats::optim` -> named optimizer result with fields like `par`, `value`, `counts`, `convergence`, `message`
+- `stats::optimHess` -> matrix double
+- `stats::optimize`, `stats::optimise` -> named list with `minimum` and `objective`
+- `stats::nlm` -> named optimizer result with fields like `minimum`, `estimate`, `gradient`, `code`, `iterations`
+- `stats::nlminb` -> named optimizer result with fields like `par`, `objective`, `convergence`, `iterations`, `evaluations`
+- `stats::constrOptim` -> named optimizer result with fields like `par`, `value`, `counts`, `convergence`, `outer.iterations`, `barrier.value`
+- `stats::uniroot` -> named root-finding result with fields like `root`, `f.root`, `iter`, `init.it`, `estim.prec`
+- `stats::integrate` -> named integration result with fields like `value`, `abs.error`, `subdivisions`, `message`, `call`
+- `stats::HoltWinters` -> named time-series model result with fields like `fitted`, `alpha`, `coefficients`, `SSE`
+- `stats::StructTS` -> named structural time-series result with fields like `coef`, `loglik`, `residuals`, `fitted`, `xtsp`
+- `stats::KalmanForecast` -> named state-space forecast result with fields like `pred`, `var`
+- `stats::KalmanRun` -> named Kalman-filter result with fields like `values`, `resid`, `states`
+- `stats::KalmanSmooth` -> named Kalman-smoother result with fields like `smooth`, `var`
+- `stats::arima` -> named ARIMA result with fields like `coef`, `sigma2`, `var.coef`, `arma`, `residuals`, `loglik`, `nobs`
+- `stats::arima0` -> legacy ARIMA result with fields like `coef`, `sigma2`, `var.coef`, `arma`, `residuals`, `loglik`
+- `stats::tsdiag` -> null
+- `stats::family`, `stats::binomial`, `stats::gaussian`, `stats::poisson`, `stats::quasibinomial`, `stats::quasipoisson`, `stats::inverse.gaussian` -> named family object with fields like `family`, `link`, `dispersion`
+- `stats::formula`, `stats::reformulate` -> formula-like opaque object
+- `stats::terms.formula`, `stats::delete.response` -> terms/formula-like opaque object
+- `stats::get_all_vars` -> dataframe-like result
+- `stats::model.response`, `stats::model.extract` -> vector-like extracted model component
+- `stats::case.names` -> vector char
+- `stats::complete.cases` -> vector logical
+- `stats::replications` -> vector int
+- `stats::fivenum` -> vector double of length 5
+- `stats::symnum` -> matrix char
+- `stats::contrasts`, `stats::contr.treatment`, `stats::contr.sum`, `stats::contr.helmert`, `stats::contr.SAS`, `stats::contr.poly` -> matrix double
+- `stats::make.link` -> named link object with fields like `name`, `linkfun`, `linkinv`, `mu.eta`, `valideta`
+- `stats::quasi` -> named family object with fields like `family`, `link`, `varfun`, `dispersion`
+- `stats::SSasymp`, `stats::SSasympOff`, `stats::SSasympOrig`, `stats::SSbiexp`, `stats::SSfol`, `stats::SSfpl`, `stats::SSgompertz`, `stats::SSlogis`, `stats::SSmicmen`, `stats::SSweibull` -> scalar-or-vector double depending on input vectorization
+- `stats::selfStart` -> self-start model callable object
+- `stats::numericDeriv` -> vector double result with attached derivative metadata left opaque
+- `stats::deriv`, `stats::deriv3` -> symbolic derivative expression-like object
+- `stats::nls` -> named nonlinear-model result with fields like `m`, `convInfo`, `dataClasses`, `control`
+- `stats::nls.control` -> named control list with fields like `maxiter`, `tol`, `minFactor`, `warnOnly`
+- `stats::getInitial` -> vector double
+- `stats::ls.diag` -> named list with fields like `std.dev`, `hat`, `std.res`, `stud.res`, `cooks`, `dfits`
+- `stats::ar` -> named autoregressive-model result with fields like `order`, `ar`, `aic`, `resid`, `frequency`
+- `stats::ar.yw`, `stats::ar.mle`, `stats::ar.burg` -> named autoregressive-model results with fields like `order`, `ar`, `aic`, `resid`, `frequency`
+- `stats::ar.ols` -> named autoregressive-model result with fields like `order`, `ar`, `aic`, `resid`, `x.intercept`
+- `stats::arima.sim` -> vector double
+- `stats::ARMAacf`, `stats::ARMAtoMA` -> vector double
+- `stats::spec.ar` -> named spectral-analysis result with fields like `freq`, `spec`, `series`, `method`
+- `stats::kernel` -> named kernel object with fields like `coef`, `m`
+- `stats::is.tskernel` -> scalar logical
+- `stats::df.kernel`, `stats::bandwidth.kernel` -> scalar double
+- `stats::kernapply` -> vector double
+- `stats::convolve`, `stats::fft` -> vector-like opaque numeric/complex result
+- `stats::mvfft` -> matrix-like opaque numeric/complex result
+- `stats::nextn` -> scalar int
+- `stats::density.default` -> named list with fields like `x`, `y`, `bw`, `n`, `old.coords`, `data.name`, `has.na`
+- `stats::bw.nrd`, `stats::bw.nrd0`, `stats::bw.ucv`, `stats::bw.bcv`, `stats::bw.SJ` -> scalar double
+- `stats::ts`, `stats::as.ts`, `stats::hasTsp`, `stats::window`, `stats::lag` -> ts-like vector/matrix preserving the first argument's broad numeric shape
+- `stats::ts.intersect`, `stats::ts.union` -> matrix preserving numeric element kind
+- `stats::frequency` -> scalar double
+- `stats::is.ts`, `stats::is.mts` -> scalar logical
+- `stats::tsp` -> vector double of length 3
+- `stats::start`, `stats::end` -> vector double
+- `stats::deltat` -> scalar double
+- `stats::time`, `stats::cycle` -> vector double
+- `stats::embed` -> matrix preserving numeric element kind
+- `stats::as.dist`, `stats::cophenetic` -> dist-like vector double
+- `stats::as.hclust` -> named `hclust`-like object with fields like `merge`, `height`, `order`, `dist.method`
+- `stats::as.dendrogram` -> dendrogram-like opaque object
+- `stats::rect.hclust` -> list of integer cluster-membership vectors
+- `stats::stepfun`, `stats::as.stepfun` -> opaque step-function callable object
+- `stats::is.stepfun`, `stats::is.leaf` -> scalar logical
+- `stats::plot.stepfun` -> named list with `t` and `y`
+- `stats::plot.ecdf`, `stats::plot.ts`, `stats::screeplot` -> null
+- `stats::dendrapply` -> dendrogram-like opaque object
+- `stats::order.dendrogram` -> vector int
+- `stats::kmeans` -> named list with fields like `cluster`, `centers`, `size`, `iter`
+- `stats::hclust` -> named list with fields like `merge`, `height`, `order`, `dist.method`
+- `stats::cutree` -> vector int
+- `stats::acf`, `stats::pacf`, `stats::ccf` -> named lists with fields like `lag`, `acf`, `n.used`, `type`, `series`, `snames`
+
+When `stats::predict` receives `newdata`, RR also preserves the symbolic output length from that `newdata` input when it can prove it.
+

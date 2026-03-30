@@ -1,0 +1,115 @@
+Usage: R CMD config [options] [VAR]
+
+Get the value of a basic R configure variable VAR which must be among
+those listed in the 'Variables' section below, or the header and
+library flags necessary for linking a front-end against R.
+
+Options:
+  -h, --help            print short help message and exit
+  -v, --version         print version info and exit
+      --cppflags        print pre-processor flags required to compile a
+			C/C++ file as part of a front-end using R as a library
+      --ldflags         print linker flags needed for linking a front-end
+                        against the R library
+      --no-user-files   ignore customization files under ~/.R
+      --no-site-files   ignore site customization files under R_HOME/etc
+      --all             print names and values of all variables below
+
+Variables:
+  AR            command to make static libraries
+  BLAS_LIBS     flags needed for linking against external BLAS libraries
+  CC            C compiler command
+  CFLAGS        C compiler flags
+  CC17          Ditto for the C17 or earlier compiler
+  C17FLAGS
+  CC23          Ditto for the C23 or later compiler
+  C23FLAGS
+  CPICFLAGS     special flags for compiling C code to be included in a
+		shared library
+  CPPFLAGS      C/C++ preprocessor flags, e.g. -I<dir> if you have
+		headers in a nonstandard directory <dir>
+  CXX           default compiler command for C++ code
+  CXXFLAGS      compiler flags for CXX
+  CXXPICFLAGS   special flags for compiling C++ code to be included in a
+		shared library
+  CXX11         compiler command for C++11 code
+  CXX11STD      flag used with CXX11 to enable C++11 support
+  CXX11FLAGS    further compiler flags for CXX11
+  CXX11PICFLAGS
+                special flags for compiling C++11 code to be included in
+                a shared library
+  CXX14         compiler command for C++14 code
+  CXX14STD      flag used with CXX14 to enable C++14 support
+  CXX14FLAGS    further compiler flags for CXX14
+  CXX14PICFLAGS
+                special flags for compiling C++14 code to be included in
+                a shared library
+  CXX17         compiler command for C++17 code
+  CXX17STD      flag used with CXX17 to enable C++17 support
+  CXX17FLAGS    further compiler flags for CXX17
+  CXX17PICFLAGS
+                special flags for compiling C++17 code to be included in
+                a shared library
+  CXX20         compiler command for C++20 code
+  CXX20STD      flag used with CXX20 to enable C++20 support
+  CXX20FLAGS    further compiler flags for CXX20
+  CXX23         compiler command for C++23 code
+  CXX23STD      flag used with CXX23 to enable C++23 support
+  CXX23FLAGS    further compiler flags for CXX23
+  CXX23PICFLAGS
+                special flags for compiling C++23 code to be included in
+                a shared library
+  CXX26         compiler command for C++26 code
+  CXX26STD      flag used with CXX26 to enable C++26 support
+  CXX26FLAGS    further compiler flags for CXX26
+  CXX26PICFLAGS
+                special flags for compiling C++26 code to be included in
+                a shared library
+  DYLIB_EXT	file extension (including '.') for dynamic libraries
+  DYLIB_LD      command for linking dynamic libraries which contain
+		object files from a C or Fortran compiler only
+  DYLIB_LDFLAGS
+		special flags used by DYLIB_LD
+  FC            Fortran compiler command
+  FFLAGS        fixed-form Fortran compiler flags
+  FCFLAGS       free-form Fortran 9x compiler flags
+  FLIBS         linker flags needed to link Fortran code
+  FPICFLAGS     special flags for compiling Fortran code to be turned
+		into a shared library
+  JAR           Java archive tool command
+  JAVA          Java interpreter command
+  JAVAC         Java compiler command
+  JAVAH         Java header and stub generator command
+  JAVA_HOME     path to the home of Java distribution
+  JAVA_LIBS     flags needed for linking against Java libraries
+  JAVA_CPPFLAGS C preprocessor flags needed for compiling JNI programs
+  LAPACK_LIBS   flags needed for linking against external LAPACK libraries
+  LIBnn         location for libraries, e.g. 'lib' or 'lib64' on this platform
+  LDFLAGS       linker flags, e.g. -L<dir> if you have libraries in a
+		nonstandard directory <dir>
+  LTO LTO_FC LTO_LD  flags for Link-Time Optimization
+  MAKE          Make command
+  NM            comand to display symbol tables
+  OBJC          Objective C compiler command
+  OBJCFLAGS     Objective C compiler flags
+  RANLIB        command to index static libraries
+  SAFE_FFLAGS   Safe (as conformant as possible) Fortran compiler flags
+  SHLIB_CFLAGS  additional CFLAGS used when building shared objects
+  SHLIB_CXXFLAGS
+                additional CXXFLAGS used when building shared objects
+  SHLIB_CXXLD   command for linking shared objects which contain
+		object files from a C++ compiler (and CXX11 CXX14 CXX17 CXX20 CXX23 CXX26)
+  SHLIB_CXXLDFLAGS
+		special flags used by SHLIB_CXXLD (and CXX11 CXX14 CXX17 CXX20 CXX23 CXX26)
+  SHLIB_EXT	file extension (including '.') for shared objects
+  SHLIB_FFLAGS  additional FFLAGS used when building shared objects
+  SHLIB_LD      command for linking shared objects which contain
+		object files from a C or Fortran compiler only
+  SHLIB_LDFLAGS
+		special flags used by SHLIB_LD
+  TCLTK_CPPFLAGS
+		flags needed for finding the tcl.h and tk.h headers
+  TCLTK_LIBS    flags needed for linking against the Tcl and Tk libraries
+
+  
+Report bugs at <https://bugs.R-project.org>.

@@ -55,6 +55,26 @@ fn backtick_items_in_markdown_section(
         .collect()
 }
 
+fn backtick_items_in_markdown_files(dir_rel: &str) -> BTreeSet<String> {
+    let dir = repo_root().join(dir_rel);
+    let mut items = BTreeSet::new();
+    let re = Regex::new(r#"- `([^`]+)`"#).expect("regex");
+
+    let mut entries: Vec<_> = fs::read_dir(&dir)
+        .expect("failed to read markdown dir")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect();
+    entries.sort();
+
+    for path in entries {
+        let text = fs::read_to_string(&path).expect("failed to read markdown file");
+        items.extend(re.captures_iter(&text).map(|caps| caps[1].to_string()));
+    }
+
+    items
+}
+
 fn long_options(src: &str) -> BTreeSet<String> {
     let re = Regex::new(r"--[a-z][a-z0-9-]*").expect("regex");
     re.find_iter(src).map(|m| m.as_str().to_string()).collect()
@@ -71,16 +91,11 @@ fn docs_direct_interop_surface_matches_code() {
     let body = extract_function_body(&code, "pub(crate) fn is_supported_package_call");
     let code_calls = quoted_namespaced_calls(body);
 
-    let docs = read("docs/r-interop.md");
-    let doc_calls = backtick_items_in_markdown_section(
-        &docs,
-        "## Direct Interop Surface",
-        "## Tidy-Eval Surface",
-    );
+    let doc_calls = backtick_items_in_markdown_files("docs/r-interop");
 
     assert_eq!(
         doc_calls, code_calls,
-        "docs/r-interop.md direct interop surface drifted from call_model.rs"
+        "docs/r-interop/*.md direct interop surface drifted from call_model.rs"
     );
 }
 
@@ -154,6 +169,7 @@ fn docs_configuration_envs_match_public_config_surface() {
         "src/mir/opt/v_opt/debug.rs",
         "src/runtime/runtime_prelude.R",
         "tests/perf_regression_gate.rs",
+        "tests/example_perf_smoke.rs",
         "tests/common/mod.rs",
     ] {
         code_envs.extend(env_vars(&read(rel)));

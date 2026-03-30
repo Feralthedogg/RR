@@ -92,7 +92,10 @@ fn validate_function(fn_ir: &FnIR, user_arities: &FxHashMap<String, usize>) -> V
         }
         match &v.kind {
             ValueKind::Load { var } => {
-                if !assigned_vars.contains(var) && !is_runtime_reserved_symbol(var) {
+                if !assigned_vars.contains(var)
+                    && !is_runtime_reserved_symbol(var)
+                    && !is_namespaced_r_call(var)
+                {
                     let mut err = RRException::new(
                         "RR.SemanticError",
                         RRCode::E1001,

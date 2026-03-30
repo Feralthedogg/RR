@@ -12,6 +12,21 @@ fn stderr_text(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
 }
 
+fn assert_parse_failure(args: &[&str], expected: &str) {
+    let output = Command::new(rr_bin())
+        .args(args)
+        .output()
+        .expect("failed to run rr");
+    assert!(!output.status.success(), "expected parse failure");
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains(expected),
+        "expected parse diagnostic '{}', got:\n{}",
+        expected,
+        stderr
+    );
+}
+
 #[test]
 fn legacy_unknown_flag_is_reported() {
     let output = Command::new(rr_bin())
@@ -76,6 +91,71 @@ fn run_invalid_parallel_mode_value_is_reported() {
         "expected invalid-value diagnostic, got:\n{}",
         stderr
     );
+}
+
+#[test]
+fn legacy_missing_compiler_parallel_flag_values_are_reported() {
+    let cases = [
+        (
+            "--compiler-parallel-mode",
+            "Missing value after --compiler-parallel-mode (off|auto|on)",
+        ),
+        (
+            "--compiler-parallel-threads",
+            "Missing value after --compiler-parallel-threads",
+        ),
+        (
+            "--compiler-parallel-min-functions",
+            "Missing value after --compiler-parallel-min-functions",
+        ),
+        (
+            "--compiler-parallel-min-fn-ir",
+            "Missing value after --compiler-parallel-min-fn-ir",
+        ),
+        (
+            "--compiler-parallel-max-jobs",
+            "Missing value after --compiler-parallel-max-jobs",
+        ),
+    ];
+
+    for (flag, expected) in cases {
+        assert_parse_failure(&[flag], expected);
+    }
+}
+
+#[test]
+fn legacy_invalid_compiler_parallel_flag_values_are_reported() {
+    let cases = [
+        (
+            "--compiler-parallel-mode",
+            "bad",
+            "Invalid --compiler-parallel-mode. Use off|auto|on",
+        ),
+        (
+            "--compiler-parallel-threads",
+            "bad",
+            "Invalid --compiler-parallel-threads. Use a non-negative integer.",
+        ),
+        (
+            "--compiler-parallel-min-functions",
+            "bad",
+            "Invalid --compiler-parallel-min-functions. Use a non-negative integer.",
+        ),
+        (
+            "--compiler-parallel-min-fn-ir",
+            "bad",
+            "Invalid --compiler-parallel-min-fn-ir. Use a non-negative integer.",
+        ),
+        (
+            "--compiler-parallel-max-jobs",
+            "bad",
+            "Invalid --compiler-parallel-max-jobs. Use a non-negative integer.",
+        ),
+    ];
+
+    for (flag, value, expected) in cases {
+        assert_parse_failure(&[flag, value], expected);
+    }
 }
 
 #[test]

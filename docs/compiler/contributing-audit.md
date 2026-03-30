@@ -12,18 +12,24 @@ trust a result enough to ship or merge it.
 
 ## Current Status
 
-Manual audit status as of `2026-03-08`:
+Manual audit status as of `2026-03-31`:
 
 - No open `MUST` violations were found on active production paths under `src/**`.
 - Baseline verification passed:
   - `cargo check`
   - `cargo clippy --all-targets -- -D warnings`
-  - `cargo test -q`
+  - `bash scripts/test_tier.sh tier0`
+  - `bash scripts/test_tier.sh tier1`
+  - `bash scripts/optimizer_suite.sh legality`
   - `FUZZ_SECONDS=1 ./scripts/fuzz_smoke.sh`
 - Extended validation has also been exercised recently:
   - deterministic `O0/O1/O2` differential tests
+  - optimizer legality/heavy suites
+  - library package suite
+  - performance gate and example perf smoke
   - pass-by-pass verifier smoke
   - nightly soak triage/promotion pipeline
+  - recommended-package coverage reporting
 
 Recent items that were explicitly closed during audit/refactor work:
 
@@ -42,7 +48,9 @@ Run these commands from the repository root:
 scripts/contributing_audit.sh
 cargo check
 cargo clippy --all-targets -- -D warnings
-cargo test -q
+bash scripts/test_tier.sh tier0
+bash scripts/test_tier.sh tier1
+bash scripts/optimizer_suite.sh legality
 FUZZ_SECONDS=1 ./scripts/fuzz_smoke.sh
 ```
 
@@ -68,15 +76,20 @@ scripts/verify_cleanroom.sh --fast --files scripts/verify_cleanroom.sh
 ```
 
 `verify_cleanroom.sh` creates a detached worktree at `HEAD`, overlays only the
-selected current-tree files, then runs `fmt`, `check`, `clippy`, the full test
-suite, pass-by-pass verifier smoke, the contributing audit, fuzz smoke, and the
+selected current-tree files, then runs `fmt`, `check`, `clippy`, the tiered test
+stack, pass-by-pass verifier smoke, the contributing audit, fuzz smoke, and the
 docs build in that clean environment. Use `--files` whenever unrelated dirty
 changes are present in the source worktree. Use `--fast` when you want to verify
 the cleanroom wiring itself before paying for the full strict stack.
 
-CI runs the same audit in `--scan-only` mode against the diff for each PR/push.
-It does not run `--all` yet because the repository still has historical whole-tree
-debt that is being paid down incrementally.
+CI is now tiered rather than relying on one monolithic compiler job:
+
+- `tier0` fast gates
+- `tier1` library/package coverage
+- optimizer legality / heavy gates
+- perf gate
+- `tier2` runtime/example/differential lanes
+- nightly soak for fuzz, triage, and recommended-package coverage
 
 ## When To Do More
 
@@ -91,6 +104,8 @@ Run a deeper pass when you change any of these:
 Recommended extended checks:
 
 ```bash
+bash scripts/optimizer_suite.sh heavy
+bash scripts/perf_gate.sh
 FUZZ_SECONDS=5 ./scripts/fuzz_smoke.sh
 cargo test -q --test example_perf_smoke -- --ignored --nocapture
 ```

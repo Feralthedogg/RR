@@ -128,7 +128,7 @@ copy_backend_candidate_assets() {
 }
 
 update_docs_testing_links() {
-  python3 - "$ROOT/docs/testing.md" "$DATE_TAG" "$SKIP_RENJIN" <<'PY'
+  python3 - "$ROOT/docs/compiler/testing.md" "$DATE_TAG" "$SKIP_RENJIN" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -192,7 +192,7 @@ PY
 }
 
 update_docs_testing_diffusion_summary() {
-  python3 - "$ROOT/docs/testing.md" "$ROOT/docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv" <<'PY'
+  python3 - "$ROOT/docs/compiler/testing.md" "$ROOT/docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv" <<'PY'
 import csv
 import sys
 from pathlib import Path
@@ -218,7 +218,7 @@ PY
 }
 
 update_docs_testing_optimizer_delta_table() {
-  python3 - "$ROOT/docs/testing.md" "$ROOT/docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv" "$ROOT/docs/assets/backend-candidate-runtime-${DATE_TAG}.csv" <<'PY'
+  python3 - "$ROOT/docs/compiler/testing.md" "$ROOT/docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv" "$ROOT/docs/assets/backend-candidate-runtime-${DATE_TAG}.csv" <<'PY'
 import csv
 import sys
 from pathlib import Path
@@ -298,4 +298,4 @@ echo "  docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv"
 echo "  docs/assets/diffusion-backend-runtime-${DATE_TAG}.svg"
 echo "  docs/assets/backend-candidate-runtime-${DATE_TAG}.csv"
 echo "  docs/assets/backend-candidate-runtime-${DATE_TAG}.svg"
-echo "  docs/testing.md"
+echo "  docs/compiler/testing.md"

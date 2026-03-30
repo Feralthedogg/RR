@@ -1,0 +1,170 @@
+# Tools
+
+Tools package direct interop surface.
+Part of the [R Interop](../r-interop.md) reference.
+
+## Direct Surface
+
+- `tools::toTitleCase`
+- `tools::file_path_as_absolute`
+- `tools::R_user_dir`
+- `tools::md5sum`
+- `tools::sha256sum`
+- `tools::file_ext`
+- `tools::file_path_sans_ext`
+- `tools::list_files_with_exts`
+- `tools::list_files_with_type`
+- `tools::dependsOnPkgs`
+- `tools::getVignetteInfo`
+- `tools::pkgVignettes`
+- `tools::delimMatch`
+- `tools::parse_URI_reference`
+- `tools::parse_Rd`
+- `tools::Rd2txt`
+- `tools::Rd2HTML`
+- `tools::Rd2latex`
+- `tools::Rd2ex`
+- `tools::Rdindex`
+- `tools::read.00Index`
+- `tools::checkRd`
+- `tools::RdTextFilter`
+- `tools::Rd2txt_options`
+- `tools::encoded_text_to_latex`
+- `tools::parseLatex`
+- `tools::getBibstyle`
+- `tools::deparseLatex`
+- `tools::latexToUtf8`
+- `tools::showNonASCII`
+- `tools::showNonASCIIfile`
+- `tools::standard_package_names`
+- `tools::base_aliases_db`
+- `tools::base_rdxrefs_db`
+- `tools::CRAN_aliases_db`
+- `tools::CRAN_archive_db`
+- `tools::CRAN_package_db`
+- `tools::CRAN_authors_db`
+- `tools::CRAN_current_db`
+- `tools::CRAN_check_results`
+- `tools::CRAN_check_details`
+- `tools::CRAN_check_issues`
+- `tools::CRAN_rdxrefs_db`
+- `tools::summarize_CRAN_check_status`
+- `tools::package_dependencies`
+- `tools::Rd_db`
+- `tools::.print.via.format`
+- `tools::add_datalist`
+- `tools::Adobe_glyphs`
+- `tools::analyze_license`
+- `tools::as.Rconcordance`
+- `tools::assertCondition`
+- `tools::assertError`
+- `tools::assertWarning`
+- `tools::bibstyle`
+- `tools::buildVignette`
+- `tools::buildVignettes`
+- `tools::charset_to_Unicode`
+- `tools::check_package_dois`
+- `tools::check_package_urls`
+- `tools::check_packages_in_dir`
+- `tools::check_packages_in_dir_changes`
+- `tools::check_packages_in_dir_details`
+- `tools::checkDocFiles`
+- `tools::checkDocStyle`
+- `tools::checkFF`
+- `tools::checkMD5sums`
+- `tools::checkPoFile`
+- `tools::checkPoFiles`
+- `tools::checkRdaFiles`
+- `tools::checkRdContents`
+- `tools::checkReplaceFuns`
+- `tools::checkS3methods`
+- `tools::checkTnF`
+- `tools::checkVignettes`
+- `tools::codoc`
+- `tools::codocClasses`
+- `tools::codocData`
+- `tools::compactPDF`
+- `tools::find_gs_cmd`
+- `tools::findHTMLlinks`
+- `tools::followConcordance`
+- `tools::getDepList`
+- `tools::HTMLheader`
+- `tools::installFoundDepends`
+- `tools::langElts`
+- `tools::loadPkgRdMacros`
+- `tools::loadRdMacros`
+- `tools::make_translations_pkg`
+- `tools::makevars_site`
+- `tools::makevars_user`
+- `tools::matchConcordance`
+- `tools::nonS3methods`
+- `tools::package_native_routine_registration_skeleton`
+- `tools::package.dependencies`
+- `tools::pkg2HTML`
+- `tools::pkgDepends`
+- `tools::pskill`
+- `tools::psnice`
+- `tools::R`
+- `tools::Rcmd`
+- `tools::Rdiff`
+- `tools::resaveRdaFiles`
+- `tools::SIGCHLD`
+- `tools::SIGCONT`
+- `tools::SIGHUP`
+- `tools::SIGINT`
+- `tools::SIGKILL`
+- `tools::SIGQUIT`
+- `tools::SIGSTOP`
+- `tools::SIGTERM`
+- `tools::SIGTSTP`
+- `tools::SIGUSR1`
+- `tools::SIGUSR2`
+- `tools::startDynamicHelp`
+- `tools::summarize_check_packages_in_dir_depends`
+- `tools::summarize_check_packages_in_dir_results`
+- `tools::summarize_check_packages_in_dir_timings`
+- `tools::SweaveTeXFilter`
+- `tools::testInstalledBasic`
+- `tools::testInstalledPackage`
+- `tools::testInstalledPackages`
+- `tools::texi2dvi`
+- `tools::texi2pdf`
+- `tools::toHTML`
+- `tools::toRd`
+- `tools::undoc`
+- `tools::update_PACKAGES`
+- `tools::update_pkg_po`
+- `tools::vignetteDepends`
+- `tools::vignetteEngine`
+- `tools::vignetteInfo`
+- `tools::write_PACKAGES`
+- `tools::xgettext`
+- `tools::xgettext2pot`
+- `tools::xngettext`
+
+Selected tools calls also keep direct type information:
+
+- `tools::toTitleCase`, `tools::file_path_as_absolute`, `tools::R_user_dir` -> scalar char
+- `tools::md5sum`, `tools::sha256sum` -> vector char
+- `tools::file_ext`, `tools::file_path_sans_ext` -> scalar or vector char depending on input shape
+- `tools::list_files_with_exts`, `tools::list_files_with_type`, `tools::dependsOnPkgs` -> vector char
+- `tools::getVignetteInfo` -> matrix char
+- `tools::pkgVignettes` -> named vignette list with fields like `docs`, `names`, `engines`, `dir`, `pkgdir`
+- `tools::delimMatch` -> scalar int
+- `tools::parse_URI_reference` -> dataframe-like table with URI components
+- `tools::parse_Rd` -> list-like opaque object
+- `tools::Rd2txt_options` -> named options list with fields such as `width`, `itemBullet`, `showURLs`
+- `tools::Rd2HTML`, `tools::Rd2latex`, `tools::Rd2ex` -> scalar char
+- `tools::Rd2txt`, `tools::RdTextFilter`, `tools::checkRd`, `tools::showNonASCII`, `tools::showNonASCIIfile` -> vector char
+- `tools::Rdindex` -> null
+- `tools::read.00Index` -> matrix char
+- `tools::encoded_text_to_latex` -> scalar or vector char depending on input shape
+- `tools::parseLatex` -> list-like opaque object
+- `tools::getBibstyle` -> scalar char
+- `tools::deparseLatex` -> scalar char
+- `tools::latexToUtf8` -> list-like opaque object
+- `tools::standard_package_names`, `tools::base_aliases_db`, `tools::base_rdxrefs_db`, `tools::CRAN_aliases_db`, `tools::CRAN_archive_db`, `tools::CRAN_rdxrefs_db` -> list-like opaque object
+- `tools::CRAN_package_db`, `tools::CRAN_authors_db`, `tools::CRAN_current_db`, `tools::CRAN_check_results`, `tools::CRAN_check_details`, `tools::CRAN_check_issues` -> dataframe-like table
+- `tools::summarize_CRAN_check_status` -> vector char
+- `tools::package_dependencies`, `tools::Rd_db` -> list-like opaque object
+

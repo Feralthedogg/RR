@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  check:
-    name: Check & Format
+  tier0:
+    name: Tier 0 / Fast Gates
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,13 +34,15 @@ jobs:
         shell: bash
         run: bash scripts/ci_contributing_audit.sh
 
-  test:
-    name: Core Tests + Perf Gate
+      - name: Tier 0 Fast Tests
+        run: bash scripts/test_tier.sh tier0
+
+  tier1:
+    name: Tier 1 / Library Packages
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      RR_PERF_GATE_MS: "45000"
-      RR_PERF_O2_O1_RATIO: "12"
+    timeout-minutes: 90
+    needs:
+      - tier0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,27 +58,145 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends r-base-core
 
-      - name: Run Core Tests
-        run: >
-          cargo test -q -- --skip simulation_examples_compile_across_opt_levels
-          --skip simulation_examples_run_at_o2
-          --skip simulation_reference_examples_match_between_o0_and_o2
-          --skip benchmark_examples_compile_at_o2
-          --skip benchmark_examples_run_at_o2
-          --skip tesseract_compiles_across_opt_levels
-          --skip tesseract_runs_at_o2
+      - name: Tier 1 Library Package Suite
+        run: bash scripts/test_tier.sh tier1
 
-  differential:
-    name: Differential + Pass Verify
+  optimizer-legality:
+    name: Optimizer / Legality
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs:
+      - tier0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rscript
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core
+
+      - name: Optimizer Legality Suite
+        run: bash scripts/optimizer_suite.sh legality
+
+  optimizer-heavy:
+    name: Optimizer / Heavy
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs:
+      - tier0
+      - tier1
+      - optimizer-legality
+    env:
+      RR_PERF_GATE_MS: "45000"
+      RR_PERF_O2_O1_RATIO: "12"
+      RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS: "6500"
+      RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS: "30000"
+      RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rscript
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core
+
+      - name: Optimizer Heavy Suite
+        run: bash scripts/optimizer_suite.sh heavy
+
+  perf-gate:
+    name: Perf Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs:
+      - tier0
+      - optimizer-legality
+    env:
+      RR_PERF_GATE_MS: "45000"
+      RR_PERF_O2_O1_RATIO: "12"
+      RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS: "6500"
+      RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS: "30000"
+      RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rscript
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core
+
+      - name: Perf Gate Suite
+        run: bash scripts/perf_gate.sh
+
+  tier2-main:
+    name: Tier 2 / Heavy Runtime and Examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs:
+      - tier0
+      - tier1
+      - optimizer-legality
+    env:
+      RR_PERF_GATE_MS: "45000"
+      RR_PERF_O2_O1_RATIO: "12"
+      RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS: "6500"
+      RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS: "30000"
+      RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rscript
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core
+
+      - name: Tier 2 Main Suite
+        run: bash scripts/test_tier.sh tier2-main
+
+  tier2-differential:
+    name: Tier 2 / Differential and Pass Verify (${{ matrix.slice_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs:
+      - tier0
+      - tier1
+      - optimizer-legality
     strategy:
       fail-fast: false
       matrix:
         include:
-          - differential_count: "12"
+          - slice_name: diff-a
+            differential_count: "12"
             differential_seed: "0xA11CE5EED55AA11C"
-          - differential_count: "12"
+          - slice_name: diff-b
+            differential_count: "12"
             differential_seed: "0x5EED123456789ABC"
     env:
       RR_RANDOM_DIFFERENTIAL_COUNT: ${{ matrix.differential_count }}
@@ -96,46 +216,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends r-base-core
 
-      - name: Random Differential
-        run: cargo test -q --test random_differential
-
-      - name: Pass Verify Examples
-        run: RR_VERIFY_EACH_PASS=1 cargo test -q --test pass_verify_examples
-
-  examples:
-    name: Example Smoke + Perf
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS: "6500"
-      RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS: "30000"
-      RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Rscript
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends r-base-core
-
-      - name: Simulation Example Smoke
-        run: cargo test -q --test example_simulations
-
-      - name: Benchmark Example Smoke
-        run: cargo test -q --test benchmark_examples_smoke
-
-      - name: Tesseract Smoke
-        run: cargo test -q --test tesseract_runtime_smoke
-
-      - name: Example Perf Smoke
-        run: cargo test -q --test example_perf_smoke -- --ignored --nocapture
+      - name: Tier 2 Differential Suite
+        run: bash scripts/test_tier.sh tier2-differential
 
   fuzz-smoke:
     name: Fuzz Smoke

@@ -192,6 +192,6 @@ path so you can inspect or rerun the exact emitted `.gen.R`.
 
 ## Related Manuals
 
-- [Configuration](configuration.md)
-- [Compiler Pipeline](compiler-pipeline.md)
+- [Configuration](../configuration.md)
+- [Compiler Pipeline](pipeline.md)
 - [Testing and Quality Gates](testing.md)

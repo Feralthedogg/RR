@@ -1,9 +1,12 @@
 use crate::codegen::mir_emit::MapEntry;
 use crate::compiler::pipeline::{
     CompileOutputOptions, EmitFunctionCache, compile_output_cache_salt,
-    compile_with_configs_using_emit_cache,
+    compile_with_configs_using_emit_cache_and_compiler_parallel,
 };
-use crate::compiler::{OptLevel, ParallelConfig, compile_with_configs_with_options};
+use crate::compiler::{
+    CompilerParallelConfig, OptLevel, ParallelConfig,
+    compile_with_configs_with_options_and_compiler_parallel,
+};
 use crate::error::{InternalCompilerError, RR, RRCode, RRException, Stage};
 use crate::typeck::TypeConfig;
 use crate::utils::Span;
@@ -115,6 +118,19 @@ enum StrictArtifactTier {
     Phase3Memory,
 }
 
+fn required_artifact_cache_key<'a>(cache_key: Option<&'a String>, context: &str) -> RR<&'a String> {
+    cache_key.ok_or_else(|| {
+        InternalCompilerError::new(
+            Stage::Codegen,
+            format!(
+                "incremental artifact cache key missing while {}: pipeline invariant violated",
+                context
+            ),
+        )
+        .into_exception()
+    })
+}
+
 impl StrictArtifactTier {
     fn label(self) -> &'static str {
         match self {
@@ -142,7 +158,7 @@ impl DiskFnEmitCache {
 }
 
 impl EmitFunctionCache for DiskFnEmitCache {
-    fn load(&mut self, key: &str) -> RR<Option<(String, Vec<MapEntry>)>> {
+    fn load(&self, key: &str) -> RR<Option<(String, Vec<MapEntry>)>> {
         let (code_path, map_path) = self.paths(key);
         if !code_path.is_file() || !map_path.is_file() {
             return Ok(None);
@@ -166,7 +182,7 @@ impl EmitFunctionCache for DiskFnEmitCache {
         Ok(Some((code, map)))
     }
 
-    fn store(&mut self, key: &str, code: &str, map: &[MapEntry]) -> RR<()> {
+    fn store(&self, key: &str, code: &str, map: &[MapEntry]) -> RR<()> {
         let (code_path, map_path) = self.paths(key);
         if let Some(parent) = code_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
@@ -219,12 +235,13 @@ pub fn compile_with_configs_incremental(
     options: IncrementalOptions,
     session: Option<&mut IncrementalSession>,
 ) -> RR<IncrementalCompileOutput> {
-    compile_with_configs_incremental_with_output_options(
+    compile_with_configs_incremental_with_output_options_and_compiler_parallel(
         entry_path,
         entry_input,
         opt_level,
         type_cfg,
         parallel_cfg,
+        CompilerParallelConfig::default(),
         options,
         CompileOutputOptions::default(),
         session,
@@ -262,6 +279,31 @@ pub fn compile_with_configs_incremental_with_output_options(
     output_options: CompileOutputOptions,
     session: Option<&mut IncrementalSession>,
 ) -> RR<IncrementalCompileOutput> {
+    compile_with_configs_incremental_with_output_options_and_compiler_parallel(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_cfg,
+        CompilerParallelConfig::default(),
+        options,
+        output_options,
+        session,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn compile_with_configs_incremental_with_output_options_and_compiler_parallel(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    compiler_parallel_cfg: CompilerParallelConfig,
+    options: IncrementalOptions,
+    output_options: CompileOutputOptions,
+    session: Option<&mut IncrementalSession>,
+) -> RR<IncrementalCompileOutput> {
     let mut resolved = options.resolve(session.is_some());
     if raw_r_debug_dump_requested() {
         // Raw debug dumps are emitted during the normal pipeline before the
@@ -272,12 +314,13 @@ pub fn compile_with_configs_incremental_with_output_options(
         resolved.phase3 = false;
     }
     if !resolved.enabled || (!resolved.phase1 && !resolved.phase2 && !resolved.phase3) {
-        let (r_code, source_map) = compile_with_configs_with_options(
+        let (r_code, source_map) = compile_with_configs_with_options_and_compiler_parallel(
             entry_path,
             entry_input,
             opt_level,
             type_cfg,
             parallel_cfg,
+            compiler_parallel_cfg,
             output_options,
         )?;
         return Ok(IncrementalCompileOutput {
@@ -343,43 +386,44 @@ pub fn compile_with_configs_incremental_with_output_options(
     }
 
     let (r_code, source_map) = if resolved.phase2 {
-        let mut fn_cache = DiskFnEmitCache::new(cache_root.join("function-emits"));
-        let (code, map, hits, misses) = compile_with_configs_using_emit_cache(
-            entry_path,
-            entry_input,
-            opt_level,
-            type_cfg,
-            parallel_cfg,
-            Some(&mut fn_cache),
-            output_options,
-        )?;
+        let fn_cache = DiskFnEmitCache::new(cache_root.join("function-emits"));
+        let (code, map, hits, misses) =
+            compile_with_configs_using_emit_cache_and_compiler_parallel(
+                crate::compiler::pipeline::CompilePipelineRequest {
+                    entry_path,
+                    entry_input,
+                    opt_level,
+                    type_cfg,
+                    parallel_cfg,
+                    compiler_parallel_cfg,
+                    cache: Some(&fn_cache),
+                    output_opts: output_options,
+                },
+            )?;
         stats.phase2_emit_hits = hits;
         stats.phase2_emit_misses = misses;
         (code, map)
     } else {
-        compile_with_configs_with_options(
+        compile_with_configs_with_options_and_compiler_parallel(
             entry_path,
             entry_input,
             opt_level,
             type_cfg,
             parallel_cfg,
+            compiler_parallel_cfg,
             output_options,
         )?
     };
     let built = CachedArtifact { r_code, source_map };
 
     if resolved.phase1 {
-        let cache_key = cache_key
-            .as_ref()
-            .expect("phase1 incremental artifact store requires cache key");
+        let cache_key = required_artifact_cache_key(cache_key.as_ref(), "storing phase1 artifact")?;
         store_artifact(&cache_root, cache_key, &built)?;
     }
     if resolved.phase3
         && let Some(s) = session
     {
-        let cache_key = cache_key
-            .as_ref()
-            .expect("phase3 incremental artifact store requires cache key");
+        let cache_key = required_artifact_cache_key(cache_key.as_ref(), "storing phase3 artifact")?;
         s.phase3_artifacts.insert(cache_key.clone(), built.clone());
     }
     if resolved.strict_verify {

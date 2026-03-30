@@ -52,6 +52,11 @@ cargo test -q --test case_regressions
 For the post-change audit pass used before merging compiler work, see
 [Contributing Audit Checklist](contributing-audit.md).
 
+The normative contributor rule set lives in
+[`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
+Use this page for verification flow and suite selection, and use the audit page
+to check that a patch still satisfies those repository-wide compiler rules.
+
 Audit helper:
 
 ```bash
@@ -192,6 +197,31 @@ silently.
 
 These cover command wiring, mode flags, and backend fallback behavior.
 
+### Surface Closure and Docs Sync
+
+- `base_surface_closure.rs`
+- `package_surface_closure.rs`
+- `docs_surface_sync.rs`
+
+These fence the regex-safe direct interop surface for core packages and verify
+that public docs surfaces such as CLI options, documented env vars, and direct
+interop listings stay synchronized with the implementation.
+
+### Runtime Contract and Helper Semantics
+
+- `runtime_contract.rs`
+- `runtime_dataflow_safety.rs`
+- `runtime_recycling_policy.rs`
+- `runtime_helper_scalar_fastpaths.rs`
+- `runtime_injection_options.rs`
+- `runtime_semantics_regression.rs`
+- `typed_parallel_wrapper.rs`
+
+These cover runtime helper guarantees that are narrower than broad
+"runtime parity" wording suggests: scalar fast paths, recycling policy,
+runtime-injection subset correctness, typed wrapper behavior, and dataflow
+safety around generated helper code.
+
 ### Stress and Determinism
 
 - `commercial_determinism.rs`
@@ -206,6 +236,18 @@ executes a hand-written reference R version, and compares `-O0/-O1/-O2`
 artifacts against the same reference output. `pass_verify_examples.rs` forces
 `RR_VERIFY_EACH_PASS=1` on representative examples so verifier regressions show
 up at the exact pass boundary instead of only at final emission time.
+
+### Verification and Tooling Smoke
+
+- `contributing_audit_smoke.rs`
+- `recommended_package_coverage_smoke.rs`
+- `verification_summary_smoke.rs`
+- `triage_reduce_smoke.rs`
+- `fuzz_regression_no_panic_invalid_mir.rs`
+
+These validate the verification system itself: audit-script behavior, nightly
+recommended-package coverage reporting, aggregated verification summaries,
+triage/reduction helpers, and checked-in fuzz-regression fences.
 
 ### Performance Gate
 
@@ -338,10 +380,10 @@ optimizer-matrix output into the published asset set.
 
 Artifacts:
 
-- raw data: [`signal-pipeline-runtime-2026-03-27.csv`](./assets/signal-pipeline-runtime-2026-03-27.csv)
+- raw data: [`signal-pipeline-runtime-2026-03-27.csv`](../assets/signal-pipeline-runtime-2026-03-27.csv)
 - chart:
 
-![Signal pipeline runtime comparison](./assets/signal-pipeline-runtime-2026-03-27.svg)
+![Signal pipeline runtime comparison](../assets/signal-pipeline-runtime-2026-03-27.svg)
 
 This slice used `target/release/RR` with `-O2 --no-incremental`, zero warmup
 runs, then three timed wall-clock runs per command. All non-parallel rows were
@@ -386,10 +428,10 @@ python3 scripts/bench_diffusion_backends.py --runs 3 --warmup 0
 
 Artifacts:
 
-- raw data: [`diffusion-backend-runtime-2026-03-27.csv`](./assets/diffusion-backend-runtime-2026-03-27.csv)
+- raw data: [`diffusion-backend-runtime-2026-03-27.csv`](../assets/diffusion-backend-runtime-2026-03-27.csv)
 - chart:
 
-![Diffusion backend runtime comparison](./assets/diffusion-backend-runtime-2026-03-27.svg)
+![Diffusion backend runtime comparison](../assets/diffusion-backend-runtime-2026-03-27.svg)
 
 These slices use `target/release/RR` with `-O0/-O1/-O2 --no-incremental`,
 zero warmup runs, then the requested timed wall-clock runs per command. Warm
@@ -424,10 +466,10 @@ python3 scripts/bench_backend_candidates.py --runs 3 --warmup 0
 
 Artifacts:
 
-- raw data: [`backend-candidate-runtime-2026-03-27.csv`](./assets/backend-candidate-runtime-2026-03-27.csv)
+- raw data: [`backend-candidate-runtime-2026-03-27.csv`](../assets/backend-candidate-runtime-2026-03-27.csv)
 - chart:
 
-![Backend candidate runtime comparison](./assets/backend-candidate-runtime-2026-03-27.svg)
+![Backend candidate runtime comparison](../assets/backend-candidate-runtime-2026-03-27.svg)
 
 These slices use the same setup as the diffusion notes: fresh
 `target/release/RR`, RR `-O0/-O1/-O2` cold rows, matching warm rows, and the
@@ -731,6 +773,14 @@ The CI workflow is expected to run:
 The example-heavy runtime suites run in a dedicated CI job so failures in
 `example_simulations`, `benchmark_examples_smoke`, or `tesseract_runtime_smoke`
 do not get buried inside the core Rust test log.
+
+This page groups tests by verification purpose rather than trying to duplicate
+every tier manifest entry inline. For the exact per-tier CI inventory, use:
+
+- `scripts/lib/test_manifests.sh`
+- `scripts/test_tier.sh`
+- `scripts/optimizer_suite.sh`
+- `scripts/perf_gate.sh`
 
 For compiler changes, targeted regression tests are preferred over broad snapshot updates.
 Use [Contributing Audit Checklist](contributing-audit.md) as the final manual sign-off pass.

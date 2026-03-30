@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-  echo "usage: $0 <triage|promote|smoke> <fuzz|differential|pass-verify> [args...]" >&2
+  echo "usage: $0 <triage|promote|smoke|reduce> <fuzz|differential|pass-verify> [args...]" >&2
   exit 1
 fi
 
@@ -55,6 +55,9 @@ case "$ACTION:$KIND" in
     ;;
   smoke:fuzz | smoke:differential | smoke:pass-verify)
     exec "$ROOT/scripts/smoke_triage_regressions.sh" "$KIND" "$@"
+    ;;
+  reduce:differential | reduce:pass-verify)
+    exec "$ROOT/scripts/reduce_triage_case.sh" "$KIND" "$@"
     ;;
   *)
     echo "unsupported action/kind combination: $ACTION $KIND" >&2

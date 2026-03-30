@@ -25,6 +25,30 @@ RR uses three interop tiers.
 The lists later on this page are authoritative for the direct tier. If a call is
 not listed there, do not assume RR models it deeply even if it still emits runnable R.
 
+`base::` is a special case: unlisted namespaced `base::` exports still stay on RR's
+direct surface through a conservative package-wide fallback, but they default to
+opaque/object-like typing unless a more precise rule is documented below.
+
+## Current Package Status
+
+As of the current RR surface:
+
+- the [base-priority package line](compatibility.md#base-priority-package-line)
+  is broadly implemented on RR's direct surface
+- that term includes `datasets`; today its strongest direct surface is
+  namespaced data objects with typed models rather than an export-for-export
+  function closure
+- `base` is effectively closed through explicit direct support plus a
+  conservative package-wide `base::` fallback for awkward operator/replacement
+  exports
+- `tcltk` is supported through a conservative proxy/direct surface, but not yet
+  documented as an exact export-for-export closure in the same way as the core
+  package line above
+- `readr`, `tidyr`, `dplyr`, and `ggplot2` also have large direct surfaces and
+  dedicated reference pages here
+- the next major compatibility frontier is the recommended package line
+  (`MASS`, `Matrix`, `survival`, `nlme`, `mgcv`, and similar)
+
 ## Practical Rule
 
 Prefer the most explicit tier RR can still reason about:
@@ -45,74 +69,156 @@ Prefer the most explicit tier RR can still reason about:
 
 `import r "pkg"` is namespace sugar. It does not emit `library("pkg")`.
 
+Direct interop support does not mean RR auto-imports package symbols into the
+current scope.
+
+- packages such as `graphics`, `grDevices`, `stats`, and `datasets` still need
+  `import r ...` if you want stable namespaced lowering instead of search-path
+  dependent fallback
+- common unqualified RR/base helpers such as `c`, `length`, and `print` are a
+  separate builtin surface; they work without `import r`, and explicit
+  `import r * as base from "base"` is only needed when you want namespaced
+  forms such as `base.c(...)` or `base.print(...)`
+
+Package data objects can also be accessed through the same namespace forms:
+
+- `import r * as datasets from "datasets"` then `datasets.iris`
+- `import r { iris as iris_df } from "datasets"` then `iris_df`
+
+Those lower to namespaced variable references such as `datasets::iris`.
+RR currently treats their precise type conservatively unless a direct typed model exists.
+
+Currently typed package-data bindings include:
+
+- `datasets::iris`
+- `datasets::mtcars`
+- `datasets::airquality`
+- `datasets::ToothGrowth`
+- `datasets::CO2`
+- `datasets::USArrests`
+- `datasets::cars`
+- `datasets::pressure`
+- `datasets::faithful`
+- `datasets::women`
+- `datasets::BOD`
+- `datasets::attitude`
+- `datasets::PlantGrowth`
+- `datasets::InsectSprays`
+- `datasets::sleep`
+- `datasets::Orange`
+- `datasets::rock`
+- `datasets::trees`
+- `datasets::esoph`
+- `datasets::stackloss`
+- `datasets::warpbreaks`
+- `datasets::quakes`
+- `datasets::LifeCycleSavings`
+- `datasets::ChickWeight`
+- `datasets::DNase`
+- `datasets::Formaldehyde`
+- `datasets::Indometh`
+- `datasets::Loblolly`
+- `datasets::Puromycin`
+- `datasets::USJudgeRatings`
+- `datasets::anscombe`
+- `datasets::attenu`
+- `datasets::chickwts`
+- `datasets::infert`
+- `datasets::longley`
+- `datasets::morley`
+- `datasets::npk`
+- `datasets::swiss`
+- `datasets::volcano`
+- `datasets::state.x77`
+- `datasets::USPersonalExpenditure`
+- `datasets::WorldPhones`
+- `datasets::EuStockMarkets`
+- `datasets::VADeaths`
+- `datasets::AirPassengers`
+- `datasets::JohnsonJohnson`
+- `datasets::Nile`
+- `datasets::lynx`
+- `datasets::nottem`
+- `datasets::sunspot.year`
+- `datasets::precip`
+- `datasets::islands`
+- `datasets::state.area`
+- `datasets::state.abb`
+- `datasets::state.name`
+- `datasets::state.region`
+- `datasets::state.division`
+- `datasets::airmiles`
+- `datasets::austres`
+- `datasets::co2`
+- `datasets::discoveries`
+- `datasets::fdeaths`
+- `datasets::ldeaths`
+- `datasets::mdeaths`
+- `datasets::nhtemp`
+- `datasets::sunspots`
+- `datasets::treering`
+- `datasets::uspop`
+- `datasets::rivers`
+- `datasets::UKDriverDeaths`
+- `datasets::UKgas`
+- `datasets::USAccDeaths`
+- `datasets::WWWusage`
+- `datasets::eurodist`
+- `datasets::UScitiesD`
+- `datasets::euro`
+- `datasets::stack.loss`
+- `datasets::sunspot.m2014`
+- `datasets::sunspot.month`
+- `datasets::LakeHuron`
+- `datasets::lh`
+- `datasets::presidents`
+- `datasets::Seatbelts`
+- `datasets::OrchardSprays`
+- `datasets::Theoph`
+- `datasets::penguins`
+- `datasets::penguins_raw`
+- `datasets::gait`
+- `datasets::crimtab`
+- `datasets::occupationalStatus`
+- `datasets::ability.cov`
+- `datasets::Harman23.cor`
+- `datasets::Harman74.cor`
+- `datasets::state.center`
+- `datasets::BJsales`
+- `datasets::BJsales.lead`
+- `datasets::beaver1`
+- `datasets::beaver2`
+- `datasets::euro.cross`
+- `datasets::randu`
+- `datasets::freeny`
+- `datasets::stack.x`
+- `datasets::freeny.x`
+- `datasets::freeny.y`
+- `datasets::iris3`
+- `datasets::Titanic`
+- `datasets::UCBAdmissions`
+- `datasets::HairEyeColor`
+
 ## Direct Interop Surface
 
-### Base/Data
+The direct interop surface is split into per-package reference pages.
+Each page lists every symbol RR recognizes on that package's direct tier.
 
-- `base::data.frame`
-
-### Stats
-
-- `stats::median`
-- `stats::sd`
-- `stats::lm`
-- `stats::glm`
-- `stats::predict`
-- `stats::quantile`
-- `stats::as.formula`
-
-### IO / Reshape
-
-- `readr::read_csv`
-- `readr::read_delim`
-- `readr::read_rds`
-- `readr::read_tsv`
-- `readr::write_csv`
-- `readr::write_delim`
-- `readr::write_rds`
-- `readr::write_tsv`
-- `tidyr::separate`
-- `tidyr::pivot_longer`
-- `tidyr::pivot_wider`
-- `tidyr::unite`
-
-### Graphics / Visualization
-
-- `graphics::plot`
-- `graphics::lines`
-- `graphics::legend`
-- `grDevices::png`
-- `grDevices::dev.off`
-- `ggplot2::aes`
-- `ggplot2::ggplot`
-- `ggplot2::geom_col`
-- `ggplot2::geom_bar`
-- `ggplot2::facet_grid`
-- `ggplot2::geom_line`
-- `ggplot2::geom_point`
-- `ggplot2::facet_wrap`
-- `ggplot2::ggtitle`
-- `ggplot2::labs`
-- `ggplot2::theme_bw`
-- `ggplot2::theme_minimal`
-- `ggplot2::ggsave`
-
-### dplyr Verbs
-
-- `dplyr::mutate`
-- `dplyr::filter`
-- `dplyr::full_join`
-- `dplyr::inner_join`
-- `dplyr::right_join`
-- `dplyr::select`
-- `dplyr::summarise`
-- `dplyr::arrange`
-- `dplyr::anti_join`
-- `dplyr::bind_rows`
-- `dplyr::group_by`
-- `dplyr::left_join`
-- `dplyr::rename`
-- `dplyr::semi_join`
+| Package | Page |
+| --- | --- |
+| base / data | [Base / Data](./r-interop/base.md) |
+| stats | [Stats](./r-interop/stats.md) |
+| stats4 | [Stats4](./r-interop/stats4.md) |
+| methods | [Methods](./r-interop/methods.md) |
+| compiler | [Compiler](./r-interop/compiler.md) |
+| utils | [Utils](./r-interop/utils.md) |
+| tools | [Tools](./r-interop/tools.md) |
+| parallel | [Parallel](./r-interop/parallel.md) |
+| splines | [Splines](./r-interop/splines.md) |
+| tcltk | [Tcl/Tk](./r-interop/tcltk.md) |
+| graphics / grDevices / ggplot2 / grid | [Graphics / Visualization](./r-interop/graphics.md) |
+| readr / tidyr | [IO / Reshape](./r-interop/io-reshape.md) |
+| dplyr / tidyr verbs | [dplyr / tidyr](./r-interop/dplyr.md) |
 
 ## Tidy-Eval Surface
 
@@ -202,4 +308,3 @@ let main <- function() {
 - [Language Reference](language.md)
 - [RR for R Users](r-for-r-users.md)
 - [Compatibility and Limits](compatibility.md)
-- [Runtime and Error Model](runtime-and-errors.md)

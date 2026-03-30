@@ -1,4 +1,5 @@
 use crate::codegen::mir_emit::MapEntry;
+use crate::compiler::scheduler::{CompilerParallelConfig, CompilerScheduler};
 use crate::error::{InternalCompilerError, Stage};
 use crate::mir::analyze::effects;
 use crate::syntax::parse::Parser;
@@ -9,7 +10,7 @@ use std::env;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -515,6 +516,40 @@ fn human_size(bytes: usize) -> String {
     }
 }
 
+fn fn_ir_work_size(fn_ir: &crate::mir::def::FnIR) -> usize {
+    fn_ir.values.len()
+        + fn_ir.blocks.len()
+        + fn_ir.blocks.iter().map(|bb| bb.instrs.len()).sum::<usize>()
+}
+
+fn emitted_segment_line_count(code: &str) -> u32 {
+    if code.is_empty() {
+        1
+    } else {
+        let base = code.lines().count() as u32;
+        if code.ends_with('\n') { base + 1 } else { base }
+    }
+}
+
+fn shifted_source_map_for_final_output_prefix(
+    mut map: Vec<MapEntry>,
+    final_code: &str,
+) -> Vec<MapEntry> {
+    const GENERATED_CODE_HEADER: &str = "# --- RR generated code (from user RR source) ---\n";
+    if map.is_empty() {
+        return map;
+    }
+    let Some(header_idx) = final_code.find(GENERATED_CODE_HEADER) else {
+        return map;
+    };
+    let prefix = &final_code[..header_idx + GENERATED_CODE_HEADER.len()];
+    let line_offset = prefix.bytes().filter(|b| *b == b'\n').count() as u32;
+    for entry in &mut map {
+        entry.r_line = entry.r_line.saturating_add(line_offset);
+    }
+    map
+}
+
 fn escape_r_string(input: &str) -> String {
     input
         .replace('\\', "\\\\")
@@ -535,9 +570,9 @@ fn normalize_module_path(path: &Path) -> PathBuf {
     }
 }
 
-pub(crate) trait EmitFunctionCache {
-    fn load(&mut self, key: &str) -> crate::error::RR<Option<(String, Vec<MapEntry>)>>;
-    fn store(&mut self, key: &str, code: &str, map: &[MapEntry]) -> crate::error::RR<()>;
+pub(crate) trait EmitFunctionCache: Send + Sync {
+    fn load(&self, key: &str) -> crate::error::RR<Option<(String, Vec<MapEntry>)>>;
+    fn store(&self, key: &str, code: &str, map: &[MapEntry]) -> crate::error::RR<()>;
 }
 
 fn stable_hash_bytes(bytes: &[u8]) -> u64 {
@@ -598,33 +633,241 @@ pub(crate) struct SourceAnalysisOutput {
     global_symbols: FxHashMap<crate::hir::def::SymbolId, String>,
 }
 
-pub(crate) struct MirSynthesisOutput {
-    all_fns: FxHashMap<String, crate::mir::def::FnIR>,
-    emit_order: Vec<String>,
-    emit_roots: Vec<String>,
-    top_level_calls: Vec<String>,
+pub(crate) type FnSlot = usize;
+
+pub(crate) struct FnUnit {
+    name: String,
+    ir: Option<crate::mir::def::FnIR>,
+    is_public: bool,
+    is_top_level: bool,
 }
 
-fn called_user_fns(
-    fn_ir: &crate::mir::def::FnIR,
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
-) -> FxHashSet<String> {
+pub(crate) struct ProgramIR {
+    fns: Vec<FnUnit>,
+    by_name: FxHashMap<String, FnSlot>,
+    emit_order: Vec<FnSlot>,
+    emit_roots: Vec<FnSlot>,
+    top_level_calls: Vec<FnSlot>,
+}
+
+impl ProgramIR {
+    fn from_parts(
+        mut all_fns: FxHashMap<String, crate::mir::def::FnIR>,
+        emit_order_names: Vec<String>,
+        emit_root_names: Vec<String>,
+        top_level_call_names: Vec<String>,
+        meta_by_name: FxHashMap<String, (bool, bool)>,
+    ) -> crate::error::RR<Self> {
+        let mut fns = Vec::new();
+        let mut by_name = FxHashMap::default();
+        for name in &emit_order_names {
+            let Some(fn_ir) = all_fns.remove(name.as_str()) else {
+                return Err(InternalCompilerError::new(
+                    Stage::Mir,
+                    format!("ProgramIR IR missing function '{}'", name),
+                )
+                .into_exception());
+            };
+            let Some((is_public, is_top_level)) = meta_by_name.get(name).copied() else {
+                return Err(InternalCompilerError::new(
+                    Stage::Mir,
+                    format!("ProgramIR metadata missing function '{}'", name),
+                )
+                .into_exception());
+            };
+            let slot = fns.len();
+            fns.push(FnUnit {
+                name: name.clone(),
+                ir: Some(fn_ir),
+                is_public,
+                is_top_level,
+            });
+            by_name.insert(name.clone(), slot);
+        }
+        let mut remaining_names: Vec<String> = all_fns
+            .keys()
+            .filter(|name| !by_name.contains_key(*name))
+            .cloned()
+            .collect();
+        remaining_names.sort();
+        for name in remaining_names {
+            let Some(fn_ir) = all_fns.remove(name.as_str()) else {
+                return Err(InternalCompilerError::new(
+                    Stage::Mir,
+                    format!("ProgramIR IR missing late-bound function '{}'", name),
+                )
+                .into_exception());
+            };
+            let (is_public, is_top_level) = meta_by_name
+                .get(&name)
+                .copied()
+                .unwrap_or((false, name.starts_with("Sym_top_")));
+            let slot = fns.len();
+            fns.push(FnUnit {
+                name: name.clone(),
+                ir: Some(fn_ir),
+                is_public,
+                is_top_level,
+            });
+            by_name.insert(name, slot);
+        }
+
+        let map_slots = |names: Vec<String>,
+                         label: &str,
+                         by_name: &FxHashMap<String, FnSlot>|
+         -> crate::error::RR<Vec<FnSlot>> {
+            names
+                .into_iter()
+                .map(|name| {
+                    by_name.get(&name).copied().ok_or_else(|| {
+                        InternalCompilerError::new(
+                            Stage::Mir,
+                            format!("ProgramIR {} references missing function '{}'", label, name),
+                        )
+                        .into_exception()
+                    })
+                })
+                .collect()
+        };
+        let emit_order = map_slots(emit_order_names, "emit order", &by_name)?;
+        let emit_roots = map_slots(emit_root_names, "emit roots", &by_name)?;
+        let top_level_calls = map_slots(top_level_call_names, "top-level call list", &by_name)?;
+
+        Ok(Self {
+            fns,
+            by_name,
+            emit_order,
+            emit_roots,
+            top_level_calls,
+        })
+    }
+
+    fn names_for_slots(&self, slots: &[FnSlot]) -> Vec<String> {
+        slots
+            .iter()
+            .filter_map(|slot| self.fns.get(*slot))
+            .map(|unit| unit.name.clone())
+            .collect()
+    }
+
+    fn emit_order_names(&self) -> Vec<String> {
+        self.names_for_slots(&self.emit_order)
+    }
+
+    fn emit_root_names(&self) -> Vec<String> {
+        self.names_for_slots(&self.emit_roots)
+    }
+
+    fn top_level_call_names(&self) -> Vec<String> {
+        self.names_for_slots(&self.top_level_calls)
+    }
+
+    fn get(&self, name: &str) -> Option<&crate::mir::def::FnIR> {
+        let slot = self.by_name.get(name).copied()?;
+        self.get_slot(slot)
+    }
+
+    fn get_slot(&self, slot: FnSlot) -> Option<&crate::mir::def::FnIR> {
+        self.fns.get(slot)?.ir.as_ref()
+    }
+
+    fn contains_name(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+
+    fn all_slots(&self) -> impl Iterator<Item = FnSlot> + '_ {
+        0..self.fns.len()
+    }
+
+    fn take_all_fns_map(&mut self) -> crate::error::RR<FxHashMap<String, crate::mir::def::FnIR>> {
+        let mut out = FxHashMap::default();
+        for unit in &mut self.fns {
+            let Some(fn_ir) = unit.ir.take() else {
+                return Err(InternalCompilerError::new(
+                    Stage::Mir,
+                    format!("ProgramIR function '{}' already taken", unit.name),
+                )
+                .into_exception());
+            };
+            out.insert(unit.name.clone(), fn_ir);
+        }
+        Ok(out)
+    }
+
+    fn restore_all_fns_map(
+        &mut self,
+        mut all_fns: FxHashMap<String, crate::mir::def::FnIR>,
+    ) -> crate::error::RR<()> {
+        for unit in &mut self.fns {
+            let Some(fn_ir) = all_fns.remove(unit.name.as_str()) else {
+                return Err(InternalCompilerError::new(
+                    Stage::Mir,
+                    format!("ProgramIR restore missing function '{}'", unit.name),
+                )
+                .into_exception());
+            };
+            unit.ir = Some(fn_ir);
+        }
+        if !all_fns.is_empty() {
+            let mut leftovers: Vec<String> = all_fns.keys().cloned().collect();
+            leftovers.sort();
+            return Err(InternalCompilerError::new(
+                Stage::Mir,
+                format!(
+                    "ProgramIR restore had unexpected functions: {}",
+                    leftovers.join(", ")
+                ),
+            )
+            .into_exception());
+        }
+        Ok(())
+    }
+}
+
+struct MirLowerJob {
+    fn_name: String,
+    is_public: bool,
+    params: Vec<String>,
+    var_names: FxHashMap<crate::hir::def::LocalId, String>,
+    hir_fn: crate::hir::def::HirFn,
+}
+
+struct TopLevelMirLowerJob {
+    fn_name: String,
+    hir_fn: crate::hir::def::HirFn,
+}
+
+struct EmittedFnFragment {
+    code: String,
+    map: Vec<MapEntry>,
+    cache_hit: bool,
+}
+
+fn hir_fn_work_size(f: &crate::hir::def::HirFn) -> usize {
+    let stmt_count = f.body.stmts.len();
+    let local_count = f.local_names.len();
+    (stmt_count * 8)
+        .saturating_add(local_count)
+        .saturating_add(f.params.len())
+}
+
+fn called_user_fns(fn_ir: &crate::mir::def::FnIR, program: &ProgramIR) -> FxHashSet<String> {
     let mut out = FxHashSet::default();
     for value in &fn_ir.values {
         match &value.kind {
             crate::mir::def::ValueKind::Call { callee, .. } => {
                 let canonical = callee.strip_suffix("_fresh").unwrap_or(callee);
-                if all_fns.contains_key(canonical) {
+                if program.contains_name(canonical) {
                     out.insert(canonical.to_string());
                 }
             }
             crate::mir::def::ValueKind::Load { var } => {
-                if all_fns.contains_key(var) {
+                if program.contains_name(var) {
                     out.insert(var.clone());
                 }
             }
             crate::mir::def::ValueKind::RSymbol { name } => {
-                if all_fns.contains_key(name) {
+                if program.contains_name(name) {
                     out.insert(name.clone());
                 }
             }
@@ -635,7 +878,7 @@ fn called_user_fns(
 }
 
 fn collect_seq_len_param_end_slots_by_fn(
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+    program: &ProgramIR,
 ) -> FxHashMap<String, FxHashMap<usize, usize>> {
     fn unique_assign_source(
         fn_ir: &crate::mir::def::FnIR,
@@ -711,7 +954,10 @@ fn collect_seq_len_param_end_slots_by_fn(
 
     let mut summaries: FxHashMap<String, FxHashMap<usize, usize>> = FxHashMap::default();
 
-    for fn_ir in all_fns.values() {
+    for slot in program.all_slots() {
+        let Some(fn_ir) = program.get_slot(slot) else {
+            continue;
+        };
         for value in &fn_ir.values {
             let crate::mir::def::ValueKind::Call {
                 callee,
@@ -725,7 +971,7 @@ fn collect_seq_len_param_end_slots_by_fn(
                 continue;
             }
             let canonical = callee.strip_suffix("_fresh").unwrap_or(callee.as_str());
-            let Some(callee_ir) = all_fns.get(canonical) else {
+            let Some(callee_ir) = program.get(canonical) else {
                 continue;
             };
             if args.len() != callee_ir.params.len() {
@@ -751,19 +997,16 @@ fn collect_seq_len_param_end_slots_by_fn(
     summaries
 }
 
-fn reachable_emit_order(
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
-    emit_order: &[String],
-    emit_roots: &[String],
-) -> Vec<String> {
-    if emit_roots.is_empty() {
-        return emit_order.to_vec();
+fn reachable_emit_order_slots(program: &ProgramIR) -> Vec<FnSlot> {
+    if program.emit_roots.is_empty() {
+        return program.emit_order.clone();
     }
 
     let mut reachable = FxHashSet::default();
-    let mut worklist: Vec<String> = emit_roots
+    let mut worklist: Vec<String> = program
+        .emit_root_names()
         .iter()
-        .filter(|name| all_fns.contains_key(name.as_str()))
+        .filter(|name| program.contains_name(name.as_str()))
         .cloned()
         .collect();
 
@@ -771,10 +1014,10 @@ fn reachable_emit_order(
         if !reachable.insert(name.clone()) {
             continue;
         }
-        let Some(fn_ir) = all_fns.get(&name) else {
+        let Some(fn_ir) = program.get(&name) else {
             continue;
         };
-        for callee in called_user_fns(fn_ir, all_fns) {
+        for callee in called_user_fns(fn_ir, program) {
             if !reachable.contains(&callee) {
                 worklist.push(callee);
             }
@@ -782,13 +1025,19 @@ fn reachable_emit_order(
     }
 
     if reachable.iter().all(|name| name.starts_with("Sym_top_")) {
-        return emit_order.to_vec();
+        return program.emit_order.clone();
     }
 
-    emit_order
+    program
+        .emit_order
         .iter()
-        .filter(|name| reachable.contains(name.as_str()))
-        .cloned()
+        .copied()
+        .filter(|slot| {
+            program
+                .fns
+                .get(*slot)
+                .is_some_and(|unit| reachable.contains(unit.name.as_str()))
+        })
         .collect()
 }
 
@@ -937,18 +1186,20 @@ pub(crate) fn run_source_analysis_and_canonicalization(
 fn emit_r_functions(
     ui: &CliLog,
     total_steps: usize,
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
-    emit_order: &[String],
+    program: &ProgramIR,
+    emit_order: &[FnSlot],
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    let scheduler = CompilerScheduler::new(CompilerParallelConfig::default());
     let (out, map, _, _) = emit_r_functions_cached(
         ui,
         total_steps,
-        all_fns,
+        program,
         emit_order,
         &[],
         OptLevel::O0,
         TypeConfig::default(),
         ParallelConfig::default(),
+        &scheduler,
         CompileOutputOptions::default(),
         None,
     )?;
@@ -957,7 +1208,7 @@ fn emit_r_functions(
 
 fn trivial_zero_arg_entry_callee(
     fn_ir: &crate::mir::def::FnIR,
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+    program: &ProgramIR,
 ) -> Option<String> {
     if !fn_ir.params.is_empty() {
         return None;
@@ -977,7 +1228,7 @@ fn trivial_zero_arg_entry_callee(
             args,
             names,
         } if args.is_empty() && names.is_empty() => {
-            let target = all_fns.get(callee)?;
+            let target = program.get(callee)?;
             if target.params.is_empty() && !callee.starts_with("Sym_top_") {
                 Some(callee.clone())
             } else {
@@ -988,16 +1239,13 @@ fn trivial_zero_arg_entry_callee(
     }
 }
 
-fn quoted_body_entry_targets(
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
-    top_level_calls: &[String],
-) -> FxHashSet<String> {
+fn quoted_body_entry_targets(program: &ProgramIR, top_level_calls: &[FnSlot]) -> FxHashSet<String> {
     let mut out = FxHashSet::default();
-    for top_name in top_level_calls {
-        let Some(top_fn) = all_fns.get(top_name) else {
+    for top_slot in top_level_calls {
+        let Some(top_fn) = program.get_slot(*top_slot) else {
             continue;
         };
-        let Some(callee) = trivial_zero_arg_entry_callee(top_fn, all_fns) else {
+        let Some(callee) = trivial_zero_arg_entry_callee(top_fn, program) else {
             continue;
         };
         out.insert(callee);
@@ -1036,14 +1284,15 @@ fn wrap_zero_arg_function_body_in_quote(code: &str, fn_name: &str) -> Option<Str
 pub(crate) fn emit_r_functions_cached(
     ui: &CliLog,
     total_steps: usize,
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
-    emit_order: &[String],
-    top_level_calls: &[String],
+    program: &ProgramIR,
+    emit_order: &[FnSlot],
+    top_level_calls: &[FnSlot],
     opt_level: OptLevel,
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
+    scheduler: &CompilerScheduler,
     output_opts: CompileOutputOptions,
-    mut cache: Option<&mut dyn EmitFunctionCache>,
+    cache: Option<&dyn EmitFunctionCache>,
 ) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
     let step_emit = ui.step_start(
         5,
@@ -1051,29 +1300,36 @@ pub(crate) fn emit_r_functions_cached(
         "R Code Emission",
         "reconstruct control flow",
     );
-    let mut final_output = String::new();
-    let mut final_source_map = Vec::new();
-    let mut cache_hits = 0usize;
-    let mut cache_misses = 0usize;
-    let quoted_entry_targets = quoted_body_entry_targets(all_fns, top_level_calls);
-    let fresh_user_calls = collect_fresh_returning_user_functions(all_fns);
-    let seq_len_param_end_slots_by_fn = collect_seq_len_param_end_slots_by_fn(all_fns);
+    let quoted_entry_targets = quoted_body_entry_targets(program, top_level_calls);
+    let fresh_user_calls = collect_fresh_returning_user_functions(program);
+    let seq_len_param_end_slots_by_fn = collect_seq_len_param_end_slots_by_fn(program);
+    let shared_fresh_user_calls = Arc::new(fresh_user_calls.clone());
+    let shared_seq_len_param_end_slots_by_fn = Arc::new(seq_len_param_end_slots_by_fn.clone());
     let direct_builtin_call_map =
         matches!(type_cfg.native_backend, crate::typeck::NativeBackend::Off)
             && matches!(parallel_cfg.mode, ParallelMode::Off);
-    let mut emitter = crate::codegen::mir_emit::MirEmitter::with_analysis_options(
-        fresh_user_calls.clone(),
-        seq_len_param_end_slots_by_fn.clone(),
-        direct_builtin_call_map,
-    );
-
-    for fn_name in emit_order {
-        let Some(fn_ir) = all_fns.get(fn_name) else {
+    let emit_total_ir = emit_order
+        .iter()
+        .filter_map(|slot| program.get_slot(*slot))
+        .map(fn_ir_work_size)
+        .sum::<usize>();
+    let emitted_fragments = scheduler.map_try(emit_order.to_vec(), emit_total_ir, |slot| {
+        let shared_fresh_user_calls = Arc::clone(&shared_fresh_user_calls);
+        let shared_seq_len_param_end_slots_by_fn =
+            Arc::clone(&shared_seq_len_param_end_slots_by_fn);
+        let Some(unit) = program.fns.get(slot) else {
+            return Err(crate::error::InternalCompilerError::new(
+                crate::error::Stage::Codegen,
+                format!("emit order references missing function slot '{}'", slot),
+            )
+            .into_exception());
+        };
+        let Some(fn_ir) = unit.ir.as_ref() else {
             return Err(crate::error::InternalCompilerError::new(
                 crate::error::Stage::Codegen,
                 format!(
                     "emit order references missing function '{}': MIR synthesis invariant violated",
-                    fn_name
+                    unit.name
                 ),
             )
             .into_exception());
@@ -1084,38 +1340,64 @@ pub(crate) fn emit_r_functions_cached(
             opt_level,
             type_cfg,
             parallel_cfg,
-            seq_len_param_end_slots_by_fn.get(fn_name),
+            seq_len_param_end_slots_by_fn.get(unit.name.as_str()),
         );
-        let maybe_hit = if let Some(ref mut c) = cache {
+        let maybe_hit = if let Some(c) = cache {
             c.load(&key)?
         } else {
             None
         };
 
-        let (code, map) = if let Some((code, map)) = maybe_hit {
-            cache_hits += 1;
-            (code, map)
+        let (code, map, cache_hit) = if let Some((code, map)) = maybe_hit {
+            (code, map, true)
         } else {
+            let mut emitter = crate::codegen::mir_emit::MirEmitter::with_shared_analysis_options(
+                shared_fresh_user_calls,
+                shared_seq_len_param_end_slots_by_fn,
+                direct_builtin_call_map,
+            );
             let (code, map) = emitter.emit(fn_ir)?;
-            if let Some(ref mut c) = cache {
+            if let Some(c) = cache {
                 c.store(&key, &code, &map)?;
             }
-            cache_misses += 1;
-            (code, map)
+            (code, map, false)
         };
+
         let mut code = code;
         let mut map = map;
-        if quoted_entry_targets.contains(fn_name)
-            && let Some(wrapped) = wrap_zero_arg_function_body_in_quote(&code, fn_name)
+        if quoted_entry_targets.contains(unit.name.as_str())
+            && let Some(wrapped) = wrap_zero_arg_function_body_in_quote(&code, unit.name.as_str())
         {
             code = wrapped;
             for entry in &mut map {
-                entry.r_line += 1;
+                entry.r_line = entry.r_line.saturating_sub(1);
             }
         }
-        final_output.push_str(&code);
+        Ok(EmittedFnFragment {
+            code,
+            map,
+            cache_hit,
+        })
+    })?;
+
+    let mut final_output = String::new();
+    let mut final_source_map = Vec::new();
+    let mut cache_hits = 0usize;
+    let mut cache_misses = 0usize;
+    let mut line_offset = 0u32;
+    for mut fragment in emitted_fragments {
+        if fragment.cache_hit {
+            cache_hits += 1;
+        } else {
+            cache_misses += 1;
+        }
+        for entry in &mut fragment.map {
+            entry.r_line = entry.r_line.saturating_add(line_offset);
+        }
+        line_offset = line_offset.saturating_add(emitted_segment_line_count(&fragment.code));
+        final_output.push_str(&fragment.code);
         final_output.push('\n');
-        final_source_map.extend(map);
+        final_source_map.extend(fragment.map);
     }
     ui.step_line_ok(&format!(
         "Emitted {} functions ({} debug maps) in {}",
@@ -1124,7 +1406,7 @@ pub(crate) fn emit_r_functions_cached(
         format_duration(step_emit.elapsed())
     ));
 
-    let pure_user_calls = collect_referentially_pure_user_functions(all_fns);
+    let pure_user_calls = collect_referentially_pure_user_functions(program);
     final_output = rewrite_trivial_clamp_helper_calls_in_raw_emitted_r(&final_output);
     final_output = rewrite_branch_local_identical_alloc_rebinds_in_raw_emitted_r(&final_output);
     final_output =
@@ -6553,9 +6835,7 @@ fn raw_literal_record_field_name(expr: &str) -> Option<String> {
     inner.chars().all(is_symbol_char).then(|| inner.to_string())
 }
 
-fn collect_referentially_pure_user_functions(
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
-) -> FxHashSet<String> {
+fn collect_referentially_pure_user_functions(program: &ProgramIR) -> FxHashSet<String> {
     fn helper_is_functionally_pure(callee: &str) -> bool {
         matches!(
             callee,
@@ -6577,7 +6857,7 @@ fn collect_referentially_pure_user_functions(
     }
 
     fn value_is_functionally_pure(
-        all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+        program: &ProgramIR,
         fn_ir: &crate::mir::def::FnIR,
         vid: crate::mir::def::ValueId,
         memo: &mut FxHashMap<String, bool>,
@@ -6593,48 +6873,48 @@ fn collect_referentially_pure_user_functions(
             | crate::mir::def::ValueKind::Load { .. }
             | crate::mir::def::ValueKind::RSymbol { .. } => true,
             crate::mir::def::ValueKind::Phi { args } => args.iter().all(|(src, _)| {
-                value_is_functionally_pure(all_fns, fn_ir, *src, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *src, memo, visiting_fns, seen)
             }),
             crate::mir::def::ValueKind::Len { base }
             | crate::mir::def::ValueKind::Indices { base } => {
-                value_is_functionally_pure(all_fns, fn_ir, *base, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *base, memo, visiting_fns, seen)
             }
             crate::mir::def::ValueKind::Range { start, end } => {
-                value_is_functionally_pure(all_fns, fn_ir, *start, memo, visiting_fns, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *end, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *start, memo, visiting_fns, seen)
+                    && value_is_functionally_pure(program, fn_ir, *end, memo, visiting_fns, seen)
             }
             crate::mir::def::ValueKind::Binary { lhs, rhs, .. } => {
-                value_is_functionally_pure(all_fns, fn_ir, *lhs, memo, visiting_fns, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *rhs, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *lhs, memo, visiting_fns, seen)
+                    && value_is_functionally_pure(program, fn_ir, *rhs, memo, visiting_fns, seen)
             }
             crate::mir::def::ValueKind::Unary { rhs, .. } => {
-                value_is_functionally_pure(all_fns, fn_ir, *rhs, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *rhs, memo, visiting_fns, seen)
             }
             crate::mir::def::ValueKind::Index1D { base, idx, .. } => {
-                value_is_functionally_pure(all_fns, fn_ir, *base, memo, visiting_fns, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *idx, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *base, memo, visiting_fns, seen)
+                    && value_is_functionally_pure(program, fn_ir, *idx, memo, visiting_fns, seen)
             }
             crate::mir::def::ValueKind::Index2D { base, r, c } => {
-                value_is_functionally_pure(all_fns, fn_ir, *base, memo, visiting_fns, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *r, memo, visiting_fns, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *c, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *base, memo, visiting_fns, seen)
+                    && value_is_functionally_pure(program, fn_ir, *r, memo, visiting_fns, seen)
+                    && value_is_functionally_pure(program, fn_ir, *c, memo, visiting_fns, seen)
             }
             crate::mir::def::ValueKind::Index3D { base, i, j, k } => {
-                value_is_functionally_pure(all_fns, fn_ir, *base, memo, visiting_fns, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *i, memo, visiting_fns, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *j, memo, visiting_fns, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *k, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *base, memo, visiting_fns, seen)
+                    && value_is_functionally_pure(program, fn_ir, *i, memo, visiting_fns, seen)
+                    && value_is_functionally_pure(program, fn_ir, *j, memo, visiting_fns, seen)
+                    && value_is_functionally_pure(program, fn_ir, *k, memo, visiting_fns, seen)
             }
             crate::mir::def::ValueKind::Intrinsic { args, .. } => args.iter().all(|arg| {
-                value_is_functionally_pure(all_fns, fn_ir, *arg, memo, visiting_fns, seen)
+                value_is_functionally_pure(program, fn_ir, *arg, memo, visiting_fns, seen)
             }),
             crate::mir::def::ValueKind::Call { callee, args, .. } => {
-                let user_pure = all_fns.get(callee).is_some_and(|callee_ir| {
-                    function_is_referentially_pure(all_fns, callee, callee_ir, memo, visiting_fns)
+                let user_pure = program.get(callee).is_some_and(|callee_ir| {
+                    function_is_referentially_pure(program, callee, callee_ir, memo, visiting_fns)
                 });
                 (effects::call_is_pure(callee) || helper_is_functionally_pure(callee) || user_pure)
                     && args.iter().all(|arg| {
-                        value_is_functionally_pure(all_fns, fn_ir, *arg, memo, visiting_fns, seen)
+                        value_is_functionally_pure(program, fn_ir, *arg, memo, visiting_fns, seen)
                     })
             }
         };
@@ -6643,7 +6923,7 @@ fn collect_referentially_pure_user_functions(
     }
 
     fn function_is_referentially_pure(
-        all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+        program: &ProgramIR,
         name: &str,
         fn_ir: &crate::mir::def::FnIR,
         memo: &mut FxHashMap<String, bool>,
@@ -6666,7 +6946,7 @@ fn collect_referentially_pure_user_functions(
                     crate::mir::def::Instr::Assign { src, .. }
                     | crate::mir::def::Instr::Eval { val: src, .. } => {
                         if !value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *src,
                             memo,
@@ -6680,21 +6960,21 @@ fn collect_referentially_pure_user_functions(
                     }
                     crate::mir::def::Instr::StoreIndex1D { base, idx, val, .. } => {
                         if !(value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *base,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *idx,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *val,
                             memo,
@@ -6710,28 +6990,28 @@ fn collect_referentially_pure_user_functions(
                         base, r, c, val, ..
                     } => {
                         if !(value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *base,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *r,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *c,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *val,
                             memo,
@@ -6747,35 +7027,35 @@ fn collect_referentially_pure_user_functions(
                         base, i, j, k, val, ..
                     } => {
                         if !(value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *base,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *i,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *j,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *k,
                             memo,
                             visiting_fns,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *val,
                             memo,
@@ -6792,7 +7072,7 @@ fn collect_referentially_pure_user_functions(
             match &block.term {
                 crate::mir::def::Terminator::If { cond, .. } => {
                     if !value_is_functionally_pure(
-                        all_fns,
+                        program,
                         fn_ir,
                         *cond,
                         memo,
@@ -6806,7 +7086,7 @@ fn collect_referentially_pure_user_functions(
                 }
                 crate::mir::def::Terminator::Return(Some(v)) => {
                     if !value_is_functionally_pure(
-                        all_fns,
+                        program,
                         fn_ir,
                         *v,
                         memo,
@@ -6830,14 +7110,14 @@ fn collect_referentially_pure_user_functions(
 
     let mut out = FxHashSet::default();
     let mut memo = FxHashMap::default();
-    let mut names: Vec<_> = all_fns.keys().cloned().collect();
+    let mut names: Vec<_> = program.fns.iter().map(|unit| unit.name.clone()).collect();
     names.sort();
     for name in names {
-        let Some(fn_ir) = all_fns.get(&name) else {
+        let Some(fn_ir) = program.get(&name) else {
             continue;
         };
         if function_is_referentially_pure(
-            all_fns,
+            program,
             &name,
             fn_ir,
             &mut memo,
@@ -6849,9 +7129,7 @@ fn collect_referentially_pure_user_functions(
     out
 }
 
-fn collect_fresh_returning_user_functions(
-    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
-) -> FxHashSet<String> {
+fn collect_fresh_returning_user_functions(program: &ProgramIR) -> FxHashSet<String> {
     struct FreshAnalysisCtx {
         pure_memo: FxHashMap<String, bool>,
         fresh_memo: FxHashMap<String, bool>,
@@ -6897,7 +7175,7 @@ fn collect_fresh_returning_user_functions(
     }
 
     fn value_is_functionally_pure(
-        all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+        program: &ProgramIR,
         fn_ir: &crate::mir::def::FnIR,
         vid: crate::mir::def::ValueId,
         ctx: &mut FreshAnalysisCtx,
@@ -6913,48 +7191,48 @@ fn collect_fresh_returning_user_functions(
             | crate::mir::def::ValueKind::RSymbol { .. } => true,
             crate::mir::def::ValueKind::Phi { args } => args
                 .iter()
-                .all(|(src, _)| value_is_functionally_pure(all_fns, fn_ir, *src, ctx, seen)),
+                .all(|(src, _)| value_is_functionally_pure(program, fn_ir, *src, ctx, seen)),
             crate::mir::def::ValueKind::Len { base }
             | crate::mir::def::ValueKind::Indices { base } => {
-                value_is_functionally_pure(all_fns, fn_ir, *base, ctx, seen)
+                value_is_functionally_pure(program, fn_ir, *base, ctx, seen)
             }
             crate::mir::def::ValueKind::Range { start, end } => {
-                value_is_functionally_pure(all_fns, fn_ir, *start, ctx, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *end, ctx, seen)
+                value_is_functionally_pure(program, fn_ir, *start, ctx, seen)
+                    && value_is_functionally_pure(program, fn_ir, *end, ctx, seen)
             }
             crate::mir::def::ValueKind::Binary { lhs, rhs, .. } => {
-                value_is_functionally_pure(all_fns, fn_ir, *lhs, ctx, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *rhs, ctx, seen)
+                value_is_functionally_pure(program, fn_ir, *lhs, ctx, seen)
+                    && value_is_functionally_pure(program, fn_ir, *rhs, ctx, seen)
             }
             crate::mir::def::ValueKind::Unary { rhs, .. } => {
-                value_is_functionally_pure(all_fns, fn_ir, *rhs, ctx, seen)
+                value_is_functionally_pure(program, fn_ir, *rhs, ctx, seen)
             }
             crate::mir::def::ValueKind::Index1D { base, idx, .. } => {
-                value_is_functionally_pure(all_fns, fn_ir, *base, ctx, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *idx, ctx, seen)
+                value_is_functionally_pure(program, fn_ir, *base, ctx, seen)
+                    && value_is_functionally_pure(program, fn_ir, *idx, ctx, seen)
             }
             crate::mir::def::ValueKind::Index2D { base, r, c } => {
-                value_is_functionally_pure(all_fns, fn_ir, *base, ctx, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *r, ctx, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *c, ctx, seen)
+                value_is_functionally_pure(program, fn_ir, *base, ctx, seen)
+                    && value_is_functionally_pure(program, fn_ir, *r, ctx, seen)
+                    && value_is_functionally_pure(program, fn_ir, *c, ctx, seen)
             }
             crate::mir::def::ValueKind::Index3D { base, i, j, k } => {
-                value_is_functionally_pure(all_fns, fn_ir, *base, ctx, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *i, ctx, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *j, ctx, seen)
-                    && value_is_functionally_pure(all_fns, fn_ir, *k, ctx, seen)
+                value_is_functionally_pure(program, fn_ir, *base, ctx, seen)
+                    && value_is_functionally_pure(program, fn_ir, *i, ctx, seen)
+                    && value_is_functionally_pure(program, fn_ir, *j, ctx, seen)
+                    && value_is_functionally_pure(program, fn_ir, *k, ctx, seen)
             }
             crate::mir::def::ValueKind::Intrinsic { args, .. } => args
                 .iter()
-                .all(|arg| value_is_functionally_pure(all_fns, fn_ir, *arg, ctx, seen)),
+                .all(|arg| value_is_functionally_pure(program, fn_ir, *arg, ctx, seen)),
             crate::mir::def::ValueKind::Call { callee, args, .. } => {
-                let user_pure = all_fns.get(callee).is_some_and(|callee_ir| {
-                    function_is_referentially_pure(all_fns, callee, callee_ir, ctx)
+                let user_pure = program.get(callee).is_some_and(|callee_ir| {
+                    function_is_referentially_pure(program, callee, callee_ir, ctx)
                 });
                 (effects::call_is_pure(callee) || helper_is_functionally_pure(callee) || user_pure)
                     && args
                         .iter()
-                        .all(|arg| value_is_functionally_pure(all_fns, fn_ir, *arg, ctx, seen))
+                        .all(|arg| value_is_functionally_pure(program, fn_ir, *arg, ctx, seen))
             }
         };
         seen.remove(&vid);
@@ -6962,7 +7240,7 @@ fn collect_fresh_returning_user_functions(
     }
 
     fn value_is_fresh_result(
-        all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+        program: &ProgramIR,
         fn_ir: &crate::mir::def::FnIR,
         vid: crate::mir::def::ValueId,
         ctx: &mut FreshAnalysisCtx,
@@ -6974,13 +7252,13 @@ fn collect_fresh_returning_user_functions(
         let fresh = match &fn_ir.values[vid].kind {
             crate::mir::def::ValueKind::Const(_) => true,
             crate::mir::def::ValueKind::Call { callee, args, .. } => {
-                let user_fresh = all_fns.get(callee).is_some_and(|callee_ir| {
-                    function_is_fresh_returning(all_fns, callee, callee_ir, ctx)
+                let user_fresh = program.get(callee).is_some_and(|callee_ir| {
+                    function_is_fresh_returning(program, callee, callee_ir, ctx)
                 });
                 (helper_is_fresh_result(callee) || user_fresh)
                     && args.iter().all(|arg| {
                         value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *arg,
                             ctx,
@@ -6995,7 +7273,7 @@ fn collect_fresh_returning_user_functions(
     }
 
     fn function_is_referentially_pure(
-        all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+        program: &ProgramIR,
         name: &str,
         fn_ir: &crate::mir::def::FnIR,
         ctx: &mut FreshAnalysisCtx,
@@ -7017,7 +7295,7 @@ fn collect_fresh_returning_user_functions(
                     crate::mir::def::Instr::Assign { src, .. }
                     | crate::mir::def::Instr::Eval { val: src, .. } => {
                         if !value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *src,
                             ctx,
@@ -7030,19 +7308,19 @@ fn collect_fresh_returning_user_functions(
                     }
                     crate::mir::def::Instr::StoreIndex1D { base, idx, val, .. } => {
                         if !(value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *base,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *idx,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *val,
                             ctx,
@@ -7057,25 +7335,25 @@ fn collect_fresh_returning_user_functions(
                         base, r, c, val, ..
                     } => {
                         if !(value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *base,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *r,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *c,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *val,
                             ctx,
@@ -7090,31 +7368,31 @@ fn collect_fresh_returning_user_functions(
                         base, i, j, k, val, ..
                     } => {
                         if !(value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *base,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *i,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *j,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *k,
                             ctx,
                             &mut FxHashSet::default(),
                         ) && value_is_functionally_pure(
-                            all_fns,
+                            program,
                             fn_ir,
                             *val,
                             ctx,
@@ -7130,7 +7408,7 @@ fn collect_fresh_returning_user_functions(
             match &block.term {
                 crate::mir::def::Terminator::If { cond, .. } => {
                     if !value_is_functionally_pure(
-                        all_fns,
+                        program,
                         fn_ir,
                         *cond,
                         ctx,
@@ -7143,7 +7421,7 @@ fn collect_fresh_returning_user_functions(
                 }
                 crate::mir::def::Terminator::Return(Some(v)) => {
                     if !value_is_functionally_pure(
-                        all_fns,
+                        program,
                         fn_ir,
                         *v,
                         ctx,
@@ -7165,7 +7443,7 @@ fn collect_fresh_returning_user_functions(
     }
 
     fn function_is_fresh_returning(
-        all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+        program: &ProgramIR,
         name: &str,
         fn_ir: &crate::mir::def::FnIR,
         ctx: &mut FreshAnalysisCtx,
@@ -7176,7 +7454,7 @@ fn collect_fresh_returning_user_functions(
         if !ctx.visiting_fresh.insert(name.to_string()) {
             return false;
         }
-        if !function_is_referentially_pure(all_fns, name, fn_ir, ctx) {
+        if !function_is_referentially_pure(program, name, fn_ir, ctx) {
             ctx.fresh_memo.insert(name.to_string(), false);
             ctx.visiting_fresh.remove(name);
             return false;
@@ -7185,7 +7463,7 @@ fn collect_fresh_returning_user_functions(
         for block in &fn_ir.blocks {
             if let crate::mir::def::Terminator::Return(Some(v)) = &block.term {
                 saw_return = true;
-                if !value_is_fresh_result(all_fns, fn_ir, *v, ctx, &mut FxHashSet::default()) {
+                if !value_is_fresh_result(program, fn_ir, *v, ctx, &mut FxHashSet::default()) {
                     ctx.fresh_memo.insert(name.to_string(), false);
                     ctx.visiting_fresh.remove(name);
                     return false;
@@ -7204,13 +7482,13 @@ fn collect_fresh_returning_user_functions(
         visiting_pure: FxHashSet::default(),
         visiting_fresh: FxHashSet::default(),
     };
-    let mut names: Vec<_> = all_fns.keys().cloned().collect();
+    let mut names: Vec<_> = program.fns.iter().map(|unit| unit.name.clone()).collect();
     names.sort();
     for name in names {
-        let Some(fn_ir) = all_fns.get(&name) else {
+        let Some(fn_ir) = program.get(&name) else {
             continue;
         };
-        if function_is_fresh_returning(all_fns, &name, fn_ir, &mut ctx) {
+        if function_is_fresh_returning(program, &name, fn_ir, &mut ctx) {
             out.insert(name);
         }
     }
@@ -7223,7 +7501,8 @@ pub(crate) fn run_mir_synthesis(
     desugared_hir: crate::hir::def::HirProgram,
     global_symbols: &FxHashMap<crate::hir::def::SymbolId, String>,
     type_cfg: TypeConfig,
-) -> crate::error::RR<MirSynthesisOutput> {
+    scheduler: &CompilerScheduler,
+) -> crate::error::RR<ProgramIR> {
     let step_ssa = ui.step_start(
         3,
         total_steps,
@@ -7235,6 +7514,9 @@ pub(crate) fn run_mir_synthesis(
     let mut emit_roots: Vec<String> = Vec::new();
     let mut top_level_calls: Vec<String> = Vec::new();
     let mut known_fn_arities: FxHashMap<String, usize> = FxHashMap::default();
+    let mut fn_jobs = Vec::new();
+    let mut top_jobs = Vec::new();
+    let mut meta_by_name: FxHashMap<String, (bool, bool)> = FxHashMap::default();
 
     for module in &desugared_hir.modules {
         for item in &module.items {
@@ -7270,15 +7552,14 @@ pub(crate) fn run_mir_synthesis(
                     }
                     let var_names = f.local_names.clone().into_iter().collect();
 
-                    let lowerer = crate::mir::lower_hir::MirLowerer::new(
-                        fn_name.clone(),
+                    fn_jobs.push(MirLowerJob {
+                        fn_name: fn_name.clone(),
+                        is_public,
                         params,
                         var_names,
-                        global_symbols,
-                        &known_fn_arities,
-                    );
-                    let fn_ir = lowerer.lower_fn(f)?;
-                    all_fns.insert(fn_name.clone(), fn_ir);
+                        hir_fn: f,
+                    });
+                    meta_by_name.insert(fn_name.clone(), (is_public, false));
                     if is_public {
                         emit_roots.push(fn_name.clone());
                     }
@@ -7309,19 +7590,56 @@ pub(crate) fn run_mir_synthesis(
                 local_names: FxHashMap::default(),
                 public: false,
             };
-            let lowerer = crate::mir::lower_hir::MirLowerer::new(
-                top_fn_name.clone(),
-                Vec::new(),
-                FxHashMap::default(),
-                global_symbols,
-                &known_fn_arities,
-            );
-            let fn_ir = lowerer.lower_fn(top_fn)?;
-            all_fns.insert(top_fn_name.clone(), fn_ir);
+            top_jobs.push(TopLevelMirLowerJob {
+                fn_name: top_fn_name.clone(),
+                hir_fn: top_fn,
+            });
+            meta_by_name.insert(top_fn_name.clone(), (false, true));
             emit_order.push(top_fn_name.clone());
             emit_roots.push(top_fn_name.clone());
             top_level_calls.push(top_fn_name);
         }
+    }
+
+    let total_hir_work = fn_jobs
+        .iter()
+        .map(|job| hir_fn_work_size(&job.hir_fn))
+        .sum::<usize>()
+        .saturating_add(
+            top_jobs
+                .iter()
+                .map(|job| hir_fn_work_size(&job.hir_fn))
+                .sum::<usize>(),
+        );
+    let lowered_fns = scheduler.map_try(fn_jobs, total_hir_work, |job| {
+        let lowerer = crate::mir::lower_hir::MirLowerer::new(
+            job.fn_name.clone(),
+            job.params,
+            job.var_names,
+            global_symbols,
+            &known_fn_arities,
+        );
+        lowerer
+            .lower_fn(job.hir_fn)
+            .map(|fn_ir| (job.fn_name, job.is_public, fn_ir))
+    })?;
+    for (fn_name, _is_public, fn_ir) in lowered_fns {
+        all_fns.insert(fn_name, fn_ir);
+    }
+    let lowered_tops = scheduler.map_try(top_jobs, total_hir_work, |job| {
+        let lowerer = crate::mir::lower_hir::MirLowerer::new(
+            job.fn_name.clone(),
+            Vec::new(),
+            FxHashMap::default(),
+            global_symbols,
+            &known_fn_arities,
+        );
+        lowerer
+            .lower_fn(job.hir_fn)
+            .map(|fn_ir| (job.fn_name, fn_ir))
+    })?;
+    for (fn_name, fn_ir) in lowered_tops {
+        all_fns.insert(fn_name, fn_ir);
     }
     ui.step_line_ok(&format!(
         "Synthesized {} MIR functions in {}",
@@ -7329,16 +7647,21 @@ pub(crate) fn run_mir_synthesis(
         format_duration(step_ssa.elapsed())
     ));
 
-    crate::typeck::solver::analyze_program(&mut all_fns, type_cfg)?;
+    crate::typeck::solver::analyze_program_with_compiler_parallel(
+        &mut all_fns,
+        type_cfg,
+        scheduler,
+    )?;
     crate::mir::semantics::validate_program(&all_fns)?;
     crate::mir::semantics::validate_runtime_safety(&all_fns)?;
 
-    Ok(MirSynthesisOutput {
+    ProgramIR::from_parts(
         all_fns,
         emit_order,
         emit_roots,
         top_level_calls,
-    })
+        meta_by_name,
+    )
 }
 
 pub(crate) fn run_tachyon_phase(
@@ -7346,6 +7669,7 @@ pub(crate) fn run_tachyon_phase(
     total_steps: usize,
     optimize: bool,
     all_fns: &mut FxHashMap<String, crate::mir::def::FnIR>,
+    scheduler: &CompilerScheduler,
 ) -> crate::error::RR<()> {
     let tachyon = crate::mir::opt::TachyonEngine::new();
     let step_opt = ui.step_start(
@@ -7437,9 +7761,13 @@ pub(crate) fn run_tachyon_phase(
                     ),
                 );
             };
-            pulse_stats = tachyon.run_program_with_stats_progress(all_fns, &mut progress_cb);
+            pulse_stats = tachyon.run_program_with_progress_and_scheduler(
+                all_fns,
+                scheduler,
+                &mut progress_cb,
+            );
         } else {
-            pulse_stats = tachyon.run_program_with_stats(all_fns);
+            pulse_stats = tachyon.run_program_with_scheduler(all_fns, scheduler);
         }
     } else {
         tachyon.stabilize_for_codegen(all_fns);
@@ -7796,15 +8124,36 @@ pub fn compile_with_configs_with_options(
     parallel_cfg: ParallelConfig,
     output_opts: CompileOutputOptions,
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
-    let (code, map, _, _) = compile_with_configs_using_emit_cache(
+    compile_with_configs_with_options_and_compiler_parallel(
         entry_path,
         entry_input,
         opt_level,
         type_cfg,
         parallel_cfg,
-        None,
+        CompilerParallelConfig::default(),
         output_opts,
-    )?;
+    )
+}
+
+pub fn compile_with_configs_with_options_and_compiler_parallel(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    compiler_parallel_cfg: CompilerParallelConfig,
+    output_opts: CompileOutputOptions,
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    let (code, map, _, _) = compile_with_pipeline_request(CompilePipelineRequest {
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_cfg,
+        compiler_parallel_cfg,
+        cache: None,
+        output_opts,
+    })?;
     Ok((code, map))
 }
 
@@ -7814,60 +8163,99 @@ pub(crate) fn compile_with_configs_using_emit_cache(
     opt_level: OptLevel,
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
-    cache: Option<&mut dyn EmitFunctionCache>,
+    cache: Option<&dyn EmitFunctionCache>,
     output_opts: CompileOutputOptions,
 ) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
+    compile_with_pipeline_request(CompilePipelineRequest {
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_cfg,
+        compiler_parallel_cfg: CompilerParallelConfig::default(),
+        cache,
+        output_opts,
+    })
+}
+
+pub(crate) struct CompilePipelineRequest<'a> {
+    pub(crate) entry_path: &'a str,
+    pub(crate) entry_input: &'a str,
+    pub(crate) opt_level: OptLevel,
+    pub(crate) type_cfg: TypeConfig,
+    pub(crate) parallel_cfg: ParallelConfig,
+    pub(crate) compiler_parallel_cfg: CompilerParallelConfig,
+    pub(crate) cache: Option<&'a dyn EmitFunctionCache>,
+    pub(crate) output_opts: CompileOutputOptions,
+}
+
+pub(crate) fn compile_with_configs_using_emit_cache_and_compiler_parallel(
+    request: CompilePipelineRequest<'_>,
+) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
+    compile_with_pipeline_request(request)
+}
+
+fn compile_with_pipeline_request(
+    request: CompilePipelineRequest<'_>,
+) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
     let ui = CliLog::new();
+    let scheduler = CompilerScheduler::new(request.compiler_parallel_cfg);
     let compile_started = Instant::now();
-    let optimize = opt_level.is_optimized();
+    let optimize = request.opt_level.is_optimized();
     const TOTAL_STEPS: usize = 6;
-    let input_label = std::path::Path::new(entry_path)
+    let input_label = std::path::Path::new(request.entry_path)
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or(entry_path);
-    ui.banner(input_label, opt_level);
+        .unwrap_or(request.entry_path);
+    ui.banner(input_label, request.opt_level);
 
     let SourceAnalysisOutput {
         desugared_hir,
         global_symbols,
     } = run_source_analysis_and_canonicalization(
         &ui,
-        entry_path,
-        entry_input,
+        request.entry_path,
+        request.entry_input,
         TOTAL_STEPS,
-        output_opts,
+        request.output_opts,
     )?;
 
-    let MirSynthesisOutput {
-        mut all_fns,
-        emit_order,
-        emit_roots,
-        top_level_calls,
-    } = run_mir_synthesis(&ui, TOTAL_STEPS, desugared_hir, &global_symbols, type_cfg)?;
+    let mut program = run_mir_synthesis(
+        &ui,
+        TOTAL_STEPS,
+        desugared_hir,
+        &global_symbols,
+        request.type_cfg,
+        &scheduler,
+    )?;
 
-    run_tachyon_phase(&ui, TOTAL_STEPS, optimize, &mut all_fns)?;
+    let mut all_fns = program.take_all_fns_map()?;
+    run_tachyon_phase(&ui, TOTAL_STEPS, optimize, &mut all_fns, &scheduler)?;
     verify_emittable_program(&all_fns)?;
-    let emit_order = if output_opts.preserve_all_defs {
-        emit_order
+    program.restore_all_fns_map(all_fns)?;
+    let top_level_call_names = program.top_level_call_names();
+    let emit_order = if request.output_opts.preserve_all_defs {
+        program.emit_order.clone()
     } else {
-        reachable_emit_order(&all_fns, &emit_order, &emit_roots)
+        reachable_emit_order_slots(&program)
     };
 
     let (final_output, final_source_map, emit_cache_hits, emit_cache_misses) =
         emit_r_functions_cached(
             &ui,
             TOTAL_STEPS,
-            &all_fns,
+            &program,
             &emit_order,
-            &top_level_calls,
-            opt_level,
-            type_cfg,
-            parallel_cfg,
-            output_opts,
-            cache,
+            &program.top_level_calls,
+            request.opt_level,
+            request.type_cfg,
+            request.parallel_cfg,
+            &scheduler,
+            request.output_opts,
+            request.cache,
         )?;
 
-    let final_code = if output_opts.inject_runtime {
+    let final_code = if request.output_opts.inject_runtime {
         let step_runtime = ui.step_start(
             6,
             TOTAL_STEPS,
@@ -7875,11 +8263,11 @@ pub(crate) fn compile_with_configs_using_emit_cache(
             "link static analysis guards",
         );
         let with_runtime = inject_runtime_prelude(
-            entry_path,
-            type_cfg,
-            parallel_cfg,
+            request.entry_path,
+            request.type_cfg,
+            request.parallel_cfg,
             final_output,
-            &top_level_calls,
+            &top_level_call_names,
         );
         ui.step_line_ok(&format!("Output size: {}", human_size(with_runtime.len())));
         ui.trace(
@@ -7902,9 +8290,9 @@ pub(crate) fn compile_with_configs_using_emit_cache(
         }
         append_runtime_configuration(
             &mut without_runtime,
-            entry_path,
-            type_cfg,
-            parallel_cfg,
+            request.entry_path,
+            request.type_cfg,
+            request.parallel_cfg,
             false,
             &runtime_roots,
         );
@@ -7912,12 +8300,12 @@ pub(crate) fn compile_with_configs_using_emit_cache(
             without_runtime.push_str("# --- RR generated code (from user RR source) ---\n");
         }
         without_runtime.push_str(&final_output);
-        for call in &top_level_calls {
+        for call in &top_level_call_names {
             if !without_runtime.ends_with('\n') {
                 without_runtime.push('\n');
             }
             if !without_runtime.contains("# --- RR synthesized entrypoints (auto-generated) ---\n")
-                && !top_level_calls.is_empty()
+                && !top_level_call_names.is_empty()
             {
                 without_runtime.push_str("# --- RR synthesized entrypoints (auto-generated) ---\n");
             }
@@ -7933,6 +8321,8 @@ pub(crate) fn compile_with_configs_using_emit_cache(
         );
         without_runtime
     };
+    let final_source_map =
+        shifted_source_map_for_final_output_prefix(final_source_map, &final_code);
     ui.pulse_success(compile_started.elapsed());
 
     Ok((

@@ -1,0 +1,282 @@
+# Utils
+
+Utils package direct interop surface.
+Part of the [R Interop](../r-interop.md) reference.
+
+## Direct Surface
+
+- `utils::head`
+- `utils::tail`
+- `utils::packageVersion`
+- `utils::maintainer`
+- `utils::packageDate`
+- `utils::object.size`
+- `utils::memory.size`
+- `utils::memory.limit`
+- `utils::compareVersion`
+- `utils::capture.output`
+- `utils::packageDescription`
+- `utils::sessionInfo`
+- `utils::citation`
+- `utils::person`
+- `utils::as.person`
+- `utils::as.personList`
+- `utils::as.roman`
+- `utils::hasName`
+- `utils::strcapture`
+- `utils::apropos`
+- `utils::find`
+- `utils::findMatches`
+- `utils::methods`
+- `utils::help.search`
+- `utils::data`
+- `utils::getAnywhere`
+- `utils::argsAnywhere`
+- `utils::contrib.url`
+- `utils::localeToCharset`
+- `utils::charClass`
+- `utils::fileSnapshot`
+- `utils::URLencode`
+- `utils::URLdecode`
+- `utils::glob2rx`
+- `utils::file_test`
+- `utils::installed.packages`
+- `utils::read.csv`
+- `utils::read.csv2`
+- `utils::read.table`
+- `utils::read.delim`
+- `utils::read.fwf`
+- `utils::write.csv`
+- `utils::write.csv2`
+- `utils::write.table`
+- `utils::str`
+- `utils::combn`
+- `utils::adist`
+- `utils::count.fields`
+- `utils::type.convert`
+- `utils::available.packages`
+- `utils::head.matrix`
+- `utils::tail.matrix`
+- `utils::stack`
+- `utils::unstack`
+- `utils::strOptions`
+- `utils::toBibtex`
+- `utils::toLatex`
+- `utils::txtProgressBar`
+- `utils::getTxtProgressBar`
+- `utils::setTxtProgressBar`
+- `utils::packageName`
+- `utils::osVersion`
+- `utils::nsl`
+- `utils::read.delim2`
+- `utils::read.DIF`
+- `utils::read.fortran`
+- `utils::menu`
+- `utils::select.list`
+- `utils::modifyList`
+- `utils::relist`
+- `utils::as.relistable`
+- `utils::is.relistable`
+- `utils::personList`
+- `utils::warnErrList`
+- `utils::readCitationFile`
+- `utils::bibentry`
+- `utils::citEntry`
+- `utils::citHeader`
+- `utils::citFooter`
+- `utils::getParseData`
+- `utils::getParseText`
+- `utils::getSrcref`
+- `utils::getSrcFilename`
+- `utils::getSrcDirectory`
+- `utils::getSrcLocation`
+- `utils::globalVariables`
+- `utils::getFromNamespace`
+- `utils::getS3method`
+- `utils::hashtab`
+- `utils::gethash`
+- `utils::sethash`
+- `utils::remhash`
+- `utils::clrhash`
+- `utils::numhash`
+- `utils::typhash`
+- `utils::maphash`
+- `utils::is.hashtab`
+- `utils::asDateBuilt`
+- `utils::findLineNum`
+- `utils::getCRANmirrors`
+- `utils::findCRANmirror`
+- `utils::package.skeleton`
+- `utils::zip`
+- `utils::unzip`
+- `utils::limitedLabels`
+- `utils::formatOL`
+- `utils::formatUL`
+- `utils::ls.str`
+- `utils::lsf.str`
+- `utils::news`
+- `utils::vignette`
+- `utils::hsearch_db`
+- `utils::hsearch_db_concepts`
+- `utils::hsearch_db_keywords`
+- `utils::browseEnv`
+- `utils::browseURL`
+- `utils::browseVignettes`
+- `utils::bug.report`
+- `utils::checkCRAN`
+- `utils::chooseBioCmirror`
+- `utils::chooseCRANmirror`
+- `utils::create.post`
+- `utils::data.entry`
+- `utils::dataentry`
+- `utils::debugcall`
+- `utils::debugger`
+- `utils::demo`
+- `utils::dump.frames`
+- `utils::edit`
+- `utils::emacs`
+- `utils::example`
+- `utils::file.edit`
+- `utils::fix`
+- `utils::fixInNamespace`
+- `utils::flush.console`
+- `utils::help.request`
+- `utils::help.start`
+- `utils::page`
+- `utils::pico`
+- `utils::process.events`
+- `utils::prompt`
+- `utils::promptData`
+- `utils::promptImport`
+- `utils::promptPackage`
+- `utils::recover`
+- `utils::removeSource`
+- `utils::RShowDoc`
+- `utils::RSiteSearch`
+- `utils::rtags`
+- `utils::setBreakpoint`
+- `utils::suppressForeignCheck`
+- `utils::undebugcall`
+- `utils::url.show`
+- `utils::vi`
+- `utils::View`
+- `utils::xedit`
+- `utils::xemacs`
+- `utils::tar`
+- `utils::untar`
+- `utils::timestamp`
+- `utils::Rprof`
+- `utils::Rprofmem`
+- `utils::summaryRprof`
+- `utils::setRepositories`
+- `utils::.AtNames`
+- `utils::.checkHT`
+- `utils::.DollarNames`
+- `utils::.romans`
+- `utils::.RtangleCodeLabel`
+- `utils::.S3methods`
+- `utils::alarm`
+- `utils::aregexec`
+- `utils::askYesNo`
+- `utils::aspell`
+- `utils::aspell_package_C_files`
+- `utils::aspell_package_R_files`
+- `utils::aspell_package_Rd_files`
+- `utils::aspell_package_vignettes`
+- `utils::aspell_write_personal_dictionary_file`
+- `utils::assignInMyNamespace`
+- `utils::assignInNamespace`
+- `utils::changedFiles`
+- `utils::cite`
+- `utils::citeNatbib`
+- `utils::close.socket`
+- `utils::de`
+- `utils::de.ncols`
+- `utils::de.restore`
+- `utils::de.setup`
+- `utils::download.file`
+- `utils::download.packages`
+- `utils::help`
+- `utils::history`
+- `utils::install.packages`
+- `utils::isS3method`
+- `utils::isS3stdGeneric`
+- `utils::loadhistory`
+- `utils::make.packages.html`
+- `utils::make.socket`
+- `utils::makeRweaveLatexCodeRunner`
+- `utils::mirror2html`
+- `utils::new.packages`
+- `utils::old.packages`
+- `utils::packageStatus`
+- `utils::rc.getOption`
+- `utils::rc.options`
+- `utils::rc.settings`
+- `utils::rc.status`
+- `utils::read.socket`
+- `utils::remove.packages`
+- `utils::Rtangle`
+- `utils::RtangleFinish`
+- `utils::RtangleRuncode`
+- `utils::RtangleSetup`
+- `utils::RtangleWritedoc`
+- `utils::RweaveChunkPrefix`
+- `utils::RweaveEvalWithOpt`
+- `utils::RweaveLatex`
+- `utils::RweaveLatexFinish`
+- `utils::RweaveLatexOptions`
+- `utils::RweaveLatexSetup`
+- `utils::RweaveLatexWritedoc`
+- `utils::RweaveTryStop`
+- `utils::savehistory`
+- `utils::Stangle`
+- `utils::Sweave`
+- `utils::SweaveHooks`
+- `utils::SweaveSyntaxLatex`
+- `utils::SweaveSyntaxNoweb`
+- `utils::SweaveSyntConv`
+- `utils::update.packages`
+- `utils::upgrade`
+- `utils::write.socket`
+
+Selected utils calls also keep direct type information:
+
+- `utils::head`, `utils::tail` -> preserve the first argument's broad container kind
+- `utils::maintainer` -> scalar char
+- `utils::packageDate`, `utils::object.size`, `utils::memory.size`, `utils::memory.limit` -> scalar double
+- `utils::packageVersion`, `utils::citation`, `utils::person`, `utils::as.person`, `utils::as.personList` -> list-like opaque object
+- `utils::getAnywhere` -> named lookup result with fields like `name`, `where`, `visible`, `dups`
+- `utils::packageDescription` -> named metadata list with package fields such as `Package`, `Version`, `Title`, `Imports`
+- `utils::sessionInfo` -> named session list with fields such as `platform`, `basePkgs`, `BLAS`, `LAPACK`
+- `utils::as.roman` -> scalar or vector int depending on input shape
+- `utils::hasName` -> scalar logical
+- `utils::strcapture` -> dataframe-like table
+- `utils::apropos`, `utils::find`, `utils::findMatches`, `utils::methods` -> vector char
+- `utils::help.search` -> named search result with fields like `pattern`, `fields`, `types`, `matches`
+- `utils::data` -> named data index result with fields like `title`, `results`, `footer`
+- `utils::argsAnywhere` -> opaque callable object
+- `utils::contrib.url` -> scalar char
+- `utils::localeToCharset` -> vector char
+- `utils::charClass` -> vector logical
+- `utils::fileSnapshot` -> list-like opaque object
+- `utils::compareVersion` -> scalar double
+- `utils::capture.output` -> vector char
+- `utils::URLencode`, `utils::URLdecode` -> scalar or vector char depending on input shape
+- `utils::glob2rx` -> scalar char
+- `utils::file_test` -> scalar or vector logical depending on the probed path input
+- `utils::installed.packages` -> matrix char
+- `utils::read.csv`, `utils::read.csv2`, `utils::read.table`, `utils::read.delim`, `utils::read.fwf` -> dataframe-like table
+- `utils::write.csv`, `utils::write.csv2`, `utils::write.table`, `utils::str` -> null
+- `utils::combn` -> matrix preserving the input element type when RR can see it
+- `utils::adist` -> matrix double
+- `utils::count.fields` -> vector int
+- `utils::type.convert` -> preserves the first argument's broad vector/scalar kind
+- The `utils::?` help alias is also recognized directly, alongside `utils::.AtNames`, `utils::.DollarNames`, `utils::cite`, `utils::citeNatbib`, `utils::help`, `utils::read.socket`, `utils::RweaveChunkPrefix` -> vector char
+- `utils::.romans` -> vector int
+- `utils::askYesNo`, `utils::isS3method`, `utils::isS3stdGeneric` -> scalar logical
+- `utils::rc.settings` -> vector logical
+- `utils::download.file` -> scalar int
+- `utils::alarm`, `utils::rc.getOption` -> opaque scalar helper result
+- `utils::close.socket`, `utils::history`, `utils::loadhistory`, `utils::savehistory`, `utils::write.socket` -> null
+- `utils::.checkHT`, `utils::.RtangleCodeLabel`, `utils::.S3methods`, `utils::aregexec`, `utils::aspell`, aspell-package helpers, assign-in-namespace helpers, `utils::changedFiles`, data-entry helpers, `utils::download.packages`, `utils::install.packages`, `utils::make.packages.html`, `utils::make.socket`, `utils::makeRweaveLatexCodeRunner`, `utils::mirror2html`, `utils::new.packages`, `utils::old.packages`, `utils::packageStatus`, `utils::rc.options`, `utils::rc.status`, `utils::remove.packages`, Rtangle helpers, Rweave helpers, `utils::Stangle`, `utils::Sweave`, `utils::SweaveHooks`, Sweave syntax helpers, `utils::SweaveSyntConv`, `utils::update.packages`, `utils::upgrade` -> broad opaque helper object
+

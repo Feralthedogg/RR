@@ -18,14 +18,9 @@ RR documentation is split into manual-style sets:
   - [Configuration](./docs/configuration.md)
   - [R Interop](./docs/r-interop.md)
   - [Compatibility and Limits](./docs/compatibility.md)
-- Internals
-  - [Compiler Pipeline](./docs/compiler-pipeline.md)
-  - [IR Model](./docs/ir-model.md)
-  - [Tachyon Engine](./docs/optimization.md)
-  - [Runtime and Error Model](./docs/runtime-and-errors.md)
-- Development
-  - [Testing and Quality Gates](./docs/testing.md)
-  - [Contributing Audit Checklist](./docs/contributing-audit.md)
+- Compiler Dev Docs
+  - [Overview](./docs/compiler/index.md)
+  - [Contributing Audit Checklist](./docs/compiler/contributing-audit.md)
 
 ## What RR Does
 
@@ -129,6 +124,8 @@ Common options:
 - `--native-backend off|optional|required`
 - `--parallel-mode off|optional|required`
 - `--parallel-backend auto|r|openmp`
+- `--compiler-parallel-mode off|auto|on`
+- `--compiler-parallel-max-jobs <N>`
 - `--incremental[=auto|off|1|1,2|1,2,3|all]`
 - `--no-incremental`
 
@@ -169,6 +166,34 @@ Representative coverage includes:
 
 If `Rscript` is unavailable, R-dependent integration tests skip automatically.
 
+Tiered local validation:
+
+- `tier0`: fast compiler-only gates and unit/integration smoke
+- `tier1`: library/package interop closure, direct surface, and type-precision regressions
+- `optimizer-suite`: pass/vectorization/codegen legality and heavier optimizer equivalence checks
+- `tier2-main`: heavier runtime/equivalence/example/perf-style suites
+- `tier2-differential`: random differential plus per-pass verify
+
+```bash
+bash scripts/test_tier.sh tier0
+bash scripts/test_tier.sh tier1
+bash scripts/optimizer_suite.sh legality
+bash scripts/optimizer_suite.sh heavy
+bash scripts/test_tier.sh tier2-main
+RR_RANDOM_DIFFERENTIAL_COUNT=12 RR_RANDOM_DIFFERENTIAL_SEED=0xA11CE5EED55AA11C bash scripts/test_tier.sh tier2-differential
+```
+
+Equivalent Make targets:
+
+```bash
+make test-tier0
+make test-tier1
+make optimizer-suite-legality
+make optimizer-suite-heavy
+make test-tier2-main
+make test-tier2-differential
+```
+
 Benchmark helper:
 
 ```bash
@@ -187,6 +212,42 @@ RR_RANDOM_DIFFERENTIAL_COUNT=72 cargo test -q --test random_differential -- --no
 
 The generated differential harness covers loops, recurrences, matrices,
 records, and direct `stats`/`base` namespace interop cases.
+
+Library package regression suite:
+
+```bash
+make library-package-suite
+```
+
+To run only part of the package suite:
+
+```bash
+RR_PACKAGE_SUITE_FILTER=stats make library-package-suite
+RR_PACKAGE_SUITE_FILTER=base make library-package-suite
+```
+
+Performance gate:
+
+```bash
+make perf-gate
+RR_PERF_GATE_FILTER=perf_regression_gate bash scripts/perf_gate.sh
+```
+
+Recommended package coverage report:
+
+```bash
+make recommended-package-coverage
+RR_RECOMMENDED_PACKAGES=MASS,Matrix,survival bash scripts/recommended_package_coverage.sh
+```
+
+Triage helpers for failing differential / pass-verify bundles:
+
+```bash
+scripts/triage_driver.sh triage differential
+scripts/triage_driver.sh triage pass-verify
+scripts/triage_driver.sh reduce differential .artifacts/differential-triage/<case-dir>
+scripts/triage_driver.sh reduce pass-verify .artifacts/pass-verify-triage/<case-dir>
+```
 
 ## Fuzzing
 
@@ -240,8 +301,7 @@ needs the highest-priority promote targets.
 
 - docs landing page: [docs/index.md](./docs/index.md)
 - getting started: [docs/getting-started.md](./docs/getting-started.md)
-- compiler internals: [docs/compiler-pipeline.md](./docs/compiler-pipeline.md)
-- optimizer details: [docs/optimization.md](./docs/optimization.md)
+- compiler contributor docs: [docs/compiler/index.md](./docs/compiler/index.md)
 
 ## Contributing
 

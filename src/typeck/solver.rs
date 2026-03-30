@@ -1,3 +1,4 @@
+use crate::compiler::scheduler::{CompilerParallelConfig, CompilerScheduler};
 use crate::diagnostic::{DiagnosticBuilder, finish_diagnostics};
 use crate::error::{InternalCompilerError, RR, RRCode, RRException, Stage};
 use crate::hir::def::Ty;
@@ -5,7 +6,10 @@ use crate::mir::{FnIR, Instr, Terminator, ValueId, ValueKind};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
-use super::builtin_sigs::{infer_builtin, infer_builtin_term};
+use super::builtin_sigs::{
+    infer_builtin, infer_builtin_term, infer_package_binding, infer_package_binding_term,
+    infer_package_call, infer_package_call_term,
+};
 use super::constraints::{ConstraintSet, TypeConstraint};
 use super::lattice::{LenSym, NaTy, PrimTy, ShapeTy, TypeState};
 use super::term::{
@@ -152,9 +156,18 @@ fn type_state_from_term(term: &TypeTerm) -> TypeState {
         TypeTerm::Double => TypeState::scalar(PrimTy::Double, false),
         TypeTerm::Char => TypeState::scalar(PrimTy::Char, false),
         TypeTerm::Vector(inner) => TypeState::vector(type_state_from_term(inner).prim, false),
+        TypeTerm::VectorLen(inner, _) => TypeState::vector(type_state_from_term(inner).prim, false),
         TypeTerm::Matrix(inner) => TypeState::matrix(type_state_from_term(inner).prim, false),
         TypeTerm::MatrixDim(inner, _, _) => {
             TypeState::matrix(type_state_from_term(inner).prim, false)
+        }
+        TypeTerm::ArrayDim(inner, dims) => {
+            let prim = type_state_from_term(inner).prim;
+            if dims.len() <= 1 {
+                TypeState::vector(prim, false)
+            } else {
+                TypeState::matrix(prim, false)
+            }
         }
         TypeTerm::DataFrame(cols) => {
             let prim = cols
@@ -172,7 +185,7 @@ fn type_state_from_term(term: &TypeTerm) -> TypeState {
                 .prim;
             TypeState::matrix(prim, false)
         }
-        TypeTerm::List(_) => TypeState::vector(PrimTy::Any, false),
+        TypeTerm::NamedList(_) | TypeTerm::List(_) => TypeState::vector(PrimTy::Any, false),
         TypeTerm::Boxed(inner) => type_state_from_term(inner),
         TypeTerm::Option(inner) => {
             let mut inner_ty = type_state_from_term(inner);
@@ -207,6 +220,15 @@ fn promoted_numeric_prim(lhs: PrimTy, rhs: PrimTy) -> PrimTy {
 }
 
 pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -> RR<()> {
+    let scheduler = CompilerScheduler::new(CompilerParallelConfig::default());
+    analyze_program_with_compiler_parallel(all_fns, cfg, &scheduler)
+}
+
+pub fn analyze_program_with_compiler_parallel(
+    all_fns: &mut FxHashMap<String, FnIR>,
+    cfg: TypeConfig,
+    scheduler: &CompilerScheduler,
+) -> RR<()> {
     let mut fn_ret: FxHashMap<String, TypeState> = FxHashMap::default();
     let mut fn_ret_term: FxHashMap<String, TypeTerm> = FxHashMap::default();
     let mut init_names: Vec<String> = all_fns.keys().cloned().collect();
@@ -222,86 +244,326 @@ pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -
         fn_ret_term.insert(name, fn_ir.ret_term_hint.clone().unwrap_or(TypeTerm::Any));
     }
 
+    let index_param_slots = collect_index_vector_param_slots_by_function(all_fns);
+    let scalar_ret_demands = collect_scalar_index_return_demands(all_fns);
+    let vector_ret_demands = collect_vector_index_return_demands(all_fns, &index_param_slots);
+    let _ = apply_index_return_demands(
+        all_fns,
+        &mut fn_ret,
+        &mut fn_ret_term,
+        &scalar_ret_demands,
+        &vector_ret_demands,
+    );
+
+    let scc_waves = type_solver_scc_waves(all_fns);
+    for wave in scc_waves {
+        let wave_total_ir = wave
+            .iter()
+            .flat_map(|names| names.iter())
+            .filter_map(|name| all_fns.get(name))
+            .map(type_fn_ir_work_size)
+            .sum::<usize>();
+        let mut wave_jobs = Vec::with_capacity(wave.len());
+        for names in wave {
+            let mut fns = Vec::with_capacity(names.len());
+            for name in &names {
+                let Some(fn_ir) = all_fns.remove(name) else {
+                    return Err(InternalCompilerError::new(
+                        Stage::Mir,
+                        format!("type solver missing SCC member '{}'", name),
+                    )
+                    .into_exception());
+                };
+                fns.push((name.clone(), fn_ir));
+            }
+            wave_jobs.push(TypeSccJob { names, fns });
+        }
+
+        let solved_jobs = scheduler.map_try(wave_jobs, wave_total_ir, |job| {
+            solve_type_scc_job(
+                job,
+                &fn_ret,
+                &fn_ret_term,
+                &scalar_ret_demands,
+                &vector_ret_demands,
+            )
+        })?;
+
+        for solved in solved_jobs {
+            for (name, ret_ty, ret_term) in &solved.summaries {
+                fn_ret.insert(name.clone(), *ret_ty);
+                fn_ret_term.insert(name.clone(), ret_term.clone());
+            }
+            for (name, fn_ir) in solved.fns {
+                all_fns.insert(name, fn_ir);
+            }
+        }
+    }
+
+    finish_type_analysis(all_fns, cfg)
+}
+
+struct TypeSccJob {
+    names: Vec<String>,
+    fns: Vec<(String, FnIR)>,
+}
+
+struct TypeSolvedScc {
+    fns: Vec<(String, FnIR)>,
+    summaries: Vec<(String, TypeState, TypeTerm)>,
+}
+
+fn type_fn_ir_work_size(fn_ir: &FnIR) -> usize {
+    fn_ir.values.len()
+        + fn_ir.blocks.len()
+        + fn_ir.blocks.iter().map(|bb| bb.instrs.len()).sum::<usize>()
+}
+
+fn type_called_user_fns(fn_ir: &FnIR, all_fns: &FxHashMap<String, FnIR>) -> Vec<String> {
+    let mut out = FxHashSet::default();
+    for value in &fn_ir.values {
+        let ValueKind::Call { callee, .. } = &value.kind else {
+            continue;
+        };
+        if all_fns.contains_key(callee.as_str()) {
+            out.insert(callee.clone());
+        }
+    }
+    let mut out: Vec<String> = out.into_iter().collect();
+    out.sort();
+    out
+}
+
+fn type_solver_scc_waves(all_fns: &FxHashMap<String, FnIR>) -> Vec<Vec<Vec<String>>> {
+    fn dfs_order(
+        name: &str,
+        graph: &FxHashMap<String, Vec<String>>,
+        visited: &mut FxHashSet<String>,
+        order: &mut Vec<String>,
+    ) {
+        if !visited.insert(name.to_string()) {
+            return;
+        }
+        if let Some(nexts) = graph.get(name) {
+            for next in nexts {
+                dfs_order(next, graph, visited, order);
+            }
+        }
+        order.push(name.to_string());
+    }
+
+    fn dfs_rev(
+        name: &str,
+        rev_graph: &FxHashMap<String, Vec<String>>,
+        visited: &mut FxHashSet<String>,
+        scc: &mut Vec<String>,
+    ) {
+        if !visited.insert(name.to_string()) {
+            return;
+        }
+        scc.push(name.to_string());
+        if let Some(nexts) = rev_graph.get(name) {
+            for next in nexts {
+                dfs_rev(next, rev_graph, visited, scc);
+            }
+        }
+    }
+
+    let mut names: Vec<String> = all_fns.keys().cloned().collect();
+    names.sort();
+    let mut graph: FxHashMap<String, Vec<String>> = FxHashMap::default();
+    let mut rev_graph: FxHashMap<String, Vec<String>> = FxHashMap::default();
+    for name in &names {
+        let Some(fn_ir) = all_fns.get(name) else {
+            continue;
+        };
+        let callees = type_called_user_fns(fn_ir, all_fns);
+        graph.insert(name.clone(), callees.clone());
+        for callee in callees {
+            rev_graph.entry(callee).or_default().push(name.clone());
+        }
+    }
+    for edges in rev_graph.values_mut() {
+        edges.sort();
+        edges.dedup();
+    }
+
+    let mut order = Vec::new();
+    let mut visited = FxHashSet::default();
+    for name in &names {
+        dfs_order(name, &graph, &mut visited, &mut order);
+    }
+
+    let mut sccs = Vec::new();
+    let mut assigned = FxHashSet::default();
+    for name in order.into_iter().rev() {
+        if assigned.contains(&name) {
+            continue;
+        }
+        let mut scc = Vec::new();
+        dfs_rev(&name, &rev_graph, &mut assigned, &mut scc);
+        scc.sort();
+        sccs.push(scc);
+    }
+    sccs.sort_by(|a, b| a[0].cmp(&b[0]));
+
+    let mut scc_of = FxHashMap::default();
+    for (idx, scc) in sccs.iter().enumerate() {
+        for name in scc {
+            scc_of.insert(name.clone(), idx);
+        }
+    }
+
+    let mut outgoing: Vec<FxHashSet<usize>> = vec![FxHashSet::default(); sccs.len()];
+    let mut incoming: Vec<FxHashSet<usize>> = vec![FxHashSet::default(); sccs.len()];
+    for (idx, scc) in sccs.iter().enumerate() {
+        for name in scc {
+            let Some(fn_ir) = all_fns.get(name) else {
+                continue;
+            };
+            for callee in type_called_user_fns(fn_ir, all_fns) {
+                let Some(&callee_idx) = scc_of.get(&callee) else {
+                    continue;
+                };
+                if callee_idx != idx {
+                    outgoing[idx].insert(callee_idx);
+                    incoming[callee_idx].insert(idx);
+                }
+            }
+        }
+    }
+
+    let mut remaining_out: Vec<usize> = outgoing.iter().map(FxHashSet::len).collect();
+    let mut ready: Vec<usize> = remaining_out
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, count)| (*count == 0).then_some(idx))
+        .collect();
+    ready.sort_by(|lhs, rhs| sccs[*lhs][0].cmp(&sccs[*rhs][0]));
+
+    let mut waves = Vec::new();
+    let mut scheduled = FxHashSet::default();
+    while !ready.is_empty() {
+        let current = ready.clone();
+        let mut wave = Vec::with_capacity(current.len());
+        let mut next_ready = Vec::new();
+        for idx in current {
+            if !scheduled.insert(idx) {
+                continue;
+            }
+            wave.push(sccs[idx].clone());
+            for parent in &incoming[idx] {
+                remaining_out[*parent] = remaining_out[*parent].saturating_sub(1);
+                if remaining_out[*parent] == 0 {
+                    next_ready.push(*parent);
+                }
+            }
+        }
+        wave.sort_by(|lhs, rhs| lhs[0].cmp(&rhs[0]));
+        waves.push(wave);
+        next_ready.sort_by(|lhs, rhs| sccs[*lhs][0].cmp(&sccs[*rhs][0]));
+        next_ready.dedup();
+        ready = next_ready;
+    }
+    waves
+}
+
+fn can_apply_index_return_override_for_fn(
+    fn_ir: &FnIR,
+    demanded_shape: ShapeTy,
+    demanded_term: &TypeTerm,
+) -> bool {
+    if let Some(hint) = fn_ir.ret_ty_hint
+        && hint != TypeState::unknown()
+    {
+        if hint.shape != ShapeTy::Unknown && hint.shape != demanded_shape {
+            return false;
+        }
+        if hint.prim != PrimTy::Any && hint.prim != PrimTy::Int {
+            return false;
+        }
+    }
+    if let Some(term_hint) = &fn_ir.ret_term_hint
+        && !term_hint.is_any()
+        && !term_hint.compatible_with(demanded_term)
+    {
+        return false;
+    }
+    true
+}
+
+fn solve_type_scc_job(
+    mut job: TypeSccJob,
+    global_ret: &FxHashMap<String, TypeState>,
+    global_ret_term: &FxHashMap<String, TypeTerm>,
+    scalar_ret_demands: &FxHashSet<String>,
+    vector_ret_demands: &FxHashSet<String>,
+) -> RR<TypeSolvedScc> {
+    let mut summary_ret = global_ret.clone();
+    let mut summary_ret_term = global_ret_term.clone();
+    let vec_term = TypeTerm::Vector(Box::new(TypeTerm::Int));
     let mut changed = true;
     let mut guard = 0usize;
-    let mut scalar_ret_demands: FxHashSet<String> = FxHashSet::default();
-    let mut vector_ret_demands: FxHashSet<String> = FxHashSet::default();
+
     while changed && guard < 16 {
         guard += 1;
         changed = false;
-        let _ = apply_index_return_demands(
-            all_fns,
-            &mut fn_ret,
-            &mut fn_ret_term,
-            &scalar_ret_demands,
-            &vector_ret_demands,
-        );
+        for (name, fn_ir) in &mut job.fns {
+            let enforce_vector_ret = vector_ret_demands.contains(name)
+                && can_apply_index_return_override_for_fn(fn_ir, ShapeTy::Vector, &vec_term);
+            let enforce_scalar_ret = scalar_ret_demands.contains(name)
+                && can_apply_index_return_override_for_fn(fn_ir, ShapeTy::Scalar, &TypeTerm::Int);
 
-        let mut names: Vec<String> = all_fns.keys().cloned().collect();
-        names.sort();
-        for name in names {
-            let enforce_vector_ret = vector_ret_demands.contains(&name)
-                && can_apply_index_return_override(
-                    all_fns,
-                    &name,
-                    ShapeTy::Vector,
-                    &TypeTerm::Vector(Box::new(TypeTerm::Int)),
-                );
-            let enforce_scalar_ret = scalar_ret_demands.contains(&name)
-                && can_apply_index_return_override(all_fns, &name, ShapeTy::Scalar, &TypeTerm::Int);
-            let Some(fn_ir) = all_fns.get_mut(&name) else {
-                return Err(InternalCompilerError::new(
-                    Stage::Mir,
-                    format!("type solver missing function '{}'", name),
-                )
-                .into_exception());
-            };
-            let mut ret = analyze_function(fn_ir, &fn_ret)?;
-            let mut ret_term = analyze_function_terms(fn_ir, &fn_ret_term);
+            let mut ret = analyze_function(fn_ir, &summary_ret)?;
+            let mut ret_term = analyze_function_terms(fn_ir, &summary_ret_term);
             if enforce_vector_ret {
                 ret = coerce_index_vector_return(ret);
-                ret_term = TypeTerm::Vector(Box::new(TypeTerm::Int));
+                ret_term = vec_term.clone();
             } else if enforce_scalar_ret {
                 ret = coerce_index_scalar_return(ret);
                 ret_term = TypeTerm::Int;
             }
 
-            let prev = fn_ret.get(&name).copied().unwrap_or(TypeState::unknown());
-            let prev_term = fn_ret_term.get(&name).cloned().unwrap_or(TypeTerm::Any);
+            let prev = summary_ret
+                .get(name)
+                .copied()
+                .unwrap_or(TypeState::unknown());
+            let prev_term = summary_ret_term.get(name).cloned().unwrap_or(TypeTerm::Any);
             if ret != prev {
-                fn_ret.insert(name.clone(), ret);
+                summary_ret.insert(name.clone(), ret);
                 changed = true;
             }
             if ret_term != prev_term {
-                fn_ret_term.insert(name.clone(), ret_term.clone());
+                summary_ret_term.insert(name.clone(), ret_term.clone());
                 changed = true;
             }
             fn_ir.inferred_ret_ty = ret;
             fn_ir.inferred_ret_term = ret_term;
         }
-
-        let index_param_slots = collect_index_vector_param_slots_by_function(all_fns);
-        let next_scalar_ret_demands = collect_scalar_index_return_demands(all_fns);
-        let next_vector_ret_demands =
-            collect_vector_index_return_demands(all_fns, &index_param_slots);
-        if next_scalar_ret_demands != scalar_ret_demands
-            || next_vector_ret_demands != vector_ret_demands
-        {
-            scalar_ret_demands = next_scalar_ret_demands;
-            vector_ret_demands = next_vector_ret_demands;
-            changed = true;
-        }
-        if apply_index_return_demands(
-            all_fns,
-            &mut fn_ret,
-            &mut fn_ret_term,
-            &scalar_ret_demands,
-            &vector_ret_demands,
-        ) {
-            changed = true;
-        }
     }
 
+    let summaries = job
+        .names
+        .iter()
+        .map(|name| {
+            (
+                name.clone(),
+                summary_ret
+                    .get(name)
+                    .copied()
+                    .unwrap_or(TypeState::unknown()),
+                summary_ret_term.get(name).cloned().unwrap_or(TypeTerm::Any),
+            )
+        })
+        .collect();
+
+    Ok(TypeSolvedScc {
+        fns: job.fns,
+        summaries,
+    })
+}
+
+fn finish_type_analysis(all_fns: &FxHashMap<String, FnIR>, cfg: TypeConfig) -> RR<()> {
     let mut type_errors = Vec::new();
     let mut names: Vec<String> = all_fns.keys().cloned().collect();
     names.sort();
@@ -348,7 +610,6 @@ pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -
                 );
             }
         } else if let Some(h) = fn_ir.ret_ty_hint {
-            // Backward-compatible primitive-only clash check when structural hint is absent.
             let inferred = fn_ir.inferred_ret_ty;
             if h != TypeState::unknown() && inferred != TypeState::unknown() {
                 let clash = h.prim != PrimTy::Any
@@ -1091,6 +1352,151 @@ fn infer_value_term(fn_ir: &FnIR, vid: ValueId, fn_ret: &FxHashMap<String, TypeT
     terms::infer_value_term(fn_ir, vid, fn_ret)
 }
 
+fn named_call_arg(args: &[ValueId], names: &[Option<String>], target: &str) -> Option<ValueId> {
+    args.iter()
+        .zip(names.iter())
+        .find_map(|(arg, name)| (name.as_deref() == Some(target)).then_some(*arg))
+}
+
+fn positional_call_arg(
+    args: &[ValueId],
+    names: &[Option<String>],
+    index: usize,
+) -> Option<ValueId> {
+    match (args.get(index), names.get(index)) {
+        (Some(arg), Some(None)) => Some(*arg),
+        _ => None,
+    }
+}
+
+fn infer_named_package_call_type(
+    fn_ir: &FnIR,
+    callee: &str,
+    args: &[ValueId],
+    names: &[Option<String>],
+) -> Option<TypeState> {
+    fn unique_assign_source_for_var(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
+        let mut found = None;
+        for block in &fn_ir.blocks {
+            for instr in &block.instrs {
+                if let Instr::Assign { dst, src, .. } = instr
+                    && dst == var
+                {
+                    if found.is_some() {
+                        return None;
+                    }
+                    found = Some(*src);
+                }
+            }
+        }
+        found
+    }
+
+    fn resolve_package_call_origin_inner(
+        fn_ir: &FnIR,
+        vid: ValueId,
+        seen_vals: &mut FxHashSet<ValueId>,
+        seen_vars: &mut FxHashSet<String>,
+    ) -> Option<ValueId> {
+        if !seen_vals.insert(vid) {
+            return None;
+        }
+        match &fn_ir.values.get(vid)?.kind {
+            ValueKind::Call { callee, args, .. }
+                if matches!(
+                    callee.as_str(),
+                    "stats::update" | "stats::update.default" | "stats::step"
+                ) && !args.is_empty() =>
+            {
+                resolve_package_call_origin_inner(fn_ir, args[0], seen_vals, seen_vars)
+            }
+            ValueKind::Call { callee, .. } if callee.contains("::") => Some(vid),
+            ValueKind::Load { var } => {
+                if var.contains("::") {
+                    return Some(vid);
+                }
+                if !seen_vars.insert(var.clone()) {
+                    return None;
+                }
+                let src = unique_assign_source_for_var(fn_ir, var)?;
+                resolve_package_call_origin_inner(fn_ir, src, seen_vals, seen_vars)
+            }
+            ValueKind::Phi { args } => {
+                let mut out: Option<ValueId> = None;
+                for (src, _) in args {
+                    let resolved =
+                        resolve_package_call_origin_inner(fn_ir, *src, seen_vals, seen_vars)?;
+                    match out {
+                        None => out = Some(resolved),
+                        Some(prev) if prev == resolved => {}
+                        Some(_) => return None,
+                    }
+                }
+                out
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_package_call_origin(fn_ir: &FnIR, vid: ValueId) -> Option<ValueId> {
+        resolve_package_call_origin_inner(
+            fn_ir,
+            vid,
+            &mut FxHashSet::default(),
+            &mut FxHashSet::default(),
+        )
+    }
+
+    match callee {
+        "base::vector" => {
+            let mode = args.first().and_then(|arg| match &fn_ir.values[*arg].kind {
+                ValueKind::Const(crate::syntax::ast::Lit::Str(name)) => Some(name.as_str()),
+                _ => None,
+            });
+            let ty = match mode {
+                Some("logical") => TypeState::vector(PrimTy::Logical, false),
+                Some("integer") => TypeState::vector(PrimTy::Int, false),
+                Some("double") | Some("numeric") => TypeState::vector(PrimTy::Double, false),
+                Some("character") => TypeState::vector(PrimTy::Char, false),
+                Some("list") => TypeState::vector(PrimTy::Any, false),
+                _ => TypeState::vector(PrimTy::Any, false),
+            };
+            Some(ty)
+        }
+        "stats::predict" => {
+            let newdata = named_call_arg(args, names, "newdata")
+                .or_else(|| positional_call_arg(args, names, 1));
+            let len_sym = newdata.and_then(|arg| fn_ir.values[arg].value_ty.len_sym);
+            Some(TypeState::vector(PrimTy::Double, false).with_len(len_sym))
+        }
+        "stats::model.frame" | "stats::model.frame.default" => {
+            if let Some(data) =
+                named_call_arg(args, names, "data").or_else(|| positional_call_arg(args, names, 1))
+            {
+                return Some(fn_ir.values[data].value_ty);
+            }
+            if let Some(model_arg) = positional_call_arg(args, names, 0)
+                && let Some(origin) = resolve_package_call_origin(fn_ir, model_arg)
+                && let ValueKind::Call {
+                    callee,
+                    args,
+                    names,
+                } = &fn_ir.values[origin].kind
+                && matches!(callee.as_str(), "stats::lm" | "stats::glm")
+                && let Some(data_arg) = named_call_arg(args, names, "data")
+                    .or_else(|| positional_call_arg(args, names, 1))
+            {
+                return Some(fn_ir.values[data_arg].value_ty);
+            }
+            Some(TypeState::matrix(PrimTy::Any, false))
+        }
+        "stats::step" | "stats::update.default" => {
+            positional_call_arg(args, names, 0).map(|arg| fn_ir.values[arg].value_ty)
+        }
+        _ => None,
+    }
+}
+
 fn infer_value_type(
     fn_ir: &FnIR,
     vid: ValueId,
@@ -1212,7 +1618,11 @@ fn infer_value_type(
             }
             out
         }
-        ValueKind::Call { callee, args, .. } => {
+        ValueKind::Call {
+            callee,
+            args,
+            names,
+        } => {
             if callee == "seq_along" && args.len() == 1 {
                 let base_ty = fn_ir.values[args[0]].value_ty;
                 return TypeState::vector(PrimTy::Int, true).with_len(base_ty.len_sym);
@@ -1256,6 +1666,22 @@ fn infer_value_type(
                 .iter()
                 .map(|a| fn_ir.values[*a].value_term.clone())
                 .collect();
+            if callee == "compiler::getCompilerOption"
+                && let Some(option_name) =
+                    args.first().and_then(|arg| match &fn_ir.values[*arg].kind {
+                        ValueKind::Const(crate::syntax::ast::Lit::Str(name)) => Some(name.as_str()),
+                        _ => None,
+                    })
+            {
+                let narrowed = match option_name {
+                    "optimize" => TypeState::scalar(PrimTy::Int, false),
+                    "suppressAll" => TypeState::scalar(PrimTy::Logical, false),
+                    "suppressUndefined" => TypeState::vector(PrimTy::Char, false),
+                    "suppressNoSuperAssignVar" => TypeState::scalar(PrimTy::Logical, false),
+                    _ => TypeState::scalar(PrimTy::Any, false),
+                };
+                return refine_type_with_term(narrowed, &fn_ir.values[vid].value_term);
+            }
             if let Some(b) = infer_builtin(callee, &arg_tys) {
                 let with_builtin_term = if let Some(term) = infer_builtin_term(callee, &arg_terms) {
                     refine_type_with_term(b, &term)
@@ -1263,6 +1689,24 @@ fn infer_value_type(
                     b
                 };
                 return refine_type_with_term(with_builtin_term, &fn_ir.values[vid].value_term);
+            }
+            if let Some(pkg_ty) = infer_named_package_call_type(fn_ir, callee, args, names) {
+                let with_pkg_term = if let Some(term) = infer_package_call_term(callee, &arg_terms)
+                {
+                    refine_type_with_term(pkg_ty, &term)
+                } else {
+                    pkg_ty
+                };
+                return refine_type_with_term(with_pkg_term, &fn_ir.values[vid].value_term);
+            }
+            if let Some(pkg_ty) = infer_package_call(callee, &arg_tys) {
+                let with_pkg_term = if let Some(term) = infer_package_call_term(callee, &arg_terms)
+                {
+                    refine_type_with_term(pkg_ty, &term)
+                } else {
+                    pkg_ty
+                };
+                return refine_type_with_term(with_pkg_term, &fn_ir.values[vid].value_term);
             }
             if callee.starts_with("Sym_") {
                 return fn_ret.get(callee).copied().unwrap_or(TypeState::unknown());
@@ -1306,7 +1750,11 @@ fn infer_value_type(
             )
         }
         ValueKind::Load { var } => {
-            let ty = var_tys.get(var).copied().unwrap_or(TypeState::unknown());
+            let ty = var_tys
+                .get(var)
+                .copied()
+                .or_else(|| infer_package_binding(var))
+                .unwrap_or(TypeState::unknown());
             refine_type_with_term(
                 ty,
                 fn_ir

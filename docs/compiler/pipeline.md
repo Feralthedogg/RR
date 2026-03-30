@@ -18,17 +18,8 @@ Read this page when you need to understand:
 
 ## Pipeline Synopsis
 
-`RR source`
-`-> parse`
-`-> HIR lowering`
-`-> HIR canonicalization`
-`-> MIR synthesis`
-`-> type analysis`
-`-> Tachyon optimization or stabilization`
-`-> structurization`
-`-> MIR-to-R emission`
-`-> runtime subset injection`
-`-> self-contained .R artifact`
+<CompilerPipelineDiagram />
+
 
 ## Pipeline Contract
 
@@ -57,7 +48,7 @@ Hard rules:
 Important boundaries to keep in mind:
 
 - HIR canonicalization should remove surface sugar before MIR lowering
-- MIR verification and type analysis operate on SSA-like MIR, not emitted R
+- MIR verification, type analysis, and semantic/runtime-safety validation operate on SSA-like MIR, not emitted R
 - codegen should only see de-SSA, structurized MIR
 - runtime injection should never invent semantics that are absent from emitted R
 
@@ -69,6 +60,7 @@ Important boundaries to keep in mind:
 | Canonicalization | desugar surface forms | `src/hir/desugar.rs` |
 | SSA Graph Synthesis | build MIR CFG and SSA values | `src/mir/lower_hir.rs` |
 | Type Analysis | infer/prove MIR value states | `src/typeck/solver.rs` |
+| Static Validation | semantic + runtime-safety MIR checks | `src/mir/semantics.rs` |
 | Tachyon | optimize or stabilize MIR | `src/mir/opt.rs` |
 | R Code Emission | structurize CFG and print R | `src/mir/structurizer.rs`, `src/codegen/mir_emit.rs` |
 | Runtime Injection | prepend helper subset and policy | `src/runtime`, `src/compiler/pipeline.rs` |
@@ -114,7 +106,7 @@ Relevant path:
 
 - `src/mir/lower_hir.rs`
 
-### 4. Type Analysis
+### 4. Type Analysis and Static Validation
 
 Type analysis computes:
 
@@ -133,6 +125,15 @@ Relevant paths:
 
 - `src/typeck/solver.rs`
 - `src/typeck/term.rs`
+
+Immediately after MIR synthesis/type analysis, RR also runs:
+
+- semantic MIR validation
+- runtime-safety static validation
+
+Relevant path:
+
+- `src/mir/semantics.rs`
 
 ### 5. Tachyon
 

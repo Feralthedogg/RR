@@ -1,23 +1,18 @@
 # Getting Started
 
-This page is the shortest path to a working RR compile and run.
+This page is the shortest path from a fresh checkout to a running RR program.
 
-## Purpose
+## What This Page Covers
 
-Use this page as a quick-start manual, not as a full language or pipeline
-reference. It is meant to get a new checkout from "can build" to "can compile
-and run one RR program" with the fewest decisions.
-
-## Audience
-
-Read this page if you want to:
+Use this page when you want the user-facing path first:
 
 - build RR locally
 - compile one `.rr` file into `.R`
 - run a small RR program end to end
-- understand which command to use next
+- learn the next three commands most people use: `run`, `build`, and `watch`
 
-If you already know the driver shape, jump to [CLI Reference](cli.md).
+This page intentionally keeps compiler structure out of the fast path. If you
+already know the driver shape, jump to [CLI Reference](cli.md).
 
 ## Requirements
 
@@ -25,7 +20,7 @@ If you already know the driver shape, jump to [CLI Reference](cli.md).
 - `Rscript` in `PATH` if you want to execute generated `.R`
 - `corepack pnpm` only if you also want to build the docs site
 
-## Fast Path
+## Five-Minute Quick Start
 
 Build the compiler:
 
@@ -39,25 +34,11 @@ Check the compiler line:
 target/debug/RR --version
 ```
 
-Compile one file:
-
-```bash
-target/debug/RR main.rr -o main.R -O2
-```
-
-Run the generated artifact:
-
-```bash
-Rscript --vanilla main.R
-```
-
-## First Program
-
 Create `main.rr`:
 
 ```rr
-let main <- function() {
-  let x <- 1 + 2
+fn main() {
+  let x = 1 + 2
   print(x)
   x
 }
@@ -65,10 +46,15 @@ let main <- function() {
 print(main())
 ```
 
-Compile and run:
+Compile it:
 
 ```bash
-target/debug/RR main.rr -o main.R -O1
+target/debug/RR main.rr -o main.R -O2
+```
+
+Run the emitted R:
+
+```bash
 Rscript --vanilla main.R
 ```
 
@@ -79,7 +65,7 @@ Expected output:
 [1] 3
 ```
 
-## Driver Forms
+## Common Commands
 
 RR supports three common workflows:
 
@@ -112,38 +98,15 @@ mirrored output tree.
 
 RR emits ordinary `.R` files.
 
-Normal output:
-
 - includes the runtime helper subset actually referenced by the emitted code
 - includes runtime bootstrap and compile-time policy defaults
 - is intended to run directly under `Rscript`
 
-Helper-only output:
+For inspection or backend debugging, you can omit the normal runtime bootstrap:
 
 ```bash
 RR main.rr -o main.R --no-runtime -O2
 ```
-
-Helper-only output:
-
-## Non-Goals
-
-This page does not try to explain:
-
-- the complete RR syntax surface
-- optimizer behavior or skip reasons
-- runtime helper policy in detail
-- contributor verification workflow
-
-Use the manuals linked below for those topics.
-
-## Related Manuals
-
-- [RR for R Users](r-for-r-users.md)
-- [CLI Reference](cli.md)
-- [Language Reference](language.md)
-- [Runtime and Error Model](runtime-and-errors.md)
-- [Testing and Quality Gates](testing.md)
 
 - omits source/native bootstrap
 - still injects the helper subset needed by the emitted program
@@ -171,15 +134,16 @@ phase 2 caches when possible.
 poll ticks do not rebuild repeatedly, and edits in imported `*.rr` modules
 trigger rebuilds even when `main.rr` itself did not change.
 
-## Recommended Reading Order
+## Where To Go Next
 
-1. [CLI Reference](cli.md)
+If you are learning RR as a language:
+
+1. [RR for R Users](r-for-r-users.md)
 2. [Language Reference](language.md)
 3. [Writing RR for Performance and Safety](writing-rr.md)
 4. [Configuration](configuration.md)
 
-If you want to understand emission and optimization next:
+If you need exact command behavior:
 
-1. [Compiler Pipeline](compiler-pipeline.md)
-2. [Tachyon Engine](optimization.md)
-3. [Runtime and Error Model](runtime-and-errors.md)
+1. [CLI Reference](cli.md)
+2. [Configuration](configuration.md)

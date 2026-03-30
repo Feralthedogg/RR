@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib/triage_common.sh"
 FAIL_ROOT="${RR_PASS_VERIFY_FAILURE_ROOT:-$ROOT/target/tests/pass_verify_failures}"
 OUT_DIR="${RR_PASS_VERIFY_TRIAGE_OUT_DIR:-$ROOT/.artifacts/pass-verify-triage}"
+RR_BIN_DEFAULT="${RR_BIN:-$ROOT/target/debug/RR}"
 mkdir -p "$OUT_DIR"
 SUMMARY="$OUT_DIR/summary.md"
 JOB_SUMMARY="$OUT_DIR/job-summary.md"
@@ -136,6 +137,34 @@ MD
 
   regression_name="$(triage_rust_test_name "$base")"
   generate_regression_rs "$regression_name" "$case_dir/regression.rs"
+  cat > "$case_dir/replay.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+RR_BIN="\${RR_BIN:-$RR_BIN_DEFAULT}"
+OUT_FILE="\${1:-$case_dir/replayed.R}"
+RR_VERIFY_EACH_PASS=1 RR_QUIET_LOG=1 "\$RR_BIN" "$case_dir/case.rr" -o "\$OUT_FILE" -O2
+SH
+  chmod +x "$case_dir/replay.sh"
+  cat > "$case_dir/reduce.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+RR_BIN="\${RR_BIN:-$RR_BIN_DEFAULT}" \
+  "$ROOT/scripts/triage_driver.sh" reduce pass-verify "$case_dir" "\${1:-$case_dir/reduced.rr}"
+SH
+  chmod +x "$case_dir/reduce.sh"
+  cat > "$case_dir/meta.json" <<JSON
+{
+  "schema": "rr-triage-case",
+  "version": 1,
+  "kind": "pass-verify",
+  "case": "$base",
+  "status": "$(triage_read_manifest_field "$bundle/bundle.manifest" "status")",
+  "case_dir": "$case_dir",
+  "replay_script": "$case_dir/replay.sh",
+  "reduce_script": "$case_dir/reduce.sh",
+  "regression": "$case_dir/regression.rs"
+}
+JSON
   printf '%s\t%s\n' "$base" "$case_dir" >> "$INDEX"
 
   cat >> "$SUMMARY" <<MD
@@ -147,6 +176,9 @@ MD
   - \`$case_dir/compiler.stdout\`
   - \`$case_dir/compiler.stderr\`
   - \`$case_dir/regression.rs\`
+  - \`$case_dir/replay.sh\`
+  - \`$case_dir/reduce.sh\`
+  - \`$case_dir/meta.json\`
 
 MD
   TOTAL=$((TOTAL + 1))

@@ -44,6 +44,94 @@ You should expect RR to stay conservative around:
 - schema-erasing dataframe flows
 - alias-heavy code where mutation order is unclear
 
+## RR Still Speaks R
+
+RR is not a “modern-only” rewrite of R syntax.
+
+If you already think in ordinary R, RR is designed so you can keep writing a lot
+of familiar code and then add stricter declarations/types where you want them.
+
+RR directly supports important R-style surface forms such as:
+
+- `<-` assignment
+- `function(...) { ... }`
+- dotted names such as `solve.cg`, `is.na`, `stats.ts.helper`
+- newline-delimited single-line control forms
+- `for (i in seq_len(n)) { ... }` style loops as accepted surface syntax
+
+So RR is not asking you to abandon R-style code. The real shift is:
+
+- declare first bindings explicitly with `let`
+- add type hints when they help
+- avoid the most dynamic parts of R in hot or correctness-sensitive paths
+
+### Mixed style is normal
+
+These are all valid RR-style authoring patterns:
+
+Traditional-leaning RR:
+
+```rr
+let scale <- function(x) {
+  let n <- length(x)
+  let out <- x
+  for (i in seq_len(n)) {
+    out[i] <- out[i] / 100.0
+  }
+  out
+}
+```
+
+Modern-leaning RR:
+
+```rr
+fn scale(x: vector<float>) -> vector<float> {
+  let n = length(x)
+  let out = x
+  for i in 1..n {
+    out[i] = out[i] / 100.0
+  }
+  out
+}
+```
+
+Mixed style:
+
+```rr
+let scale <- function(x: vector<float>) {
+  let n = length(x)
+  let out <- x
+  for (i in 1..n) {
+    out[i] = out[i] / 100.0
+  }
+  out
+}
+```
+
+All three are within RR's intended source style.
+
+### The important difference from R
+
+The biggest rule to remember is this:
+
+- the first binding of a name still needs `let`, even when you write R-style `<-`
+
+Good:
+
+```rr
+let x <- 1L
+x <- x + 1L
+```
+
+Bad:
+
+```rr
+x <- 1L
+```
+
+That is why RR can feel familiar to R users at the syntax layer while still
+being stricter and more compiler-friendly underneath.
+
 ## Syntax Differences from R
 
 ### Declarations
@@ -83,6 +171,10 @@ fn saxpy(a: float, x: vector<float>, y: vector<float>) -> vector<float> {
 
 You can still write R-like data code inside the function body, but parameter and
 return hints give RR much better type and shape information.
+
+`fn` is the concise RR-native function form, but R-style `function(...)` remains
+fully supported surface syntax. Use whichever one makes the codebase easier to
+read, and mix them when that helps migration from existing R code.
 
 ### Integers and Floats
 
@@ -255,8 +347,8 @@ This is by design. RR tries to fail early when it can prove a runtime failure.
 Example:
 
 ```bash
-RR_STRICT_LET=1 RR_RUNTIME_MODE=debug \
-  cargo run -- example/benchmarks/signal_pipeline_bench.rr -O2 --no-incremental
+RR_RUNTIME_MODE=debug \
+  cargo run -- example/benchmarks/signal_pipeline_bench.rr -O2 --type-mode strict --no-incremental
 ```
 
 ## Read Next

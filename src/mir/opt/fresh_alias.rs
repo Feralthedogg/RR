@@ -24,6 +24,19 @@ pub fn optimize_program(all_fns: &mut FxHashMap<String, FnIR>) -> bool {
     changed
 }
 
+pub(crate) fn collect_fresh_returning_user_functions_for_parallel(
+    all_fns: &FxHashMap<String, FnIR>,
+) -> FxHashSet<String> {
+    collect_fresh_returning_user_functions(all_fns)
+}
+
+pub(crate) fn optimize_function_with_fresh_user_calls(
+    fn_ir: &mut FnIR,
+    fresh_user_calls: &FxHashSet<String>,
+) -> bool {
+    optimize_function(fn_ir, fresh_user_calls)
+}
+
 fn optimize_function(fn_ir: &mut FnIR, fresh_user_calls: &FxHashSet<String>) -> bool {
     let in_states = compute_in_states(fn_ir, fresh_user_calls);
     let mut changed = false;

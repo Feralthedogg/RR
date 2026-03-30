@@ -3,69 +3,96 @@ layout: home
 
 hero:
   name: RR
-  text: RR Compiler Manual
-  tagline: RR Tachyon v7.0.0. R-oriented source, MIR-based optimization, and self-contained R artifacts documented against the implementation.
+  text: "Write RR, Run R"
+  tagline: "Learn RR from the user side first: write `.rr`, compile it into self-contained `.R`, and run it with familiar R tooling."
   actions:
     - theme: brand
-      text: Getting Started
+      text: Start Here
       link: /getting-started
     - theme: alt
-      text: Language Reference
-      link: /language
+      text: RR for R Users
+      link: /r-for-r-users
     - theme: alt
-      text: Compiler Pipeline
-      link: /compiler-pipeline
+      text: CLI Reference
+      link: /cli
 
 features:
-  - title: Guide Manuals
-    details: Start with build, compile, run, watch, and performance-oriented writing guidance before moving into reference material.
-  - title: Reference Manuals
-    details: Language, CLI, configuration, compatibility, and R interop are documented as stable user-facing interfaces.
-  - title: Internal Manuals
-    details: Compiler pipeline, IR model, optimizer, and runtime contracts are described from the current source tree and tests.
-  - title: Development Manuals
-    details: Testing, audit, and verification pages define the commands and invariants used to keep RR trustworthy.
+  - title: First Compile
+    details: Go from a fresh checkout to a working `.R` artifact in a few commands.
+  - title: Learn the Language
+    details: Pick up RR syntax, type hints, matrix and dataframe guidance, and the patterns RR understands well.
+  - title: Build Real Projects
+    details: Use `RR run`, `RR build`, and `RR watch` for local runs, mirrored build trees, and edit-compile loops.
+  - title: R Interop and Limits
+    details: Check configuration, package interop, and supported limits when you need exact behavior.
 ---
 
-## Documentation Sets
+## Start Here
 
-RR documentation is split into four manual sets, following the style used by
-systems projects such as the Linux kernel, GCC, and LLVM.
+If your goal is "show me how to use RR", start here:
 
-### Guide
+1. Read [Getting Started](/getting-started) for the shortest path from checkout to a running program.
+2. Read [RR for R Users](/r-for-r-users) if you already know R and want the RR mental model quickly.
+3. Keep [CLI Reference](/cli) nearby once you want exact command forms and flags.
 
-Use these pages when you want to get something done with RR.
+Build RR, compile one file, and run it:
+
+```bash
+cargo build
+target/debug/RR main.rr -o main.R -O2
+Rscript --vanilla main.R
+```
+
+## Common Workflows
+
+### Compile one file
+
+```bash
+RR input.rr -o out.R -O2
+```
+
+### Run a project entry
+
+```bash
+RR run . -O2
+```
+
+### Build a directory tree
+
+```bash
+RR build . --out-dir build -O2
+```
+
+### Watch and rebuild
+
+```bash
+RR watch . -O2
+```
+
+## User Docs
+
+Use these pages when you want to write RR code and get work done.
 
 - [Getting Started](/getting-started)
 - [RR for R Users](/r-for-r-users)
 - [Writing RR for Performance and Safety](/writing-rr)
 - [CLI Reference](/cli)
-- [Configuration](/configuration)
-
-### Reference
-
-Use these pages when you need a precise statement of the supported surface.
-
 - [Language Reference](/language)
+- [Configuration](/configuration)
 - [R Interop](/r-interop)
 - [Compatibility and Limits](/compatibility)
 
-### Internals
+## Compiler Docs
 
-Use these pages when you need to understand why RR emits what it emits.
+Use these pages when you want the implementation-side view:
 
-- [Compiler Pipeline](/compiler-pipeline)
-- [IR Model](/ir-model)
-- [Tachyon Engine](/optimization)
-- [Runtime and Error Model](/runtime-and-errors)
-
-### Development
-
-Use these pages when you are changing the compiler, reviewing a patch, or
-triaging a regression.
-
-- [Testing and Quality Gates](/testing)
-- [Contributing Audit Checklist](/contributing-audit)
+- [Compiler Overview](/compiler/)
+- [Compiler Pipeline](/compiler/pipeline)
+- [IR Model](/compiler/ir-model)
+- [Tachyon Optimizer](/compiler/optimization)
+- [Runtime and Error Model](/compiler/runtime-and-errors)
+- [Testing and Quality Gates](/compiler/testing)
+- [Contributing Audit Checklist](/compiler/contributing-audit)
 
 ## Reading Paths
 
@@ -76,21 +103,23 @@ If you are new to RR:
 3. Read [CLI Reference](/cli).
 4. Read [Language Reference](/language).
 
-If you are validating generated output:
+If you are shipping RR code:
 
-1. Read [Writing RR for Performance and Safety](/writing-rr).
-2. Read [Compatibility and Limits](/compatibility).
-3. Read [Runtime and Error Model](/runtime-and-errors).
+1. Read [CLI Reference](/cli).
+2. Read [Configuration](/configuration).
+3. Read [Writing RR for Performance and Safety](/writing-rr).
 
-If you are debugging the compiler:
+If you are debugging or modifying RR itself:
 
-1. Read [Compiler Pipeline](/compiler-pipeline).
-2. Read [Tachyon Engine](/optimization).
-3. Read [Testing and Quality Gates](/testing).
+1. Read [Compiler Overview](/compiler/).
+2. Read [Compiler Pipeline](/compiler/pipeline).
+3. Read [IR Model](/compiler/ir-model).
+4. Read [Tachyon Optimizer](/compiler/optimization).
+5. Read [Testing and Quality Gates](/compiler/testing).
 
 ## Documentation Principles
 
 - Pages describe RR as implemented in this repository, not as an aspirational design.
-- User manuals prefer behavior, guarantees, and limits over implementation trivia.
-- Internal manuals prefer contracts, phase boundaries, and failure modes over prose-only overviews.
+- User docs start with workflows, commands, and examples before compiler structure.
+- User docs avoid implementation-detail walkthroughs in the main reading flow.
 - Testing pages are treated as part of the product contract, not as contributor-only notes.

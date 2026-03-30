@@ -1,7 +1,8 @@
 use RR::compiler::{
-    CliLog, CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel,
-    ParallelBackend, ParallelConfig, ParallelMode,
-    compile_with_configs_incremental_with_output_options, compile_with_configs_with_options,
+    CliLog, CompileOutputOptions, CompilerParallelConfig, CompilerParallelMode, IncrementalOptions,
+    IncrementalSession, OptLevel, ParallelBackend, ParallelConfig, ParallelMode,
+    compile_with_configs_incremental_with_output_options_and_compiler_parallel,
+    compile_with_configs_with_options_and_compiler_parallel, default_compiler_parallel_config,
     default_parallel_config, default_type_config, module_tree_fingerprint, module_tree_snapshot,
 };
 use RR::runtime::runner::Runner;
@@ -94,6 +95,21 @@ fn print_usage() {
     eprintln!("  --parallel-backend <auto|r|openmp>        Parallel backend selection");
     eprintln!("  --parallel-threads <N>                    Parallel worker threads (0=auto)");
     eprintln!("  --parallel-min-trip <N>                   Minimum trip-count for parallel path");
+    eprintln!(
+        "  --compiler-parallel-mode <off|auto|on>    Compiler scheduling mode (default auto)"
+    );
+    eprintln!(
+        "  --compiler-parallel-threads <N>           Compiler worker threads (0=auto, default)"
+    );
+    eprintln!(
+        "  --compiler-parallel-min-functions <N>     Minimum functions before compiler parallelism"
+    );
+    eprintln!(
+        "  --compiler-parallel-min-fn-ir <N>         Minimum aggregate IR before compiler parallelism"
+    );
+    eprintln!(
+        "  --compiler-parallel-max-jobs <N>          Maximum concurrent compiler jobs (0=threads)"
+    );
     eprintln!("  --strict-let <on|off>                     Require explicit let before assignment");
     eprintln!("  --warn-implicit-decl <on|off>             Warn on legacy implicit declaration");
     eprintln!("  --incremental[=auto|off|1|1,2|1,2,3|all] Enable incremental compile phases");
@@ -224,6 +240,11 @@ enum CommonCompileFlag {
     ParallelBackend,
     ParallelThreads,
     ParallelMinTrip,
+    CompilerParallelMode,
+    CompilerParallelThreads,
+    CompilerParallelMinFunctions,
+    CompilerParallelMinFnIr,
+    CompilerParallelMaxJobs,
     StrictLet,
     WarnImplicitDecl,
 }
@@ -237,6 +258,11 @@ impl CommonCompileFlag {
             "--parallel-backend" => Some(Self::ParallelBackend),
             "--parallel-threads" => Some(Self::ParallelThreads),
             "--parallel-min-trip" => Some(Self::ParallelMinTrip),
+            "--compiler-parallel-mode" => Some(Self::CompilerParallelMode),
+            "--compiler-parallel-threads" => Some(Self::CompilerParallelThreads),
+            "--compiler-parallel-min-functions" => Some(Self::CompilerParallelMinFunctions),
+            "--compiler-parallel-min-fn-ir" => Some(Self::CompilerParallelMinFnIr),
+            "--compiler-parallel-max-jobs" => Some(Self::CompilerParallelMaxJobs),
             "--strict-let" => Some(Self::StrictLet),
             "--warn-implicit-decl" => Some(Self::WarnImplicitDecl),
             _ => None,
@@ -251,6 +277,15 @@ impl CommonCompileFlag {
             Self::ParallelBackend => "Missing value after --parallel-backend (auto|r|openmp)",
             Self::ParallelThreads => "Missing value after --parallel-threads",
             Self::ParallelMinTrip => "Missing value after --parallel-min-trip",
+            Self::CompilerParallelMode => {
+                "Missing value after --compiler-parallel-mode (off|auto|on)"
+            }
+            Self::CompilerParallelThreads => "Missing value after --compiler-parallel-threads",
+            Self::CompilerParallelMinFunctions => {
+                "Missing value after --compiler-parallel-min-functions"
+            }
+            Self::CompilerParallelMinFnIr => "Missing value after --compiler-parallel-min-fn-ir",
+            Self::CompilerParallelMaxJobs => "Missing value after --compiler-parallel-max-jobs",
             Self::StrictLet => "Missing value after --strict-let (on|off)",
             Self::WarnImplicitDecl => "Missing value after --warn-implicit-decl (on|off)",
         }
@@ -269,6 +304,7 @@ struct CommonCompileFlagState<'a> {
     opt_level: &'a mut OptLevel,
     type_cfg: &'a mut TypeConfig,
     parallel_cfg: &'a mut ParallelConfig,
+    compiler_parallel_cfg: &'a mut CompilerParallelConfig,
     strict_let: &'a mut bool,
     warn_implicit_decl: &'a mut bool,
 }
@@ -350,6 +386,53 @@ fn apply_common_compile_flags(
                 }
             };
         }
+        CommonCompileFlag::CompilerParallelMode => {
+            state.compiler_parallel_cfg.mode = match v.parse::<CompilerParallelMode>() {
+                Ok(m) => m,
+                Err(()) => {
+                    ui.error("Invalid --compiler-parallel-mode. Use off|auto|on");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::CompilerParallelThreads => {
+            state.compiler_parallel_cfg.threads = match parse_nonnegative_usize(v) {
+                Some(n) => n,
+                None => {
+                    ui.error("Invalid --compiler-parallel-threads. Use a non-negative integer.");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::CompilerParallelMinFunctions => {
+            state.compiler_parallel_cfg.min_functions = match parse_nonnegative_usize(v) {
+                Some(n) => n,
+                None => {
+                    ui.error(
+                        "Invalid --compiler-parallel-min-functions. Use a non-negative integer.",
+                    );
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::CompilerParallelMinFnIr => {
+            state.compiler_parallel_cfg.min_fn_ir = match parse_nonnegative_usize(v) {
+                Some(n) => n,
+                None => {
+                    ui.error("Invalid --compiler-parallel-min-fn-ir. Use a non-negative integer.");
+                    return Err(1);
+                }
+            };
+        }
+        CommonCompileFlag::CompilerParallelMaxJobs => {
+            state.compiler_parallel_cfg.max_jobs = match parse_nonnegative_usize(v) {
+                Some(n) => n,
+                None => {
+                    ui.error("Invalid --compiler-parallel-max-jobs. Use a non-negative integer.");
+                    return Err(1);
+                }
+            };
+        }
         CommonCompileFlag::StrictLet => {
             *state.strict_let = match parse_bool_flag(v) {
                 Some(value) => value,
@@ -427,6 +510,7 @@ struct CommonOpts {
     opt_level: OptLevel,
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
+    compiler_parallel_cfg: CompilerParallelConfig,
     strict_let: bool,
     warn_implicit_decl: bool,
     incremental: IncrementalOptions,
@@ -445,6 +529,7 @@ impl CommonOpts {
             opt_level: OptLevel::O1,
             type_cfg: default_type_config(),
             parallel_cfg: default_parallel_config(),
+            compiler_parallel_cfg: default_compiler_parallel_config(),
             strict_let: true,
             warn_implicit_decl: false,
             incremental: IncrementalOptions::auto(),
@@ -519,6 +604,7 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
                 opt_level: &mut opts.opt_level,
                 type_cfg: &mut opts.type_cfg,
                 parallel_cfg: &mut opts.parallel_cfg,
+                compiler_parallel_cfg: &mut opts.compiler_parallel_cfg,
                 strict_let: &mut opts.strict_let,
                 warn_implicit_decl: &mut opts.warn_implicit_decl,
             };
@@ -643,24 +729,26 @@ fn cmd_legacy(args: &[String]) -> i32 {
         warn_implicit_decl: opts.warn_implicit_decl,
     };
     let result = if opts.incremental.enabled {
-        compile_with_configs_incremental_with_output_options(
+        compile_with_configs_incremental_with_output_options_and_compiler_parallel(
             &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
+            opts.compiler_parallel_cfg,
             opts.incremental,
             output_opts,
             None,
         )
         .map(|v| (v.r_code, v.source_map))
     } else {
-        compile_with_configs_with_options(
+        compile_with_configs_with_options_and_compiler_parallel(
             &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
+            opts.compiler_parallel_cfg,
             output_opts,
         )
     };
@@ -755,12 +843,13 @@ fn cmd_run(args: &[String]) -> i32 {
     };
 
     let result = if opts.incremental.enabled {
-        compile_with_configs_incremental_with_output_options(
+        compile_with_configs_incremental_with_output_options_and_compiler_parallel(
             &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
+            opts.compiler_parallel_cfg,
             opts.incremental,
             CompileOutputOptions {
                 inject_runtime: true,
@@ -772,12 +861,13 @@ fn cmd_run(args: &[String]) -> i32 {
         )
         .map(|v| (v.r_code, v.source_map))
     } else {
-        compile_with_configs_with_options(
+        compile_with_configs_with_options_and_compiler_parallel(
             &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
+            opts.compiler_parallel_cfg,
             CompileOutputOptions {
                 inject_runtime: true,
                 preserve_all_defs: opts.preserve_all_defs,
@@ -899,12 +989,13 @@ fn cmd_build(args: &[String]) -> i32 {
         };
 
         let build_out = if opts.incremental.enabled {
-            compile_with_configs_incremental_with_output_options(
+            compile_with_configs_incremental_with_output_options_and_compiler_parallel(
                 &rr_path_str,
                 &input,
                 opts.opt_level,
                 opts.type_cfg,
                 opts.parallel_cfg,
+                opts.compiler_parallel_cfg,
                 opts.incremental,
                 CompileOutputOptions {
                     inject_runtime: true,
@@ -916,12 +1007,13 @@ fn cmd_build(args: &[String]) -> i32 {
             )
             .map(|v| (v.r_code, v.source_map))
         } else {
-            compile_with_configs_with_options(
+            compile_with_configs_with_options_and_compiler_parallel(
                 &rr_path_str,
                 &input,
                 opts.opt_level,
                 opts.type_cfg,
                 opts.parallel_cfg,
+                opts.compiler_parallel_cfg,
                 CompileOutputOptions {
                     inject_runtime: true,
                     preserve_all_defs: opts.preserve_all_defs,
@@ -1097,12 +1189,13 @@ fn cmd_watch(args: &[String]) -> i32 {
             ui.success("watch output missing or changed; restoring");
         }
 
-        match compile_with_configs_incremental_with_output_options(
+        match compile_with_configs_incremental_with_output_options_and_compiler_parallel(
             &input_path_str,
             &input,
             opts.opt_level,
             opts.type_cfg,
             opts.parallel_cfg,
+            opts.compiler_parallel_cfg,
             opts.incremental,
             CompileOutputOptions {
                 inject_runtime: true,

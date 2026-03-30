@@ -8,6 +8,7 @@ use crate::typeck::{LenSym, PrimTy, ShapeTy, TypeTerm};
 use crate::utils::Span;
 use regex::{Captures, Regex};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::Arc;
 
 const IDENT_PATTERN: &str = r"(?:[A-Za-z_][A-Za-z0-9._]*|\.[A-Za-z_][A-Za-z0-9._]*)";
 
@@ -56,8 +57,20 @@ impl MirEmitter {
         seq_len_param_end_slots_by_fn: FxHashMap<String, FxHashMap<usize, usize>>,
         direct_builtin_vector_math: bool,
     ) -> Self {
+        Self::with_shared_analysis_options(
+            Arc::new(known_fresh_result_calls),
+            Arc::new(seq_len_param_end_slots_by_fn),
+            direct_builtin_vector_math,
+        )
+    }
+
+    pub fn with_shared_analysis_options(
+        known_fresh_result_calls: Arc<FxHashSet<String>>,
+        seq_len_param_end_slots_by_fn: Arc<FxHashMap<String, FxHashMap<usize, usize>>>,
+        direct_builtin_vector_math: bool,
+    ) -> Self {
         Self {
-            backend: RBackend::with_analysis_options(
+            backend: RBackend::with_shared_analysis_options(
                 known_fresh_result_calls,
                 seq_len_param_end_slots_by_fn,
                 direct_builtin_vector_math,
@@ -149,8 +162,8 @@ pub struct RBackend {
     active_loop_known_full_end_exprs: Vec<FxHashMap<String, String>>,
     active_loop_mutated_vars: Vec<FxHashSet<String>>,
     active_scalar_loop_indices: Vec<ActiveScalarLoopIndex>,
-    known_fresh_result_calls: FxHashSet<String>,
-    seq_len_param_end_slots_by_fn: FxHashMap<String, FxHashMap<usize, usize>>,
+    known_fresh_result_calls: Arc<FxHashSet<String>>,
+    seq_len_param_end_slots_by_fn: Arc<FxHashMap<String, FxHashMap<usize, usize>>>,
     current_seq_len_param_end_slots: FxHashMap<usize, usize>,
     direct_builtin_vector_math: bool,
 }
@@ -184,6 +197,18 @@ impl RBackend {
     pub fn with_analysis_options(
         known_fresh_result_calls: FxHashSet<String>,
         seq_len_param_end_slots_by_fn: FxHashMap<String, FxHashMap<usize, usize>>,
+        direct_builtin_vector_math: bool,
+    ) -> Self {
+        Self::with_shared_analysis_options(
+            Arc::new(known_fresh_result_calls),
+            Arc::new(seq_len_param_end_slots_by_fn),
+            direct_builtin_vector_math,
+        )
+    }
+
+    pub fn with_shared_analysis_options(
+        known_fresh_result_calls: Arc<FxHashSet<String>>,
+        seq_len_param_end_slots_by_fn: Arc<FxHashMap<String, FxHashMap<usize, usize>>>,
         direct_builtin_vector_math: bool,
     ) -> Self {
         Self {
@@ -426,10 +451,16 @@ impl RBackend {
     fn typed_parallel_returns_slice_like(fn_ir: &FnIR) -> bool {
         matches!(
             fn_ir.ret_term_hint.as_ref(),
-            Some(TypeTerm::Vector(_)) | Some(TypeTerm::Matrix(_))
+            Some(TypeTerm::Vector(_))
+                | Some(TypeTerm::VectorLen(_, _))
+                | Some(TypeTerm::Matrix(_))
+                | Some(TypeTerm::ArrayDim(_, _))
         ) || matches!(
             fn_ir.inferred_ret_term,
-            TypeTerm::Vector(_) | TypeTerm::Matrix(_)
+            TypeTerm::Vector(_)
+                | TypeTerm::VectorLen(_, _)
+                | TypeTerm::Matrix(_)
+                | TypeTerm::ArrayDim(_, _)
         )
     }
 
@@ -460,17 +491,32 @@ impl RBackend {
         }
         if matches!(
             fn_ir.param_term_hints.get(idx),
-            Some(TypeTerm::Vector(_)) | Some(TypeTerm::Matrix(_))
+            Some(TypeTerm::Vector(_))
+                | Some(TypeTerm::VectorLen(_, _))
+                | Some(TypeTerm::Matrix(_))
+                | Some(TypeTerm::ArrayDim(_, _))
         ) {
             return true;
         }
         fn_ir.values.iter().any(|value| {
             matches!(value.kind, ValueKind::Param { index } if index == idx)
                 && (matches!(value.value_ty.shape, ShapeTy::Vector | ShapeTy::Matrix)
-                    || matches!(value.value_term, TypeTerm::Vector(_) | TypeTerm::Matrix(_)))
+                    || matches!(
+                        value.value_term,
+                        TypeTerm::Vector(_)
+                            | TypeTerm::VectorLen(_, _)
+                            | TypeTerm::Matrix(_)
+                            | TypeTerm::ArrayDim(_, _)
+                    ))
         }) || fn_ir.values.iter().any(|value| {
             (matches!(value.value_ty.shape, ShapeTy::Vector | ShapeTy::Matrix)
-                || matches!(value.value_term, TypeTerm::Vector(_) | TypeTerm::Matrix(_)))
+                || matches!(
+                    value.value_term,
+                    TypeTerm::Vector(_)
+                        | TypeTerm::VectorLen(_, _)
+                        | TypeTerm::Matrix(_)
+                        | TypeTerm::ArrayDim(_, _)
+                ))
                 && Self::typed_parallel_value_param_slot(
                     fn_ir,
                     value.id,
@@ -1399,10 +1445,13 @@ impl RBackend {
                 && !matches!(
                     value.value_term,
                     TypeTerm::Vector(_)
+                        | TypeTerm::VectorLen(_, _)
                         | TypeTerm::Matrix(_)
                         | TypeTerm::MatrixDim(_, _, _)
+                        | TypeTerm::ArrayDim(_, _)
                         | TypeTerm::DataFrame(_)
                         | TypeTerm::DataFrameNamed(_)
+                        | TypeTerm::NamedList(_)
                         | TypeTerm::List(_)
                         | TypeTerm::Boxed(_)
                         | TypeTerm::Union(_)
@@ -1966,10 +2015,13 @@ impl RBackend {
                 val.value_term,
                 TypeTerm::Any
                     | TypeTerm::Vector(_)
+                    | TypeTerm::VectorLen(_, _)
                     | TypeTerm::Matrix(_)
                     | TypeTerm::MatrixDim(_, _, _)
+                    | TypeTerm::ArrayDim(_, _)
                     | TypeTerm::DataFrame(_)
                     | TypeTerm::DataFrameNamed(_)
+                    | TypeTerm::NamedList(_)
                     | TypeTerm::List(_)
                     | TypeTerm::Boxed(_)
                     | TypeTerm::Option(_)

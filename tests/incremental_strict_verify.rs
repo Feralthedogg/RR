@@ -1,8 +1,10 @@
 mod common;
 
 use RR::compiler::{
-    CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel,
-    compile_with_configs_incremental, compile_with_configs_incremental_with_output_options,
+    CompileOutputOptions, CompilerParallelConfig, CompilerParallelMode, IncrementalOptions,
+    IncrementalSession, OptLevel, compile_with_configs_incremental,
+    compile_with_configs_incremental_with_output_options,
+    compile_with_configs_incremental_with_output_options_and_compiler_parallel,
     default_parallel_config, default_type_config,
 };
 use common::unique_dir;
@@ -35,6 +37,16 @@ fn phase1_only_opts() -> IncrementalOptions {
         phase2: false,
         phase3: false,
         strict_verify: false,
+    }
+}
+
+fn compiler_parallel_cfg() -> CompilerParallelConfig {
+    CompilerParallelConfig {
+        mode: CompilerParallelMode::On,
+        threads: 2,
+        min_functions: 1,
+        min_fn_ir: 1,
+        max_jobs: 2,
     }
 }
 
@@ -225,6 +237,66 @@ fn strict_incremental_verify_rejects_source_map_drift() {
             .any(|fix| fix.message.contains("clear the incremental cache")),
         "strict verify error should suggest clearing the cache:\n{err:?}"
     );
+
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
+}
+
+#[test]
+fn strict_incremental_verify_checks_cached_outputs_under_compiler_parallel() {
+    let env_guard = lock_env_guard();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("incremental_strict_verify");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "compiler_parallel_strict");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_dir = proj_dir.join(".rr-cache");
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
+
+    let (main_path, source) = write_basic_project(&proj_dir);
+    let path_str = main_path.to_string_lossy().to_string();
+    let type_cfg = default_type_config();
+    let parallel_cfg = default_parallel_config();
+    let opts = strict_opts();
+    let mut session = IncrementalSession::default();
+
+    let first = compile_with_configs_incremental_with_output_options_and_compiler_parallel(
+        &path_str,
+        source,
+        OptLevel::O1,
+        type_cfg,
+        parallel_cfg,
+        compiler_parallel_cfg(),
+        opts,
+        CompileOutputOptions::default(),
+        Some(&mut session),
+    )
+    .expect("strict verify first compiler-parallel compile failed");
+    assert!(
+        !first.stats.strict_verification_checked,
+        "first strict compiler-parallel compile should not claim a cache comparison"
+    );
+
+    let second = compile_with_configs_incremental_with_output_options_and_compiler_parallel(
+        &path_str,
+        source,
+        OptLevel::O1,
+        type_cfg,
+        parallel_cfg,
+        compiler_parallel_cfg(),
+        opts,
+        CompileOutputOptions::default(),
+        Some(&mut session),
+    )
+    .expect("strict verify second compiler-parallel compile failed");
+    assert!(second.stats.phase3_memory_hit);
+    assert!(second.stats.phase1_artifact_hit);
+    assert!(second.stats.strict_verification_checked);
+    assert!(second.stats.strict_verification_passed);
+    assert_eq!(first.r_code, second.r_code);
+    assert_eq!(first.source_map, second.source_map);
 
     common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }

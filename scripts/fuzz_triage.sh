@@ -177,6 +177,34 @@ tmin_status: $tmin_status
 skeleton_kind: $skeleton_kind
 MD
 
+  cat > "$case_dir/replay.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+RR_QUIET_LOG=1 cargo +"$TOOLCHAIN" fuzz run "$target" "$case_dir/original-input" --fuzz-dir "$FUZZ_DIR" -- -runs=1 -rss_limit_mb="$RSS_LIMIT_MB" -dict="$DICT"
+SH
+  chmod +x "$case_dir/replay.sh"
+  cat > "$case_dir/reduce.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+RR_QUIET_LOG=1 cargo +"$TOOLCHAIN" fuzz tmin "$target" "$case_dir/minimized-input" --fuzz-dir "$FUZZ_DIR" -O -r "$TMIN_RUNS" -- -rss_limit_mb="$RSS_LIMIT_MB" -dict="$DICT"
+SH
+  chmod +x "$case_dir/reduce.sh"
+  cat > "$case_dir/meta.json" <<JSON
+{
+  "schema": "rr-triage-case",
+  "version": 1,
+  "kind": "fuzz",
+  "target": "$target",
+  "artifact": "$base",
+  "repro_status": "$repro_status",
+  "tmin_status": "$tmin_status",
+  "skeleton_kind": "$skeleton_kind",
+  "case_dir": "$case_dir",
+  "replay_script": "$case_dir/replay.sh",
+  "reduce_script": "$case_dir/reduce.sh"
+}
+JSON
+
   orig_size=$(wc -c < "$artifact" | tr -d ' ')
   min_size=$(wc -c < "$minimized" | tr -d ' ')
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$target" "$base" "$repro_status" "$tmin_status" "$skeleton_kind" "$case_dir" >> "$INDEX"
@@ -199,6 +227,9 @@ MD
 - generated files:
   - \`$case_dir/minimized-input\`
   - \`$case_dir/original-input\`
+  - \`$case_dir/replay.sh\`
+  - \`$case_dir/reduce.sh\`
+  - \`$case_dir/meta.json\`
 MD
 
   if [[ "$skeleton_kind" == "rust-test" ]]; then

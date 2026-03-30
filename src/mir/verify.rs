@@ -1,3 +1,4 @@
+use crate::mir::semantics::call_model::is_namespaced_r_call;
 use crate::mir::*;
 use rustc_hash::FxHashSet;
 use std::fmt;
@@ -252,6 +253,7 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
         if let ValueKind::Load { var } = &val.kind
             && !assigned_vars.contains(var)
             && !is_reserved_binding(var)
+            && !is_namespaced_r_call(var)
         {
             return Err(VerifyError::UndefinedVar {
                 var: var.clone(),

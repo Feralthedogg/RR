@@ -16,6 +16,7 @@ default-members = ["."]
 [dependencies]
 regex = "1.12.3"
 rustc-hash = "2.1.1"
+rayon = "1.11.0"
 
 [profile.release]
 opt-level = 3

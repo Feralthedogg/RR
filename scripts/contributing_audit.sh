@@ -199,7 +199,7 @@ pass_sensitive_prefixes = (
 cache_sensitive_prefixes = (
     "src/compiler/incremental.rs",
     "src/compiler/pipeline.rs",
-    "docs/compiler-pipeline.md",
+    "docs/compiler/pipeline.md",
     "docs/cli.md",
 )
 doc_prefixes = ("docs/",)

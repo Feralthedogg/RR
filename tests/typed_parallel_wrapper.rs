@@ -6,19 +6,17 @@ use common::{normalize, rscript_available, rscript_path};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn unique_tmp_dir(name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    static UNIQUE_TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let seq = UNIQUE_TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("tests")
         .join("typed_parallel_wrapper");
     let _ = fs::create_dir_all(&root);
-    let dir = root.join(format!("{}_{}_{}", name, std::process::id(), ts));
+    let dir = root.join(format!("{}_{}_{}", name, std::process::id(), seq));
     let _ = fs::create_dir_all(&dir);
     dir
 }

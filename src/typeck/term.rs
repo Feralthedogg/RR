@@ -12,10 +12,13 @@ pub enum TypeTerm {
     Double,
     Char,
     Vector(Box<TypeTerm>),
+    VectorLen(Box<TypeTerm>, Option<i64>),
     Matrix(Box<TypeTerm>),
     MatrixDim(Box<TypeTerm>, Option<i64>, Option<i64>),
+    ArrayDim(Box<TypeTerm>, Vec<Option<i64>>),
     DataFrame(Vec<TypeTerm>),
     DataFrameNamed(Vec<(String, TypeTerm)>),
+    NamedList(Vec<(String, TypeTerm)>),
     List(Box<TypeTerm>),
     Boxed(Box<TypeTerm>),
     Option(Box<TypeTerm>),
@@ -46,14 +49,34 @@ impl TypeTerm {
         match (self, other) {
             (Self::Int, Self::Double) | (Self::Double, Self::Int) => Self::Double,
             (Self::Vector(a), Self::Vector(b)) => Self::Vector(Box::new(a.join(b))),
+            (Self::VectorLen(a, alen), Self::VectorLen(b, blen)) => {
+                Self::VectorLen(Box::new(a.join(b)), if alen == blen { *alen } else { None })
+            }
+            (Self::Vector(a), Self::VectorLen(b, _)) | (Self::VectorLen(b, _), Self::Vector(a)) => {
+                Self::Vector(Box::new(a.join(b)))
+            }
             (Self::Matrix(a), Self::Matrix(b)) => Self::Matrix(Box::new(a.join(b))),
             (Self::MatrixDim(a, ar, ac), Self::MatrixDim(b, br, bc)) => Self::MatrixDim(
                 Box::new(a.join(b)),
                 if ar == br { *ar } else { None },
                 if ac == bc { *ac } else { None },
             ),
+            (Self::ArrayDim(a, adims), Self::ArrayDim(b, bdims)) if adims.len() == bdims.len() => {
+                Self::ArrayDim(
+                    Box::new(a.join(b)),
+                    adims
+                        .iter()
+                        .zip(bdims.iter())
+                        .map(|(a, b)| if a == b { *a } else { None })
+                        .collect(),
+                )
+            }
             (Self::Matrix(a), Self::MatrixDim(b, _, _))
-            | (Self::MatrixDim(b, _, _), Self::Matrix(a)) => Self::Matrix(Box::new(a.join(b))),
+            | (Self::MatrixDim(b, _, _), Self::Matrix(a))
+            | (Self::Matrix(a), Self::ArrayDim(b, _))
+            | (Self::ArrayDim(b, _), Self::Matrix(a))
+            | (Self::MatrixDim(a, _, _), Self::ArrayDim(b, _))
+            | (Self::ArrayDim(b, _), Self::MatrixDim(a, _, _)) => Self::Matrix(Box::new(a.join(b))),
             (Self::DataFrame(a), Self::DataFrame(b)) if a.len() == b.len() => {
                 Self::DataFrame(a.iter().zip(b.iter()).map(|(x, y)| x.join(y)).collect())
             }
@@ -62,6 +85,17 @@ impl TypeTerm {
                     && a.iter().zip(b.iter()).all(|((an, _), (bn, _))| an == bn) =>
             {
                 Self::DataFrameNamed(
+                    a.iter()
+                        .zip(b.iter())
+                        .map(|((name, x), (_, y))| (name.clone(), x.join(y)))
+                        .collect(),
+                )
+            }
+            (Self::NamedList(a), Self::NamedList(b))
+                if a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|((an, _), (bn, _))| an == bn) =>
+            {
+                Self::NamedList(
                     a.iter()
                         .zip(b.iter())
                         .map(|((name, x), (_, y))| (name.clone(), x.join(y)))
@@ -119,16 +153,37 @@ impl TypeTerm {
             // Numeric widening.
             (Self::Double, Self::Int) if allow_numeric_widen => true,
             (Self::Vector(a), Self::Vector(b))
-            | (Self::List(a), Self::List(b))
+            | (Self::Vector(a), Self::VectorLen(b, _))
+            | (Self::VectorLen(a, _), Self::Vector(b))
             | (Self::Boxed(a), Self::Boxed(b))
             | (Self::Option(a), Self::Option(b)) => a.compatible_with_inner(b, false),
+            (Self::List(a), Self::List(b)) => a.compatible_with_inner(b, false),
+            (Self::VectorLen(a, alen), Self::VectorLen(b, blen)) => {
+                a.compatible_with_inner(b, false)
+                    && (alen.is_none() || blen.is_none() || alen == blen)
+            }
             (Self::Matrix(a), Self::Matrix(b))
             | (Self::Matrix(a), Self::MatrixDim(b, _, _))
-            | (Self::MatrixDim(a, _, _), Self::Matrix(b)) => a.compatible_with_inner(b, false),
+            | (Self::MatrixDim(a, _, _), Self::Matrix(b))
+            | (Self::Matrix(a), Self::ArrayDim(b, _))
+            | (Self::ArrayDim(a, _), Self::Matrix(b)) => a.compatible_with_inner(b, false),
             (Self::MatrixDim(a, ar, ac), Self::MatrixDim(b, br, bc)) => {
                 a.compatible_with_inner(b, false)
                     && (ar.is_none() || br.is_none() || ar == br)
                     && (ac.is_none() || bc.is_none() || ac == bc)
+            }
+            (Self::ArrayDim(a, adims), Self::ArrayDim(b, bdims)) if adims.len() == bdims.len() => {
+                a.compatible_with_inner(b, false)
+                    && adims
+                        .iter()
+                        .zip(bdims.iter())
+                        .all(|(a, b)| a.is_none() || b.is_none() || a == b)
+            }
+            (Self::MatrixDim(a, ar, ac), Self::ArrayDim(b, bdims))
+            | (Self::ArrayDim(b, bdims), Self::MatrixDim(a, ar, ac)) => {
+                a.compatible_with_inner(b, false)
+                    && (ar.is_none() || bdims.is_empty() || *ar == bdims[0])
+                    && (ac.is_none() || bdims.get(1).is_none() || *ac == bdims[1])
             }
             (Self::DataFrame(a), Self::DataFrame(b)) if a.len() == b.len() => a
                 .iter()
@@ -150,6 +205,17 @@ impl TypeTerm {
                     .zip(b.iter())
                     .all(|(x, (_, y))| x.compatible_with_inner(y, false))
             }
+            (Self::NamedList(a), Self::NamedList(b))
+                if a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|((an, _), (bn, _))| an == bn) =>
+            {
+                a.iter()
+                    .zip(b.iter())
+                    .all(|((_, x), (_, y))| x.compatible_with_inner(y, false))
+            }
+            (Self::List(a), Self::NamedList(b)) | (Self::NamedList(b), Self::List(a)) => {
+                b.iter().all(|(_, y)| a.compatible_with_inner(y, false))
+            }
             (Self::Union(arms), rhs) => arms
                 .iter()
                 .any(|a| a.compatible_with_inner(rhs, allow_numeric_widen)),
@@ -160,8 +226,10 @@ impl TypeTerm {
     pub fn index_element(&self) -> Self {
         match self {
             Self::Vector(inner)
+            | Self::VectorLen(inner, _)
             | Self::Matrix(inner)
             | Self::MatrixDim(inner, _, _)
+            | Self::ArrayDim(inner, _)
             | Self::List(inner)
             | Self::Option(inner) => inner.as_ref().clone(),
             Self::DataFrame(cols) => {
@@ -175,6 +243,13 @@ impl TypeTerm {
                 let mut out = TypeTerm::Any;
                 for (_, col) in cols {
                     out = out.join(col);
+                }
+                out
+            }
+            Self::NamedList(fields) => {
+                let mut out = TypeTerm::Any;
+                for (_, field) in fields {
+                    out = out.join(field);
                 }
                 out
             }
@@ -214,6 +289,18 @@ impl TypeTerm {
                 }
                 out
             }
+            Self::NamedList(fields) => {
+                if let Some(name) = name
+                    && let Some((_, term)) = fields.iter().find(|(field, _)| field == name)
+                {
+                    return term.clone();
+                }
+                let mut out = TypeTerm::Any;
+                for (_, field) in fields {
+                    out = out.join(field);
+                }
+                out
+            }
             Self::Union(arms) => {
                 let mut out = TypeTerm::Any;
                 for arm in arms {
@@ -227,7 +314,7 @@ impl TypeTerm {
 
     pub fn has_exact_named_fields(&self) -> bool {
         match self {
-            Self::DataFrameNamed(_) => true,
+            Self::DataFrameNamed(_) | Self::NamedList(_) => true,
             Self::Union(arms) => !arms.is_empty() && arms.iter().all(Self::has_exact_named_fields),
             _ => false,
         }
@@ -236,6 +323,10 @@ impl TypeTerm {
     pub fn exact_field_value(&self, name: &str) -> Option<Self> {
         match self {
             Self::DataFrameNamed(cols) => cols
+                .iter()
+                .find(|(field, _)| field == name)
+                .map(|(_, term)| term.clone()),
+            Self::NamedList(fields) => fields
                 .iter()
                 .find(|(field, _)| field == name)
                 .map(|(_, term)| term.clone()),
@@ -276,6 +367,15 @@ impl TypeTerm {
                 }
                 Self::DataFrame(out)
             }
+            Self::NamedList(fields) => {
+                let mut out = fields.clone();
+                if let Some((_, term)) = out.iter_mut().find(|(field, _)| field == name) {
+                    *term = value.clone();
+                } else {
+                    out.push((name.to_string(), value.clone()));
+                }
+                Self::NamedList(out)
+            }
             Self::Union(arms) => Self::Union(
                 arms.iter()
                     .map(|arm| arm.updated_field_value_named(name, value))
@@ -303,6 +403,19 @@ impl TypeTerm {
         match self {
             Self::Matrix(inner) => Some((inner.as_ref(), None, None)),
             Self::MatrixDim(inner, rows, cols) => Some((inner.as_ref(), *rows, *cols)),
+            Self::ArrayDim(inner, dims) => Some((
+                inner.as_ref(),
+                dims.first().copied().flatten(),
+                dims.get(1).copied().flatten(),
+            )),
+            _ => None,
+        }
+    }
+
+    pub fn vector_parts(&self) -> Option<(&TypeTerm, Option<i64>)> {
+        match self {
+            Self::Vector(inner) => Some((inner.as_ref(), None)),
+            Self::VectorLen(inner, len) => Some((inner.as_ref(), *len)),
             _ => None,
         }
     }

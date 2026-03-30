@@ -25,6 +25,31 @@ Its goals are:
 - emit simpler and more idiomatic R when safe
 - keep compile time bounded on large workloads
 
+## Mental Model
+
+Tachyon is not "just pattern matching".
+
+The optimizer has two broad layers:
+
+1. general MIR analysis/simplification passes
+   - SCCP
+   - GVN/CSE
+   - simplify
+   - DCE
+   - BCE
+   - LICM
+   - inlining
+   - de-SSA
+2. proof-driven structural rewrites that are much more pattern-sensitive
+   - vectorization
+   - reduction rewrites
+   - selected scatter/gather/call-map forms
+
+So when a user says "my loop did not optimize", the answer is not always
+"the pattern failed". Sometimes the general passes still ran and improved the
+program, but the pattern-sensitive layer correctly skipped because the final MIR
+shape was not provable enough.
+
 ## Safety Rules
 
 Tachyon prefers a clean skip to a risky rewrite.
@@ -45,7 +70,8 @@ Important rules:
 - `-O1`
   - optimizing pipeline
 - `-O2`
-  - same optimizer family, more opportunity from accumulated rewrites and proofs
+  - currently runs the same optimizing pipeline as `-O1`
+  - RR currently distinguishes `-O0` from optimized mode, not `-O1` from `-O2`
 
 ## Program-Level Strategy
 
@@ -80,6 +106,10 @@ Run bounded interprocedural inlining only when the heavy tier is active.
 - DCE
 - BCE
 - LICM
+
+These are not merely pre-processing helpers. They are substantive optimization
+passes in their own right, and they often produce the facts or MIR cleanup that
+later pattern-sensitive passes rely on.
 
 ### Structural Transformations
 
@@ -130,18 +160,20 @@ CLI summary reports:
 
 `VecSkip` is grouped by dominant reject reason:
 
-- `no-iv`
+| Reason | Meaning |
+| --- | --- |
+| `no-iv` | the loop did not expose one recoverable induction variable |
+| `bound` | the trip count or loop bound was not canonical enough to prove safely |
+| `cfg` | the loop CFG shape exceeded the currently supported matcher forms |
+| `indirect` | the loop used indirect index access that RR could not prove safe to rewrite |
+| `store` | the loop had store side effects that block the current vector rewrite families |
+| `no-pattern` | the loop was analyzable, but it did not match any supported vector plan |
 
 ## Related Manuals
 
-- [Writing RR for Performance and Safety](writing-rr.md)
-- [Compiler Pipeline](compiler-pipeline.md)
-- [Compatibility and Limits](compatibility.md)
-- `bound`
-- `cfg`
-- `indirect`
-- `store`
-- `no-pattern`
+- [Writing RR for Performance and Safety](../writing-rr.md)
+- [Compiler Pipeline](pipeline.md)
+- [Compatibility and Limits](../compatibility.md)
 
 Use `RR_VECTORIZE_TRACE=1` to see per-loop matcher decisions.
 
@@ -257,6 +289,6 @@ RR_VERIFY_EACH_PASS=1 target/debug/RR file.rr -o out.R -O2 --no-incremental
 
 Useful companion references:
 
-- [Compiler Pipeline](compiler-pipeline.md)
+- [Compiler Pipeline](pipeline.md)
 - [Runtime and Error Model](runtime-and-errors.md)
 - [Testing and Quality Gates](testing.md)

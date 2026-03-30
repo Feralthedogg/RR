@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
 struct RunResult {
@@ -38,11 +38,9 @@ impl Lcg {
 }
 
 fn unique_dir(root: &Path, name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    root.join(format!("{}_{}_{}", name, std::process::id(), ts))
+    static UNIQUE_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let seq = UNIQUE_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    root.join(format!("{}_{}_{}", name, std::process::id(), seq))
 }
 
 fn normalize(s: &str) -> String {

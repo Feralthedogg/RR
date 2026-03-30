@@ -16,7 +16,10 @@ Read this page when you need exact driver behavior:
 ## Synopsis
 
 ```bash
+RR -h
+RR help
 RR --version
+RR -V
 RR version
 RR <input.rr> [options]
 RR run [main.rr|dir|.] [options]
@@ -125,6 +128,10 @@ at `--keep-r` so you can inspect the generated artifact.
 - `-o <file>`
 - `--out-dir <dir>`
 
+Today RR distinguishes `-O0` from optimized mode. `-O1` and `-O2` currently
+run the same optimizing pipeline, so the difference is naming/intent rather
+than pass selection.
+
 ### Type and Backend Policy
 
 - `--type-mode strict|gradual`
@@ -133,6 +140,11 @@ at `--keep-r` so you can inspect the generated artifact.
 - `--parallel-backend auto|r|openmp`
 - `--parallel-threads <N>`
 - `--parallel-min-trip <N>`
+- `--compiler-parallel-mode off|auto|on`
+- `--compiler-parallel-threads <N>`
+- `--compiler-parallel-min-functions <N>`
+- `--compiler-parallel-min-fn-ir <N>`
+- `--compiler-parallel-max-jobs <N>`
 
 ### Language and Declaration Policy
 
@@ -197,8 +209,7 @@ intermediate dump.
 
 - [Getting Started](getting-started.md)
 - [Configuration](configuration.md)
-- [Runtime and Error Model](runtime-and-errors.md)
-- [Compiler Pipeline](compiler-pipeline.md)
+- [Language Reference](language.md)
 
 ## Semantics Notes
 
@@ -269,4 +280,44 @@ Use:
 - `--no-incremental` when you want a fresh compile for inspection
 - `--strict-incremental-verify` when you want cache reuse checked against a rebuild
 
-The incremental artifact model is documented in [Compiler Pipeline](compiler-pipeline.md).
+## Compiler Parallelism
+
+Compiler scheduling is separate from generated-runtime parallel policy.
+
+Default CLI behavior is automatic:
+
+- compiler parallel mode defaults to `auto`
+- compiler worker count defaults to host parallelism (`available_parallelism()`)
+- compiler max jobs defaults to the active worker count unless you override it
+
+Use:
+
+- `--compiler-parallel-mode off|auto|on`
+- `--compiler-parallel-threads <N>`
+- `--compiler-parallel-min-functions <N>`
+- `--compiler-parallel-min-fn-ir <N>`
+- `--compiler-parallel-max-jobs <N>`
+
+These flags control host-side compile scheduling for stages such as:
+
+- MIR synthesis
+- type analysis
+- function-local Tachyon waves
+- MIR-to-R emission
+
+They do not change emitted runtime semantics.
+
+`--compiler-parallel-max-jobs` caps the number of simultaneously active
+compiler jobs and is intended as the memory-pressure safety valve for large
+projects or heavily nested compile workloads.
+
+`RR build` is still file-serial today. If RR grows file-level parallel build
+mode later, that outer layer should continue to use the same compiler-side pool
+instead of creating a second independent pool.
+
+Runtime parallel behavior is still controlled by:
+
+- `--parallel-mode`
+- `--parallel-backend`
+- `--parallel-threads`
+- `--parallel-min-trip`

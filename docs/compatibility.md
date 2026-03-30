@@ -16,6 +16,32 @@ Read the bullets on this page in three classes:
 - unsupported
   - not part of the current optimizing contract
 
+## Base-Priority Package Line
+
+On this docs site, the "base-priority package line" means RR's first
+direct-interop compatibility tier for the core R package set:
+
+- `base`
+- `compiler`
+- `datasets`
+- `graphics`
+- `grDevices`
+- `grid`
+- `methods`
+- `parallel`
+- `splines`
+- `stats`
+- `stats4`
+- `tools`
+- `utils`
+
+`datasets` is included in that term.
+
+In practice, `datasets` currently shows up more as a direct typed data-object
+surface than as an export-for-export function-closure claim. That means RR has
+direct typed models for a large built-in subset of namespaced dataset bindings,
+while the other packages in this line are the main direct call/interop surface.
+
 ## What RR Guarantees Today
 
 - RR compiles to plain `.R` and executes through `Rscript`.
@@ -28,6 +54,8 @@ Read the bullets on this page in three classes:
   - single-line control forms
 - closures and lambda lifting are supported
 - list and record patterns are supported in core forms
+- the base-priority package line is on RR's direct surface today
+- `tcltk` stays on a conservative direct/proxy surface rather than forcing opaque fallback for the common helper family
 
 ## Conservative Zones
 
@@ -60,6 +88,9 @@ Interpret that conservatism literally:
 - record rest patterns are not supported
 - vectorization is pattern-driven, not arbitrary-loop automatic transformation
 - matrix/dataframe optimization remains selective
+- the recommended package line (`MASS`, `Matrix`, `survival`, `nlme`, and similar)
+  is not yet under the same "substantially closed" guarantee as the
+  [base-priority package line](#base-priority-package-line)
 - surface `matrix<T>` hints are accepted, but matrix-specific type precision is still more conservative than plain scalar/vector precision
 - selected 3D scalar and vector patterns are supported, but arbitrary nested 3D traversal, schedule changes, and polyhedral-style transforms are not part of the current contract
 - legacy `src/legacy/ir/*` is not the production compiler pipeline
@@ -144,5 +175,4 @@ RR is much more likely to preserve correctness by skipping aggressive rewrites.
 - [Language Reference](language.md)
 - [Writing RR for Performance and Safety](writing-rr.md)
 - [R Interop](r-interop.md)
-- [Runtime and Error Model](runtime-and-errors.md)
-- [Tachyon Engine](optimization.md)
+- [Configuration](configuration.md)

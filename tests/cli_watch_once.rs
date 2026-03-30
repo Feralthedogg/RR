@@ -45,6 +45,60 @@ main()
 }
 
 #[test]
+fn watch_once_accepts_compiler_parallel_flags() {
+    let env_guard = common::env_lock().lock().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "compiler_parallel");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_dir = proj_dir.join(".rr-cache");
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
+
+    let main_path = proj_dir.join("main.rr");
+    let source = r#"
+fn square(x) {
+  return x * x
+}
+
+fn main() {
+  print(square(5L))
+}
+main()
+"#;
+    fs::write(&main_path, source).expect("failed to write main.rr");
+
+    let out_file = proj_dir.join("watched.R");
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(rr_bin)
+        .arg("watch")
+        .arg(&proj_dir)
+        .arg("--once")
+        .arg("--poll-ms")
+        .arg("1")
+        .arg("-o")
+        .arg(&out_file)
+        .arg("--compiler-parallel-mode")
+        .arg("on")
+        .arg("--compiler-parallel-threads")
+        .arg("2")
+        .arg("--compiler-parallel-min-functions")
+        .arg("1")
+        .arg("--compiler-parallel-min-fn-ir")
+        .arg("1")
+        .arg("--compiler-parallel-max-jobs")
+        .arg("2")
+        .status()
+        .expect("failed to run rr watch --once with compiler parallel flags");
+    assert!(
+        status.success(),
+        "watch --once with compiler parallel flags failed"
+    );
+    assert!(out_file.is_file(), "watch output file was not generated");
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
+}
+
+#[test]
 fn watch_rebuilds_when_imported_module_changes() {
     let env_guard = common::env_lock().lock().unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

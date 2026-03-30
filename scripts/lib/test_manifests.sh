@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+
+# Shared test manifests for CI tiers and package/library regression suites.
+
+RR_LIBRARY_PACKAGE_EXACT_TESTS=(
+  "base_surface_closure::regex_safe_base_surface_is_closed"
+  "package_surface_closure::regex_safe_core_package_surfaces_are_closed"
+  "docs_surface_sync::docs_direct_interop_surface_matches_code"
+)
+
+RR_LIBRARY_PACKAGE_TESTS=(
+  base_p0_builtins
+  base_p0_metadata_builtins
+  base_p0_string_builtins
+  base_direct_interop
+  compiler_direct_interop
+  graphics_direct_interop
+  grid_direct_interop
+  methods_direct_interop
+  parallel_direct_interop
+  splines_direct_interop
+  stats4_direct_interop
+  tcltk_direct_interop
+  tools_direct_interop
+  utils_direct_interop
+  ggplot2_direct_interop
+  datasets_direct_types
+  tidy_eval_interop
+  stats_direct_types
+  stats_aov_interop
+  stats_cluster_interop
+  stats_contrast_interop
+  stats_density_bw_interop
+  stats_dimred_interop
+  stats_distribution_interop
+  stats_family_interop
+  stats_fit_internals_interop
+  stats_formula_interop
+  stats_grouping_interop
+  stats_htest_interop
+  stats_matrix_formula_interop
+  stats_misc_interop
+  stats_model_alias_interop
+  stats_model_interop
+  stats_model_misc_interop
+  stats_model_plumbing_interop
+  stats_model_selection_interop
+  stats_multivar_interop
+  stats_multivar_math_interop
+  stats_na_interop
+  stats_nls_interop
+  stats_optimizer_interop
+  stats_power_interop
+  stats_selfstart_interop
+  stats_signal_interop
+  stats_signal_math_interop
+  stats_smoothing_interop
+  stats_stepfun_interop
+  stats_structure_interop
+  stats_summary_interop
+  stats_symbolic_interop
+  stats_table_interop
+  stats_termplot_interop
+  stats_ts_analysis_interop
+  stats_ts_diag_interop
+  stats_ts_interop
+  stats_ts_model_interop
+  stats_utility_interop
+  stats_wrapper_interop
+  type_precision_regression
+)
+
+RR_TIER0_FAST_TESTS=(
+  syntax_errors
+  semantic_errors
+  parse_multi_errors
+  multi_errors
+  match_exhaustiveness
+  lambda_closure
+  hybrid_syntax
+  hybrid_fallback
+  import_error_flow
+  import_path_dedup
+  statement_boundaries
+  dotted_builtin_calls
+  dot_identifier_and_field
+  builtin_shadowing
+  type_hint_conflict
+  type_lattice
+  type_diagnostic_aggregation
+  type_solver_intraprocedural
+  type_solver_interprocedural
+  type_solver_nested_generic
+  lowering_pipe_try_match
+  compiler_hardcode_guard
+  compiler_parallel_defaults
+  compiler_parallel_equivalence
+  parallel_cli_flags
+  cli_option_errors
+  cli_quiet_log
+  cli_watch_once
+  cli_incremental_default
+  incremental_auto
+  condition_truthy_elision
+  runtime_static_errors
+  runtime_dataflow_safety
+  runtime_recycling_policy
+  runtime_helper_scalar_fastpaths
+  runtime_contract
+  rr_logic_equivalence_matrix
+  native_required_fail
+  loop_carried_state_regression
+  loop_shadow_scoping
+  mir_lowering_loop_match
+)
+
+RR_TIER2_EXACT_TESTS=()
+
+RR_TIER2_SPECIAL_TESTS=(
+  random_differential
+  pass_verify_examples
+  example_perf_smoke
+)
+
+RR_PERF_GATE_TESTS=(
+  perf_regression_gate
+  benchmark_vectorization
+  commercial_determinism
+  example_perf_smoke
+)
+
+RR_OPTIMIZER_LEGALITY_TESTS=(
+  bce_shifted_index
+  codegen_binding_regression
+  codegen_redundant_backcopy
+  dead_phi_codegen_regression
+  guard_elimination_soundness
+  gvn_pure_calls
+  index_3d
+  index_floor_read_idx
+  index_param_canonicalization
+  index_param_skip_when_proven
+  intrinsic_vectorization
+  licm_default_tier
+  licm_speculation_safety
+  matrix_type_specialize
+  o0_codegen_smoke
+  optimizer_budget_tiers
+  parallel_codegen
+  reduction_user_call_regression
+  sccp_overflow_regression
+  vectorization_binop_cse
+  vectorization_callmap_profit_guard
+  vectorization_floor_index_cse
+  vectorization_loop_state_regression
+  vectorization_phi_default_regression
+  vectorization_phi_ifelse
+  vectorization_same_base_shift
+)
+
+RR_OPTIMIZER_HEAVY_TESTS=(
+  artifact_mode_equivalence
+  benchmark_vectorization
+  native_equivalence
+  opt_level_equivalence
+  vector_check
+  vectorization_3d_axis_map
+  vectorization_3d_axis_reduce
+  vectorization_3d_call_map
+  vectorization_3d_conditional_map
+  vectorization_3d_expr_map
+  vectorization_3d_multi_expr_map
+  vectorization_3d_scatter_map
+  vectorization_3d_shift_recur
+  vectorization_callmap_slice
+  vectorization_conditional_slice
+  vectorization_cube_alias_slice
+  vectorization_cube_helper
+  vectorization_extended
+  vectorization_floor_alias
+  vectorization_floor_read_helper
+  vectorization_gather_helper
+  vectorization_gather_map
+  vectorization_invariant_fill
+  vectorization_lt_bound
+  vectorization_multi_shadow
+  vectorization_scatter_map
+  vectorization_shadow_last
+  vectorization_slice_assign
+  vectorization_wrap_helper
+)
+
+RR_TIER2_MAIN_TESTS=(
+  benchmark_examples_smoke
+  callmap_user_mixed
+  case_regressions
+  cli_commands
+  commercial_negative_corpus
+  commercial_stress_differential
+  comprehensive_all
+  contributing_audit_smoke
+  example_numeric_regression
+  example_simulations
+  example_visualization
+  fuzz_regression_no_panic_invalid_mir
+  golden
+  incremental_phase1
+  incremental_phase2
+  incremental_phase3
+  incremental_strict_verify
+  native_optional_fallback
+  output_hygiene
+  parallel_optional_fallback_semantics
+  r_output_optimization_audit
+  r_package_import
+  r_style_defaults_and_singleline
+  r_style_syntax
+  random_error_diagnostics
+  recommended_package_coverage_smoke
+  runtime_injection_options
+  runtime_semantics_regression
+  support_expansion
+  tesseract_runtime_smoke
+  triage_reduce_smoke
+  typed_parallel_wrapper
+  unicode_peephole_regression
+  verification_summary_smoke
+)

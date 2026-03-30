@@ -18,21 +18,36 @@ This is not a syntax reference. Use [Language Reference](language.md) for that.
 
 ## Contract
 
-Tachyon is pattern-driven.
+Tachyon is proof-first, with a pattern-driven vectorization/reduction layer on
+top of more general MIR simplification passes.
 
 That means:
 
-- optimization comes from recognizable source structure
+- some optimization comes from general scalar/dataflow passes such as SCCP, GVN,
+  simplification, DCE, BCE, LICM, inlining, and de-SSA cleanup
+- the most aggressive loop rewrites still depend on recognizable source shape
+  once those earlier passes have simplified the MIR enough
 - missing proof usually means a deliberate skip, not a near miss
 - the best source style is the one that makes dataflow obvious
 
 The practical consequence is that “compiler-friendly” RR usually also reads more
-like a numerical kernel specification and less like dynamic metaprogramming.
+like a numerical kernel specification and less like dynamic metaprogramming,
+but that is not because Tachyon only does pattern matching. It is because the
+general optimizer and the pattern-based loop optimizer both benefit from
+explicit, stable dataflow.
 
 ## Why This Style Optimizes Well
 
-Tachyon does not try to guess arbitrary intent from dynamic code. It recognizes
-specific safe source shapes and rewrites them aggressively when the proof is clear.
+Tachyon does not try to guess arbitrary intent from dynamic code. In practice it
+works in two layers:
+
+- general MIR cleanup and scalar/dataflow optimization
+- pattern-based loop and container rewrites when the remaining structure is
+  simple enough to certify
+
+That is why source shape still matters so much: the early passes can simplify
+and sharpen facts, but the stronger loop rewrites still need a safe,
+recognizable shape at the end of that pipeline.
 
 Think of that source shape as an optimization fingerprint:
 
@@ -44,14 +59,22 @@ Think of that source shape as an optimization fingerprint:
 | pure, small helper calls | inlining, SCCP, GVN/CSE, vectorized call-map |
 | loop-invariant shape/scalar facts computed once | LICM and simpler safety proofs |
 
-There is not yet a standalone end-user "fingerprint checker" command. In practice,
-use the optimizer's own feedback:
+There is not yet a per-loop standalone "fingerprint checker" command for RR
+authors. In practice, use the optimizer's own feedback:
 
 - normal `-O1` / `-O2` compile output for `Vectorized`, `Reduced`, `Simplified`, and `VecSkip`
 - `RR_VECTORIZE_TRACE=1` when you need per-loop reject reasons
 - `--no-incremental` when you are debugging optimizer output on a stable input path;
   the normal CLI default is incremental `auto`, so unchanged inputs may reuse a
   cached artifact instead of rebuilding the hot loop you are inspecting
+
+If you are validating RR itself rather than one RR program, the nearest
+project-level checks are:
+
+- `bash scripts/optimizer_suite.sh legality`
+- `bash scripts/optimizer_suite.sh heavy`
+- `bash scripts/test_tier.sh tier1`
+- `make library-package-suite`
 
 Canonical loops matter mainly because they are the main entry point to RR's
 vectorization pipeline. Today that usually means rewriting scalar loops into
@@ -645,7 +668,5 @@ Before blaming the optimizer, check these first:
 ## Related Docs
 
 - [Language Reference](language.md)
-- [Tachyon Engine](optimization.md)
-- [Runtime and Errors](runtime-and-errors.md)
 - [Compatibility and Limits](compatibility.md)
 - [Configuration](configuration.md)

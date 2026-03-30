@@ -64,6 +64,26 @@ Runtime-injected artifacts embed the compile-time-resolved values for these
 parallel knobs directly, so emitted `.R` keeps the compile policy unless edited
 manually.
 
+Relevant driver flags:
+
+- `--parallel-mode off|optional|required`
+- `--parallel-backend auto|r|openmp`
+- `--parallel-threads <N>`
+- `--parallel-min-trip <N>`
+
+## Compiler Parallelism
+
+Compiler-side scheduling is also explicit driver policy rather than ambient
+environment selection.
+
+Relevant driver flags:
+
+- `--compiler-parallel-mode off|auto|on`
+- `--compiler-parallel-threads <N>`
+- `--compiler-parallel-min-functions <N>`
+- `--compiler-parallel-min-fn-ir <N>`
+- `--compiler-parallel-max-jobs <N>`
+
 ## Runtime Behavior
 
 - `RR_RUNTIME_MODE`
@@ -126,13 +146,16 @@ These control inlining eligibility and growth limits.
 ## Related Manuals
 
 - [CLI Reference](cli.md)
-- [Runtime and Error Model](runtime-and-errors.md)
-- [Testing and Quality Gates](testing.md)
+- [Compatibility and Limits](compatibility.md)
 
 ## Performance Gates
 
 - `RR_PERF_GATE_MS`
 - `RR_PERF_O2_O1_RATIO`
+- `RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS`
+- `RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS`
+- `RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS`
+- `RR_EXAMPLE_PERF_REPEATS`
 
 These are test-budget knobs, not general optimization controls.
 

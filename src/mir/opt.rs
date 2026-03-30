@@ -1,3 +1,4 @@
+use crate::compiler::scheduler::{CompilerParallelConfig, CompilerScheduler};
 use crate::mir::*;
 use crate::syntax::ast::BinOp;
 use crate::typeck::{LenSym, PrimTy, TypeState, TypeTerm};
@@ -899,7 +900,8 @@ impl TachyonEngine {
         &self,
         all_fns: &mut FxHashMap<String, FnIR>,
     ) -> TachyonPulseStats {
-        self.run_program_with_stats_inner(all_fns, None)
+        let scheduler = CompilerScheduler::new(CompilerParallelConfig::default());
+        self.run_program_with_scheduler(all_fns, &scheduler)
     }
 
     pub fn run_program_with_stats_progress(
@@ -907,7 +909,44 @@ impl TachyonEngine {
         all_fns: &mut FxHashMap<String, FnIR>,
         on_progress: &mut dyn FnMut(TachyonProgress),
     ) -> TachyonPulseStats {
-        self.run_program_with_stats_inner(all_fns, Some(on_progress))
+        let scheduler = CompilerScheduler::new(CompilerParallelConfig::default());
+        self.run_program_with_progress_and_scheduler(all_fns, &scheduler, on_progress)
+    }
+
+    pub fn run_program_with_stats_and_compiler_parallel(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        compiler_parallel_cfg: CompilerParallelConfig,
+    ) -> TachyonPulseStats {
+        let scheduler = CompilerScheduler::new(compiler_parallel_cfg);
+        self.run_program_with_scheduler(all_fns, &scheduler)
+    }
+
+    pub fn run_program_with_stats_progress_and_compiler_parallel(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        compiler_parallel_cfg: CompilerParallelConfig,
+        on_progress: &mut dyn FnMut(TachyonProgress),
+    ) -> TachyonPulseStats {
+        let scheduler = CompilerScheduler::new(compiler_parallel_cfg);
+        self.run_program_with_progress_and_scheduler(all_fns, &scheduler, on_progress)
+    }
+
+    pub(crate) fn run_program_with_scheduler(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        scheduler: &CompilerScheduler,
+    ) -> TachyonPulseStats {
+        self.run_program_with_stats_inner(all_fns, scheduler, None)
+    }
+
+    pub(crate) fn run_program_with_progress_and_scheduler(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        scheduler: &CompilerScheduler,
+        on_progress: &mut dyn FnMut(TachyonProgress),
+    ) -> TachyonPulseStats {
+        self.run_program_with_stats_inner(all_fns, scheduler, Some(on_progress))
     }
 
     fn emit_progress(
@@ -927,9 +966,29 @@ impl TachyonEngine {
         }
     }
 
+    fn take_functions_in_order(
+        all_fns: &mut FxHashMap<String, FnIR>,
+        ordered_names: &[String],
+    ) -> Vec<(String, FnIR)> {
+        let mut jobs = Vec::with_capacity(ordered_names.len());
+        for name in ordered_names {
+            if let Some(fn_ir) = all_fns.remove(name) {
+                jobs.push((name.clone(), fn_ir));
+            }
+        }
+        jobs
+    }
+
+    fn restore_functions(all_fns: &mut FxHashMap<String, FnIR>, jobs: Vec<(String, FnIR)>) {
+        for (name, fn_ir) in jobs {
+            all_fns.insert(name, fn_ir);
+        }
+    }
+
     fn run_program_with_stats_inner(
         &self,
         all_fns: &mut FxHashMap<String, FnIR>,
+        scheduler: &CompilerScheduler,
         mut progress: Option<&mut dyn FnMut(TachyonProgress)>,
     ) -> TachyonPulseStats {
         /*
@@ -1030,24 +1089,33 @@ impl TachyonEngine {
         }
 
         // Tier A (always): lightweight canonicalization for every safe function.
-        for (idx, name) in ordered_names.iter().enumerate() {
-            let Some(fn_ir) = all_fns.get_mut(name) else {
-                continue;
-            };
+        let tier_a_total_ir: usize = ordered_names
+            .iter()
+            .filter_map(|name| all_fns.get(name))
+            .map(Self::fn_ir_size)
+            .sum();
+        let tier_a_jobs = Self::take_functions_in_order(all_fns, &ordered_names);
+        let tier_a_results = scheduler.map(tier_a_jobs, tier_a_total_ir, |(name, mut fn_ir)| {
             let s = self.run_always_tier_with_stats(
-                fn_ir,
-                proven_floor_param_slots.get(name),
+                &mut fn_ir,
+                proven_floor_param_slots.get(&name),
                 &floor_helpers,
             );
+            (name, fn_ir, s)
+        });
+        let mut restored_tier_a = Vec::with_capacity(tier_a_results.len());
+        for (idx, (name, fn_ir, s)) in tier_a_results.into_iter().enumerate() {
             stats.accumulate(s);
             Self::emit_progress(
                 &mut progress,
                 TachyonProgressTier::Always,
                 idx + 1,
                 ordered_total,
-                name,
+                &name,
             );
+            restored_tier_a.push((name, fn_ir));
         }
+        Self::restore_functions(all_fns, restored_tier_a);
         Self::debug_wrap_candidates(all_fns);
 
         let wrap_index_helpers = if run_heavy_tier {
@@ -1109,71 +1177,62 @@ impl TachyonEngine {
         };
 
         // Tier B (selective-heavy): optimize full pass pipeline only for selected functions.
-        for (idx, name) in ordered_names.iter().enumerate() {
-            let Some(fn_ir) = all_fns.get_mut(name) else {
-                continue;
-            };
+        let tier_b_total_ir: usize = ordered_names
+            .iter()
+            .filter_map(|name| all_fns.get(name))
+            .map(Self::fn_ir_size)
+            .sum();
+        let tier_b_jobs = Self::take_functions_in_order(all_fns, &ordered_names);
+        let tier_b_results = scheduler.map(tier_b_jobs, tier_b_total_ir, |(name, mut fn_ir)| {
+            let mut local_stats = TachyonPulseStats::default();
             if fn_ir.requires_conservative_optimization() {
-                stats.skipped_functions += 1;
-                let _ = Self::verify_or_reject(fn_ir, "SkipOpt/ConservativeInterop");
-                Self::emit_progress(
-                    &mut progress,
-                    TachyonProgressTier::Heavy,
-                    idx + 1,
-                    ordered_total,
-                    name,
-                );
-                continue;
+                local_stats.skipped_functions += 1;
+                let _ = Self::verify_or_reject(&mut fn_ir, "SkipOpt/ConservativeInterop");
+                return (name, fn_ir, local_stats);
             }
-            if fn_ir
-                .values
-                .iter()
-                .any(|value| matches!(&value.kind, ValueKind::Call { callee, .. } if callee == &fn_ir.name))
-            {
-                stats.skipped_functions += 1;
-                let _ = Self::verify_or_reject(fn_ir, "SkipOpt/SelfRecursive");
-                Self::emit_progress(
-                    &mut progress,
-                    TachyonProgressTier::Heavy,
-                    idx + 1,
-                    ordered_total,
-                    name,
-                );
-                continue;
+            if fn_ir.values.iter().any(|value| {
+                matches!(
+                    &value.kind,
+                    ValueKind::Call { callee, .. } if callee == &fn_ir.name
+                )
+            }) {
+                local_stats.skipped_functions += 1;
+                let _ = Self::verify_or_reject(&mut fn_ir, "SkipOpt/SelfRecursive");
+                return (name, fn_ir, local_stats);
             }
-            let selected = !plan.selective_mode || plan.selected_functions.contains(name);
+            let selected = !plan.selective_mode || plan.selected_functions.contains(&name);
             if !run_heavy_tier || !selected {
-                stats.skipped_functions += 1;
+                local_stats.skipped_functions += 1;
                 let reason = if !run_heavy_tier {
                     "SkipOpt/HeavyTierDisabled"
                 } else {
                     "SkipOpt/Budget"
                 };
-                let _ = Self::verify_or_reject(fn_ir, reason);
-                Self::emit_progress(
-                    &mut progress,
-                    TachyonProgressTier::Heavy,
-                    idx + 1,
-                    ordered_total,
-                    name,
-                );
-                continue;
+                let _ = Self::verify_or_reject(&mut fn_ir, reason);
+                return (name, fn_ir, local_stats);
             }
-            stats.optimized_functions += 1;
+            local_stats.optimized_functions += 1;
             let s = self.run_function_with_stats_with_proven(
-                fn_ir,
+                &mut fn_ir,
                 &callmap_user_whitelist,
-                proven_floor_param_slots.get(name),
+                proven_floor_param_slots.get(&name),
             );
-            stats.accumulate(s);
+            local_stats.accumulate(s);
+            (name, fn_ir, local_stats)
+        });
+        let mut restored_tier_b = Vec::with_capacity(tier_b_results.len());
+        for (idx, (name, fn_ir, local_stats)) in tier_b_results.into_iter().enumerate() {
+            stats.accumulate(local_stats);
             Self::emit_progress(
                 &mut progress,
                 TachyonProgressTier::Heavy,
                 idx + 1,
                 ordered_total,
-                name,
+                &name,
             );
+            restored_tier_b.push((name, fn_ir));
         }
+        Self::restore_functions(all_fns, restored_tier_b);
 
         // Tier C (full-program): bounded inter-procedural inlining.
         if run_full_inline_tier {
@@ -1201,76 +1260,117 @@ impl TachyonEngine {
                     stats.inline_rounds += 1;
                     changed = true;
                     // Re-optimize each function if inlining happened
-                    for name in &ordered_names {
-                        let Some(fn_ir) = all_fns.get_mut(name) else {
-                            continue;
-                        };
-                        if fn_ir.requires_conservative_optimization() {
-                            Self::maybe_verify(
-                                fn_ir,
-                                "After Inline Cleanup (Skipped: ConservativeInterop)",
-                            );
-                            continue;
-                        }
-                        // Run lightweight cleanup after inlining.
-                        let inline_sc_changed = self.simplify_cfg(fn_ir);
-                        let inline_dce_changed = self.dce(fn_ir);
-                        if inline_sc_changed || inline_dce_changed {
-                            stats.inline_cleanup_hits += 1;
-                        }
-                        if inline_sc_changed {
-                            stats.simplify_hits += 1;
-                        }
-                        if inline_dce_changed {
-                            stats.dce_hits += 1;
-                        }
-                        Self::maybe_verify(fn_ir, "After Inline Cleanup");
+                    let cleanup_total_ir: usize = ordered_names
+                        .iter()
+                        .filter_map(|name| all_fns.get(name))
+                        .map(Self::fn_ir_size)
+                        .sum();
+                    let cleanup_jobs = Self::take_functions_in_order(all_fns, &ordered_names);
+                    let cleanup_results =
+                        scheduler.map(cleanup_jobs, cleanup_total_ir, |(name, mut fn_ir)| {
+                            let mut local_stats = TachyonPulseStats::default();
+                            if fn_ir.requires_conservative_optimization() {
+                                Self::maybe_verify(
+                                    &fn_ir,
+                                    "After Inline Cleanup (Skipped: ConservativeInterop)",
+                                );
+                                return (name, fn_ir, local_stats);
+                            }
+                            let inline_sc_changed = self.simplify_cfg(&mut fn_ir);
+                            let inline_dce_changed = self.dce(&mut fn_ir);
+                            if inline_sc_changed || inline_dce_changed {
+                                local_stats.inline_cleanup_hits += 1;
+                            }
+                            if inline_sc_changed {
+                                local_stats.simplify_hits += 1;
+                            }
+                            if inline_dce_changed {
+                                local_stats.dce_hits += 1;
+                            }
+                            Self::maybe_verify(&fn_ir, "After Inline Cleanup");
+                            (name, fn_ir, local_stats)
+                        });
+                    let mut restored_cleanup = Vec::with_capacity(cleanup_results.len());
+                    for (name, fn_ir, local_stats) in cleanup_results {
+                        stats.accumulate(local_stats);
+                        restored_cleanup.push((name, fn_ir));
                     }
+                    Self::restore_functions(all_fns, restored_cleanup);
                 }
             }
         }
 
-        let _ = fresh_alias::optimize_program(all_fns);
+        let fresh_user_calls =
+            fresh_alias::collect_fresh_returning_user_functions_for_parallel(all_fns);
+        let fresh_alias_names = Self::sorted_fn_names(all_fns);
+        let fresh_alias_total_ir: usize = fresh_alias_names
+            .iter()
+            .filter_map(|name| all_fns.get(name))
+            .map(Self::fn_ir_size)
+            .sum();
+        let fresh_alias_jobs = Self::take_functions_in_order(all_fns, &fresh_alias_names);
+        let fresh_alias_results = scheduler.map(
+            fresh_alias_jobs,
+            fresh_alias_total_ir,
+            |(name, mut fn_ir)| {
+                let _ = fresh_alias::optimize_function_with_fresh_user_calls(
+                    &mut fn_ir,
+                    &fresh_user_calls,
+                );
+                (name, fn_ir)
+            },
+        );
+        Self::restore_functions(all_fns, fresh_alias_results);
 
         // 3. De-SSA (Phi elimination via parallel copy) before codegen.
         let ordered_names = Self::sorted_fn_names(all_fns);
         let de_ssa_total = ordered_names.len();
-        for (idx, name) in ordered_names.iter().enumerate() {
-            let Some(fn_ir) = all_fns.get_mut(name) else {
-                continue;
-            };
-            let de_ssa_changed = de_ssa::run(fn_ir);
+        let de_ssa_total_ir: usize = ordered_names
+            .iter()
+            .filter_map(|name| all_fns.get(name))
+            .map(Self::fn_ir_size)
+            .sum();
+        let de_ssa_jobs = Self::take_functions_in_order(all_fns, &ordered_names);
+        let de_ssa_results = scheduler.map(de_ssa_jobs, de_ssa_total_ir, |(name, mut fn_ir)| {
+            let mut local_stats = TachyonPulseStats::default();
+            let de_ssa_changed = de_ssa::run(&mut fn_ir);
             if de_ssa_changed {
-                stats.de_ssa_hits += 1;
+                local_stats.de_ssa_hits += 1;
             }
             let copy_cleanup_changed = if fn_ir.requires_conservative_optimization() {
                 false
             } else {
-                copy_cleanup::optimize(fn_ir)
+                copy_cleanup::optimize(&mut fn_ir)
             };
             if copy_cleanup_changed {
-                stats.simplify_hits += 1;
+                local_stats.simplify_hits += 1;
             }
-            // Cleanup after De-SSA to drop dead temps and unreachable blocks.
             if !fn_ir.requires_conservative_optimization() {
-                let sc_changed = self.simplify_cfg(fn_ir);
-                let dce_changed = self.dce(fn_ir);
+                let sc_changed = self.simplify_cfg(&mut fn_ir);
+                let dce_changed = self.dce(&mut fn_ir);
                 if sc_changed {
-                    stats.simplify_hits += 1;
+                    local_stats.simplify_hits += 1;
                 }
                 if dce_changed {
-                    stats.dce_hits += 1;
+                    local_stats.dce_hits += 1;
                 }
             }
-            let _ = Self::verify_or_reject(fn_ir, "After De-SSA");
+            let _ = Self::verify_or_reject(&mut fn_ir, "After De-SSA");
+            (name, fn_ir, local_stats)
+        });
+        let mut restored_de_ssa = Vec::with_capacity(de_ssa_results.len());
+        for (idx, (name, fn_ir, local_stats)) in de_ssa_results.into_iter().enumerate() {
+            stats.accumulate(local_stats);
             Self::emit_progress(
                 &mut progress,
                 TachyonProgressTier::DeSsa,
                 idx + 1,
                 de_ssa_total,
-                name,
+                &name,
             );
+            restored_de_ssa.push((name, fn_ir));
         }
+        Self::restore_functions(all_fns, restored_de_ssa);
         stats
     }
 
