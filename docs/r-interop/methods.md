@@ -132,6 +132,8 @@ Part of the [R Interop](../r-interop.md) reference.
 - `methods::.untracedFunction`
 - `methods::.valueClassTest`
 - `methods::emptyMethodsList`
+- `methods::linearizeMlist`
+- `methods::listFromMlist`
 - `methods::listFromMethods`
 - `methods::metaNameUndo`
 - `methods::Math`
@@ -181,6 +183,7 @@ Part of the [R Interop](../r-interop.md) reference.
 - `methods::cacheGenericsMetaData`
 - `methods::tryNew`
 - `methods::showDefault`
+- `methods::showMlist`
 - `methods::Compare`
 - `methods::makeClassRepresentation`
 - `methods::promptClass`
@@ -233,7 +236,9 @@ Part of the [R Interop](../r-interop.md) reference.
 - `methods::.__C__environment`
 - `methods::.__C__Date`
 - `methods::.__C__character`
+- `methods::.__C__EmptyMethodsList`
 - `methods::.__C__LinearMethodsList`
+- `methods::.__C__MethodsList`
 - `methods::.__C__structure`
 - `methods::.__C__lm`
 - `methods::.__C__dump.frames`
@@ -357,4 +362,3 @@ Selected methods calls also keep direct type information:
 - `methods::classLabel`, `methods::className`, `methods::setPackageName` -> scalar char
 - Remaining plain methods helpers in this batch, including `methods::Math`, `methods::setIs`, `methods::loadMethod`, `methods::MethodsList`, `methods::functionBody<-` and related class/generic manipulation helpers -> broad opaque helper object
 - Methods constructor/meta exports in the `methods::.__C__*` family, including oddball names such as `methods::.__C__<-`, `methods::.__C__(`, and `methods::.__C__{`, are also surfaced directly as broad opaque class-representation objects
-
