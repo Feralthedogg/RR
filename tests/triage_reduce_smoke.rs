@@ -155,10 +155,14 @@ print(main())
         .arg(&compiled_r)
         .output()
         .expect("failed to run compiled");
-    fs::write(diff_case_dir.join("reference.stdout"), &reference.stdout).expect("failed to write diff ref stdout");
-    fs::write(diff_case_dir.join("reference.stderr"), &reference.stderr).expect("failed to write diff ref stderr");
-    fs::write(diff_case_dir.join("compiled.stdout"), &compiled.stdout).expect("failed to write diff compiled stdout");
-    fs::write(diff_case_dir.join("compiled.stderr"), &compiled.stderr).expect("failed to write diff compiled stderr");
+    fs::write(diff_case_dir.join("reference.stdout"), &reference.stdout)
+        .expect("failed to write diff ref stdout");
+    fs::write(diff_case_dir.join("reference.stderr"), &reference.stderr)
+        .expect("failed to write diff ref stderr");
+    fs::write(diff_case_dir.join("compiled.stdout"), &compiled.stdout)
+        .expect("failed to write diff compiled stdout");
+    fs::write(diff_case_dir.join("compiled.stderr"), &compiled.stderr)
+        .expect("failed to write diff compiled stderr");
     fs::write(
         diff_case_dir.join("bundle.manifest"),
         format!(
@@ -183,8 +187,10 @@ print(main())
         .output()
         .expect("failed to compile pass case");
     assert!(!pass_compile.status.success(), "expected pass case to fail");
-    fs::write(pass_case_dir.join("compiler.stdout"), &pass_compile.stdout).expect("failed to write pass stdout");
-    fs::write(pass_case_dir.join("compiler.stderr"), &pass_compile.stderr).expect("failed to write pass stderr");
+    fs::write(pass_case_dir.join("compiler.stdout"), &pass_compile.stdout)
+        .expect("failed to write pass stdout");
+    fs::write(pass_case_dir.join("compiler.stderr"), &pass_compile.stderr)
+        .expect("failed to write pass stderr");
     fs::write(
         pass_case_dir.join("bundle.manifest"),
         format!(
@@ -238,7 +244,11 @@ print(main())
         generated_pass_case.join("meta.json"),
         generated_pass_case.join("regression.rs"),
     ] {
-        assert!(path.exists(), "expected generated triage file: {}", path.display());
+        assert!(
+            path.exists(),
+            "expected generated triage file: {}",
+            path.display()
+        );
     }
 
     let diff_meta = fs::read_to_string(generated_diff_case.join("meta.json"))
@@ -246,7 +256,11 @@ print(main())
     let pass_meta = fs::read_to_string(generated_pass_case.join("meta.json"))
         .expect("failed to read pass meta");
     assert!(diff_meta.contains(r#""kind": "differential""#));
-    assert!(diff_meta.contains(r#""reduce_script":"#) || diff_meta.contains(r#""reduce_script": "#));
+    assert!(
+        diff_meta.contains(r#""reduce_script":"#) || diff_meta.contains(r#""reduce_script": "#)
+    );
     assert!(pass_meta.contains(r#""kind": "pass-verify""#));
-    assert!(pass_meta.contains(r#""replay_script":"#) || pass_meta.contains(r#""replay_script": "#));
+    assert!(
+        pass_meta.contains(r#""replay_script":"#) || pass_meta.contains(r#""replay_script": "#)
+    );
 }
