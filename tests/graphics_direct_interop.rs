@@ -119,7 +119,9 @@ fn render_plot() -> int {
   print(grDevices.palette.pals())
   print(grDevices.palette())
   print(grDevices.n2mfrow(5))
-  print(grDevices.densCols(c(1.0, 2.0, 3.0), c(1.0, 2.0, 3.0)))
+  if (has_kernsmooth) {
+    print(grDevices.densCols(c(1.0, 2.0, 3.0), c(1.0, 2.0, 3.0)))
+  }
   print(grDevices.adjustcolor("red", 0.5))
   let rast = grDevices.as.raster(matrix(c("red", "blue", "green", "black"), nrow = 2L))
   print(dim(rast))
