@@ -24,6 +24,7 @@ fn graphics_and_grdevices_direct_surface_match_between_o0_and_o2() {
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
 
     let src = r#"
+import r * as base from "base"
 import r { plot, lines, points, abline, title, box, text, axis, axTicks, strwidth, strheight, grconvertX, grconvertY, clip, xspline, pie, symbols, smoothScatter, stem, segments, arrows, mtext, rug, polygon, hist, boxplot, par, layout, layout.show, matplot, matlines, matpoints, pairs, stripchart, dotchart, contour, image, persp, assocplot, mosaicplot, fourfoldplot, legend } from "graphics"
 import r default from "grDevices"
 
@@ -80,7 +81,10 @@ fn render_plot() -> int {
   let heights = strheight(c("a", "bb"))
   pie(c(1.0, 2.0, 3.0))
   symbols(c(1.0, 2.0, 3.0), c(1.0, 2.0, 3.0), circles = c(1.0, 2.0, 3.0), inches = false)
-  smoothScatter(c(1.0, 2.0, 3.0), c(1.0, 2.0, 3.0))
+  let has_kernsmooth = base.requireNamespace("KernSmooth", quietly = true)
+  if (has_kernsmooth) {
+    smoothScatter(c(1.0, 2.0, 3.0), c(1.0, 2.0, 3.0))
+  }
   stem(c(1.1, 1.2, 2.3))
   print(length(rugs))
   print(length(ticks))
