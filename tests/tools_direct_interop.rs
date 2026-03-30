@@ -30,15 +30,16 @@ fn tools_direct_surface_matches_between_o0_and_o2() {
     let sample_html = out_dir.join("sample.html");
 
     let src = r#"
+import r * as base from "base"
 import r default from "tools"
 import r * as utils from "utils"
 
 fn use_tools() -> char {
   let titled = tools.toTitleCase("hello world")
-  let abs = tools.file_path_as_absolute(".")
+  let abs = tools.file_path_as_absolute("__A_TXT__")
   let user_dir = tools.R_user_dir("RR", "cache")
   let hash = tools.md5sum(abs)
-  let sha = tools.sha256sum(c("__A_TXT__", "__B_CSV__"))
+  let has_sha256 = base.exists("sha256sum", where = base.asNamespace("tools"), inherits = false)
   let ext = tools.file_ext(c("a.txt", "b.csv"))
   let sans = tools.file_path_sans_ext(c("a.txt", "b.csv"))
   let listed_exts = tools.list_files_with_exts("__ROOT__", c("txt", "csv"))
@@ -89,7 +90,11 @@ fn use_tools() -> char {
   let vig_names = pkg_vigs.names
   let vig_dir = pkg_vigs.dir
   print(hash)
-  print(sha)
+  if (has_sha256) {
+    print(tools.sha256sum(c("__A_TXT__", "__B_CSV__")))
+  } else {
+    print(base.character(0L))
+  }
   print(user_dir)
   print(ext)
   print(sans)
