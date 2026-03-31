@@ -261,6 +261,8 @@ impl RBackend {
             "tools::CRAN_check_details" => "tools:::CRAN_check_details".to_string(),
             "tools::CRAN_check_issues" => "tools:::CRAN_check_issues".to_string(),
             "tools::CRAN_rdxrefs_db" => "tools:::CRAN_rdxrefs_db".to_string(),
+            // `qr.influence` is namespace-internal on older R releases used in CI.
+            "stats::qr.influence" => "stats:::qr.influence".to_string(),
             _ => callee.to_string(),
         }
     }
