@@ -32,6 +32,8 @@ import r { set.seed } from "base"
 
 fn inspect_model_alias() -> float {
   set.seed(1L)
+  let stats_ns = base.asNamespace("stats")
+  let has_qr_influence = base.exists("qr.influence", envir = stats_ns, inherits = false)
   let lm_fit = stats.lm(stats.as.formula("mpg ~ wt + hp"), data = datasets.mtcars)
   let glm_fit = stats.glm(stats.as.formula("am ~ mpg"), data = datasets.mtcars, family = stats.binomial())
   let sim_lm = stats.simulate(lm_fit, nsim = 2L)
@@ -58,7 +60,6 @@ fn inspect_model_alias() -> float {
   let wr = stats.weighted.residuals(lm_fit)
   let infl = stats.influence(lm_fit)
   let infm = stats.influence.measures(lm_fit)
-  let qri = stats.qr.influence(lm_fit.qr, stats.residuals.lm(lm_fit))
   let li = stats.lm.influence(lm_fit)
   print(base.dim(sim_lm))
   print(base.dim(sim_glm))
@@ -88,8 +89,14 @@ fn inspect_model_alias() -> float {
   print(infl.coefficients)
   print(infl.sigma)
   print(infm)
-  print(qri.hat)
-  print(qri.sigma)
+  if (has_qr_influence) {
+    let qri = stats.qr.influence(lm_fit.qr, stats.residuals.lm(lm_fit))
+    print(qri.hat)
+    print(qri.sigma)
+  } else {
+    print(li.hat)
+    print(li.sigma)
+  }
   print(li.hat)
   print(li.coefficients)
   print(li.sigma)
