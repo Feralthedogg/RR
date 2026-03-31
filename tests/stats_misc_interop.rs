@@ -28,6 +28,7 @@ import r * as datasets from "datasets"
 import r { png, dev.off } from "grDevices"
 
 fn inspect_misc() -> float {
+  let pca_input = base.matrix(c(1.0, 2.0, 2.0, 1.0, 3.0, 4.0, 4.0, 3.0, 5.0, 7.0, 6.0, 8.0), ncol = 2L)
   let adj = stats.p.adjust(c(0.01, 0.2, 0.5))
   let adj_scalar = stats.p.adjust(0.01)
   let pts = stats.ppoints(4L)
@@ -47,7 +48,7 @@ fn inspect_misc() -> float {
     c(1.0, 4.0, 9.0, 16.0, 25.0, 36.0, 49.0, 64.0, 81.0, 100.0),
     span = 0.75
   )
-  stats.biplot(stats.prcomp(base.matrix(c(1.0, 2.0, 3.0, 4.0), ncol = 2L)))
+  stats.biplot(stats.prcomp(pca_input))
   dev.off()
   let d = stats.dist(c(1.0, 2.0, 3.0))
   let cov_xy = stats.cov(c(1.0, 2.0, 3.0), c(1.0, 2.0, 4.0))
@@ -56,7 +57,7 @@ fn inspect_misc() -> float {
   let iqr_v = stats.IQR(c(1.0, 2.0, 3.0, 4.0))
   let mad_v = stats.mad(c(1.0, 2.0, 3.0, 4.0))
   let poly = stats.poly(c(1.0, 2.0, 3.0), 2L)
-  let pc = stats.prcomp(base.matrix(c(1.0, 2.0, 3.0, 4.0), ncol = 2L))
+  let pc = stats.prcomp(pca_input)
   print(adj)
   print(pts)
   print(den.bw)
@@ -115,6 +116,7 @@ import r { png, dev.off } from "grDevices"
 import r { plot } from "graphics"
 
 fn helpers() -> int {
+  let pca_input = base.matrix(c(1.0, 2.0, 2.0, 1.0, 3.0, 4.0, 4.0, 3.0, 5.0, 7.0, 6.0, 8.0), ncol = 2L)
   let f = stats.ecdf(c(1.0, 2.0, 3.0))
   print(f)
   png("stats_misc_qqline.png")
@@ -134,7 +136,7 @@ fn helpers() -> int {
     c(1.0, 4.0, 9.0, 16.0, 25.0, 36.0, 49.0, 64.0, 81.0, 100.0),
     span = 0.75
   )
-  stats.biplot(stats.prcomp(base.matrix(c(1.0, 2.0, 3.0, 4.0), ncol = 2L)))
+  stats.biplot(stats.prcomp(pca_input))
   dev.off()
   return 1L
 }
