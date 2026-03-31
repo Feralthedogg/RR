@@ -24,6 +24,8 @@ fn datasets_package_data_have_usable_types_in_strict_mode() {
 
     let src = r#"
 import r * as datasets from "datasets"
+import r * as base from "base"
+import r * as utils from "utils"
 import r {
   state.x77 as state_x77,
   sunspot.year as sunspot_year,
@@ -45,6 +47,11 @@ import r {
   freeny.x as freeny_x,
   freeny.y as freeny_y
 } from "datasets"
+
+fn has_datasets_entry(name: char) -> bool {
+  let items = c(utils.data(package = "datasets").results)
+  return any(items == name) || any(base.startsWith(items, paste0(name, " (")))
+}
 
 fn mean_mpg() -> float {
   let cars = datasets.mtcars
@@ -429,6 +436,9 @@ fn sum_stack_loss_series() -> float {
 }
 
 fn sum_sunspot_m2014() -> float {
+  if (!has_datasets_entry("sunspot.m2014")) {
+    return 0.0
+  }
   return sum(sunspot_m2014)
 }
 
@@ -467,21 +477,33 @@ fn mean_theoph_conc() -> float {
 }
 
 fn penguin_species_count() -> int {
+  if (!has_datasets_entry("penguins")) {
+    return 0L
+  }
   let x = datasets.penguins
   return length(x.species)
 }
 
 fn mean_penguin_year() -> float {
+  if (!has_datasets_entry("penguins")) {
+    return 0.0
+  }
   let x = datasets.penguins
   return mean(x.year)
 }
 
 fn penguins_raw_col_count() -> int {
+  if (!has_datasets_entry("penguins_raw")) {
+    return 0L
+  }
   let x = datasets.penguins_raw
   return length(colnames(x))
 }
 
 fn gait_dim_count() -> int {
+  if (!has_datasets_entry("gait")) {
+    return 0L
+  }
   let x = datasets.gait
   return length(dim(x))
 }
