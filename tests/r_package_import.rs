@@ -208,6 +208,48 @@ print(main())
 }
 
 #[test]
+fn tools_namespace_internal_members_emit_triple_colon_calls() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = root
+        .join("target")
+        .join("tests")
+        .join("r_package_import_tools_internal");
+    fs::create_dir_all(&out_dir).expect("failed to create tools internal import dir");
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+
+    let rr_src = r#"
+import r default from "tools"
+
+fn main() {
+  print(length(tools.standard_package_names()))
+  print(length(tools.base_aliases_db()))
+  print(length(tools.base_rdxrefs_db()))
+  0L
+}
+
+print(main())
+"#;
+
+    let rr_path = out_dir.join("r_package_import_tools_internal.rr");
+    fs::write(&rr_path, rr_src).expect("failed to write tools internal import source");
+    let out = out_dir.join("r_package_import_tools_internal_o2.R");
+    compile_rr(&rr_bin, &rr_path, &out, "-O2");
+
+    let code = fs::read_to_string(&out).expect("failed to read emitted R");
+    assert!(
+        code.contains("tools:::standard_package_names(")
+            && code.contains("tools:::base_aliases_db(")
+            && code.contains("tools:::base_rdxrefs_db(")
+            && !code.contains("tools::standard_package_names(")
+            && !code.contains("tools::base_aliases_db(")
+            && !code.contains("tools::base_rdxrefs_db(")
+            && !code.contains("# rr-opaque-interop:")
+            && !code.contains("# rr-hybrid-fallback:"),
+        "expected namespace-internal tools members to emit via ::: for cross-version compatibility:\n{code}"
+    );
+}
+
+#[test]
 fn direct_stats_readr_tidyr_interop_avoids_opaque_and_hybrid() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = root

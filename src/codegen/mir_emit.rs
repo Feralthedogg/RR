@@ -243,6 +243,28 @@ impl RBackend {
         }
     }
 
+    fn emitted_callee_name(callee: &str) -> String {
+        match callee {
+            // Some `tools` namespace database helpers have shifted between exported
+            // and namespace-internal across R releases. Emitting `:::` keeps the
+            // RR surface stable for package-alias calls while remaining compatible
+            // with versions where `::` no longer resolves them.
+            "tools::standard_package_names" => "tools:::standard_package_names".to_string(),
+            "tools::base_aliases_db" => "tools:::base_aliases_db".to_string(),
+            "tools::base_rdxrefs_db" => "tools:::base_rdxrefs_db".to_string(),
+            "tools::CRAN_aliases_db" => "tools:::CRAN_aliases_db".to_string(),
+            "tools::CRAN_archive_db" => "tools:::CRAN_archive_db".to_string(),
+            "tools::CRAN_package_db" => "tools:::CRAN_package_db".to_string(),
+            "tools::CRAN_authors_db" => "tools:::CRAN_authors_db".to_string(),
+            "tools::CRAN_current_db" => "tools:::CRAN_current_db".to_string(),
+            "tools::CRAN_check_results" => "tools:::CRAN_check_results".to_string(),
+            "tools::CRAN_check_details" => "tools:::CRAN_check_details".to_string(),
+            "tools::CRAN_check_issues" => "tools:::CRAN_check_issues".to_string(),
+            "tools::CRAN_rdxrefs_db" => "tools:::CRAN_rdxrefs_db".to_string(),
+            _ => callee.to_string(),
+        }
+    }
+
     fn in_active_loop_mutated_context(&self, var: &str) -> bool {
         self.active_loop_mutated_vars
             .iter()
@@ -3670,7 +3692,8 @@ impl RBackend {
                         _ => {}
                     }
                 }
-                Some(format!("{}({})", callee, rendered_args.join(", ")))
+                let rendered_callee = Self::emitted_callee_name(callee);
+                Some(format!("{}({})", rendered_callee, rendered_args.join(", ")))
             }
             ValueKind::Intrinsic { op, args } => {
                 let rendered_args: Option<Vec<String>> = args
@@ -4221,7 +4244,8 @@ impl RBackend {
             );
         }
         let arg_list = self.build_named_arg_list(args, names, values, params);
-        format!("{}({})", callee, arg_list)
+        let rendered_callee = Self::emitted_callee_name(callee);
+        format!("{}({})", rendered_callee, arg_list)
     }
 
     fn resolve_rr_idx_cube_vec_arg_expr(
