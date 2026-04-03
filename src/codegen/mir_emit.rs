@@ -375,6 +375,16 @@ impl RBackend {
         assign::resolve_bound_temp_expr(self, val_id, values, params, seen)
     }
 
+    fn resolve_expanded_scalar_expr_for_equivalence(
+        &self,
+        val_id: usize,
+        values: &[Value],
+        params: &[String],
+        seen: &mut FxHashSet<usize>,
+    ) -> String {
+        assign::resolve_expanded_scalar_expr_for_equivalence(self, val_id, values, params, seen)
+    }
+
     fn resolve_named_mutable_base_var(
         &self,
         val_id: usize,

@@ -329,6 +329,36 @@ pub(super) fn resolve_bound_temp_expr(
     this.rewrite_live_readonly_arg_aliases(this.resolve_val(val_id, values, params, true), values)
 }
 
+pub(super) fn resolve_expanded_scalar_expr_for_equivalence(
+    this: &RBackend,
+    val_id: usize,
+    values: &[Value],
+    params: &[String],
+    seen: &mut FxHashSet<usize>,
+) -> String {
+    if !seen.insert(val_id) {
+        return this.resolve_val(val_id, values, params, true);
+    }
+    match values.get(val_id).map(|v| &v.kind) {
+        Some(ValueKind::Load { var }) => {
+            if let Some(bound) = this.resolve_bound_value_id(var)
+                && bound != val_id
+            {
+                return resolve_expanded_scalar_expr_for_equivalence(
+                    this, bound, values, params, seen,
+                );
+            }
+            this.resolve_val(val_id, values, params, true)
+        }
+        Some(ValueKind::FieldGet { base, field }) => {
+            let base_expr =
+                resolve_expanded_scalar_expr_for_equivalence(this, *base, values, params, seen);
+            format!(r#"{base_expr}[["{field}"]]"#)
+        }
+        _ => this.resolve_val(val_id, values, params, true),
+    }
+}
+
 pub(super) fn resolve_named_mutable_base_var(
     this: &RBackend,
     val_id: usize,

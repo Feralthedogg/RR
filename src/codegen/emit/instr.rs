@@ -36,6 +36,31 @@ impl RBackend {
                     && values[*src].origin_var.as_deref() == Some(dst.as_str())
                     && self.resolve_bound_value_id(dst) != Some(*src)
                 {
+                    if let Some(current_val_id) = self.resolve_bound_value_id(dst)
+                        && current_val_id != *src
+                    {
+                        if values[current_val_id].kind == values[*src].kind {
+                            self.invalidate_emitted_cse_temps();
+                            return Ok(());
+                        }
+                        let expanded_src_expr = self.resolve_expanded_scalar_expr_for_equivalence(
+                            *src,
+                            values,
+                            params,
+                            &mut FxHashSet::default(),
+                        );
+                        let expanded_current_expr = self
+                            .resolve_expanded_scalar_expr_for_equivalence(
+                                current_val_id,
+                                values,
+                                params,
+                                &mut FxHashSet::default(),
+                            );
+                        if expanded_src_expr == expanded_current_expr {
+                            self.invalidate_emitted_cse_temps();
+                            return Ok(());
+                        }
+                    }
                     let base_expr = self.resolve_val(*base, values, params, false);
                     let rendered = format!(r#"{base_expr}[["{field}"]]"#);
                     self.record_span(*span);
@@ -263,6 +288,23 @@ impl RBackend {
                         let src_expr = self.resolve_val(*src, values, params, true);
                         let current_expr = self.resolve_val(current_val_id, values, params, true);
                         if src_expr == current_expr {
+                            self.invalidate_emitted_cse_temps();
+                            return Ok(());
+                        }
+                        let expanded_src_expr = self.resolve_expanded_scalar_expr_for_equivalence(
+                            *src,
+                            values,
+                            params,
+                            &mut FxHashSet::default(),
+                        );
+                        let expanded_current_expr = self
+                            .resolve_expanded_scalar_expr_for_equivalence(
+                                current_val_id,
+                                values,
+                                params,
+                                &mut FxHashSet::default(),
+                            );
+                        if expanded_src_expr == expanded_current_expr {
                             self.invalidate_emitted_cse_temps();
                             return Ok(());
                         }

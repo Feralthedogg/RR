@@ -483,6 +483,122 @@ fn field_get_rebind_to_same_named_var_emits_when_binding_is_stale() {
 }
 
 #[test]
+fn equivalent_field_get_rebind_is_skipped_when_live_binding_matches_via_alias_expansion() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Call {
+                callee: "tools::Rd2txt_options".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("rd_opts".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Int)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "rd_opts".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("rd_opts".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Int)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::FieldGet {
+                base: 1,
+                field: "width".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("rd_width".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Int,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Call {
+                callee: "tools::Rd2txt_options".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Int)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::FieldGet {
+                base: 3,
+                field: "width".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("rd_width".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Int,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "rd_opts".to_string(),
+                src: 0,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("rd_opts assign should emit");
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "rd_width".to_string(),
+                src: 2,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("initial rd_width assign should emit");
+
+    let before = backend.output.clone();
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "rd_width".to_string(),
+                src: 4,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("equivalent replay should be handled");
+
+    assert_eq!(backend.output, before, "{}", backend.output);
+}
+
+#[test]
 fn stale_fresh_clone_selection_is_deterministic_across_binding_insertion_order() {
     let values = vec![
         Value {
