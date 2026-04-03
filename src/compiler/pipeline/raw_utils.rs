@@ -460,8 +460,7 @@ fn symbol_hit_is_rewritable(line: &str, idx: usize, symbol_len: usize) -> bool {
 
 fn symbol_hit_is_named_label(line: &str, after_idx: usize) -> bool {
     let rest = &line[after_idx..];
-    let mut iter = rest.char_indices().peekable();
-    while let Some((off, ch)) = iter.next() {
+    for (off, ch) in rest.char_indices() {
         if ch.is_ascii_whitespace() {
             continue;
         }

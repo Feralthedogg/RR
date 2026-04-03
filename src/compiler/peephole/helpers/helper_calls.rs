@@ -687,8 +687,7 @@ fn helper_ident_end(expr: &str, start: usize) -> usize {
 
 fn helper_ident_is_named_label(expr: &str, end: usize) -> bool {
     let rest = &expr[end..];
-    let mut iter = rest.char_indices();
-    while let Some((off, ch)) = iter.next() {
+    for (off, ch) in rest.char_indices() {
         if ch.is_ascii_whitespace() {
             continue;
         }
