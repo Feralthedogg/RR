@@ -1,6 +1,6 @@
 [package]
 name = "RR"
-version = "8.0.1"
+version = "9.0.0"
 edition = "2024"
 authors = ["Feral"]
 description = "The RR Compiler"

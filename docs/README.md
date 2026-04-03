@@ -9,7 +9,7 @@ repository, but the reading order is user-first: how to write RR, compile it,
 and run it comes before compiler structure. Compiler contributor manuals live
 under `docs/compiler/`.
 
-Current compiler line: `RR Tachyon v8.0.1`.
+Current compiler line: `RR Tachyon v9.0.0`.
 
 ## Manual Organization
 

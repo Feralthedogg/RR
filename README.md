@@ -3,7 +3,7 @@
 RR is an optimizing compiler for an R-oriented source language.
 It compiles `.rr` programs into self-contained `.R` output, using an SSA-like MIR pipeline,
 the `Tachyon` optimizer, and an embedded runtime for checks and helper operations.
-Current compiler line: `RR Tachyon v8.0.1`.
+Current compiler line: `RR Tachyon v9.0.0`.
 
 ## Documentation Sets
 
