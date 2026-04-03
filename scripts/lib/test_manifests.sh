@@ -67,6 +67,7 @@ RR_LIBRARY_PACKAGE_TESTS=(
   stats_ts_model_interop
   stats_utility_interop
   stats_wrapper_interop
+  package_manager_cli
   type_precision_regression
 )
 
@@ -82,6 +83,7 @@ RR_TIER0_FAST_TESTS=(
   import_error_flow
   import_path_dedup
   statement_boundaries
+  default_args_records
   dotted_builtin_calls
   dot_identifier_and_field
   builtin_shadowing
@@ -147,6 +149,24 @@ RR_OPTIMIZER_LEGALITY_TESTS=(
   o0_codegen_smoke
   optimizer_budget_tiers
   parallel_codegen
+  poly_cfg_guard
+  poly_identity_map
+  poly_identity_reduce
+  poly_isl_dependence
+  poly_isl_reduction
+  poly_isl_schedule
+  poly_multi_map
+  poly_multi_reduce
+  poly_nested_interchange
+  poly_nested_multi_map
+  poly_nested_multi_reduce
+  poly_nested_reduce
+  poly_range_map
+  poly_range_multi_map
+  poly_range_multi_reduce
+  poly_range_reduce
+  poly_tiny_schedule
+  poly_vopt_fallback
   reduction_user_call_regression
   sccp_overflow_regression
   vectorization_binop_cse
@@ -163,6 +183,20 @@ RR_OPTIMIZER_HEAVY_TESTS=(
   benchmark_vectorization
   native_equivalence
   opt_level_equivalence
+  poly_for_nested_2d_interchange
+  poly_for_nested_3d
+  poly_for_nested_3d_interchange
+  poly_for_tile_2d
+  poly_for_tile_3d
+  poly_generic_mir
+  poly_isl_backend
+  poly_nested_3d
+  poly_nested_3d_interchange
+  poly_structured_axes
+  poly_tile_1d
+  poly_tile_2d
+  poly_tile_3d
+  poly_tree_dump
   vector_check
   vectorization_3d_axis_map
   vectorization_3d_axis_reduce
