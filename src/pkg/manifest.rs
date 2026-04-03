@@ -82,8 +82,9 @@ impl Manifest {
         if !self.requires.is_empty() {
             out.push('\n');
             if self.requires.len() == 1 {
-                let (path, version) = self.requires.iter().next().unwrap();
-                out.push_str(&format!("require {} {}\n", path, version));
+                if let Some((path, version)) = self.requires.iter().next() {
+                    out.push_str(&format!("require {} {}\n", path, version));
+                }
             } else {
                 out.push_str("require (\n");
                 for (path, version) in &self.requires {

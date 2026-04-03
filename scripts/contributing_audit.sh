@@ -364,7 +364,11 @@ for path, shown, audit in zip(paths, display_paths, audit_paths):
 
     all_lines = raw_text.splitlines()
     prod_lines = production_lines(all_lines)
-    is_production_src = audit.startswith("src/") and not audit.startswith("src/legacy/")
+    is_production_src = (
+        audit.startswith("src/")
+        and not audit.startswith("src/legacy/")
+        and not audit.endswith("/tests.rs")
+    )
     is_rust_file = shown.endswith(".rs")
 
     if is_production_src:
