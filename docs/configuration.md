@@ -112,6 +112,10 @@ Relevant driver flags:
   - write the pre-peephole emitted R artifact to a file before final cleanup/remap
 - `RR_PULSE_JSON_PATH`
   - write `TachyonPulseStats` JSON diagnostics for a compile to the given path
+- `RR_POLY_ENABLE`
+  - `auto`/unset enables poly optimization automatically when RR was built with ISL support
+- `RR_POLY_BACKEND`
+  - `auto`/unset prefers the ISL backend when RR was built with ISL support
 - `RR_VECTORIZE_TRACE`
 - `RR_VOPT_PROOF`
   - enable proof-certified vectorization rewrites explicitly
@@ -125,6 +129,20 @@ Use these only when:
 - investigating skipped vectorization
 
 They are not the normal end-user entry surface.
+
+## Polyhedral / ISL Build
+
+RR now requires ISL support at build time. If RR cannot find usable `isl` and
+`gmp` libraries, the build fails instead of silently disabling the ISL-backed
+polyhedral path.
+
+- `RR_ISL_LIB_DIR`
+  - override the library search directory used to discover `libisl`
+- `RR_GMP_LIB_DIR`
+  - override the library search directory used to discover `libgmp` for static ISL builds
+- `RR_ISL_LINK`
+  - `auto|static|dylib`
+  - `auto` prefers fully static `isl+gmp` when available and otherwise falls back to shared `isl`
 
 ## Inlining Policy
 

@@ -104,8 +104,27 @@ fn env_flag_enabled(key: &str) -> bool {
     })
 }
 
+fn compiled_with_isl() -> bool {
+    option_env!("RR_HAS_ISL") == Some("1")
+}
+
+fn poly_enabled_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
+    match raw
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("1" | "true" | "yes" | "on") => true,
+        Some("0" | "false" | "no" | "off") => false,
+        None | Some("auto") => build_has_isl,
+        Some(_) => false,
+    }
+}
+
 pub fn poly_enabled() -> bool {
-    env_flag_enabled("RR_POLY_ENABLE")
+    poly_enabled_from_setting(
+        std::env::var("RR_POLY_ENABLE").ok().as_deref(),
+        compiled_with_isl(),
+    )
 }
 
 pub fn poly_trace_enabled() -> bool {
@@ -291,4 +310,26 @@ fn analyze_loops(fn_ir: &FnIR) -> (PolyStats, Vec<crate::mir::opt::loop_analysis
     }
 
     (stats, loops)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::poly_enabled_from_setting;
+
+    #[test]
+    fn poly_enabled_auto_follows_build_isl_availability() {
+        assert!(!poly_enabled_from_setting(None, false));
+        assert!(poly_enabled_from_setting(None, true));
+        assert!(!poly_enabled_from_setting(Some("auto"), false));
+        assert!(poly_enabled_from_setting(Some("auto"), true));
+    }
+
+    #[test]
+    fn poly_enabled_explicit_values_override_auto_default() {
+        assert!(poly_enabled_from_setting(Some("1"), false));
+        assert!(poly_enabled_from_setting(Some("true"), false));
+        assert!(!poly_enabled_from_setting(Some("0"), true));
+        assert!(!poly_enabled_from_setting(Some("off"), true));
+        assert!(!poly_enabled_from_setting(Some("weird"), true));
+    }
 }

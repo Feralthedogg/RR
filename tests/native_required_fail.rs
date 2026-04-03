@@ -19,15 +19,8 @@ fn required_backend_fails_without_native_library() {
     let src = r#"
 fn call_abs(n: int) {
   let x = seq_len(n) - 4
-
-  let y = seq_len(n)
-
-  for (i in 1..length(x)) {
-    y[i] = abs(x[i])
-
-  }
+  let y = abs(x)
   return y
-
 }
 print(call_abs(5L))
 

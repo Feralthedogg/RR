@@ -5,6 +5,9 @@ on:
     - cron: "17 18 * * *"
   workflow_dispatch:
 
+env:
+  RR_ISL_LINK: static
+
 jobs:
   recommended-package-coverage:
     name: Recommended Package Coverage
@@ -23,7 +26,7 @@ jobs:
       - name: Install R + Recommended Packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends r-base-core r-recommended
+          sudo apt-get install -y --no-install-recommends r-base-core r-recommended libisl-dev libgmp-dev
 
       - name: Build Recommended Package Coverage
         run: bash scripts/recommended_package_coverage.sh .artifacts/recommended-package-coverage
@@ -59,7 +62,7 @@ jobs:
       - name: Install Rscript
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends r-base-core
+          sudo apt-get install -y --no-install-recommends r-base-core libisl-dev libgmp-dev
 
       - name: Prepare Artifact Directory
         run: mkdir -p .artifacts/nightly-soak .artifacts/nightly-soak/verify-dumps
@@ -165,7 +168,7 @@ jobs:
       - name: Install Fuzz Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld
+          sudo apt-get install -y --no-install-recommends clang lld libisl-dev libgmp-dev
           cargo install cargo-fuzz --version 0.13.1 --locked
 
       - name: Prepare Artifact Directory

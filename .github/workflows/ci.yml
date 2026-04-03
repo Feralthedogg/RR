@@ -16,6 +16,9 @@ defaults:
   run:
     shell: bash
 
+env:
+  RR_ISL_LINK: static
+
 jobs:
   tier0:
     name: Tier 0 / Fast Gates
@@ -35,6 +38,11 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
@@ -47,6 +55,138 @@ jobs:
 
       - name: Tier 0 Fast Tests
         run: bash scripts/test_tier.sh tier0
+
+  platform-build:
+    name: Platform Build / ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+            binary_path: target/release/RR
+            artifact_dir: .artifacts/platform-build/linux-x64
+          - os: windows-latest
+            label: windows-x64
+            binary_path: target/x86_64-pc-windows-gnu/release/RR.exe
+            artifact_dir: .artifacts/platform-build/windows-x64
+          - os: macos-latest
+            label: macos-arm64
+            binary_path: target/release/RR
+            artifact_dir: .artifacts/platform-build/macos-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        if: runner.os != 'Windows'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust (stable, Windows GNU target)
+        if: runner.os == 'Windows'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+          isl_dir="$(dpkg -L libisl-dev | grep '/libisl.a$' | head -n1 | xargs dirname)"
+          gmp_dir="$(dpkg -L libgmp-dev | grep '/libgmp.a$' | head -n1 | xargs dirname)"
+          test -n "$isl_dir" && test -f "$isl_dir/libisl.a"
+          test -n "$gmp_dir" && test -f "$gmp_dir/libgmp.a"
+          echo "RR_ISL_LIB_DIR=$isl_dir" >> "$GITHUB_ENV"
+          echo "RR_GMP_LIB_DIR=$gmp_dir" >> "$GITHUB_ENV"
+
+      - name: Install Static ISL Dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install isl gmp
+          isl_dir="$(brew --prefix isl)/lib"
+          gmp_dir="$(brew --prefix gmp)/lib"
+          test -f "$isl_dir/libisl.a"
+          test -f "$gmp_dir/libgmp.a"
+          echo "RR_ISL_LIB_DIR=$isl_dir" >> "$GITHUB_ENV"
+          echo "RR_GMP_LIB_DIR=$gmp_dir" >> "$GITHUB_ENV"
+
+      - name: Install Static ISL Dependencies (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-gmp
+            mingw-w64-x86_64-isl
+
+      - name: Configure Static ISL Paths (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          test -f /c/msys64/mingw64/lib/libisl.a
+          test -f /c/msys64/mingw64/lib/libgmp.a
+          echo "RR_ISL_LIB_DIR=C:/msys64/mingw64/lib" >> "$GITHUB_ENV"
+          echo "RR_GMP_LIB_DIR=C:/msys64/mingw64/lib" >> "$GITHUB_ENV"
+
+      - name: Build RR Release Binary (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cargo build --locked --release --bin RR
+
+      - name: Build RR Release Binary (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: cargo build --locked --release --bin RR --target x86_64-pc-windows-gnu
+
+      - name: Smoke Version Output (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: ${{ matrix.binary_path }} --version
+
+      - name: Smoke Version Output (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: ${{ matrix.binary_path }} --version
+
+      - name: Verify No Dynamic ISL/GMP Dependency (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "${{ matrix.artifact_dir }}"
+          ldd "${{ matrix.binary_path }}" | tee "${{ matrix.artifact_dir }}/dynamic-deps.txt"
+          ! grep -Ei 'libisl|libgmp' "${{ matrix.artifact_dir }}/dynamic-deps.txt"
+
+      - name: Verify No Dynamic ISL/GMP Dependency (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "${{ matrix.artifact_dir }}"
+          otool -L "${{ matrix.binary_path }}" | tee "${{ matrix.artifact_dir }}/dynamic-deps.txt"
+          ! grep -Ei 'libisl|libgmp' "${{ matrix.artifact_dir }}/dynamic-deps.txt"
+
+      - name: Verify No Dynamic ISL/GMP Dependency (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          mkdir -p "${{ matrix.artifact_dir }}"
+          objdump -p "${{ matrix.binary_path }}" | tee "${{ matrix.artifact_dir }}/dynamic-deps.txt"
+          ! grep -Ei 'DLL Name: .*isl|DLL Name: .*gmp' "${{ matrix.artifact_dir }}/dynamic-deps.txt"
+
+      - name: Prepare Build Artifact
+        run: |
+          mkdir -p "${{ matrix.artifact_dir }}"
+          cp "${{ matrix.binary_path }}" "${{ matrix.artifact_dir }}/"
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rr-${{ matrix.label }}-static-isl
+          path: ${{ matrix.artifact_dir }}
+          if-no-files-found: error
 
   tier1:
     name: Tier 1 / Library Packages
@@ -63,6 +203,11 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
 
       - name: Install Rscript
         run: |
@@ -87,6 +232,11 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
 
       - name: Install Rscript
         run: |
@@ -120,6 +270,11 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+
       - name: Install Rscript
         run: |
           sudo apt-get update
@@ -150,6 +305,11 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
 
       - name: Install Rscript
         run: |
@@ -182,6 +342,11 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
 
       - name: Install Rscript
         run: |
@@ -222,6 +387,11 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
 
       - name: Install Rscript
         run: |
@@ -330,7 +500,7 @@ jobs:
       - name: Install Fuzz Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld
+          sudo apt-get install -y --no-install-recommends clang lld libisl-dev libgmp-dev
           cargo install cargo-fuzz --version 0.13.1 --locked
 
       - name: Prepare Artifact Directory

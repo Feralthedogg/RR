@@ -71,10 +71,28 @@ pub fn parse_backend_name(raw: &str) -> PolyBackendKind {
     }
 }
 
+fn backend_from_setting(raw: Option<&str>, build_has_isl: bool) -> PolyBackendKind {
+    match raw
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("isl") => PolyBackendKind::Isl,
+        None | Some("auto") => {
+            if build_has_isl {
+                PolyBackendKind::Isl
+            } else {
+                PolyBackendKind::Heuristic
+            }
+        }
+        Some(_) => PolyBackendKind::Heuristic,
+    }
+}
+
 pub fn backend_from_env() -> PolyBackendKind {
-    std::env::var("RR_POLY_BACKEND")
-        .map(|raw| parse_backend_name(&raw))
-        .unwrap_or(PolyBackendKind::Heuristic)
+    backend_from_setting(
+        std::env::var("RR_POLY_BACKEND").ok().as_deref(),
+        option_env!("RR_HAS_ISL") == Some("1"),
+    )
 }
 
 fn identity_relation(scop: &ScopRegion) -> ScheduleRelation {
@@ -839,7 +857,7 @@ mod tests {
             access_count: 1,
             reduction_count: 0,
         };
-        let plan = search_schedule(&scop, &deps);
+        let plan = search_schedule_for_backend(&scop, &deps, PolyBackendKind::Heuristic);
         assert_eq!(plan.kind, SchedulePlanKind::Interchange);
     }
 
@@ -892,7 +910,7 @@ mod tests {
             access_count: 1,
             reduction_count: 0,
         };
-        let plan = search_schedule(&scop, &deps);
+        let plan = search_schedule_for_backend(&scop, &deps, PolyBackendKind::Heuristic);
         assert_eq!(plan.kind, SchedulePlanKind::Identity);
     }
 
@@ -954,7 +972,7 @@ mod tests {
             access_count: 1,
             reduction_count: 0,
         };
-        let plan = search_schedule(&scop, &deps);
+        let plan = search_schedule_for_backend(&scop, &deps, PolyBackendKind::Heuristic);
         assert_eq!(plan.kind, SchedulePlanKind::Interchange);
         assert_eq!(plan.relation.output_expressions.len(), 3);
     }
@@ -964,6 +982,39 @@ mod tests {
         assert_eq!(parse_backend_name(""), PolyBackendKind::Heuristic);
         assert_eq!(parse_backend_name("weird"), PolyBackendKind::Heuristic);
         assert_eq!(parse_backend_name("isl"), PolyBackendKind::Isl);
+    }
+
+    #[test]
+    fn backend_auto_prefers_isl_when_build_has_isl() {
+        assert_eq!(
+            backend_from_setting(None, false),
+            PolyBackendKind::Heuristic
+        );
+        assert_eq!(backend_from_setting(None, true), PolyBackendKind::Isl);
+        assert_eq!(
+            backend_from_setting(Some("auto"), false),
+            PolyBackendKind::Heuristic
+        );
+        assert_eq!(
+            backend_from_setting(Some("auto"), true),
+            PolyBackendKind::Isl
+        );
+    }
+
+    #[test]
+    fn backend_explicit_value_overrides_auto_default() {
+        assert_eq!(
+            backend_from_setting(Some("isl"), false),
+            PolyBackendKind::Isl
+        );
+        assert_eq!(
+            backend_from_setting(Some("heuristic"), true),
+            PolyBackendKind::Heuristic
+        );
+        assert_eq!(
+            backend_from_setting(Some("weird"), true),
+            PolyBackendKind::Heuristic
+        );
     }
 
     #[test]
