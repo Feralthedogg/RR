@@ -1,5 +1,0 @@
-Sym_42 <- function(xs) 
-{
-  .arg_xs <- xs
-  return((Sym_11(.arg_xs) / length(.arg_xs)))
-}

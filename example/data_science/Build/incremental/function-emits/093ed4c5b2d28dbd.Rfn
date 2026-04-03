@@ -1,5 +1,0 @@
-Sym_23 <- function(x) 
-{
-  .arg_x <- x
-  return((.arg_x - (.arg_x %% 1.0)))
-}

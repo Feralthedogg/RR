@@ -1,5 +1,6 @@
 /target
 /Build
+/example/**/Build/
 .idea
 .DS_Store
 /scripts/__pycache__

@@ -1,4 +1,0 @@
-Sym_top_0 <- function() 
-{
-  return(Sym_6())
-}

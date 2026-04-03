@@ -1,9 +1,0 @@
-Sym_19 <- function(x) 
-{
-  .arg_x <- x
-  if ((.arg_x < 0.0)) {
-    return((0.0 - .arg_x))
-  } else {
-    return(.arg_x)
-  }
-}
