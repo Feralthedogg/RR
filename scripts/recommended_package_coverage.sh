@@ -21,16 +21,14 @@ packages = [pkg.strip() for pkg in sys.argv[2].split(",") if pkg.strip()]
 json_out = Path(sys.argv[3])
 md_out = Path(sys.argv[4])
 
-code = (root / "src" / "mir" / "semantics" / "call_model.rs").read_text()
-
-def extract_function_body(src: str, marker: str) -> str:
-    start = src.index(marker)
-    tail = src[start:]
-    next_points = [idx for idx in (tail.find("\npub(super) fn "), tail.find("\npub(crate) fn "), tail.find("\nfn ")) if idx > 0]
-    return tail[: min(next_points) if next_points else len(tail)]
-
-body = extract_function_body(code, "pub(crate) fn is_supported_package_call")
 quoted_re = re.compile(r'"([A-Za-z0-9_.]+::[A-Za-z0-9_.]+)"')
+surface_file = root / "src" / "mir" / "semantics" / "call_model_package_surface.rs"
+surface_tree = root / "src" / "mir" / "semantics" / "call_model_package_surface"
+surface_body = surface_file.read_text()
+
+quoted_calls = []
+for path in sorted(surface_tree.rglob("*.rs")):
+    quoted_calls.extend(m.group(1) for m in quoted_re.finditer(path.read_text()))
 
 results = []
 for package in packages:
@@ -57,11 +55,11 @@ for package in packages:
                 for line in exports.stdout.splitlines()
                 if re.fullmatch(r"[A-Za-z0-9_.]+", line.strip())
             )
-    direct_calls = sorted(m.group(1) for m in quoted_re.finditer(body) if m.group(1).startswith(f"{package}::"))
+    direct_calls = sorted(name for name in quoted_calls if name.startswith(f"{package}::"))
     direct_set = set(direct_calls)
     export_set = set(regex_safe_exports)
     missing = sorted(export_set - direct_set)
-    has_prefix_fallback = f'name.starts_with("{package}::")' in body
+    has_prefix_fallback = f'name.starts_with("{package}::")' in surface_body
     if not installed:
         status = "unavailable"
     elif has_prefix_fallback:
