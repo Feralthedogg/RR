@@ -20,6 +20,7 @@ fn compile_with_dump(name: &str, rr_src: &str, envs: &[(&str, &str)]) -> Vec<Str
         .arg("--no-runtime")
         .arg("-O1")
         .env("RR_POLY_ENABLE", "1")
+        .env("RR_POLY_BACKEND", "heuristic")
         .env("RR_POLY_GENERIC_MIR", "1")
         .env("RR_POLY_DUMP_DIR", &dump_dir);
     for (k, v) in envs {
