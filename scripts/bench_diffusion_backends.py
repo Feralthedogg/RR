@@ -86,7 +86,8 @@ def benchmark(
 
 
 def ensure_release_rr(rr_bin: pathlib.Path) -> pathlib.Path:
-    run(["cargo", "build", "--release", "--bin", "RR"])
+    if not rr_bin.exists():
+        run(["cargo", "build", "--release", "--bin", "RR"])
     if not rr_bin.exists():
         raise FileNotFoundError(f"missing RR binary after build: {rr_bin}")
     return rr_bin

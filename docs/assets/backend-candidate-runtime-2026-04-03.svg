@@ -8,11 +8,11 @@
   <line x1="390" y1="840" x2="910" y2="840" stroke="#9aa8b2" stroke-width="1"/>
   <g font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#5d6b75">
     <text x="390" y="858" text-anchor="middle">0</text>
-    <text x="494" y="858" text-anchor="middle">79</text>
-    <text x="598" y="858" text-anchor="middle">159</text>
-    <text x="702" y="858" text-anchor="middle">238</text>
-    <text x="806" y="858" text-anchor="middle">318</text>
-    <text x="910" y="858" text-anchor="middle">397</text>
+    <text x="494" y="858" text-anchor="middle">113</text>
+    <text x="598" y="858" text-anchor="middle">227</text>
+    <text x="702" y="858" text-anchor="middle">340</text>
+    <text x="806" y="858" text-anchor="middle">453</text>
+    <text x="910" y="858" text-anchor="middle">566</text>
   </g>
   <g font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#16212b">
     <text x="24" y="102">Vector Fusion RR O0</text>
@@ -35,41 +35,41 @@
     <text x="24" y="782">Bootstrap Resample RR O2 warm x10</text>
   </g>
   <rect x="390" y="86" width="520.0" height="22" fill="#6d597a" rx="4"/>
-  <text x="920.0" y="102" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">397.3 ms ± 22.1</text>
-  <rect x="390" y="126" width="316.3" height="22" fill="#b07aa1" rx="4"/>
-  <text x="716.3" y="142" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">241.7 ms ± 2.1</text>
-  <rect x="390" y="166" width="215.8" height="22" fill="#457b9d" rx="4"/>
-  <text x="615.8" y="182" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">164.9 ms ± 8.8</text>
-  <rect x="390" y="206" width="25.8" height="22" fill="#74a7d4" rx="4"/>
-  <text x="425.8" y="222" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">19.7 ms ± 1.2</text>
-  <rect x="390" y="246" width="212.2" height="22" fill="#2a9d8f" rx="4"/>
-  <text x="612.2" y="262" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">162.1 ms ± 4.3</text>
-  <rect x="390" y="286" width="24.5" height="22" fill="#8fd0c4" rx="4"/>
-  <text x="424.5" y="302" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">18.7 ms ± 1.1</text>
-  <rect x="390" y="326" width="306.7" height="22" fill="#6d597a" rx="4"/>
-  <text x="706.7" y="342" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">234.3 ms ± 23.3</text>
-  <rect x="390" y="366" width="109.7" height="22" fill="#b07aa1" rx="4"/>
-  <text x="509.7" y="382" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">83.8 ms ± 4.9</text>
-  <rect x="390" y="406" width="274.2" height="22" fill="#457b9d" rx="4"/>
-  <text x="674.2" y="422" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">209.5 ms ± 10.1</text>
-  <rect x="390" y="446" width="107.7" height="22" fill="#74a7d4" rx="4"/>
-  <text x="507.7" y="462" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">82.3 ms ± 0.9</text>
-  <rect x="390" y="486" width="280.1" height="22" fill="#2a9d8f" rx="4"/>
-  <text x="680.1" y="502" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">214.0 ms ± 8.7</text>
-  <rect x="390" y="526" width="106.8" height="22" fill="#8fd0c4" rx="4"/>
-  <text x="506.8" y="542" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">81.6 ms ± 0.3</text>
-  <rect x="390" y="566" width="444.6" height="22" fill="#6d597a" rx="4"/>
-  <text x="844.6" y="582" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">339.7 ms ± 14.8</text>
-  <rect x="390" y="606" width="239.9" height="22" fill="#b07aa1" rx="4"/>
-  <text x="639.9" y="622" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">183.3 ms ± 4.3</text>
-  <rect x="390" y="646" width="261.5" height="22" fill="#457b9d" rx="4"/>
-  <text x="661.5" y="662" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">199.8 ms ± 9.9</text>
-  <rect x="390" y="686" width="64.3" height="22" fill="#74a7d4" rx="4"/>
-  <text x="464.3" y="702" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">49.1 ms ± 1.2</text>
-  <rect x="390" y="726" width="261.1" height="22" fill="#2a9d8f" rx="4"/>
-  <text x="661.1" y="742" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">199.5 ms ± 9.9</text>
-  <rect x="390" y="766" width="64.1" height="22" fill="#8fd0c4" rx="4"/>
-  <text x="464.1" y="782" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">49.0 ms ± 0.9</text>
+  <text x="920.0" y="102" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">566.4 ms ± 0.0</text>
+  <rect x="390" y="126" width="341.0" height="22" fill="#b07aa1" rx="4"/>
+  <text x="741.0" y="142" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">371.4 ms ± 0.0</text>
+  <rect x="390" y="166" width="205.6" height="22" fill="#457b9d" rx="4"/>
+  <text x="605.6" y="182" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">223.9 ms ± 0.0</text>
+  <rect x="390" y="206" width="25.0" height="22" fill="#74a7d4" rx="4"/>
+  <text x="425.0" y="222" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">27.2 ms ± 0.0</text>
+  <rect x="390" y="246" width="217.9" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="617.9" y="262" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">237.3 ms ± 0.0</text>
+  <rect x="390" y="286" width="27.7" height="22" fill="#8fd0c4" rx="4"/>
+  <text x="427.7" y="302" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">30.2 ms ± 0.0</text>
+  <rect x="390" y="326" width="270.6" height="22" fill="#6d597a" rx="4"/>
+  <text x="670.6" y="342" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">294.7 ms ± 0.0</text>
+  <rect x="390" y="366" width="119.1" height="22" fill="#b07aa1" rx="4"/>
+  <text x="519.1" y="382" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">129.7 ms ± 0.0</text>
+  <rect x="390" y="406" width="279.3" height="22" fill="#457b9d" rx="4"/>
+  <text x="679.3" y="422" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">304.2 ms ± 0.0</text>
+  <rect x="390" y="446" width="112.3" height="22" fill="#74a7d4" rx="4"/>
+  <text x="512.3" y="462" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">122.3 ms ± 0.0</text>
+  <rect x="390" y="486" width="271.8" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="671.8" y="502" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">296.0 ms ± 0.0</text>
+  <rect x="390" y="526" width="109.2" height="22" fill="#8fd0c4" rx="4"/>
+  <text x="509.2" y="542" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">118.9 ms ± 0.0</text>
+  <rect x="390" y="566" width="467.8" height="22" fill="#6d597a" rx="4"/>
+  <text x="867.8" y="582" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">509.5 ms ± 0.0</text>
+  <rect x="390" y="606" width="266.5" height="22" fill="#b07aa1" rx="4"/>
+  <text x="666.5" y="622" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">290.3 ms ± 0.0</text>
+  <rect x="390" y="646" width="263.9" height="22" fill="#457b9d" rx="4"/>
+  <text x="663.9" y="662" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">287.4 ms ± 0.0</text>
+  <rect x="390" y="686" width="70.6" height="22" fill="#74a7d4" rx="4"/>
+  <text x="470.6" y="702" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">76.9 ms ± 0.0</text>
+  <rect x="390" y="726" width="294.7" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="694.7" y="742" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">321.0 ms ± 0.0</text>
+  <rect x="390" y="766" width="70.4" height="22" fill="#8fd0c4" rx="4"/>
+  <text x="470.4" y="782" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">76.7 ms ± 0.0</text>
   <g font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#4b5b67">
     <text x="24" y="878">Source data: backend_candidate_bench.csv</text>
   </g>

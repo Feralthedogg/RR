@@ -11,6 +11,7 @@ import pathlib
 import re
 import statistics
 import subprocess
+import sys
 import textwrap
 import time
 import shutil
@@ -33,6 +34,12 @@ SAMPLE_COUNT = 250_000
 PASS_COUNT = 16
 WARM_KERNEL_ITERS = 10
 OPENMP_THREADS = 4
+
+
+def default_python_bin() -> str:
+    if DEFAULT_PYTHON.exists():
+        return str(DEFAULT_PYTHON)
+    return sys.executable
 
 
 def run(
@@ -80,7 +87,8 @@ def benchmark(
 
 
 def ensure_release_rr(rr_bin: pathlib.Path) -> pathlib.Path:
-    run(["cargo", "build", "--release", "--bin", "RR"])
+    if not rr_bin.exists():
+        run(["cargo", "build", "--release", "--bin", "RR"])
     if not rr_bin.exists():
         raise FileNotFoundError(f"missing RR binary after build: {rr_bin}")
     return rr_bin
@@ -540,7 +548,7 @@ def main() -> int:
     parser.add_argument("--rr-src", type=pathlib.Path, default=DEFAULT_RR_SRC)
     parser.add_argument("--rr-bin", type=pathlib.Path, default=DEFAULT_RR_BIN)
     parser.add_argument("--rscript-bin", default="Rscript")
-    parser.add_argument("--python-bin", default=str(DEFAULT_PYTHON))
+    parser.add_argument("--python-bin", default=default_python_bin())
     parser.add_argument("--julia-bin", default="julia")
     parser.add_argument("--renjin-bin", type=pathlib.Path, default=DEFAULT_RENJIN)
     parser.add_argument("--skip-renjin", action="store_true")

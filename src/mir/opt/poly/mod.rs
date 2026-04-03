@@ -108,6 +108,17 @@ fn compiled_with_isl() -> bool {
     option_env!("RR_HAS_ISL") == Some("1")
 }
 
+fn poly_setting_from_env() -> Option<String> {
+    std::env::var("RR_POLY_ENABLE").ok()
+}
+
+fn poly_auto_mode_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
+    matches!(
+        raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        None | Some("auto")
+    ) && build_has_isl
+}
+
 fn poly_enabled_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
     match raw
         .map(|value| value.trim().to_ascii_lowercase())
@@ -122,9 +133,13 @@ fn poly_enabled_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
 
 pub fn poly_enabled() -> bool {
     poly_enabled_from_setting(
-        std::env::var("RR_POLY_ENABLE").ok().as_deref(),
+        poly_setting_from_env().as_deref(),
         compiled_with_isl(),
     )
+}
+
+fn poly_auto_mode_enabled() -> bool {
+    poly_auto_mode_from_setting(poly_setting_from_env().as_deref(), compiled_with_isl())
 }
 
 pub fn poly_trace_enabled() -> bool {
@@ -194,6 +209,9 @@ pub fn optimize_with_stats(fn_ir: &mut FnIR) -> PolyStats {
             let Ok(scop) = scop::extract_scop_region(fn_ir, lp, &loops) else {
                 continue;
             };
+            if poly_auto_mode_enabled() && scop.dimensions.len() == 1 {
+                continue;
+            }
             let backend = make_backend_from_env();
             let dep_backend = make_dependence_backend(backend.as_ref());
             let deps = dep_backend.analyze(fn_ir, &scop);
@@ -237,6 +255,10 @@ fn analyze_loops(fn_ir: &FnIR) -> (PolyStats, Vec<crate::mir::opt::loop_analysis
                     .iter()
                     .map(|stmt| stmt.accesses.len())
                     .sum::<usize>();
+
+                if poly_auto_mode_enabled() && scop.dimensions.len() == 1 {
+                    continue;
+                }
 
                 let backend = make_backend_from_env();
                 let dep_backend = make_dependence_backend(backend.as_ref());
@@ -314,7 +336,7 @@ fn analyze_loops(fn_ir: &FnIR) -> (PolyStats, Vec<crate::mir::opt::loop_analysis
 
 #[cfg(test)]
 mod tests {
-    use super::poly_enabled_from_setting;
+    use super::{poly_auto_mode_from_setting, poly_enabled_from_setting};
 
     #[test]
     fn poly_enabled_auto_follows_build_isl_availability() {
@@ -331,5 +353,14 @@ mod tests {
         assert!(!poly_enabled_from_setting(Some("0"), true));
         assert!(!poly_enabled_from_setting(Some("off"), true));
         assert!(!poly_enabled_from_setting(Some("weird"), true));
+    }
+
+    #[test]
+    fn poly_auto_mode_helper_matches_build_gated_auto_setting() {
+        assert!(!poly_auto_mode_from_setting(None, false));
+        assert!(poly_auto_mode_from_setting(None, true));
+        assert!(poly_auto_mode_from_setting(Some("auto"), true));
+        assert!(!poly_auto_mode_from_setting(Some("1"), true));
+        assert!(!poly_auto_mode_from_setting(Some("off"), true));
     }
 }

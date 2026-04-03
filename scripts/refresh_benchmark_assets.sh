@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATE_TAG="${DATE_TAG:-$(date +%F)}"
 RUNS="${RUNS:-3}"
 WARMUP="${WARMUP:-0}"
+RR_BIN_OVERRIDE="${RR_BIN:-}"
 SKIP_RENJIN=0
 
 usage() {
@@ -19,7 +20,7 @@ Options:
   --help                Show this help.
 
 Environment overrides:
-  DATE_TAG, RUNS, WARMUP
+  DATE_TAG, RUNS, WARMUP, RR_BIN
 EOF
 }
 
@@ -273,6 +274,9 @@ fi
 
 echo "-- refreshing signal pipeline assets"
 signal_cmd=(python3 "$ROOT/scripts/bench_signal_pipeline_docs_slice.py" --runs "$RUNS" --warmup "$WARMUP")
+if [[ -n "$RR_BIN_OVERRIDE" ]]; then
+  signal_cmd+=(--rr-bin "$RR_BIN_OVERRIDE")
+fi
 if [[ $SKIP_RENJIN -eq 1 ]]; then
   signal_cmd+=(--skip-renjin)
 fi
@@ -280,11 +284,19 @@ fi
 copy_signal_assets
 
 echo "-- refreshing diffusion backend assets"
-python3 "$ROOT/scripts/bench_diffusion_backends.py" --runs "$RUNS" --warmup "$WARMUP"
+diffusion_cmd=(python3 "$ROOT/scripts/bench_diffusion_backends.py" --runs "$RUNS" --warmup "$WARMUP")
+if [[ -n "$RR_BIN_OVERRIDE" ]]; then
+  diffusion_cmd+=(--rr-bin "$RR_BIN_OVERRIDE")
+fi
+"${diffusion_cmd[@]}"
 copy_diffusion_assets
 
 echo "-- refreshing backend candidate assets"
-python3 "$ROOT/scripts/bench_backend_candidates.py" --runs "$RUNS" --warmup "$WARMUP"
+backend_cmd=(python3 "$ROOT/scripts/bench_backend_candidates.py" --runs "$RUNS" --warmup "$WARMUP")
+if [[ -n "$RR_BIN_OVERRIDE" ]]; then
+  backend_cmd+=(--rr-bin "$RR_BIN_OVERRIDE")
+fi
+"${backend_cmd[@]}"
 copy_backend_candidate_assets
 
 update_docs_testing_links

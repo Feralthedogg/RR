@@ -32,7 +32,7 @@ def main() -> int:
     parser.add_argument("--rr-src", type=pathlib.Path, default=base.DEFAULT_RR_SRC)
     parser.add_argument("--rr-bin", type=pathlib.Path, default=base.DEFAULT_RR_BIN)
     parser.add_argument("--rscript-bin", default="Rscript")
-    parser.add_argument("--python-bin", default=str(base.DEFAULT_PYTHON))
+    parser.add_argument("--python-bin", default=base.default_python_bin())
     parser.add_argument("--julia-bin", default="julia")
     parser.add_argument("--renjin-bin", type=pathlib.Path, default=base.DEFAULT_RENJIN)
     parser.add_argument("--skip-renjin", action="store_true")
@@ -80,6 +80,7 @@ def main() -> int:
         ("NumPy", [args.python_bin, str(numpy_py)]),
         ("Julia", [args.julia_bin, "--startup-file=no", str(julia_jl)]),
     ]:
+        print(f"[verify] {label}", flush=True)
         base.assert_metrics_close(
             reference,
             base.parse_metrics(base.run(cmd, env=env, capture_output=True).stdout),
@@ -202,6 +203,7 @@ def main() -> int:
 
     rows: list[dict[str, object]] = []
     for row_id, label, engine, cmd, notes, scale, diagnostics in cases:
+        print(f"[bench] {label}", flush=True)
         case_env = renjin_runtime_env if engine == "Renjin 3.5-beta76" else env
         stats = base.benchmark(cmd, runs=args.runs, warmup=args.warmup, env=case_env, scale=scale)
         rows.append(

@@ -445,8 +445,8 @@ Notes:
   diagnostics as the signal-pipeline slice, so cold/warm timings can be tied
   back to actual optimizer activity.
 - On the current signoff snapshot, the useful `-O2` reference points are
-  roughly `217.4 ms` / `25.5 ms` for `heat_diffusion` cold/warm and
-  `208.8 ms` / `31.9 ms` for `reaction_diffusion` cold/warm.
+  roughly `367.8 ms` / `37.3 ms` for `heat_diffusion` cold/warm and
+  `337.8 ms` / `48.8 ms` for `reaction_diffusion` cold/warm.
 
 ### Optimizer Candidate Slice
 
@@ -488,11 +488,11 @@ RR optimization-level deltas on representative workloads:
 
 | Workload | O0 ms | O1 ms | O2 ms | O1/O0 | O2/O0 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `bootstrap` | `339.7 (14.8)` | `199.8 (9.9)` | `199.5 (9.9)` | `1.70x` | `1.70x` |
-| `heat` | `271.5 (18.7)` | `214.5 (8.1)` | `217.4 (5.4)` | `1.27x` | `1.25x` |
-| `orbital` | `234.3 (23.3)` | `209.5 (10.1)` | `214.0 (8.7)` | `1.12x` | `1.09x` |
-| `reaction` | `622.4 (4.3)` | `211.1 (2.6)` | `208.8 (3.9)` | `2.95x` | `2.98x` |
-| `vector` | `397.3 (22.1)` | `164.9 (8.8)` | `162.1 (4.3)` | `2.41x` | `2.45x` |
+| `bootstrap` | `509.5 (0)` | `287.4 (0)` | `321.0 (0)` | `1.77x` | `1.59x` |
+| `heat` | `511.4 (0)` | `339.7 (0)` | `367.8 (0)` | `1.51x` | `1.39x` |
+| `orbital` | `294.7 (0)` | `304.2 (0)` | `296.0 (0)` | `0.97x` | `1.00x` |
+| `reaction` | `1261.7 (0)` | `307.2 (0)` | `337.8 (0)` | `4.11x` | `3.74x` |
+| `vector` | `566.4 (0)` | `223.9 (0)` | `237.3 (0)` | `2.53x` | `2.39x` |
 
 Notes:
 
