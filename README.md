@@ -70,6 +70,8 @@ GitHub Releases are built with `cargo-dist` for:
 
 - Linux `x86_64`
 - Windows `x86_64-pc-windows-gnu`
+  - zip archive
+  - MSI installer with install-location selection and optional `PATH` integration
 - macOS `aarch64`
 
 Cut a release by pushing a version tag:

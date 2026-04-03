@@ -9,6 +9,12 @@ license = "MIT"
 keywords = ["compiler", "r-language", "optimization", "static-analysis"]
 categories = ["compilers", "science", "development-tools"]
 
+[package.metadata.wix]
+upgrade-guid = "AC34955C-4FEF-46F3-9AC1-7F2C1FC8937D"
+path-guid = "558EB98E-D5A0-440F-AF67-385387E39235"
+license = false
+eula = false
+
 [workspace]
 members = [".", "fuzz"]
 default-members = ["."]
