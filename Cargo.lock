@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "RR"
-version = "8.0.0"
+version = "8.0.1"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.2.17",

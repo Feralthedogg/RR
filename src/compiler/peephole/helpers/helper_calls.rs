@@ -1,6 +1,6 @@
 use super::super::{
-    assign_re, compile_regex, expr_idents, expr_is_fresh_allocation_like, find_matching_block_end,
-    ident_re, nested_index_vec_floor_re, normalize_expr_with_aliases, plain_ident_re,
+    assign_re, expr_idents, expr_is_fresh_allocation_like, find_matching_block_end, ident_re,
+    nested_index_vec_floor_re, normalize_expr_with_aliases, plain_ident_re,
     previous_non_empty_line, scalar_lit_re, split_top_level_args, unquoted_sym_refs,
 };
 use regex::Captures;
@@ -615,26 +615,91 @@ pub(in super::super) fn substitute_helper_expr(
     expr: &str,
     bindings: &FxHashMap<String, String>,
 ) -> String {
-    let mut out = expr.to_string();
-    let mut keys: Vec<&String> = bindings.keys().collect();
-    keys.sort_by_key(|key| std::cmp::Reverse(key.len()));
-    for key in keys {
-        let Some(re) = compile_regex(format!(
-            r"(?P<prefix>^|[^A-Za-z0-9._]){}(?P<suffix>$|[^A-Za-z0-9._])",
-            regex::escape(key)
-        )) else {
+    let mut out = String::with_capacity(expr.len());
+    let bytes = expr.as_bytes();
+    let mut idx = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\'' if !in_double => {
+                in_single = !in_single;
+                out.push('\'');
+                idx += 1;
+                continue;
+            }
+            b'"' if !in_single => {
+                in_double = !in_double;
+                out.push('"');
+                idx += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        if !in_single && !in_double && helper_ident_is_start(expr, idx) {
+            let end = helper_ident_end(expr, idx);
+            let ident = &expr[idx..end];
+            if !helper_ident_is_named_label(expr, end)
+                && let Some(replacement) = bindings.get(ident)
+            {
+                out.push_str(replacement);
+            } else {
+                out.push_str(ident);
+            }
+            idx = end;
             continue;
-        };
-        let replacement = bindings.get(key).map(String::as_str).unwrap_or("");
-        out = re
-            .replace_all(&out, |caps: &Captures<'_>| {
-                let prefix = caps.name("prefix").map(|m| m.as_str()).unwrap_or("");
-                let suffix = caps.name("suffix").map(|m| m.as_str()).unwrap_or("");
-                format!("{prefix}{replacement}{suffix}")
-            })
-            .to_string();
+        }
+
+        out.push(bytes[idx] as char);
+        idx += 1;
     }
+
     out
+}
+
+fn helper_ident_is_start(expr: &str, idx: usize) -> bool {
+    let rest = &expr[idx..];
+    let mut chars = rest.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if first.is_ascii_alphabetic() || first == '_' {
+        return true;
+    }
+    first == '.'
+        && chars
+            .next()
+            .is_some_and(|next| next.is_ascii_alphabetic() || next == '_')
+}
+
+fn helper_ident_end(expr: &str, start: usize) -> usize {
+    let mut end = start;
+    for (off, ch) in expr[start..].char_indices() {
+        if !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.')) {
+            break;
+        }
+        end = start + off + ch.len_utf8();
+    }
+    end
+}
+
+fn helper_ident_is_named_label(expr: &str, end: usize) -> bool {
+    let rest = &expr[end..];
+    let mut iter = rest.char_indices();
+    while let Some((off, ch)) = iter.next() {
+        if ch.is_ascii_whitespace() {
+            continue;
+        }
+        if ch != '=' {
+            return false;
+        }
+        let tail = &rest[off + ch.len_utf8()..];
+        let next_non_ws = tail.chars().find(|ch| !ch.is_ascii_whitespace());
+        return next_non_ws != Some('=');
+    }
+    false
 }
 
 pub(in super::super) fn collect_simple_expr_helpers(

@@ -19,6 +19,9 @@ pub(super) fn extract_pure_call_binding(
     pure_user_calls: &FxHashSet<String>,
 ) -> Option<PureCallBinding> {
     let rhs = rhs.trim();
+    if !expr_has_only_pure_calls(rhs, pure_user_calls) {
+        return None;
+    }
     let (callee, rest) = rhs.split_once('(')?;
     if !pure_user_calls.contains(callee.trim()) || !rhs.ends_with(')') {
         return None;

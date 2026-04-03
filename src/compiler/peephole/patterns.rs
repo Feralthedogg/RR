@@ -22,7 +22,7 @@ pub(crate) fn indexed_store_base_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(format!(
-            r"^(?P<indent>\s*)(?P<base>{})\s*\[[^\]]+\]\s*<-\s*.+$",
+            r"^(?P<indent>\s*)(?P<base>{})\s*\[[^\n]+\]\s*<-\s*.+$",
             IDENT_PATTERN
         ))
     })

@@ -296,6 +296,27 @@ Sym_303 <- function()\n\
 }
 
 #[test]
+fn substitute_helper_expr_preserves_named_list_labels() {
+    let bindings = FxHashMap::from_iter([
+        (
+            "bucket".to_string(),
+            "list(first = 4L, buffer_len = 4L)".to_string(),
+        ),
+        ("capacity".to_string(), "4L".to_string()),
+    ]);
+
+    let expanded = substitute_helper_expr(
+        "list(bucket = bucket, capacity = capacity, used = 1L, marks = integer(0L))",
+        &bindings,
+    );
+
+    assert_eq!(
+        expanded,
+        "list(bucket = list(first = 4L, buffer_len = 4L), capacity = 4L, used = 1L, marks = integer(0L))"
+    );
+}
+
+#[test]
 fn restores_missing_scalar_loop_increment_for_repeat_guarded_index_loop() {
     let input = "\
 Sym_1 <- function(n)\n\

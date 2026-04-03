@@ -1,6 +1,6 @@
 # Contributing Audit Checklist
 
-Current compiler line: `RR Tachyon v8.0.0`.
+Current compiler line: `RR Tachyon v8.0.1`.
 
 Use this checklist after meaningful compiler changes to verify that the code still matches [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 

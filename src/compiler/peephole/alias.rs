@@ -1,4 +1,3 @@
-use super::patterns::ident_re;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 pub(crate) fn resolve_alias(name: &str, aliases: &FxHashMap<String, String>) -> String {
@@ -51,17 +50,48 @@ pub(crate) fn invalidate_aliases_for_write(lhs: &str, aliases: &mut FxHashMap<St
 }
 
 pub(crate) fn rewrite_known_aliases(expr: &str, aliases: &FxHashMap<String, String>) -> String {
-    let Some(re) = ident_re() else {
-        return expr.to_string();
-    };
-    let rewritten = re.replace_all(expr, |caps: &regex::Captures<'_>| {
-        let ident = caps.get(0).map(|m| m.as_str()).unwrap_or("");
-        aliases
-            .get(ident)
-            .map(|_| resolve_alias(ident, aliases))
-            .unwrap_or_else(|| ident.to_string())
-    });
-    rewritten.to_string()
+    let mut out = String::with_capacity(expr.len());
+    let bytes = expr.as_bytes();
+    let mut idx = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\'' if !in_double => {
+                in_single = !in_single;
+                out.push('\'');
+                idx += 1;
+                continue;
+            }
+            b'"' if !in_single => {
+                in_double = !in_double;
+                out.push('"');
+                idx += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        if !in_single && !in_double && ident_is_start(expr, idx) {
+            let end = ident_end(expr, idx);
+            let ident = &expr[idx..end];
+            if !ident_is_named_label(expr, end)
+                && let Some(_) = aliases.get(ident)
+            {
+                out.push_str(&resolve_alias(ident, aliases));
+            } else {
+                out.push_str(ident);
+            }
+            idx = end;
+            continue;
+        }
+
+        out.push(bytes[idx] as char);
+        idx += 1;
+    }
+
+    out
 }
 
 pub(crate) fn normalize_expr_with_aliases(
@@ -81,4 +111,47 @@ pub(crate) fn normalize_expr_with_aliases(
     }
     out = out.replace(".arg_", "");
     out
+}
+
+fn ident_is_start(expr: &str, idx: usize) -> bool {
+    let rest = &expr[idx..];
+    let mut chars = rest.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if first.is_ascii_alphabetic() || first == '_' {
+        return true;
+    }
+    first == '.'
+        && chars
+            .next()
+            .is_some_and(|next| next.is_ascii_alphabetic() || next == '_')
+}
+
+fn ident_end(expr: &str, start: usize) -> usize {
+    let mut end = start;
+    for (off, ch) in expr[start..].char_indices() {
+        if !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.')) {
+            break;
+        }
+        end = start + off + ch.len_utf8();
+    }
+    end
+}
+
+fn ident_is_named_label(expr: &str, end: usize) -> bool {
+    let rest = &expr[end..];
+    let mut iter = rest.char_indices();
+    while let Some((off, ch)) = iter.next() {
+        if ch.is_ascii_whitespace() {
+            continue;
+        }
+        if ch != '=' {
+            return false;
+        }
+        let tail = &rest[off + ch.len_utf8()..];
+        let next_non_ws = tail.chars().find(|ch| !ch.is_ascii_whitespace());
+        return next_non_ws != Some('=');
+    }
+    false
 }

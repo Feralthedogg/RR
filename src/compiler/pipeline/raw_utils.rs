@@ -347,36 +347,11 @@ pub(crate) fn previous_outer_assign_before_branch_relaxed<'a>(
 }
 
 pub(crate) fn line_contains_symbol(line: &str, symbol: &str) -> bool {
-    let mut search_from = 0usize;
-    while let Some(rel_idx) = line[search_from..].find(symbol) {
-        let idx = search_from + rel_idx;
-        let before = line[..idx].chars().next_back();
-        let after = line[idx + symbol.len()..].chars().next();
-        let boundary_ok = before.is_none_or(|ch| !is_symbol_char(ch))
-            && after.is_none_or(|ch| !is_symbol_char(ch));
-        if boundary_ok {
-            return true;
-        }
-        search_from = idx + symbol.len();
-    }
-    false
+    scan_symbol_occurrences(line, symbol).next().is_some()
 }
 
 pub(crate) fn count_symbol_occurrences(line: &str, symbol: &str) -> usize {
-    let mut count = 0usize;
-    let mut search_from = 0usize;
-    while let Some(rel_idx) = line[search_from..].find(symbol) {
-        let idx = search_from + rel_idx;
-        let before = line[..idx].chars().next_back();
-        let after = line[idx + symbol.len()..].chars().next();
-        let boundary_ok = before.is_none_or(|ch| !is_symbol_char(ch))
-            && after.is_none_or(|ch| !is_symbol_char(ch));
-        if boundary_ok {
-            count += 1;
-        }
-        search_from = idx + symbol.len();
-    }
-    count
+    scan_symbol_occurrences(line, symbol).count()
 }
 
 pub(crate) fn find_symbol_call(line: &str, symbol: &str, start_from: usize) -> Option<usize> {
@@ -419,8 +394,29 @@ pub(crate) fn find_matching_paren(line: &str, open_idx: usize) -> Option<usize> 
 }
 
 pub(crate) fn line_contains_unquoted_symbol_reference(line: &str, symbol: &str) -> bool {
+    scan_symbol_occurrences(line, symbol).next().is_some()
+}
+
+pub(crate) fn replace_symbol_occurrences(line: &str, symbol: &str, replacement: &str) -> String {
+    let hits: Vec<usize> = scan_symbol_occurrences(line, symbol).collect();
+    if hits.is_empty() {
+        return line.to_string();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut cursor = 0usize;
+    for hit in hits {
+        out.push_str(&line[cursor..hit]);
+        out.push_str(replacement);
+        cursor = hit + symbol.len();
+    }
+    out.push_str(&line[cursor..]);
+    out
+}
+
+fn scan_symbol_occurrences<'a>(line: &'a str, symbol: &'a str) -> impl Iterator<Item = usize> + 'a {
     let bytes = line.as_bytes();
     let symbol_bytes = symbol.as_bytes();
+    let mut hits = Vec::new();
     let mut idx = 0usize;
     let mut in_single = false;
     let mut in_double = false;
@@ -440,41 +436,43 @@ pub(crate) fn line_contains_unquoted_symbol_reference(line: &str, symbol: &str) 
             _ => {}
         }
 
-        if !in_single && !in_double && bytes[idx..].starts_with(symbol_bytes) {
-            let before = line[..idx].chars().next_back();
-            let after = line[idx + symbol.len()..].chars().next();
-            let boundary_ok = before.is_none_or(|ch| !is_symbol_char(ch))
-                && after.is_none_or(|ch| !is_symbol_char(ch));
-            if boundary_ok {
-                return true;
-            }
+        if !in_single
+            && !in_double
+            && bytes[idx..].starts_with(symbol_bytes)
+            && symbol_hit_is_rewritable(line, idx, symbol.len())
+        {
+            hits.push(idx);
         }
 
         idx += 1;
     }
 
-    false
+    hits.into_iter()
 }
 
-pub(crate) fn replace_symbol_occurrences(line: &str, symbol: &str, replacement: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut idx = 0usize;
-    while let Some(rel_idx) = line[idx..].find(symbol) {
-        let hit = idx + rel_idx;
-        let before = line[..hit].chars().next_back();
-        let after = line[hit + symbol.len()..].chars().next();
-        let boundary_ok = before.is_none_or(|ch| !is_symbol_char(ch))
-            && after.is_none_or(|ch| !is_symbol_char(ch));
-        out.push_str(&line[idx..hit]);
-        if boundary_ok {
-            out.push_str(replacement);
-        } else {
-            out.push_str(symbol);
+fn symbol_hit_is_rewritable(line: &str, idx: usize, symbol_len: usize) -> bool {
+    let before = line[..idx].chars().next_back();
+    let after = line[idx + symbol_len..].chars().next();
+    let boundary_ok =
+        before.is_none_or(|ch| !is_symbol_char(ch)) && after.is_none_or(|ch| !is_symbol_char(ch));
+    boundary_ok && !symbol_hit_is_named_label(line, idx + symbol_len)
+}
+
+fn symbol_hit_is_named_label(line: &str, after_idx: usize) -> bool {
+    let rest = &line[after_idx..];
+    let mut iter = rest.char_indices().peekable();
+    while let Some((off, ch)) = iter.next() {
+        if ch.is_ascii_whitespace() {
+            continue;
         }
-        idx = hit + symbol.len();
+        if ch != '=' {
+            return false;
+        }
+        let tail = &rest[off + ch.len_utf8()..];
+        let next_non_ws = tail.chars().find(|ch| !ch.is_ascii_whitespace());
+        return next_non_ws != Some('=');
     }
-    out.push_str(&line[idx..]);
-    out
+    false
 }
 
 pub(crate) fn raw_expr_idents(expr: &str) -> Vec<String> {

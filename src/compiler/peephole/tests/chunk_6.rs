@@ -207,6 +207,28 @@ next\n\
 }
 
 #[test]
+fn nested_field_write_invalidates_alias_before_later_helper_call() {
+    let input = "\
+Sym_1 <- function(state) \n\
+{\n\
+  marked <- state\n\
+  marked[[\"marks\"]] <- c(marked[[\"marks\"]], marked[[\"used\"]])\n\
+  out <- rr_field_set(NULL, \"state\", marked)\n\
+  out <- rr_field_set(out, \"mark\", marked[[\"used\"]])\n\
+  return(out)\n\
+}\n";
+    let out = optimize_emitted_r(input, true);
+    assert!(
+        out.contains("out <- rr_field_set(NULL, \"state\", marked)"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("out <- rr_field_set(NULL, \"state\", state)"),
+        "{out}"
+    );
+}
+
+#[test]
 fn removes_branch_local_init_overwritten_before_first_read_in_loop() {
     let input = "\
 Sym_1 <- function() \n\
@@ -508,6 +530,34 @@ next\n\
     let out = optimize_emitted_r(input, true);
     assert!(!out.contains("x <- rr_assign_slice(x, 1, .arg_size, .tachyon_exprmap0_1)"));
     assert!(out.contains("return(x)"));
+}
+
+#[test]
+fn preserves_local_binding_used_by_inlined_helper_calls() {
+    let input = include_str!("fixtures/arena_ctor.raw.R");
+
+    let pure = FxHashSet::from_iter([
+        String::from("Sym_21"),
+        String::from("Sym_54"),
+        String::from("Sym_77"),
+        String::from("Sym_82"),
+        String::from("Sym_170"),
+        String::from("Sym_4"),
+        String::from("Sym_2"),
+        String::from("Sym_7"),
+    ]);
+    let fresh = FxHashSet::default();
+    let (out, _) = optimize_emitted_r_with_context_and_fresh(input, true, &pure, &fresh);
+
+    assert!(
+        !out.contains("numeric(default_capacity)") || out.contains("default_capacity <-"),
+        "helper-local binding was dropped while helper-call inlining kept the symbol live:\n{out}"
+    );
+    assert!(
+        !out.contains("\"default_chunk_capacity\", default_capacity")
+            || out.contains("default_capacity <-"),
+        "field write still references an unbound helper local:\n{out}"
+    );
 }
 
 #[test]

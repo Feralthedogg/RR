@@ -71,6 +71,7 @@ pub(super) fn run_initial_emitted_r_rewrite_pass(
             );
             fresh_expr_for_var.clear();
             last_rhs_for_var.clear();
+            pure_call_bindings.clear();
             out_lines.push(line.to_string());
             if opens_conditional {
                 conditional_depth += 1;
@@ -106,6 +107,7 @@ pub(super) fn run_initial_emitted_r_rewrite_pass(
             }
             fresh_expr_for_var.clear();
             last_rhs_for_var.clear();
+            pure_call_bindings.clear();
             out_lines.push(rewritten_line);
             continue;
         }
