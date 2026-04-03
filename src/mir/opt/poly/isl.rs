@@ -520,8 +520,8 @@ pub fn infer_transform_hints(
 
 #[cfg(rr_has_isl)]
 mod imp {
-    use super::*;
     use super::super::affine::AffineConstraintKind;
+    use super::*;
     use std::collections::BTreeSet;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_int, c_void};
