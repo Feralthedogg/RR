@@ -3,7 +3,7 @@
 RR is an optimizing compiler for an R-oriented source language.
 It compiles `.rr` programs into self-contained `.R` output, using an SSA-like MIR pipeline,
 the `Tachyon` optimizer, and an embedded runtime for checks and helper operations.
-Current compiler line: `RR Tachyon v9.0.0`.
+Current compiler line: `RR Tachyon v1.0.0`.
 
 ## Documentation Sets
 
@@ -77,8 +77,8 @@ GitHub Releases are built with `cargo-dist` for:
 Cut a release by pushing a version tag:
 
 ```bash
-git tag v9.0.0
-git push origin v9.0.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 ### Compile a file to R
