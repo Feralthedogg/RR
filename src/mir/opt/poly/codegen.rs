@@ -3237,16 +3237,8 @@ fn replace_reduction_result_in_assignment(
     new_reduce_val: ValueId,
 ) -> ValueId {
     match fn_ir.values[out_val].kind.clone() {
-        ValueKind::Call {
-            callee,
-            args,
-            names,
-        } if callee == "rr_matrix_reduce_rect" => new_reduce_val,
-        ValueKind::Call {
-            callee,
-            args,
-            names,
-        } if callee == "rr_reduce_range" => new_reduce_val,
+        ValueKind::Call { callee, .. } if callee == "rr_matrix_reduce_rect" => new_reduce_val,
+        ValueKind::Call { callee, .. } if callee == "rr_reduce_range" => new_reduce_val,
         ValueKind::Call {
             callee,
             args,

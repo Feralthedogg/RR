@@ -402,6 +402,7 @@ pub(crate) fn apply_map_plan(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_cond_map_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,

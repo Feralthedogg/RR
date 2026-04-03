@@ -1,11 +1,8 @@
 use super::ScopRegion;
-use super::affine::{AffineConstraintKind, AffineExpr, AffineSymbol};
+use super::affine::{AffineExpr, AffineSymbol};
 use super::schedule::{SchedulePlan, SchedulePlanKind};
-use std::collections::BTreeSet;
-use std::ffi::{CStr, CString};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::raw::{c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -524,6 +521,10 @@ pub fn infer_transform_hints(
 #[cfg(rr_has_isl)]
 mod imp {
     use super::*;
+    use super::super::affine::AffineConstraintKind;
+    use std::collections::BTreeSet;
+    use std::ffi::{CStr, CString};
+    use std::os::raw::{c_char, c_int, c_void};
 
     #[repr(C)]
     struct isl_ctx {

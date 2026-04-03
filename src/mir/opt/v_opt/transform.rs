@@ -3294,7 +3294,6 @@ pub(crate) fn prepare_partial_slice_value(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_expr_vector_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
