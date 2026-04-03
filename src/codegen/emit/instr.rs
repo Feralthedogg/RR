@@ -31,11 +31,13 @@ impl RBackend {
                     self.invalidate_emitted_cse_temps();
                     return Ok(());
                 }
-                if let Some(ValueKind::FieldGet { .. }) = values.get(*src).map(|value| &value.kind)
+                if let Some(ValueKind::FieldGet { base, field }) =
+                    values.get(*src).map(|value| &value.kind)
                     && values[*src].origin_var.as_deref() == Some(dst.as_str())
                     && self.resolve_bound_value_id(dst) != Some(*src)
                 {
-                    let rendered = self.resolve_val(*src, values, params, false);
+                    let base_expr = self.resolve_val(*base, values, params, false);
+                    let rendered = format!(r#"{base_expr}[["{field}"]]"#);
                     self.record_span(*span);
                     self.write_stmt(&format!("{dst} <- {rendered}"));
                     self.note_var_write(dst);
