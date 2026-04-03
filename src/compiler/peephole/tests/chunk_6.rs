@@ -534,18 +534,26 @@ next\n\
 
 #[test]
 fn preserves_local_binding_used_by_inlined_helper_calls() {
-    let input = include_str!("fixtures/arena_ctor.raw.R");
+    let input = "\
+Sym_21 <- function(default_capacity)\n\
+{\n\
+  return(numeric(default_capacity))\n\
+}\n\
+Sym_54 <- function(default_capacity)\n\
+{\n\
+  return(rr_field_set(NULL, \"default_chunk_capacity\", default_capacity))\n\
+}\n\
+Sym_1 <- function(chunks)\n\
+{\n\
+  default_capacity <- length(chunks)\n\
+  chunk_buf <- Sym_21(default_capacity)\n\
+  chunk_meta <- Sym_54(default_capacity)\n\
+  out <- rr_field_set(NULL, \"buffer\", chunk_buf)\n\
+  out <- rr_field_set(out, \"meta\", chunk_meta)\n\
+  return(out)\n\
+}\n";
 
-    let pure = FxHashSet::from_iter([
-        String::from("Sym_21"),
-        String::from("Sym_54"),
-        String::from("Sym_77"),
-        String::from("Sym_82"),
-        String::from("Sym_170"),
-        String::from("Sym_4"),
-        String::from("Sym_2"),
-        String::from("Sym_7"),
-    ]);
+    let pure = FxHashSet::from_iter([String::from("Sym_21"), String::from("Sym_54")]);
     let fresh = FxHashSet::default();
     let (out, _) = optimize_emitted_r_with_context_and_fresh(input, true, &pure, &fresh);
 
