@@ -34,6 +34,10 @@ RR documentation is split into manual-style sets:
 ### Prerequisites
 
 - Rust toolchain (`cargo`)
+- static `isl` and `gmp` development libraries for local builds
+  - Ubuntu/Debian: `sudo apt-get install libisl-dev libgmp-dev`
+  - macOS (Homebrew): `brew install isl gmp`
+  - Windows release builds use MSYS2 `mingw-w64-x86_64-isl` and `mingw-w64-x86_64-gmp`
 - `Rscript` in `PATH` if you want to execute generated programs
 
 ### Build
@@ -58,6 +62,21 @@ Print the compiler version:
 
 ```bash
 target/debug/RR --version
+```
+
+### Prebuilt Release Binaries
+
+GitHub Releases are built with `cargo-dist` for:
+
+- Linux `x86_64`
+- Windows `x86_64-pc-windows-gnu`
+- macOS `aarch64`
+
+Cut a release by pushing a version tag:
+
+```bash
+git tag v9.0.0
+git push origin v9.0.0
 ```
 
 ### Compile a file to R
