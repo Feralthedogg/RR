@@ -20,6 +20,7 @@ fn compile_with_tile3d(name: &str, rr_src: &str) -> (String, String) {
         .arg("--no-runtime")
         .arg("-O1")
         .env("RR_POLY_ENABLE", "1")
+        .env("RR_POLY_BACKEND", "heuristic")
         .env("RR_POLY_TILE_3D", "1")
         .env("RR_POLY_TILE_DEPTH", "2")
         .env("RR_POLY_TILE_ROWS", "2")
