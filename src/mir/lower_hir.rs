@@ -704,6 +704,7 @@ impl<'a> MirLowerer<'a> {
 
     pub fn lower_fn(mut self, f: hir::HirFn) -> RR<FnIR> {
         self.fn_ir.span = f.span;
+        self.fn_ir.user_name = self.symbols.get(&f.name).cloned();
         self.fn_ir.param_default_r_exprs = f
             .params
             .iter()

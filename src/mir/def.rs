@@ -116,6 +116,7 @@ impl InteropReason {
 #[derive(Debug, Clone)]
 pub struct FnIR {
     pub name: String,
+    pub user_name: Option<String>,
     pub span: Span,
     pub params: Vec<VarId>,
     pub param_default_r_exprs: Vec<Option<String>>,
@@ -563,6 +564,7 @@ impl FnIR {
         let param_default_r_exprs = vec![None; params.len()];
         Self {
             name,
+            user_name: None,
             span: Span::default(),
             params,
             param_default_r_exprs,

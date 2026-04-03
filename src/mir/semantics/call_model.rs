@@ -23,6 +23,7 @@ pub(crate) use self::call_model_surfaces::{
 
 #[derive(Debug, Clone)]
 pub(super) struct UserFnSignature {
+    pub display_name: String,
     pub param_names: Vec<String>,
     pub has_default: Vec<bool>,
 }
@@ -49,6 +50,7 @@ pub(super) fn validate_call_target(
     user_signatures: &FxHashMap<String, UserFnSignature>,
 ) -> RR<()> {
     if let Some(signature) = user_signatures.get(callee) {
+        let display_name = signature.display_name.as_str();
         let mut bound = vec![false; signature.param_names.len()];
         let mut next_positional = 0usize;
 
@@ -60,7 +62,10 @@ pub(super) fn validate_call_target(
                         "RR.SemanticError",
                         RRCode::E1002,
                         Stage::Mir,
-                        format!("function '{}' has no parameter named '{}'", callee, name),
+                        format!(
+                            "function '{}' has no parameter named '{}'",
+                            display_name, name
+                        ),
                     )
                     .at(span)
                     .push_frame("mir::semantics::validate_call_target/5", Some(span)));
@@ -72,7 +77,7 @@ pub(super) fn validate_call_target(
                         Stage::Mir,
                         format!(
                             "function '{}' received duplicate argument '{}'",
-                            callee, name
+                            display_name, name
                         ),
                     )
                     .at(span)
@@ -92,7 +97,7 @@ pub(super) fn validate_call_target(
                     Stage::Mir,
                     format!(
                         "function '{}' expects at most {} argument(s), got {}",
-                        callee,
+                        display_name,
                         signature.param_names.len(),
                         argc
                     ),
@@ -122,14 +127,14 @@ pub(super) fn validate_call_target(
             let message = if legacy_exact_arity {
                 format!(
                     "function '{}' expects {} argument(s), got {}",
-                    callee,
+                    display_name,
                     signature.param_names.len(),
                     argc
                 )
             } else {
                 format!(
                     "function '{}' is missing required argument(s): {}",
-                    callee,
+                    display_name,
                     missing_required.join(", ")
                 )
             };

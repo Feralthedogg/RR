@@ -31,6 +31,7 @@ pub fn validate_program(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
             user_signatures.insert(
                 name.clone(),
                 UserFnSignature {
+                    display_name: fn_ir.user_name.clone().unwrap_or_else(|| name.clone()),
                     param_names: fn_ir.params.clone(),
                     has_default: fn_ir
                         .param_default_r_exprs
