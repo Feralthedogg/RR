@@ -1690,7 +1690,9 @@ fn rebuild_generic_tiled_1d_loop_nest(
         else_bb: outer_step,
     };
 
-    if emit_generic_body(fn_ir, body_bb, scop, &loop_var_map, skip_accessless_assigns).is_none() {
+    if emit_loop_iv_aliases(fn_ir, body_bb, scop, &loop_var_map).is_none()
+        || emit_generic_body(fn_ir, body_bb, scop, &loop_var_map, skip_accessless_assigns).is_none()
+    {
         return false;
     }
     fn_ir.blocks[body_bb].term = Terminator::Goto(inner_step);
@@ -1877,7 +1879,9 @@ fn rebuild_generic_skewed_2d_loop_nest(
         else_bb: outer_step,
     };
 
-    if emit_generic_body(fn_ir, body_bb, scop, &loop_var_map, skip_accessless_assigns).is_none() {
+    if emit_loop_iv_aliases(fn_ir, body_bb, scop, &loop_var_map).is_none()
+        || emit_generic_body(fn_ir, body_bb, scop, &loop_var_map, skip_accessless_assigns).is_none()
+    {
         return false;
     }
     fn_ir.blocks[body_bb].term = Terminator::Goto(inner_step);
@@ -2204,7 +2208,9 @@ fn rebuild_generic_tiled_2d_loop_nest(
         else_bb: row_step,
     };
 
-    if emit_generic_body(fn_ir, body_bb, scop, &loop_var_map, skip_accessless_assigns).is_none() {
+    if emit_loop_iv_aliases(fn_ir, body_bb, scop, &loop_var_map).is_none()
+        || emit_generic_body(fn_ir, body_bb, scop, &loop_var_map, skip_accessless_assigns).is_none()
+    {
         return false;
     }
     fn_ir.blocks[body_bb].term = Terminator::Goto(col_step);
@@ -2678,7 +2684,9 @@ fn rebuild_generic_tiled_3d_loop_nest(
         else_bb: dim1_step,
     };
 
-    if emit_generic_body(fn_ir, body_bb, scop, &loop_var_map, skip_accessless_assigns).is_none() {
+    if emit_loop_iv_aliases(fn_ir, body_bb, scop, &loop_var_map).is_none()
+        || emit_generic_body(fn_ir, body_bb, scop, &loop_var_map, skip_accessless_assigns).is_none()
+    {
         return false;
     }
     fn_ir.blocks[body_bb].term = Terminator::Goto(dim2_step);
@@ -2902,6 +2910,7 @@ fn build_loop_level(
 
     let after_body_bb = if level + 1 == dims.len() {
         let body_bb = fn_ir.add_block();
+        emit_loop_iv_aliases(fn_ir, body_bb, scop, loop_var_map)?;
         emit_generic_body(fn_ir, body_bb, scop, loop_var_map, skip_accessless_assigns)?;
         fn_ir.blocks[body_bb].term = Terminator::Goto(step_bb);
         body_bb
@@ -2972,6 +2981,27 @@ fn build_loop_level(
     fn_ir.blocks[step_bb].term = Terminator::Goto(header_bb);
 
     Some(init_bb)
+}
+
+fn emit_loop_iv_aliases(
+    fn_ir: &mut FnIR,
+    body_bb: usize,
+    scop: &ScopRegion,
+    loop_var_map: &FxHashMap<String, String>,
+) -> Option<()> {
+    for dim in &scop.dimensions {
+        let generated = loop_var_map.get(&dim.iv_name)?;
+        if generated == &dim.iv_name {
+            continue;
+        }
+        let src = build_load(fn_ir, generated.clone());
+        fn_ir.blocks[body_bb].instrs.push(Instr::Assign {
+            dst: dim.iv_name.clone(),
+            src,
+            span: Span::dummy(),
+        });
+    }
+    Some(())
 }
 
 fn emit_generic_body(

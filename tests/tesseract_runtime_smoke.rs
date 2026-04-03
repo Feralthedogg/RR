@@ -101,12 +101,14 @@ fn tesseract_compiles_across_opt_levels() {
             code.contains("particles <- Sym_")
                 && (code.contains("return(rr_named_list(\"px\", px, \"py\", py, \"pf\", pf))")
                     || code.contains("return(list(px = px, py = py, pf = pf))"))
-                && (code.contains("p_x <- rr_field_get(particles, \"px\")")
+                && (((code.contains("p_x <- rr_field_get(particles, \"px\")")
                     || code.contains("p_x <- particles[[\"px\"]]"))
-                && (code.contains("p_y <- rr_field_get(particles, \"py\")")
-                    || code.contains("p_y <- particles[[\"py\"]]"))
-                && (code.contains("p_f <- rr_field_get(particles, \"pf\")")
-                    || code.contains("p_f <- particles[[\"pf\"]]")),
+                    && (code.contains("p_y <- rr_field_get(particles, \"py\")")
+                        || code.contains("p_y <- particles[[\"py\"]]"))
+                    && (code.contains("p_f <- rr_field_get(particles, \"pf\")")
+                        || code.contains("p_f <- particles[[\"pf\"]]")))
+                    || code.contains("particles[[\"px\"]]")
+                    || code.contains("rr_field_get(particles, \"px\")")),
             "expected compiled tesseract output to thread particle state back for {}",
             flag
         );

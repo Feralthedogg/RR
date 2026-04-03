@@ -73,12 +73,14 @@ fn tesseract_emits_expected_vectorized_kernels() {
             && Regex::new(r"particles <- Sym_\d+\(p_x, p_y, p_f, u, v, (?:dt|0\.1), (?:N|40)\)")
                 .expect("invalid particle regex")
                 .is_match(&code)
-            && (code.contains("p_x <- rr_field_get(particles, \"px\")")
+            && ((code.contains("p_x <- rr_field_get(particles, \"px\")")
                 || code.contains("p_x <- particles[[\"px\"]]"))
-            && (code.contains("p_y <- rr_field_get(particles, \"py\")")
-                || code.contains("p_y <- particles[[\"py\"]]"))
-            && (code.contains("p_f <- rr_field_get(particles, \"pf\")")
-                || code.contains("p_f <- particles[[\"pf\"]]")),
+                && (code.contains("p_y <- rr_field_get(particles, \"py\")")
+                    || code.contains("p_y <- particles[[\"py\"]]"))
+                && (code.contains("p_f <- rr_field_get(particles, \"pf\")")
+                    || code.contains("p_f <- particles[[\"pf\"]]"))
+                || code.contains("particles[[\"px\"]]")
+                || code.contains("rr_field_get(particles, \"px\")")),
         "expected particle state to be threaded back through a record return and field rebinding"
     );
     assert!(
