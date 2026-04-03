@@ -184,12 +184,15 @@ fn docs_cli_long_options_match_driver_usage() {
 fn docs_configuration_envs_match_public_config_surface() {
     let mut code_envs = BTreeSet::new();
     for rel in [
+        "build.rs",
         "src/compiler/pipeline.rs",
         "src/compiler/incremental.rs",
         "src/hir/lower.rs",
         "src/mir/opt/config.rs",
         "src/mir/opt/inline.rs",
         "src/mir/opt/bce.rs",
+        "src/mir/opt/poly/mod.rs",
+        "src/mir/opt/poly/schedule.rs",
         "src/mir/opt/v_opt/debug.rs",
         "src/runtime/runtime_prelude.R",
         "tests/perf_regression_gate.rs",
@@ -199,6 +202,8 @@ fn docs_configuration_envs_match_public_config_surface() {
         code_envs.extend(env_vars(&read(rel)));
     }
     code_envs.remove("RR_COMPILER_BUILD_HASH");
+    code_envs.remove("RR_HAS_ISL");
+    code_envs.remove("RR_ISL_LINK_MODE");
 
     let docs = read("docs/configuration.md");
     let doc_envs = env_vars(&docs);

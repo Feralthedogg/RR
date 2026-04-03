@@ -116,6 +116,24 @@ Relevant driver flags:
   - `auto`/unset enables poly optimization automatically when RR was built with ISL support
 - `RR_POLY_BACKEND`
   - `auto`/unset prefers the ISL backend when RR was built with ISL support
+- `RR_POLY_TILE_1D`
+  - force-enable 1D poly tiling policy
+- `RR_POLY_TILE_2D`
+  - force-enable 2D poly tiling policy
+- `RR_POLY_TILE_3D`
+  - force-enable 3D poly tiling policy
+- `RR_POLY_TILE_SIZE`
+  - override the default 1D tile size
+- `RR_POLY_TILE_DEPTH`
+  - override the default 3D tile depth
+- `RR_POLY_TILE_ROWS`
+  - override the default tiled row count for 2D/3D schedules
+- `RR_POLY_TILE_COLS`
+  - override the default tiled column count for 2D/3D schedules
+- `RR_POLY_SKEW_2D`
+  - `auto|on|off` control whether 2D skew scheduling is considered
+- `RR_POLY_TRACE`
+  - emit additional polyhedral optimizer tracing when poly optimization is enabled
 - `RR_VECTORIZE_TRACE`
 - `RR_VOPT_PROOF`
   - enable proof-certified vectorization rewrites explicitly
