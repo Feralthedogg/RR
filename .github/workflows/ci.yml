@@ -144,7 +144,9 @@ jobs:
       - name: Build RR Release Binary (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        run: cargo build --locked --release --bin RR --target x86_64-pc-windows-gnu
+        run: |
+          cargo_bin="$(cygpath -u "$CARGO_HOME")/bin/cargo.exe"
+          "$cargo_bin" build --locked --release --bin RR --target x86_64-pc-windows-gnu
 
       - name: Smoke Version Output (Linux/macOS)
         if: runner.os != 'Windows'

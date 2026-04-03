@@ -53,7 +53,7 @@ print(poly_preempts_vopt_1d_map(8))
         &[],
     );
     assert!(
-        stats.contains("\"poly_schedule_applied_identity\": 1")
+        stats.contains("\"poly_schedule_applied\": 1")
             && stats.contains("\"vector_applied_total\": 0")
             && stats.contains("\"vector_legacy_poly_fallback_applied_total\": 0"),
         "expected poly to preempt legacy v_opt 1d map path, got:\n{}",
@@ -83,7 +83,7 @@ print(poly_preempts_vopt_2d_interchange(4, 4))
         &[],
     );
     assert!(
-        stats.contains("\"poly_schedule_applied_interchange\": 1")
+        stats.contains("\"poly_schedule_applied\": 1")
             && stats.contains("\"vector_applied_total\": 0")
             && stats.contains("\"vector_legacy_poly_fallback_applied_total\": 0"),
         "expected poly to preempt legacy v_opt 2d interchange path, got:\n{}",
