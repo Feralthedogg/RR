@@ -130,11 +130,12 @@ jobs:
 
       - name: Configure Static ISL Paths (Windows)
         if: runner.os == 'Windows'
+        shell: msys2 {0}
         run: |
-          test -f /c/msys64/mingw64/lib/libisl.a
-          test -f /c/msys64/mingw64/lib/libgmp.a
-          echo "RR_ISL_LIB_DIR=C:/msys64/mingw64/lib" >> "$GITHUB_ENV"
-          echo "RR_GMP_LIB_DIR=C:/msys64/mingw64/lib" >> "$GITHUB_ENV"
+          test -f "$MINGW_PREFIX/lib/libisl.a"
+          test -f "$MINGW_PREFIX/lib/libgmp.a"
+          echo "RR_ISL_LIB_DIR=$(cygpath -m "$MINGW_PREFIX/lib")" >> "$GITHUB_ENV"
+          echo "RR_GMP_LIB_DIR=$(cygpath -m "$MINGW_PREFIX/lib")" >> "$GITHUB_ENV"
 
       - name: Build RR Release Binary (Linux/macOS)
         if: runner.os != 'Windows'

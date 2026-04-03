@@ -132,10 +132,7 @@ fn poly_enabled_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
 }
 
 pub fn poly_enabled() -> bool {
-    poly_enabled_from_setting(
-        poly_setting_from_env().as_deref(),
-        compiled_with_isl(),
-    )
+    poly_enabled_from_setting(poly_setting_from_env().as_deref(), compiled_with_isl())
 }
 
 fn poly_auto_mode_enabled() -> bool {
