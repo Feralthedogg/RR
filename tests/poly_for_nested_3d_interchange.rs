@@ -20,6 +20,7 @@ fn compile_for_nested_3d_interchange(name: &str, rr_src: &str) -> (String, Strin
         .arg("--no-runtime")
         .arg("-O1")
         .env("RR_POLY_ENABLE", "1")
+        .env("RR_POLY_BACKEND", "heuristic")
         .env("RR_PULSE_JSON_PATH", &stats_path)
         .status()
         .expect("failed to run RR compiler");
