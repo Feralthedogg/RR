@@ -127,6 +127,102 @@ mod tests {
 }
 
 #[test]
+fn contributing_audit_rejects_unstructured_actionable_comments() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("contributing_audit_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let sandbox = common::unique_dir(&sandbox_root, "comments");
+    fs::create_dir_all(sandbox.join("src")).expect("failed to create sandbox src");
+
+    let bad_file = sandbox.join("src").join("comments.rs");
+    let todo_prefix = "TODO";
+    fs::write(
+        &bad_file,
+        format!(
+            "\nfn needs_follow_up() {{\n    // {todo_prefix} clean this up before merge\n    let _ = 1;\n}}\n"
+        ),
+    )
+    .expect("failed to write bad comment file");
+
+    let script = root.join("scripts").join("contributing_audit.sh");
+    let output = Command::new("bash")
+        .arg(&script)
+        .arg("--scan-only")
+        .arg("--files")
+        .arg(&bad_file)
+        .output()
+        .expect("failed to execute contributing audit script for bad comment file");
+    assert!(
+        !output.status.success(),
+        "bad comment audit input should fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("error[comment-prefix]"));
+}
+
+#[test]
+fn contributing_audit_validates_contributing_md_structure() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("contributing_audit_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let sandbox = common::unique_dir(&sandbox_root, "contributing");
+    fs::create_dir_all(&sandbox).expect("failed to create contributing sandbox");
+
+    let bad_file = sandbox.join("CONTRIBUTING.md");
+    fs::write(
+        &bad_file,
+        r#"
+# Contributing
+
+## Scope
+
+## Core Principles
+
+## Rule Levels
+
+## Rules
+
+### 1) Deterministic Output and Traversal
+
+- `MUST` keep behavior deterministic.
+
+## Exception Process
+
+## PR Checklist
+
+- Behavior is deterministic for same input/config.
+"#,
+    )
+    .expect("failed to write bad CONTRIBUTING.md");
+
+    let script = root.join("scripts").join("contributing_audit.sh");
+    let output = Command::new("bash")
+        .arg(&script)
+        .arg("--scan-only")
+        .arg("--files")
+        .arg(&bad_file)
+        .output()
+        .expect("failed to execute contributing audit script for bad contributing doc");
+    assert!(
+        !output.status.success(),
+        "bad contributing doc should fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("error[contributing-rule-topic]"));
+    assert!(stdout.contains("error[contributing-pr-checklist]"));
+}
+
+#[test]
 fn contributing_audit_all_scope_includes_fuzz_and_native_paths() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let script = root.join("scripts").join("contributing_audit.sh");

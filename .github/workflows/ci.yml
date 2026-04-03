@@ -5,6 +5,17 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: rr-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   tier0:
     name: Tier 0 / Fast Gates
@@ -201,6 +212,7 @@ jobs:
     env:
       RR_RANDOM_DIFFERENTIAL_COUNT: ${{ matrix.differential_count }}
       RR_RANDOM_DIFFERENTIAL_SEED: ${{ matrix.differential_seed }}
+      RR_VERIFY_DUMP_DIR: .artifacts/ci/tier2-differential/${{ matrix.slice_name }}/verify-dumps
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -216,8 +228,82 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends r-base-core
 
+      - name: Prepare Artifact Directory
+        run: mkdir -p .artifacts/ci/tier2-differential/${{ matrix.slice_name }} "$RR_VERIFY_DUMP_DIR"
+
       - name: Tier 2 Differential Suite
-        run: bash scripts/test_tier.sh tier2-differential
+        id: differential_suite
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash scripts/test_tier.sh tier2-differential \
+            | tee .artifacts/ci/tier2-differential/${{ matrix.slice_name }}/tier2-differential.log
+
+      - name: Triage Differential Failure Bundles
+        if: always()
+        run: scripts/triage_driver.sh triage differential
+
+      - name: Publish Differential Triage Summary
+        if: always()
+        run: |
+          if [ -f .artifacts/differential-triage/job-summary.md ]; then
+            cat .artifacts/differential-triage/job-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Triage Pass-Verify Failure Bundles
+        if: always()
+        run: scripts/triage_driver.sh triage pass-verify
+
+      - name: Publish Pass-Verify Triage Summary
+        if: always()
+        run: |
+          if [ -f .artifacts/pass-verify-triage/job-summary.md ]; then
+            cat .artifacts/pass-verify-triage/job-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Tier 2 Differential Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-tier2-differential-${{ matrix.slice_name }}-logs
+          path: .artifacts/ci/tier2-differential/${{ matrix.slice_name }}
+          if-no-files-found: error
+
+      - name: Upload Differential Failure Bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-tier2-differential-${{ matrix.slice_name }}-failures
+          path: target/tests/random_differential_failures
+          if-no-files-found: ignore
+
+      - name: Upload Differential Triage Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-tier2-differential-${{ matrix.slice_name }}-triage
+          path: .artifacts/differential-triage
+          if-no-files-found: error
+
+      - name: Upload Pass-Verify Failure Bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-pass-verify-${{ matrix.slice_name }}-failures
+          path: target/tests/pass_verify_failures
+          if-no-files-found: ignore
+
+      - name: Upload Pass-Verify Triage Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-pass-verify-${{ matrix.slice_name }}-triage
+          path: .artifacts/pass-verify-triage
+          if-no-files-found: error
+
+      - name: Fail If Differential Suite Failed
+        if: steps.differential_suite.outcome != 'success'
+        run: exit 1
 
   fuzz-smoke:
     name: Fuzz Smoke
@@ -226,6 +312,7 @@ jobs:
     env:
       CARGO_PROFILE_RELEASE_LTO: "off"
       CARGO_PROFILE_RELEASE_STRIP: "none"
+      RUSTUP_TOOLCHAIN: nightly-2026-01-15
 
     steps:
       - name: Checkout
@@ -246,17 +333,51 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang lld
           cargo install cargo-fuzz --version 0.13.1 --locked
 
-      - name: Parser Fuzz Smoke
-        run: cargo fuzz run parser fuzz/corpus_smoke/parser -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
+      - name: Prepare Artifact Directory
+        run: mkdir -p .artifacts/ci/fuzz-smoke
 
-      - name: Pipeline Fuzz Smoke
-        run: cargo fuzz run pipeline fuzz/corpus_smoke/pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
+      - name: Fuzz Smoke Suite
+        id: fuzz_smoke_suite
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash scripts/fuzz_smoke.sh | tee .artifacts/ci/fuzz-smoke/fuzz-smoke.log
 
-      - name: Type Solver Fuzz Smoke
-        run: cargo fuzz run type_solver fuzz/corpus_smoke/type_solver -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
+      - name: Triage Fuzz Crash Artifacts
+        if: always()
+        run: scripts/triage_driver.sh triage fuzz
 
-      - name: Incremental Fuzz Smoke
-        run: cargo fuzz run incremental_compile fuzz/corpus_smoke/incremental_compile -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
+      - name: Publish Fuzz Triage Summary
+        if: always()
+        run: |
+          if [ -f .artifacts/fuzz-triage/job-summary.md ]; then
+            cat .artifacts/fuzz-triage/job-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-      - name: Generated Pipeline Fuzz Smoke
-        run: cargo fuzz run generated_pipeline fuzz/corpus_smoke/generated_pipeline -- -dict=fuzz/dictionaries/rr.dict -max_total_time=20 -rss_limit_mb=2048
+      - name: Upload Fuzz Smoke Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-fuzz-smoke-logs
+          path: .artifacts/ci/fuzz-smoke
+          if-no-files-found: error
+
+      - name: Upload Fuzz Crash Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-fuzz-smoke-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore
+
+      - name: Upload Fuzz Triage Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-fuzz-smoke-triage
+          path: .artifacts/fuzz-triage
+          if-no-files-found: error
+
+      - name: Fail If Fuzz Smoke Suite Failed
+        if: steps.fuzz_smoke_suite.outcome != 'success'
+        run: exit 1
