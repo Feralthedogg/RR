@@ -44,14 +44,13 @@ fn regex_safe_base_surface_is_closed() {
         return;
     }
 
-    let code = read("src/mir/semantics/call_model.rs");
+    let code = read("src/mir/semantics/call_model_package_surface.rs");
     let body = extract_function_body(&code, "pub(crate) fn is_supported_package_call");
-    let re = Regex::new(r#""(base::[A-Za-z0-9_.]+)""#).expect("regex");
-    let code_calls: std::collections::BTreeSet<String> = re
-        .captures_iter(body)
-        .map(|caps| caps[1].to_string())
-        .filter(|name| !name.starts_with("base::."))
-        .collect();
+    assert!(
+        body.contains(r#"name.starts_with("base::")"#),
+        "expected regex-safe base fallback in package surface gate, got:\n{}",
+        body
+    );
 
     let out = Command::new("R")
         .args([
@@ -73,11 +72,8 @@ fn regex_safe_base_surface_is_closed() {
         .map(|line| format!("base::{}", line.trim()))
         .filter(|name| export_re.is_match(name) && !name.starts_with("base::."))
         .collect();
-
-    let missing: Vec<String> = exports.difference(&code_calls).cloned().collect();
     assert!(
-        missing.is_empty(),
-        "regex-safe base exports missing from direct surface: {}",
-        missing.join(", ")
+        !exports.is_empty(),
+        "expected base namespace to expose regex-safe exports"
     );
 }
