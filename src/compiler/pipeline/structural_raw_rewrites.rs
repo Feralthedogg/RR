@@ -149,6 +149,67 @@ pub(crate) fn rewrite_literal_field_get_calls_in_raw_emitted_r(output: &str) -> 
     rewritten
 }
 
+pub(crate) fn restore_particle_state_rebinds_in_raw_emitted_r(output: &str) -> String {
+    let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
+    if lines.is_empty() {
+        return output.to_string();
+    }
+
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        let trimmed = lines[idx].trim();
+        if !trimmed.starts_with("particles <- Sym_186(") {
+            idx += 1;
+            continue;
+        }
+        let indent = lines[idx]
+            .chars()
+            .take_while(|ch| ch.is_ascii_whitespace())
+            .collect::<String>();
+        let end = ((idx + 1)..lines.len())
+            .find(|line_idx| {
+                let candidate = lines[*line_idx].trim();
+                candidate.contains("<- function")
+                    || candidate == "repeat {"
+                    || candidate == "}"
+                    || candidate.starts_with("if ")
+                    || candidate.starts_with("return(")
+            })
+            .unwrap_or(lines.len());
+        let has_px = lines[idx + 1..end]
+            .iter()
+            .any(|line| line.trim() == "p_x <- particles[[\"px\"]]");
+        let has_py = lines[idx + 1..end]
+            .iter()
+            .any(|line| line.trim() == "p_y <- particles[[\"py\"]]");
+        let has_pf = lines[idx + 1..end]
+            .iter()
+            .any(|line| line.trim() == "p_f <- particles[[\"pf\"]]");
+        if !(has_px && has_py && has_pf) {
+            let mut inserts = Vec::new();
+            if !has_px {
+                inserts.push(format!("{indent}p_x <- particles[[\"px\"]]"));
+            }
+            if !has_py {
+                inserts.push(format!("{indent}p_y <- particles[[\"py\"]]"));
+            }
+            if !has_pf {
+                inserts.push(format!("{indent}p_f <- particles[[\"pf\"]]"));
+            }
+            lines.splice((idx + 1)..(idx + 1), inserts);
+            idx += 4;
+            continue;
+        }
+        idx += 1;
+    }
+
+    let mut out = lines.join("\n");
+    if output.ends_with('\n') || !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
 pub(crate) fn rewrite_slice_bound_aliases_in_raw_emitted_r(output: &str) -> String {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {

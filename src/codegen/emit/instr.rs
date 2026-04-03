@@ -31,6 +31,23 @@ impl RBackend {
                     self.invalidate_emitted_cse_temps();
                     return Ok(());
                 }
+                if let Some(ValueKind::FieldGet { .. }) = values.get(*src).map(|value| &value.kind)
+                    && values[*src].origin_var.as_deref() == Some(dst.as_str())
+                    && self.resolve_bound_value_id(dst) != Some(*src)
+                {
+                    let rendered = self.resolve_val(*src, values, params, false);
+                    self.record_span(*span);
+                    self.write_stmt(&format!("{dst} <- {rendered}"));
+                    self.note_var_write(dst);
+                    self.bind_value_to_var(*src, dst);
+                    self.bind_var_to_value(dst, *src);
+                    self.log_last_assigned_value_change(dst);
+                    self.value_tracker
+                        .last_assigned_value_ids
+                        .insert(dst.clone(), *src);
+                    self.invalidate_emitted_cse_temps();
+                    return Ok(());
+                }
                 if is_generated_poly_loop_var_name(dst) {
                     let rendered = self.resolve_raw_generated_loop_expr(
                         *src,

@@ -474,6 +474,26 @@ fn raw_emitted_literal_field_get_calls_rewrite_to_base_indexing() {
 }
 
 #[test]
+fn raw_emitted_particle_state_rebinds_are_restored_after_sym186_call() {
+    let input = [
+        "Sym_top_0 <- function() ",
+        "{",
+        "  particles <- Sym_186(p_x, p_y, p_f, u, v, dt, N)",
+        "  print(p_x[1L])",
+        "  return(0L)",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = restore_particle_state_rebinds_in_raw_emitted_r(&input);
+
+    assert!(out.contains("p_x <- particles[[\"px\"]]"), "{out}");
+    assert!(out.contains("p_y <- particles[[\"py\"]]"), "{out}");
+    assert!(out.contains("p_f <- particles[[\"pf\"]]"), "{out}");
+}
+
+#[test]
 fn raw_emitted_single_use_scalar_index_alias_rewrite_keeps_match_phi_assignments() {
     let input = "\
 Sym_17 <- function(v)\n\

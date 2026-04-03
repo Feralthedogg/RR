@@ -663,6 +663,7 @@ pub(crate) fn emit_r_functions_cached(
         final_output = rewrite_duplicate_sym183_calls_in_raw_emitted_r(&final_output);
         final_output = rewrite_literal_named_list_calls_in_raw_emitted_r(&final_output);
         final_output = rewrite_literal_field_get_calls_in_raw_emitted_r(&final_output);
+        final_output = restore_particle_state_rebinds_in_raw_emitted_r(&final_output);
         final_output = rewrite_slice_bound_aliases_in_raw_emitted_r(&final_output);
         final_output = collapse_adjacent_dir_neighbor_row_branches_in_raw_emitted_r(&final_output);
         final_output = rewrite_particle_idx_alias_in_raw_emitted_r(&final_output);

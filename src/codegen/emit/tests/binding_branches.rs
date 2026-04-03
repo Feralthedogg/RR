@@ -397,6 +397,92 @@ fn reassigning_same_expr_to_current_bound_var_is_skipped_even_without_origin_var
 }
 
 #[test]
+fn field_get_rebind_to_same_named_var_emits_when_binding_is_stale() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "p_x".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("p_x".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Call {
+                callee: "Sym_186".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("particles".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("px".to_string(), TypeTerm::Any)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::FieldGet {
+                base: 1,
+                field: "px".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("p_x".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("p_x");
+    backend.bind_value_to_var(0, "p_x");
+    backend.bind_var_to_value("p_x", 0);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "particles".to_string(),
+                src: 1,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("particles assign should emit");
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "p_x".to_string(),
+                src: 2,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("field get rebind should emit");
+
+    assert!(
+        backend
+            .output
+            .lines()
+            .any(|line| line.trim() == "p_x <- particles[[\"px\"]]"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
 fn stale_fresh_clone_selection_is_deterministic_across_binding_insertion_order() {
     let values = vec![
         Value {
