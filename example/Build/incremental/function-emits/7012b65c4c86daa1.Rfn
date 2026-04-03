@@ -1,6 +1,0 @@
-Sym_top_0 <- function() 
-{
-  rr_mark(1116L, 1L);
-  print(Sym_222())
-  return(print(Sym_303()))
-}

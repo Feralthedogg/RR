@@ -1,8 +1,0 @@
-Sym_35 <- function(f, x, y, size) 
-{
-  .arg_f <- f
-  .arg_x <- x
-  .arg_y <- y
-  .arg_size <- size
-  return(rr_idx_cube_vec_i(.arg_f, .arg_x, .arg_y, .arg_size))
-}

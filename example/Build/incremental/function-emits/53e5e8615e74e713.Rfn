@@ -1,7 +1,0 @@
-Sym_17 <- function(n, val, depth) 
-{
-  .arg_n <- n
-  .arg_val <- val
-  .arg_depth <- depth
-  return(rep.int(.arg_val, .arg_n))
-}
