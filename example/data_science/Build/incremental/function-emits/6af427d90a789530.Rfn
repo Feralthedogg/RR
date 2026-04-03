@@ -1,0 +1,57 @@
+Sym_1 <- function() 
+{
+  xs <- c(0.8, 1.1, 1.4, 1.8, 7.4, 7.8, 8.1, 8.5, 9.0, 9.3)
+  c1 <- 1.0
+  c2 <- 8.8
+  iter <- 1.0
+  # rr-cse-pruned
+  licm_123 <- (i + 1.0)
+  licm_51 <- (i + 1.0)
+  repeat {
+    if (!(iter <= 8.0)) break
+    sum1 <- 0.0
+    sum2 <- 0.0
+    count1 <- 0.0
+    count2 <- 0.0
+    i <- 1.0
+    repeat {
+      if (!(i <= length(xs))) break
+      x <- xs[i]
+      if ((abs((x - c1)) <= abs((x - c2)))) {
+        sum1 <- (sum1 + x)
+        count1 <- (count1 + 1.0)
+      } else {
+        sum2 <- (sum2 + x)
+        count2 <- (count2 + 1.0)
+      }
+      i <- (i + 1.0)
+      next
+    }
+    if ((count1 > 0.0)) {
+      c1 <- (sum1 / count1)
+    } else {
+    }
+    if ((count2 > 0.0)) {
+      c2 <- (sum2 / count2)
+    } else {
+    }
+    iter <- (iter + 1.0)
+    next
+  }
+  # rr-cse-pruned
+  .__rr_cse_115 <- (xs - c1)
+  .__rr_cse_116 <- abs(.__rr_cse_115)
+  .__rr_cse_117 <- (xs - c2)
+  .__rr_cse_118 <- abs(.__rr_cse_117)
+  .__rr_cse_119 <- pmin(.__rr_cse_116, .__rr_cse_118)
+  inertia <- sum((.__rr_cse_119 * .__rr_cse_119))
+  rr_mark(125L, 5L);
+  print("kmeans_c1")
+  rr_mark(126L, 5L);
+  print(c1)
+  rr_mark(125L, 5L);
+  print("kmeans_c2")
+  rr_mark(126L, 5L);
+  print(c2)
+  return(Sym_20("kmeans_inertia", inertia))
+}

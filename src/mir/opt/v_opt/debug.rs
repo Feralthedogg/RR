@@ -181,6 +181,21 @@ pub(super) fn trace_value_tree(
         ValueKind::Unary { rhs, .. } => {
             trace_value_tree(fn_ir, *rhs, indent + 2, seen);
         }
+        ValueKind::RecordLit { fields } => {
+            for (field, value) in fields {
+                eprintln!("{}  .{}", pad, field);
+                trace_value_tree(fn_ir, *value, indent + 4, seen);
+            }
+        }
+        ValueKind::FieldGet { base, field } => {
+            eprintln!("{}  get .{}", pad, field);
+            trace_value_tree(fn_ir, *base, indent + 2, seen);
+        }
+        ValueKind::FieldSet { base, field, value } => {
+            eprintln!("{}  set .{}", pad, field);
+            trace_value_tree(fn_ir, *base, indent + 2, seen);
+            trace_value_tree(fn_ir, *value, indent + 2, seen);
+        }
         ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => {
             for arg in args {
                 trace_value_tree(fn_ir, *arg, indent + 2, seen);

@@ -1,0 +1,20 @@
+Sym_20 <- function() 
+{
+  rr_mark(42L, 3L);
+  print(Sym_1(10L))
+  rr_mark(43L, 3L);
+  print(Sym_5(6L))
+  rr_mark(44L, 3L);
+  print(Sym_9(c(10L, 20L, 30L, 40L)))
+  rr_mark(45L, 3L);
+  print(Sym_9(c(7L)))
+  rr_mark(46L, 3L);
+  print(Sym_9(NULL))
+  rr_mark(47L, 3L);
+  print(Sym_17(list(a = 3L, b = 4L)))
+  rr_mark(48L, 3L);
+  print(Sym_17(list(a = 9L)))
+  rr_mark(49L, 3L);
+  print(Sym_17(list(c = 1L)))
+  return(0L)
+}

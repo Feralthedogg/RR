@@ -1,4 +1,5 @@
 pub mod incremental;
+pub mod peephole;
 pub mod pipeline;
 mod r_peephole;
 pub mod scheduler;

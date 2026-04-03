@@ -1,0 +1,16 @@
+Sym_27 <- function(x, lo, hi) 
+{
+  .arg_x <- x
+  .arg_lo <- lo
+  .arg_hi <- hi
+  y <- .arg_x
+  if ((y < .arg_lo)) {
+    y <- .arg_lo
+  } else {
+  }
+  if ((y > .arg_hi)) {
+    y <- hi
+  } else {
+  }
+  return(y)
+}

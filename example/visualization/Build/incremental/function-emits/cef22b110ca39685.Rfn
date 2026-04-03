@@ -1,0 +1,15 @@
+Sym_1 <- function() 
+{
+  outfile <- "rr_tidyr_summary_pivot_wider_modern.png"
+  raw <- base::data.frame(step = c(0L, 1L, 2L, 3L, 0L, 1L, 2L, 3L), series = c("value_a", "value_a", "value_a", "value_a", "value_b", "value_b", "value_b", "value_b"), value = c(0.3, 0.7, 1.1, 0.8, 0.2, 0.5, 0.9, 1.2))
+  summary <- dplyr::summarise(dplyr::group_by(raw, series), avg = stats::median(value), spread = stats::sd(value))
+  long_metrics <- tidyr::pivot_longer(summary, cols = c(avg, spread), names_to = "metric", values_to = "metric_value")
+  wide <- tidyr::pivot_wider(long_metrics, names_from = series, values_from = metric_value)
+  long_avg <- tidyr::pivot_longer(wide, cols = c(value_a, value_b), names_to = "series", values_to = "metric_value")
+  p <- ((((ggplot2::ggplot(long_avg, ggplot2::aes(x = metric, y = metric_value, color = series, group = series)) + ggplot2::geom_point(size = 4.0)) + ggplot2::geom_line(linewidth = 1.1)) + ggplot2::ggtitle("RR modern + tidyr + dplyr: summary reshape")) + ggplot2::theme_minimal())
+  rr_mark(44L, 5L);
+  ggplot2::ggsave(filename = outfile, plot = p, width = 7L, height = 4.2, dpi = 120L)
+  rr_mark(45L, 5L);
+  print("saved_plot")
+  return(print(outfile))
+}

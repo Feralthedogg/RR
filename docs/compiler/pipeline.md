@@ -58,12 +58,13 @@ Important boundaries to keep in mind:
 | --- | --- | --- |
 | Source Analysis | parse modules, imports, HIR lowering | `src/syntax`, `src/hir` |
 | Canonicalization | desugar surface forms | `src/hir/desugar.rs` |
-| SSA Graph Synthesis | build MIR CFG and SSA values | `src/mir/lower_hir.rs` |
-| Type Analysis | infer/prove MIR value states | `src/typeck/solver.rs` |
+| SSA Graph Synthesis | build MIR CFG and SSA values | `src/mir/lower_hir.rs`, `src/compiler/pipeline/phases/source_emit.rs` |
+| Type Analysis | infer/prove MIR value states | `src/typeck/solver.rs`, `src/typeck/sigs/*` |
 | Static Validation | semantic + runtime-safety MIR checks | `src/mir/semantics.rs` |
-| Tachyon | optimize or stabilize MIR | `src/mir/opt.rs` |
-| R Code Emission | structurize CFG and print R | `src/mir/structurizer.rs`, `src/codegen/mir_emit.rs` |
-| Runtime Injection | prepend helper subset and policy | `src/runtime`, `src/compiler/pipeline.rs` |
+| Tachyon | optimize or stabilize MIR | `src/mir/opt.rs`, `src/compiler/pipeline/phases/tachyon_runtime.rs` |
+| R Code Emission | structurize CFG and print R | `src/mir/structurizer.rs`, `src/codegen/mir_emit.rs`, `src/codegen/emit/*` |
+| Artifact Cleanup | canonicalize raw emitted R without changing meaning | `src/compiler/pipeline/*`, `src/compiler/peephole/*` |
+| Runtime Injection | prepend helper subset and policy | `src/runtime`, `src/compiler/pipeline/phases/tachyon_runtime.rs` |
 
 ## Detailed Phase Notes
 
@@ -165,7 +166,9 @@ Relevant paths:
 
 - `src/mir/structurizer.rs`
 - `src/codegen/mir_emit.rs`
-- `src/compiler/r_peephole.rs`
+- `src/codegen/emit/*`
+- `src/compiler/pipeline/*`
+- `src/compiler/peephole/*`
 
 The final emitted-R cleanup stage is intentionally conservative. It exists to
 improve readability and stabilize artifact shape without changing meaning. In

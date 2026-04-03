@@ -1,0 +1,31 @@
+Sym_37 <- function(f, x, y, size) 
+{
+  .arg_f <- f
+  .arg_x <- x
+  .arg_y <- y
+  .arg_size <- size
+  u <- (((.arg_x / .arg_size) * 2.0) - 1.0)
+  v <- (((.arg_y / .arg_size) * 2.0) - 1.0)
+  lat <- 0.0
+  if ((.arg_f == 5.0)) {
+    .__rr_cse_5 <- (.arg_x / .arg_size)
+    .__rr_cse_7 <- (.__rr_cse_5 * 2.0)
+    .__rr_cse_11 <- (.arg_y / .arg_size)
+    .__rr_cse_13 <- (.__rr_cse_11 * 2.0)
+    lat <- (45.0 + ((1.0 - (((u * u) + (v * v)) * 0.25)) * 45.0))
+  } else {
+  }
+  if ((.arg_f == 6.0)) {
+    .__rr_cse_5 <- (.arg_x / .arg_size)
+    .__rr_cse_7 <- (.__rr_cse_5 * 2.0)
+    .__rr_cse_11 <- (.arg_y / .arg_size)
+    .__rr_cse_13 <- (.__rr_cse_11 * 2.0)
+    lat <- (-45.0 - ((1.0 - (((u * (.__rr_cse_7 - 1.0)) + (v * (.__rr_cse_13 - 1.0))) * 0.25)) * 45.0))
+  } else {
+  }
+  if ((.arg_f < 5.0)) {
+    lat <- (v * 45.0)
+  } else {
+  }
+  return(lat)
+}

@@ -1,0 +1,20 @@
+Sym_9 <- function(v) 
+{
+  .arg_v <- v
+  rr_mark(27L, 5L);
+  if ((((length(.arg_v) >= 2L) & TRUE) & TRUE)) {
+    a <- .arg_v[1L]
+    b <- .arg_v[2L]
+    rest <- rr_list_rest(.arg_v, 3L)
+    .phi_32 <- ((a + b) + length(rest))
+  } else {
+    rr_mark(28L, 5L);
+    if (((length(.arg_v) == 1L) & TRUE)) {
+      x <- .arg_v[1L]
+      .phi_32 <- x
+    } else {
+      .phi_32 <- 0L
+    }
+  }
+  return(.phi_32)
+}

@@ -1,0 +1,13 @@
+Sym_5 <- function(n) 
+{
+  .arg_n <- n
+  acc <- 1L
+  i <- 1L
+  repeat {
+    if (!(i <= .arg_n)) break
+    acc <- (acc * i)
+    i <- (i + 1L)
+    next
+  }
+  return(acc)
+}

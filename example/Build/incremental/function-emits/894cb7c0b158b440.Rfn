@@ -1,0 +1,36 @@
+Sym_26 <- function(f, x, y, size) 
+{
+  .arg_f <- f
+  .arg_x <- x
+  .arg_y <- y
+  .arg_size <- size
+  ff <- Sym_23(.arg_f)
+  xx <- Sym_23(.arg_x)
+  yy <- Sym_23(.arg_y)
+  ss <- Sym_23(.arg_size)
+  if ((ff < 1.0)) {
+    ff <- 1.0
+  } else {
+  }
+  if ((ff > 6.0)) {
+    ff <- 6.0
+  } else {
+  }
+  if ((xx < 1.0)) {
+    xx <- 1.0
+  } else {
+  }
+  if ((xx > ss)) {
+    xx <- ss
+  } else {
+  }
+  if ((yy < 1.0)) {
+    yy <- 1.0
+  } else {
+  }
+  if ((yy > ss)) {
+    yy <- ss
+  } else {
+  }
+  return((((((ff - 1.0) * ss) * ss) + ((xx - 1.0) * ss)) + yy))
+}

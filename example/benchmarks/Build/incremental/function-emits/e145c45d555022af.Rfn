@@ -1,0 +1,33 @@
+Sym_1 <- function() 
+{
+  n <- 250000.0
+  passes <- 16.0
+  idx <- seq_len(n)
+  x <- ((((idx * 13.0) %% 1000.0) / 1000.0) - 0.5)
+  y <- (((((idx * 17.0) + 7.0) %% 1000.0) / 1000.0) - 0.5)
+  # rr-cse-pruned
+  clean <- rep.int(0.0, n)
+  pass <- 1.0
+  # rr-cse-pruned
+  licm_128 <- (pass + 1.0)
+  repeat {
+    if (!(pass <= passes)) break
+    # rr-cse-pruned
+    score <- pmax(abs((((x * 0.65) + (y * 0.35)) - 0.08)), 0.05)
+    # rr-cse-pruned
+    clean <- ifelse((score > 0.4), sqrt((score + 0.1)), ((score * 0.55) + 0.03))
+    # rr-cse-pruned
+    x <- (clean + (y * 0.15))
+    # rr-cse-pruned
+    y <- ((score * 0.8) + (clean * 0.2))
+    pass <- (pass + 1.0)
+    next
+  }
+  rr_mark(36L, 5L);
+  print("signal_pipeline_tail")
+  rr_mark(37L, 5L);
+  print(clean[n])
+  rr_mark(38L, 5L);
+  print("signal_pipeline_mean")
+  return(print(mean(clean)))
+}

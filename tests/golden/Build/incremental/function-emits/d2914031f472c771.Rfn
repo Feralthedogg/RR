@@ -1,0 +1,28 @@
+Sym_7 <- function() 
+{
+  rec <- list(a = 3L, b = 4L)
+  rec[["a"]] <- (rec[["a"]] + 2L)
+  seed <- 10L
+  add_seed <- rr_closure_make(Sym_13, seed)
+  r1 <- Sym_1(4L)
+  x <- (r1 + 1L)
+  r2 <- x
+  r3 <- Sym_4(Sym_21, 3L)
+  r4 <- rr_call_closure(add_seed, 5L)
+  r5 <- Sym_26(6L)
+  rr_mark(24L, 3L);
+  print(rec[["a"]])
+  rr_mark(25L, 3L);
+  print(rec[["b"]])
+  rr_mark(26L, 3L);
+  print(r1)
+  rr_mark(27L, 3L);
+  print(r2)
+  rr_mark(28L, 3L);
+  print(r3)
+  rr_mark(29L, 3L);
+  print(r4)
+  rr_mark(30L, 3L);
+  print(r5)
+  return(((((((rec[["a"]] + rec[["b"]]) + r1) + r2) + r3) + r4) + r5))
+}

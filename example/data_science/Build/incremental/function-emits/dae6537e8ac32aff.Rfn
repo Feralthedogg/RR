@@ -1,0 +1,22 @@
+Sym_6 <- function() 
+{
+  # rr-cse-pruned
+  p1 <- 0.1
+  p2 <- 0.25
+  p3 <- 0.4
+  p4 <- 0.55
+  step <- 1.0
+  repeat {
+    if (!(step <= 30.0)) break
+    p1 <- Sym_1(p1, 0.8, 1.0)
+    p2 <- Sym_1(p2, 0.6, 1.0)
+    p3 <- Sym_1(p3, 0.4, 1.0)
+    p4 <- Sym_1(p4, 0.2, 1.0)
+    step <- (step + 1.0)
+    next
+  }
+  total <- (((p1 + p2) + p3) + p4)
+  rr_mark(22L, 5L);
+  Sym_13("logistic_mean", (total / 4.0))
+  return(Sym_13("logistic_mass", total))
+}

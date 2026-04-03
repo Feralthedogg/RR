@@ -1,0 +1,43 @@
+Sym_1 <- function() 
+{
+  n <- 21.0
+  u <- rep.int(1.0, n)
+  v <- rep.int(0.0, n)
+  rr_mark(7L, 5L);
+  v[11.0] <- 1.0
+  rr_mark(8L, 5L);
+  v[10.0] <- 0.5
+  rr_mark(9L, 5L);
+  v[12.0] <- 0.5
+  du <- 0.16
+  dv <- 0.08
+  feed <- 0.035
+  kill <- 0.06
+  step <- 1.0
+  licm_86 <- (kill + feed)
+  repeat {
+    if (!(step <= 18.0)) break
+    next_u <- Sym_11(u)
+    next_v <- Sym_11(v)
+    i <- 2.0
+    repeat {
+      if (!(i < n)) break
+      lap_u <- ((u[(i - 1.0)] - (2.0 * u[i])) + u[(i + 1.0)])
+      lap_v <- ((v[(i - 1.0)] - (2.0 * v[i])) + v[(i + 1.0)])
+      uvv <- ((u[i] * v[i]) * v[i])
+      rr_mark(23L, 13L);
+      next_u[i] <- (((u[i] + (du * lap_u)) - uvv) + (feed * (1.0 - u[i])))
+      rr_mark(24L, 13L);
+      next_v[i] <- (((v[i] + (dv * lap_v)) + uvv) - (licm_86 * v[i]))
+      i <- (i + 1.0)
+      next
+    }
+    u <- next_u
+    v <- next_v
+    step <- (step + 1.0)
+    next
+  }
+  rr_mark(31L, 5L);
+  Sym_18("reaction_u_center", u[11.0])
+  return(Sym_18("reaction_v_center", v[11.0]))
+}

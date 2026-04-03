@@ -1,0 +1,16 @@
+Sym_1 <- function() 
+{
+  outfile <- "rr_dplyr_join_filter_plot_modern.png"
+  left <- base::data.frame(id = c(1.0, 2.0, 3.0, 4.0), value = c(1.2, 2.4, 1.8, 3.1))
+  right <- base::data.frame(id = c(2.0, 4.0), marker = c("keep", "keep"))
+  kept <- dplyr::mutate(dplyr::semi_join(left, right, by = "id"), kind = "kept")
+  dropped <- dplyr::mutate(dplyr::anti_join(left, right, by = "id"), kind = "dropped")
+  # rr-cse-pruned
+  combined <- dplyr::bind_rows(kept, dropped)
+  p <- (((ggplot2::ggplot(combined, ggplot2::aes(x = kind, y = value, fill = kind)) + ggplot2::geom_col()) + ggplot2::ggtitle("RR modern + dplyr semi/anti join")) + ggplot2::theme_bw())
+  rr_mark(28L, 5L);
+  ggplot2::ggsave(filename = outfile, plot = p, width = 8L, height = 4.5, dpi = 120L)
+  rr_mark(29L, 5L);
+  print("saved_plot")
+  return(print(outfile))
+}

@@ -273,6 +273,14 @@ pub(super) fn root_depends_on_value(
                 || root_depends_on_value(fn_ir, *rhs, target, seen)
         }
         ValueKind::Unary { rhs, .. } => root_depends_on_value(fn_ir, *rhs, target, seen),
+        ValueKind::RecordLit { fields } => fields
+            .iter()
+            .any(|(_, value)| root_depends_on_value(fn_ir, *value, target, seen)),
+        ValueKind::FieldGet { base, .. } => root_depends_on_value(fn_ir, *base, target, seen),
+        ValueKind::FieldSet { base, value, .. } => {
+            root_depends_on_value(fn_ir, *base, target, seen)
+                || root_depends_on_value(fn_ir, *value, target, seen)
+        }
         ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args
             .iter()
             .any(|arg| root_depends_on_value(fn_ir, *arg, target, seen)),

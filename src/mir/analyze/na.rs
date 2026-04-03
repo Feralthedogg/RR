@@ -56,6 +56,17 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
                     NaState::propagate(states[*lhs], states[*rhs])
                 }
                 ValueKind::Unary { rhs, .. } => states[*rhs],
+                ValueKind::RecordLit { fields } => {
+                    let mut acc = NaState::Never;
+                    for (_, value) in fields {
+                        acc = NaState::propagate(acc, states[*value]);
+                    }
+                    acc
+                }
+                ValueKind::FieldGet { base, .. } => states[*base],
+                ValueKind::FieldSet { base, value, .. } => {
+                    NaState::propagate(states[*base], states[*value])
+                }
                 ValueKind::Phi { args } => {
                     let mut it = args.iter();
                     let mut acc = if let Some((v, _)) = it.next() {
@@ -124,18 +135,45 @@ fn call_na_behavior(callee: &str, args: &[ValueId], states: &[NaState]) -> NaSta
         | "min"
         | "max"
         | "prod"
+        | "rr_reduce_range"
+        | "rr_can_reduce_range"
+        | "rr_tile_map_range"
+        | "rr_tile_reduce_range"
         | "rr_row_sum_range"
         | "rr_col_sum_range"
+        | "rr_col_reduce_range"
+        | "rr_can_col_reduce_range"
+        | "rr_tile_col_binop_assign"
+        | "rr_tile_col_reduce_range"
+        | "rr_matrix_reduce_rect"
+        | "rr_can_matrix_reduce_rect"
+        | "rr_tile_matrix_binop_assign"
+        | "rr_tile_matrix_reduce_rect"
         | "rr_dim1_sum_range"
         | "rr_dim2_sum_range"
         | "rr_dim3_sum_range"
         | "rr_dim1_reduce_range"
+        | "rr_can_dim1_reduce_range"
+        | "rr_can_array3_reduce_cube"
+        | "rr_array3_reduce_cube"
+        | "rr_array3_binop_cube_assign"
+        | "rr_tile_array3_reduce_cube"
+        | "rr_tile_array3_binop_cube_assign"
+        | "rr_tile_dim1_binop_assign"
+        | "rr_tile_dim1_reduce_range"
         | "rr_dim2_reduce_range"
         | "rr_dim3_reduce_range"
         | "rr_dim1_read_values"
         | "rr_dim2_read_values"
         | "rr_dim3_read_values"
         | "rr_array3_gather_values"
+        | "rr_can_same_len"
+        | "rr_can_same_or_scalar"
+        | "rr_same_matrix_shape_or_scalar"
+        | "rr_same_array3_shape_or_scalar"
+        | "rr_can_same_matrix_shape_or_scalar"
+        | "rr_can_same_array3_shape_or_scalar"
+        | "rr_matrix_binop_assign"
         | "colSums"
         | "rowSums"
         | "%*%"

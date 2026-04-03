@@ -5,16 +5,34 @@ use RR::compiler::{
     compile_with_configs_with_options_and_compiler_parallel, default_compiler_parallel_config,
     default_parallel_config, default_type_config, module_tree_fingerprint, module_tree_snapshot,
 };
+use RR::error::{RRCode, RRException, Stage};
 use RR::runtime::runner::Runner;
+use RR::syntax::ast::{Expr, ExprKind, Stmt, StmtKind};
+use RR::syntax::parse::Parser;
 use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use rustc_hash::FxHashMap;
 use std::any::Any;
 use std::env;
 use std::fs;
 use std::io::ErrorKind;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
+
+#[path = "main_compile.rs"]
+mod main_compile;
+#[path = "main_pkg.rs"]
+mod main_pkg;
+#[path = "main_project.rs"]
+mod main_project;
+#[path = "main_registry.rs"]
+mod main_registry;
+
+use self::main_compile::*;
+use self::main_pkg::*;
+use self::main_project::*;
+use self::main_registry::*;
 
 fn main() {
     install_broken_pipe_panic_hook();
@@ -42,6 +60,9 @@ fn run_cli() -> i32 {
     }
 
     match args[1].as_str() {
+        "__rr_poly_isl_materialize" => {
+            RR::mir::opt::poly::run_hidden_poly_cli(&args[2..]).unwrap_or(2)
+        }
         "--version" | "-V" | "version" => {
             print_version();
             0
@@ -50,6 +71,16 @@ fn run_cli() -> i32 {
             print_usage();
             0
         }
+        "new" => cmd_new(&args[2..]),
+        "init" => cmd_init(&args[2..]),
+        "install" => cmd_install(&args[2..]),
+        "remove" => cmd_remove(&args[2..]),
+        "outdated" => cmd_outdated(&args[2..]),
+        "update" => cmd_update(&args[2..]),
+        "publish" => cmd_publish(&args[2..]),
+        "search" => cmd_search(&args[2..]),
+        "registry" => cmd_registry(&args[2..]),
+        "mod" => cmd_mod(&args[2..]),
         "build" => cmd_build(&args[2..]),
         "run" => cmd_run(&args[2..]),
         "watch" => cmd_watch(&args[2..]),
@@ -82,13 +113,75 @@ fn print_usage() {
     eprintln!("  RR --version");
     eprintln!("  RR version");
     eprintln!("  RR <input.rr> [options]");
-    eprintln!("  RR run [main.rr|dir|.] [options]");
+    eprintln!("  RR new [--bin|--lib] <module-path|.> [dir|.]");
+    eprintln!("  RR init [--bin|--lib] [module-path]");
+    eprintln!("  RR install <github-url|module-path>[@version]");
+    eprintln!("  RR remove <module-path>");
+    eprintln!("  RR outdated");
+    eprintln!("  RR update [module-path]");
+    eprintln!(
+        "  RR publish <version> [--dry-run] [--allow-dirty] [--push-tag] [--remote <name>] [--registry <dir>]"
+    );
+    eprintln!("  RR search <query> [--registry <dir>]");
+    eprintln!("  RR registry keygen [identity] [--out-dir <dir>]");
+    eprintln!(
+        "  RR registry onboard [identity] [--out-dir <dir>] [--require-signed] [--require-approval] [--auto-approve] [--registry <dir>]"
+    );
+    eprintln!("  RR registry list [--registry <dir>]");
+    eprintln!("  RR registry report [module-path] [--registry <dir>]");
+    eprintln!("  RR registry diff <module-path> <from-version> <to-version> [--registry <dir>]");
+    eprintln!(
+        "  RR registry risk <module-path> <version> [--against <version>] [--registry <dir>]"
+    );
+    eprintln!("  RR registry channel show <module-path> [--registry <dir>]");
+    eprintln!("  RR registry channel set <module-path> <channel> <version> [--registry <dir>]");
+    eprintln!("  RR registry channel clear <module-path> <channel> [--registry <dir>]");
+    eprintln!("  RR registry queue [--registry <dir>]");
+    eprintln!(
+        "  RR registry audit [--limit <n>] [--action <kind>] [--module <path>] [--contains <text>] [--registry <dir>]"
+    );
+    eprintln!(
+        "  RR registry audit export <file> [--format <tsv|jsonl>] [--limit <n>] [--action <kind>] [--module <path>] [--contains <text>] [--registry <dir>]"
+    );
+    eprintln!(
+        "  RR registry policy bootstrap <trusted-public-key> [--signer <identity>] [--auto-approve-signer <identity>] [--require-signed] [--require-approval] [--registry <dir>]"
+    );
+    eprintln!("  RR registry policy show [--registry <dir>]");
+    eprintln!("  RR registry policy lint [--registry <dir>]");
+    eprintln!(
+        "  RR registry policy rotate-key <old-public-key> <new-public-key> [--registry <dir>]"
+    );
+    eprintln!("  RR registry policy apply <file> [--registry <dir>]");
+    eprintln!("  RR registry info <module-path> [--registry <dir>]");
+    eprintln!("  RR registry approve <module-path> <version> [--registry <dir>]");
+    eprintln!("  RR registry unapprove <module-path> <version> [--registry <dir>]");
+    eprintln!("  RR registry promote <module-path> <version> [--registry <dir>]");
+    eprintln!("  RR registry yank <module-path> <version> [--registry <dir>]");
+    eprintln!("  RR registry unyank <module-path> <version> [--registry <dir>]");
+    eprintln!("  RR registry deprecate <module-path> <message> [--registry <dir>]");
+    eprintln!("  RR registry undeprecate <module-path> [--registry <dir>]");
+    eprintln!("  RR registry verify [module-path] [--registry <dir>]");
+    eprintln!("  RR mod graph");
+    eprintln!("  RR mod why <module-path>");
+    eprintln!("  RR mod verify");
+    eprintln!("  RR mod tidy");
+    eprintln!("  RR mod vendor");
+    eprintln!("  RR run [entry.rr|dir|.] [options]");
     eprintln!("  RR build [dir|file.rr] [options]");
-    eprintln!("  RR watch [main.rr|dir|.] [options]");
+    eprintln!("  RR watch [entry.rr|dir|.] [options]");
     eprintln!("Options:");
     eprintln!("  -o <file> / --out-dir <dir>   Output file (legacy) or build output dir");
     eprintln!("  -O0, -O1, -O2                 Optimization level (default O1)");
     eprintln!("  -o0, -o1, -o2                 (Also accepted) Optimization level");
+    eprintln!("  --bin                         Scaffold a binary project for RR new/init");
+    eprintln!("  --lib                         Scaffold a library project for RR new/init");
+    eprintln!("  --signer <identity>           Registry policy bootstrap signer allowlist entry");
+    eprintln!("  --auto-approve-signer <identity>  Registry policy bootstrap auto-approval signer");
+    eprintln!("  --auto-approve               Registry onboard: auto-approve the generated signer");
+    eprintln!("  --action <kind>             Registry audit action filter");
+    eprintln!("  --module <path>             Registry audit module filter");
+    eprintln!("  --contains <text>           Registry audit substring filter");
+    eprintln!("  --format <tsv|jsonl>        Registry audit export output format");
     eprintln!("  --type-mode <strict|gradual>  Static typing mode (default strict)");
     eprintln!("  --native-backend <off|optional|required>  Native intrinsic backend mode");
     eprintln!("  --parallel-mode <off|optional|required>   Parallel execution mode");
@@ -134,51 +227,6 @@ fn print_version() {
 struct TargetResolutionError {
     message: String,
     help: Option<String>,
-}
-
-fn report_path_read_failure(ui: &CliLog, path: &Path, err: &std::io::Error, role: &str) {
-    ui.error(&format!("Failed to read '{}': {}", path.display(), err));
-    match err.kind() {
-        ErrorKind::PermissionDenied => ui.warn(&format!(
-            "make the {role} readable, or adjust file and parent-directory permissions before retrying"
-        )),
-        ErrorKind::NotFound => ui.warn(&format!(
-            "make sure the {role} exists and points to a readable .rr source file"
-        )),
-        _ => ui.warn(&format!(
-            "check that the {role} is readable and not locked or replaced by another process"
-        )),
-    }
-}
-
-fn report_dir_create_failure(ui: &CliLog, path: &Path, err: &std::io::Error, role: &str) {
-    ui.error(&format!("Failed to create '{}': {}", path.display(), err));
-    match err.kind() {
-        ErrorKind::PermissionDenied => ui.warn(&format!(
-            "choose a writable {role}, or adjust parent-directory permissions before retrying"
-        )),
-        ErrorKind::NotFound => ui.warn(&format!(
-            "create the parent directories first, or point {role} at an existing writable parent"
-        )),
-        _ => ui.warn(&format!(
-            "choose a different {role}, or fix the destination path before retrying"
-        )),
-    }
-}
-
-fn report_file_write_failure(ui: &CliLog, path: &Path, err: &std::io::Error, role: &str) {
-    ui.error(&format!("Failed to write '{}': {}", path.display(), err));
-    match err.kind() {
-        ErrorKind::PermissionDenied => ui.warn(&format!(
-            "choose a writable {role}, or adjust file and parent-directory permissions before retrying"
-        )),
-        ErrorKind::NotFound => ui.warn(&format!(
-            "create the destination directory first, or point {role} at an existing writable path"
-        )),
-        _ => ui.warn(&format!(
-            "check that the {role} is writable and not blocked by another process"
-        )),
-    }
 }
 
 fn stable_hash_bytes(bytes: &[u8]) -> u64 {
@@ -472,10 +520,7 @@ impl CommandMode {
     }
 
     fn default_output_path(self) -> Option<String> {
-        match self {
-            Self::Build => Some("build".to_string()),
-            _ => None,
-        }
+        None
     }
 
     fn takes_output_arg(self, arg: &str) -> bool {
@@ -779,553 +824,5 @@ fn cmd_legacy(args: &[String]) -> i32 {
             e.display(Some(&input), Some(&input_path_str));
             1
         }
-    }
-}
-
-fn resolve_command_input(raw: &str, command: &str) -> Result<PathBuf, TargetResolutionError> {
-    let path = PathBuf::from(raw);
-    if path.is_dir() || raw == "." {
-        let entry = path.join("main.rr");
-        if entry.is_file() {
-            Ok(fs::canonicalize(&entry).unwrap_or(entry))
-        } else {
-            Err(TargetResolutionError {
-                message: format!("main.rr not found in '{}'", path.to_string_lossy()),
-                help: Some(format!(
-                    "add a main.rr entry file in that directory, or run RR {command} with an explicit .rr file path"
-                )),
-            })
-        }
-    } else if path.is_file() {
-        if path.extension().and_then(|s| s.to_str()) == Some("rr") {
-            Ok(fs::canonicalize(&path).unwrap_or(path))
-        } else {
-            Err(TargetResolutionError {
-                message: format!("{command} target must be a .rr file or directory"),
-                help: Some(format!(
-                    "pass a .rr file directly, or point RR {command} at a directory containing main.rr"
-                )),
-            })
-        }
-    } else {
-        Err(TargetResolutionError {
-            message: format!("{command} target not found: '{}'", raw),
-            help: Some(format!(
-                "use RR {command} . inside a project directory, or pass an existing .rr file path"
-            )),
-        })
-    }
-}
-
-fn cmd_run(args: &[String]) -> i32 {
-    let ui = CliLog::new();
-    let opts = match parse_command_opts(args, CommandMode::Run, &ui) {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-    let input_path = match resolve_command_input(&opts.target, "run") {
-        Ok(p) => p,
-        Err(err) => {
-            ui.error(&err.message);
-            if let Some(help) = err.help {
-                ui.warn(&help);
-            }
-            return 1;
-        }
-    };
-    let input_path_str = input_path.to_string_lossy().to_string();
-    let input = match fs::read_to_string(&input_path) {
-        Ok(s) => s,
-        Err(e) => {
-            report_path_read_failure(&ui, &input_path, &e, "run input");
-            return 1;
-        }
-    };
-
-    let result = if opts.incremental.enabled {
-        compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-            &input_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-            opts.compiler_parallel_cfg,
-            opts.incremental,
-            CompileOutputOptions {
-                inject_runtime: true,
-                preserve_all_defs: opts.preserve_all_defs,
-                strict_let: opts.strict_let,
-                warn_implicit_decl: opts.warn_implicit_decl,
-            },
-            None,
-        )
-        .map(|v| (v.r_code, v.source_map))
-    } else {
-        compile_with_configs_with_options_and_compiler_parallel(
-            &input_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-            opts.compiler_parallel_cfg,
-            CompileOutputOptions {
-                inject_runtime: true,
-                preserve_all_defs: opts.preserve_all_defs,
-                strict_let: opts.strict_let,
-                warn_implicit_decl: opts.warn_implicit_decl,
-            },
-        )
-    };
-
-    match result {
-        Ok((r_code, source_map)) => Runner::run(
-            &input_path_str,
-            &input,
-            &r_code,
-            &source_map,
-            None,
-            opts.keep_r,
-        ),
-        Err(e) => {
-            e.display(Some(&input), Some(&input_path_str));
-            1
-        }
-    }
-}
-
-fn collect_rr_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if name == "build" || name == "target" || name == ".git" {
-                continue;
-            }
-            collect_rr_files(&path, files)?;
-        } else if path.extension().and_then(|s| s.to_str()) == Some("rr") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn cmd_build(args: &[String]) -> i32 {
-    let ui = CliLog::new();
-    let opts = match parse_command_opts(args, CommandMode::Build, &ui) {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-    let target = opts.target;
-    let out_dir = opts.output_path.unwrap_or_else(|| "build".to_string());
-
-    let target_path = PathBuf::from(&target);
-    if !target_path.exists() {
-        ui.error(&format!("build target not found: '{}'", target));
-        ui.warn("pass an existing directory or .rr file; use --out-dir to choose where emitted R files go");
-        return 1;
-    }
-
-    let out_root = PathBuf::from(&out_dir);
-    if let Err(e) = fs::create_dir_all(&out_root) {
-        report_dir_create_failure(&ui, &out_root, &e, "build --out-dir destination");
-        return 1;
-    }
-    println!("{} {}", ui.yellow_bold("[+]"), ui.red_bold("RR Build"));
-    println!(
-        " {} {}",
-        ui.dim("|-"),
-        ui.white_bold(&format!(
-            "Target: {} | Out: {} ({})",
-            target,
-            out_dir,
-            opts.opt_level.label()
-        ))
-    );
-
-    let mut rr_files = Vec::new();
-    let dir_mode = target_path.is_dir();
-    if dir_mode {
-        if let Err(e) = collect_rr_files(&target_path, &mut rr_files) {
-            ui.error(&format!("Failed while scanning '{}': {}", target, e));
-            ui.warn(
-                "make sure the build target directory is readable, and that RR can descend into its source tree",
-            );
-            return 1;
-        }
-    } else if target_path.extension().and_then(|s| s.to_str()) == Some("rr") {
-        rr_files.push(target_path.clone());
-    } else {
-        ui.error("build target must be a directory or .rr file");
-        ui.warn("use RR build <dir> to compile a project tree, or RR build path/to/file.rr for a single file");
-        return 1;
-    }
-
-    rr_files.sort();
-    if rr_files.is_empty() {
-        ui.error(&format!("no .rr files found under '{}'", target));
-        ui.warn(
-            "add at least one .rr source file under that directory, or point RR build at a specific .rr file instead",
-        );
-        return 1;
-    }
-
-    let root_abs = if dir_mode {
-        fs::canonicalize(&target_path).ok()
-    } else {
-        None
-    };
-
-    let mut built = 0usize;
-    for rr in rr_files {
-        let rr_abs = fs::canonicalize(&rr).unwrap_or(rr.clone());
-        let rr_path_str = rr_abs.to_string_lossy().to_string();
-        let input = match fs::read_to_string(&rr_abs) {
-            Ok(s) => s,
-            Err(e) => {
-                report_path_read_failure(&ui, &rr_abs, &e, "build input");
-                return 1;
-            }
-        };
-
-        let build_out = if opts.incremental.enabled {
-            compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-                &rr_path_str,
-                &input,
-                opts.opt_level,
-                opts.type_cfg,
-                opts.parallel_cfg,
-                opts.compiler_parallel_cfg,
-                opts.incremental,
-                CompileOutputOptions {
-                    inject_runtime: true,
-                    preserve_all_defs: opts.preserve_all_defs,
-                    strict_let: opts.strict_let,
-                    warn_implicit_decl: opts.warn_implicit_decl,
-                },
-                None,
-            )
-            .map(|v| (v.r_code, v.source_map))
-        } else {
-            compile_with_configs_with_options_and_compiler_parallel(
-                &rr_path_str,
-                &input,
-                opts.opt_level,
-                opts.type_cfg,
-                opts.parallel_cfg,
-                opts.compiler_parallel_cfg,
-                CompileOutputOptions {
-                    inject_runtime: true,
-                    preserve_all_defs: opts.preserve_all_defs,
-                    strict_let: opts.strict_let,
-                    warn_implicit_decl: opts.warn_implicit_decl,
-                },
-            )
-        };
-
-        let (r_code, _source_map) = match build_out {
-            Ok(v) => v,
-            Err(e) => {
-                e.display(Some(&input), Some(&rr_path_str));
-                return 1;
-            }
-        };
-
-        let out_file = if dir_mode {
-            let rel = rr
-                .strip_prefix(&target_path)
-                .ok()
-                .filter(|p| !p.as_os_str().is_empty())
-                .map(Path::to_path_buf)
-                .or_else(|| {
-                    root_abs.as_ref().and_then(|root| {
-                        rr_abs
-                            .strip_prefix(root)
-                            .ok()
-                            .filter(|p| !p.as_os_str().is_empty())
-                            .map(Path::to_path_buf)
-                    })
-                })
-                .or_else(|| rr.file_name().map(PathBuf::from))
-                .unwrap_or_else(|| PathBuf::from("out.rr"));
-            out_root.join(rel).with_extension("R")
-        } else {
-            let stem = rr.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-            out_root.join(format!("{}.R", stem))
-        };
-
-        if let Some(parent) = out_file.parent()
-            && let Err(e) = fs::create_dir_all(parent)
-        {
-            report_dir_create_failure(&ui, parent, &e, "build output directory");
-            return 1;
-        }
-        if let Err(e) = fs::write(&out_file, r_code) {
-            report_file_write_failure(&ui, &out_file, &e, "build output path");
-            return 1;
-        }
-
-        ui.success(&format!("Built {} -> {}", rr.display(), out_file.display()));
-        built += 1;
-    }
-
-    ui.success(&format!(
-        "Build complete: {} file(s) -> {}",
-        built,
-        out_root.display()
-    ));
-    0
-}
-
-fn cmd_watch(args: &[String]) -> i32 {
-    let ui = CliLog::new();
-    let mut opts = match parse_command_opts(args, CommandMode::Watch, &ui) {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-
-    if opts.incremental.enabled && !opts.incremental.auto {
-        opts.incremental.phase3 = true;
-    }
-
-    let input_path = match resolve_command_input(&opts.target, "watch") {
-        Ok(p) => p,
-        Err(err) => {
-            ui.error(&err.message);
-            if let Some(help) = err.help {
-                ui.warn(&help);
-            }
-            return 1;
-        }
-    };
-    let input_path_str = input_path.to_string_lossy().to_string();
-    let out_file = if let Some(out) = opts.output_path.clone() {
-        PathBuf::from(out)
-    } else {
-        let stem = input_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("main");
-        input_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(".rr-watch")
-            .join(format!("{}.R", stem))
-    };
-    if let Some(parent) = out_file.parent()
-        && let Err(e) = fs::create_dir_all(parent)
-    {
-        report_dir_create_failure(&ui, parent, &e, "watch output directory");
-        return 1;
-    }
-
-    ui.success(&format!(
-        "Watching {} (poll={}ms)",
-        input_path.display(),
-        opts.watch_poll_ms
-    ));
-
-    let mut session = IncrementalSession::default();
-    let mut last_successful_snapshot: Option<Vec<(PathBuf, u64)>> = None;
-    let mut last_successful_fingerprint: Option<u64> = None;
-    let mut last_successful_output_hash: Option<u64> = None;
-    let mut last_announced_fingerprint: Option<u64> = None;
-    let mut reported_idle_wait = false;
-    loop {
-        let input = match fs::read_to_string(&input_path) {
-            Ok(s) => s,
-            Err(e) => {
-                report_path_read_failure(&ui, &input_path, &e, "watch input");
-                return 1;
-            }
-        };
-        let snapshot = match module_tree_snapshot(&input_path_str, &input) {
-            Ok(snapshot) => snapshot,
-            Err(e) => {
-                e.display(Some(&input), Some(&input_path_str));
-                if opts.watch_once {
-                    return 1;
-                }
-                thread::sleep(Duration::from_millis(opts.watch_poll_ms));
-                continue;
-            }
-        };
-        let fingerprint = match module_tree_fingerprint(&input_path_str, &input) {
-            Ok(fp) => fp,
-            Err(e) => {
-                e.display(Some(&input), Some(&input_path_str));
-                if opts.watch_once {
-                    return 1;
-                }
-                thread::sleep(Duration::from_millis(opts.watch_poll_ms));
-                continue;
-            }
-        };
-        let output_current = watch_output_matches_hash(&out_file, last_successful_output_hash);
-        if last_successful_fingerprint == Some(fingerprint) && output_current {
-            if opts.watch_once {
-                return 0;
-            }
-            if !reported_idle_wait {
-                ui.success("unchanged module tree; waiting for changes");
-                reported_idle_wait = true;
-            }
-            thread::sleep(Duration::from_millis(opts.watch_poll_ms));
-            continue;
-        }
-        reported_idle_wait = false;
-        if last_announced_fingerprint != Some(fingerprint) {
-            if let Some(prev) = &last_successful_snapshot
-                && let Some(summary) = summarize_watch_changes(prev, &snapshot)
-            {
-                ui.success(&format!("change detected in {summary}"));
-            }
-            last_announced_fingerprint = Some(fingerprint);
-        }
-        if last_successful_fingerprint == Some(fingerprint)
-            && last_successful_output_hash.is_some()
-            && !output_current
-        {
-            ui.success("watch output missing or changed; restoring");
-        }
-
-        match compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-            &input_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-            opts.compiler_parallel_cfg,
-            opts.incremental,
-            CompileOutputOptions {
-                inject_runtime: true,
-                preserve_all_defs: opts.preserve_all_defs,
-                strict_let: opts.strict_let,
-                warn_implicit_decl: opts.warn_implicit_decl,
-            },
-            Some(&mut session),
-        ) {
-            Ok(out) => {
-                let output_hash = watch_output_hash(&out.r_code);
-                if let Err(e) = fs::write(&out_file, out.r_code.as_bytes()) {
-                    report_file_write_failure(&ui, &out_file, &e, "watch output path");
-                    return 1;
-                }
-                last_successful_snapshot = Some(snapshot);
-                last_successful_fingerprint = Some(fingerprint);
-                last_successful_output_hash = Some(output_hash);
-                if out.stats.phase3_memory_hit || out.stats.phase1_artifact_hit {
-                    ui.success(&format!(
-                        "cache hit (phase1_hit={}, phase3_hit={}) -> {}",
-                        out.stats.phase1_artifact_hit,
-                        out.stats.phase3_memory_hit,
-                        out_file.display()
-                    ));
-                } else {
-                    ui.success(&format!(
-                        "rebuilt (phase2 hits={}, misses={}) -> {}",
-                        out.stats.phase2_emit_hits,
-                        out.stats.phase2_emit_misses,
-                        out_file.display()
-                    ));
-                }
-            }
-            Err(e) => {
-                e.display(Some(&input), Some(&input_path_str));
-                if opts.watch_once {
-                    return 1;
-                }
-            }
-        }
-
-        if opts.watch_once {
-            return 0;
-        }
-        thread::sleep(Duration::from_millis(opts.watch_poll_ms));
-    }
-}
-
-fn summarize_watch_changes(prev: &[(PathBuf, u64)], next: &[(PathBuf, u64)]) -> Option<String> {
-    let prev_map: FxHashMap<&PathBuf, u64> =
-        prev.iter().map(|(path, hash)| (path, *hash)).collect();
-    let next_map: FxHashMap<&PathBuf, u64> =
-        next.iter().map(|(path, hash)| (path, *hash)).collect();
-
-    let mut changed = Vec::new();
-    for (path, hash) in &next_map {
-        match prev_map.get(path) {
-            Some(prev_hash) if prev_hash == hash => {}
-            Some(_) | None => changed.push(display_watch_path(path)),
-        }
-    }
-    for path in prev_map.keys() {
-        if !next_map.contains_key(path) {
-            changed.push(display_watch_path(path));
-        }
-    }
-
-    changed.sort();
-    changed.dedup();
-    if changed.is_empty() {
-        return None;
-    }
-    let first = changed[0].clone();
-    if changed.len() == 1 {
-        Some(first)
-    } else {
-        Some(format!("{first} (+{} more)", changed.len() - 1))
-    }
-}
-
-fn display_watch_path(path: &Path) -> String {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.to_string())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{display_watch_path, summarize_watch_changes};
-    use std::path::PathBuf;
-
-    #[test]
-    fn summarize_watch_changes_reports_single_changed_module() {
-        let prev = vec![
-            (PathBuf::from("/tmp/main.rr"), 1_u64),
-            (PathBuf::from("/tmp/module.rr"), 2_u64),
-        ];
-        let next = vec![
-            (PathBuf::from("/tmp/main.rr"), 1_u64),
-            (PathBuf::from("/tmp/module.rr"), 3_u64),
-        ];
-        assert_eq!(
-            summarize_watch_changes(&prev, &next),
-            Some("module.rr".to_string())
-        );
-    }
-
-    #[test]
-    fn summarize_watch_changes_reports_added_and_removed_modules_compactly() {
-        let prev = vec![
-            (PathBuf::from("/tmp/main.rr"), 1_u64),
-            (PathBuf::from("/tmp/old.rr"), 2_u64),
-        ];
-        let next = vec![
-            (PathBuf::from("/tmp/main.rr"), 1_u64),
-            (PathBuf::from("/tmp/new.rr"), 9_u64),
-        ];
-        assert_eq!(
-            summarize_watch_changes(&prev, &next),
-            Some("new.rr (+1 more)".to_string())
-        );
-    }
-
-    #[test]
-    fn display_watch_path_prefers_file_name() {
-        assert_eq!(
-            display_watch_path(&PathBuf::from("/tmp/sub/module.rr")),
-            "module.rr".to_string()
-        );
     }
 }

@@ -1,0 +1,21 @@
+Sym_156 <- function(u, v, n_l, n_r, n_d, n_u, size) 
+{
+  n_d <- rr_index_vec_floor(n_d)
+  n_l <- rr_index_vec_floor(n_l)
+  n_r <- rr_index_vec_floor(n_r)
+  n_u <- rr_index_vec_floor(n_u)
+  .arg_u <- u
+  .arg_v <- v
+  .arg_n_l <- n_l
+  .arg_n_r <- n_r
+  .arg_n_d <- n_d
+  .arg_n_u <- n_u
+  .arg_size <- size
+  # rr-cse-pruned
+  Cs <- 0.15
+  DX <- 10000.0
+  mix_sq <- ((Cs * DX) * (Cs * DX))
+  # rr-cse-pruned
+  visc <- (((Cs * DX) * (Cs * DX)) * sqrt((((((rr_gather(.arg_u, .arg_n_r) - rr_gather(.arg_u, .arg_n_l)) / (2.0 * DX)) - ((rr_gather(.arg_v, .arg_n_u) - rr_gather(.arg_v, .arg_n_d)) / (2.0 * DX))) * (((rr_gather(.arg_u, .arg_n_r) - rr_gather(.arg_u, .arg_n_l)) / (2.0 * DX)) - ((rr_gather(.arg_v, .arg_n_u) - rr_gather(.arg_v, .arg_n_d)) / (2.0 * DX)))) + ((((rr_gather(.arg_u, .arg_n_u) - rr_gather(.arg_u, .arg_n_d)) / (2.0 * DX)) + ((rr_gather(.arg_v, .arg_n_r) - rr_gather(.arg_v, .arg_n_l)) / (2.0 * DX))) * (((rr_gather(.arg_u, .arg_n_u) - rr_gather(.arg_u, .arg_n_d)) / (2.0 * DX)) + ((rr_gather(.arg_v, .arg_n_r) - rr_gather(.arg_v, .arg_n_l)) / (2.0 * DX)))))))
+  return(visc)
+}

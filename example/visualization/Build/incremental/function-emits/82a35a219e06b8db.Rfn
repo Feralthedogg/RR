@@ -1,0 +1,16 @@
+Sym_1 <- function() 
+{
+  outfile <- "rr_stats_quantile_band_plot_modern.png"
+  x <- c(0L, 1L, 2L, 3L, 4L, 5L, 6L)
+  signal <- c(0.2, 0.8, 1.4, 1.1, 0.7, 0.3, -0.1)
+  quantiles <- stats::quantile(signal, probs = c(0.1, 0.5, 0.9))
+  spread <- stats::sd(signal)
+  # rr-cse-pruned
+  band <- base::data.frame(x = x, signal = signal, q_low = rep.int(quantiles[1L], 7L), q_mid = rep.int(quantiles[2L], 7L), q_high = rep.int(quantiles[3L], 7L), spread_up = rep.int((quantiles[2L] + (spread * 0.35)), 7L))
+  p <- (((((((ggplot2::ggplot(band, ggplot2::aes(x = x)) + ggplot2::geom_line(ggplot2::aes(y = signal), color = "steelblue", linewidth = 1.2)) + ggplot2::geom_line(ggplot2::aes(y = q_mid), color = "tomato", linewidth = 1.0, linetype = 2L)) + ggplot2::geom_line(ggplot2::aes(y = q_low), color = "gray45", linewidth = 0.9, linetype = 3L)) + ggplot2::geom_line(ggplot2::aes(y = q_high), color = "gray45", linewidth = 0.9, linetype = 3L)) + ggplot2::geom_point(ggplot2::aes(y = spread_up), color = "darkgreen", size = 2.0)) + ggplot2::ggtitle("RR modern + stats: quantile band trace")) + ggplot2::theme_minimal())
+  rr_mark(31L, 5L);
+  ggplot2::ggsave(filename = outfile, plot = p, width = 8L, height = 4.5, dpi = 120L)
+  rr_mark(32L, 5L);
+  print("saved_plot")
+  return(print(outfile))
+}

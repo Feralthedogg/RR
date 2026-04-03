@@ -40,6 +40,8 @@ pub mod licm;
 pub mod loop_analysis;
 pub mod loop_opt;
 pub mod parallel_copy;
+#[path = "opt/poly/mod.rs"]
+pub mod poly;
 pub mod sccp;
 pub mod simplify;
 pub mod tco;
@@ -991,32 +993,6 @@ impl TachyonEngine {
         scheduler: &CompilerScheduler,
         mut progress: Option<&mut dyn FnMut(TachyonProgress)>,
     ) -> TachyonPulseStats {
-        /*
-        // 1. Clean
-        simplify::SimplifyCFG::new().optimize(fn_ir);
-
-        loop {
-             let mut changed = false;
-
-             // 2. Sccp
-             // changed |= sccp::MirSccp::new().optimize(fn_ir);
-
-             // 3. LICM
-             // changed |= licm::MirLicm::new().optimize(fn_ir);
-
-             // 4. Clean again
-             changed |= simplify::SimplifyCFG::new().optimize(fn_ir);
-
-             if !changed { break; }
-        }
-
-        // TCO
-        tco::optimize(fn_ir);
-
-        // Final polish (DCE/cleanup)
-        simplify::SimplifyCFG::new().optimize(fn_ir);
-        */
-
         let mut stats = TachyonPulseStats::default();
         let plan = Self::build_opt_plan(all_fns);
         let selective_enabled = Self::selective_budget_enabled();
@@ -1464,6 +1440,35 @@ impl TachyonEngine {
                 Self::debug_stage_dump(fn_ir, "After TypeSpecialize");
                 pass_changed |= type_spec_changed;
 
+                let p_stats = poly::optimize_with_stats(fn_ir);
+                stats.poly_loops_seen += p_stats.loops_seen;
+                stats.poly_scops_detected += p_stats.scops_detected;
+                stats.poly_rejected_cfg_shape += p_stats.rejected_cfg_shape;
+                stats.poly_rejected_non_affine += p_stats.rejected_non_affine;
+                stats.poly_rejected_effects += p_stats.rejected_effects;
+                stats.poly_affine_stmt_count += p_stats.affine_stmt_count;
+                stats.poly_access_relation_count += p_stats.access_relation_count;
+                stats.poly_dependence_solved += p_stats.dependence_solved;
+                stats.poly_schedule_attempted += p_stats.schedule_attempted;
+                stats.poly_schedule_applied += p_stats.schedule_applied;
+                stats.poly_schedule_attempted_identity += p_stats.schedule_attempted_identity;
+                stats.poly_schedule_attempted_interchange += p_stats.schedule_attempted_interchange;
+                stats.poly_schedule_attempted_skew2d += p_stats.schedule_attempted_skew2d;
+                stats.poly_schedule_attempted_tile1d += p_stats.schedule_attempted_tile1d;
+                stats.poly_schedule_attempted_tile2d += p_stats.schedule_attempted_tile2d;
+                stats.poly_schedule_attempted_tile3d += p_stats.schedule_attempted_tile3d;
+                stats.poly_schedule_applied_identity += p_stats.schedule_applied_identity;
+                stats.poly_schedule_applied_interchange += p_stats.schedule_applied_interchange;
+                stats.poly_schedule_applied_skew2d += p_stats.schedule_applied_skew2d;
+                stats.poly_schedule_applied_tile1d += p_stats.schedule_applied_tile1d;
+                stats.poly_schedule_applied_tile2d += p_stats.schedule_applied_tile2d;
+                stats.poly_schedule_applied_tile3d += p_stats.schedule_applied_tile3d;
+                stats.poly_schedule_auto_fuse_selected += p_stats.schedule_auto_fuse_selected;
+                stats.poly_schedule_auto_fission_selected += p_stats.schedule_auto_fission_selected;
+                stats.poly_schedule_auto_skew2d_selected += p_stats.schedule_auto_skew2d_selected;
+                stats.poly_schedule_backend_hint_selected += p_stats.schedule_backend_hint_selected;
+                pass_changed |= p_stats.schedule_applied > 0;
+
                 // Vectorization
                 let v_stats =
                     v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
@@ -1507,6 +1512,18 @@ impl TachyonEngine {
                 stats.vector_applied_3d += v_stats.applied_3d;
                 stats.vector_applied_call_map_direct += v_stats.applied_call_map_direct;
                 stats.vector_applied_call_map_runtime += v_stats.applied_call_map_runtime;
+                stats.vector_legacy_poly_fallback_candidate_total +=
+                    v_stats.legacy_poly_fallback_candidate_total;
+                stats.vector_legacy_poly_fallback_candidate_reductions +=
+                    v_stats.legacy_poly_fallback_candidate_reductions;
+                stats.vector_legacy_poly_fallback_candidate_maps +=
+                    v_stats.legacy_poly_fallback_candidate_maps;
+                stats.vector_legacy_poly_fallback_applied_total +=
+                    v_stats.legacy_poly_fallback_applied_total;
+                stats.vector_legacy_poly_fallback_applied_reductions +=
+                    v_stats.legacy_poly_fallback_applied_reductions;
+                stats.vector_legacy_poly_fallback_applied_maps +=
+                    v_stats.legacy_poly_fallback_applied_maps;
                 stats.vector_trip_tier_tiny += v_stats.trip_tier_tiny;
                 stats.vector_trip_tier_small += v_stats.trip_tier_small;
                 stats.vector_trip_tier_medium += v_stats.trip_tier_medium;

@@ -36,6 +36,31 @@ fn quoted_namespaced_calls(src: &str) -> BTreeSet<String> {
         .collect()
 }
 
+fn quoted_namespaced_calls_in_rs_tree(dir_rel: &str) -> BTreeSet<String> {
+    let dir = repo_root().join(dir_rel);
+    let mut items = BTreeSet::new();
+    let re = Regex::new(r#""([A-Za-z0-9_.]+::[A-Za-z0-9_.]+)""#).expect("regex");
+
+    let mut stack = vec![dir];
+    while let Some(path) = stack.pop() {
+        for entry in fs::read_dir(&path).expect("failed to read rust dir") {
+            let entry = entry.expect("failed to read entry");
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = fs::read_to_string(&path).expect("failed to read rust file");
+            items.extend(re.captures_iter(&text).map(|caps| caps[1].to_string()));
+        }
+    }
+
+    items
+}
+
 fn backtick_items_in_markdown_section(
     doc: &str,
     start_marker: &str,
@@ -87,21 +112,20 @@ fn env_vars(src: &str) -> BTreeSet<String> {
 
 #[test]
 fn docs_direct_interop_surface_matches_code() {
-    let code = read("src/mir/semantics/call_model.rs");
-    let body = extract_function_body(&code, "pub(crate) fn is_supported_package_call");
-    let code_calls = quoted_namespaced_calls(body);
+    let code_calls =
+        quoted_namespaced_calls_in_rs_tree("src/mir/semantics/call_model_package_surface");
 
     let doc_calls = backtick_items_in_markdown_files("docs/r-interop");
 
     assert_eq!(
         doc_calls, code_calls,
-        "docs/r-interop/*.md direct interop surface drifted from call_model.rs"
+        "docs/r-interop/*.md direct interop surface drifted from call_model_package_surface.rs"
     );
 }
 
 #[test]
 fn docs_tidy_helper_surface_matches_code() {
-    let code = read("src/mir/semantics/call_model.rs");
+    let code = read("src/mir/semantics/call_model_builtin_surface.rs");
     let body = extract_function_body(&code, "pub(crate) fn is_tidy_helper_call");
     let re = Regex::new(r#""([A-Za-z_][A-Za-z0-9_]*)""#).expect("regex");
     let code_helpers: BTreeSet<String> = re
@@ -118,13 +142,13 @@ fn docs_tidy_helper_surface_matches_code() {
 
     assert_eq!(
         doc_helpers, code_helpers,
-        "docs/r-interop.md tidy helper list drifted from call_model.rs"
+        "docs/r-interop.md tidy helper list drifted from call_model_builtin_surface.rs"
     );
 }
 
 #[test]
 fn docs_tidy_data_mask_surface_matches_code() {
-    let code = read("src/mir/semantics/call_model.rs");
+    let code = read("src/mir/semantics/call_model_builtin_surface.rs");
     let body = extract_function_body(&code, "pub(crate) fn is_tidy_data_mask_call");
     let code_calls = quoted_namespaced_calls(body);
 
@@ -137,7 +161,7 @@ fn docs_tidy_data_mask_surface_matches_code() {
 
     assert_eq!(
         doc_calls, code_calls,
-        "docs/r-interop.md tidy-aware call list drifted from call_model.rs"
+        "docs/r-interop.md tidy-aware call list drifted from call_model_builtin_surface.rs"
     );
 }
 

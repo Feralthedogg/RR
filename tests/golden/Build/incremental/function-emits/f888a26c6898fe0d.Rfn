@@ -1,0 +1,5 @@
+Sym_1 <- function(x) 
+{
+  .arg_x <- x
+  return((.arg_x + 1L))
+}

@@ -112,6 +112,16 @@ pub(super) fn collect_reachable_values(
                 stack.push(*rhs);
             }
             ValueKind::Unary { rhs, .. } => stack.push(*rhs),
+            ValueKind::RecordLit { fields } => {
+                for (_, value) in fields {
+                    stack.push(*value);
+                }
+            }
+            ValueKind::FieldGet { base, .. } => stack.push(*base),
+            ValueKind::FieldSet { base, value, .. } => {
+                stack.push(*base);
+                stack.push(*value);
+            }
             ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => {
                 for arg in args {
                     stack.push(*arg);

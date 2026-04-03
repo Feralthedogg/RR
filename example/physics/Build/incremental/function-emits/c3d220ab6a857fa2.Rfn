@@ -1,0 +1,17 @@
+Sym_36 <- function(x) 
+{
+  .arg_x <- x
+  if ((.arg_x <= 0.0)) {
+    return(0.0)
+  } else {
+    g <- ((.arg_x * 0.5) + 0.5)
+    i <- 0.0
+    repeat {
+      if (!(i < 8.0)) break
+      g <- (0.5 * (g + (.arg_x / g)))
+      i <- (i + 1.0)
+      next
+    }
+    return(g)
+  }
+}

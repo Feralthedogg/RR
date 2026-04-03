@@ -305,6 +305,9 @@ fn ensure_value_range_inner(
             eval_binary(*op, &li, &ri)
         }
         ValueKind::Unary { .. } => RangeInterval::top(),
+        ValueKind::RecordLit { .. } | ValueKind::FieldGet { .. } | ValueKind::FieldSet { .. } => {
+            RangeInterval::top()
+        }
         ValueKind::Phi { args } => {
             let mut acc = RangeInterval::bottom();
             for (arg_val, _pred) in args {

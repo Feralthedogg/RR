@@ -89,10 +89,18 @@ if [[ $ALL_FILES -eq 1 && ${#FILES[@]} -gt 0 ]]; then
 fi
 
 collect_all_files() {
+  if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    (
+      cd "$ROOT"
+      git ls-files -- CONTRIBUTING.md src tests docs scripts fuzz native
+    ) | sort -u
+    return
+  fi
+
   (
     cd "$ROOT"
     printf 'CONTRIBUTING.md\n'
-    rg --files src tests docs scripts
+    rg --files src tests docs scripts fuzz native
   ) | sort -u
 }
 
@@ -109,7 +117,7 @@ collect_changed_files() {
     git -C "$ROOT" diff --cached --name-only --
     git -C "$ROOT" ls-files --others --exclude-standard
   } | awk '
-    /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^CONTRIBUTING\.md$/ {
+    /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^fuzz\// || /^native\// || /^CONTRIBUTING\.md$/ {
       print
     }
   ' | sort -u
@@ -204,7 +212,7 @@ cache_sensitive_prefixes = (
 )
 doc_prefixes = ("docs/",)
 test_prefixes = ("tests/",)
-known_roots = ("src", "tests", "docs", "scripts")
+known_roots = ("src", "tests", "docs", "scripts", "fuzz", "native")
 safe_alt_markers = (
     "safe alternative",
     "safe alternatives",

@@ -364,6 +364,27 @@ fn replace_var_read(fn_ir: &mut FnIR, src: ValueId, old_var: &VarId, new_var: &V
             let e = replace_var_read(fn_ir, end, old_var, new_var);
             ValueKind::Range { start: s, end: e }
         }
+        ValueKind::RecordLit { fields } => {
+            let fields = fields
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        replace_var_read(fn_ir, *value, old_var, new_var),
+                    )
+                })
+                .collect();
+            ValueKind::RecordLit { fields }
+        }
+        ValueKind::FieldGet { base, field } => {
+            let base = replace_var_read(fn_ir, base, old_var, new_var);
+            ValueKind::FieldGet { base, field }
+        }
+        ValueKind::FieldSet { base, field, value } => {
+            let base = replace_var_read(fn_ir, base, old_var, new_var);
+            let value = replace_var_read(fn_ir, value, old_var, new_var);
+            ValueKind::FieldSet { base, field, value }
+        }
         ValueKind::Const(_) | ValueKind::RSymbol { .. } => return src,
     };
 

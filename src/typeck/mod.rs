@@ -1,6 +1,7 @@
 pub mod builtin_sigs;
 pub mod constraints;
 pub mod lattice;
+pub(crate) mod sigs;
 pub mod solver;
 pub mod term;
 

@@ -178,13 +178,15 @@ fn run_missing_main_reports_recovery_hint() {
     );
     let stderr = stderr_text(&output);
     assert!(
-        stderr.contains("main.rr not found"),
-        "expected missing-main diagnostic, got:\n{}",
+        stderr.contains("src/main.rr or main.rr not found"),
+        "expected missing-entry diagnostic, got:\n{}",
         stderr
     );
     assert!(
-        stderr.contains("add a main.rr entry file") || stderr.contains("explicit .rr file path"),
-        "expected recovery hint for missing main.rr, got:\n{}",
+        stderr.contains("add src/main.rr")
+            || stderr.contains("legacy main.rr")
+            || stderr.contains("explicit .rr file path"),
+        "expected recovery hint for missing entry file, got:\n{}",
         stderr
     );
 }
@@ -212,8 +214,8 @@ fn watch_missing_main_reports_recovery_hint() {
     );
     let stderr = stderr_text(&output);
     assert!(
-        stderr.contains("main.rr not found"),
-        "expected missing-main diagnostic, got:\n{}",
+        stderr.contains("src/main.rr or main.rr not found"),
+        "expected missing-entry diagnostic, got:\n{}",
         stderr
     );
     assert!(
@@ -253,7 +255,7 @@ fn watch_non_rr_file_reports_watch_specific_hint() {
         stderr
     );
     assert!(
-        stderr.contains("point RR watch at a directory containing main.rr"),
+        stderr.contains("point RR watch at a directory containing src/main.rr or main.rr"),
         "expected watch-specific invalid-target recovery hint, got:\n{}",
         stderr
     );
@@ -317,7 +319,7 @@ fn build_empty_project_reports_recovery_hint() {
 
 #[cfg(unix)]
 #[test]
-fn build_scan_failure_reports_recovery_hint() {
+fn build_project_mode_ignores_unreadable_unrelated_subtree() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sandbox = root.join("target").join("tests").join("cli_option_errors");
     fs::create_dir_all(&sandbox).expect("failed to create sandbox root");
@@ -356,15 +358,9 @@ main()
     fs::set_permissions(&blocked, restore).expect("failed to restore blocked dir permissions");
 
     assert!(
-        !output.status.success(),
-        "expected build failure when subtree is unreadable"
-    );
-    let stderr = stderr_text(&output);
-    assert!(
-        stderr.contains("Failed while scanning")
-            && stderr.contains("build target directory is readable"),
-        "expected build scan recovery hint, got:\n{}",
-        stderr
+        output.status.success(),
+        "project-mode build should ignore unrelated unreadable subtree:\n{}",
+        stderr_text(&output)
     );
 }
 

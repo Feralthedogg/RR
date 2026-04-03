@@ -1,0 +1,14 @@
+Sym_11 <- function(xs) 
+{
+  .arg_xs <- xs
+  s <- 0.0
+  i <- 1.0
+  n <- length(.arg_xs)
+  repeat {
+    if (!(i <= length(.arg_xs))) break
+    s <- (s + .arg_xs[i])
+    i <- (i + 1.0)
+    next
+  }
+  return(s)
+}

@@ -7,6 +7,7 @@ pub mod diagnostic;
 pub mod error;
 pub mod hir;
 pub mod mir;
+pub mod pkg;
 pub mod runtime;
 pub mod syntax;
 pub mod typeck;

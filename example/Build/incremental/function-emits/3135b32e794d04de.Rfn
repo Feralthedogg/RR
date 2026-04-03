@@ -1,0 +1,12 @@
+Sym_210 <- function(field, w, h) 
+{
+  .arg_field <- field
+  .arg_w <- w
+  .arg_h <- h
+  size <- (.arg_w * .arg_h)
+  # rr-cse-pruned
+  i <- 1.0
+  # rr-cse-pruned
+  lap <- ((((((rr_gather(.arg_field, rr_wrap_index_vec_i(((((i:size - 1.0) %% .arg_w) + 1.0) - 1.0), (floor(((i:size - 1.0) / .arg_w)) + 1.0), .arg_w, .arg_h)) + rr_gather(.arg_field, rr_wrap_index_vec_i(((((i:size - 1.0) %% .arg_w) + 1.0) + 1.0), (floor(((i:size - 1.0) / .arg_w)) + 1.0), .arg_w, .arg_h))) + rr_gather(.arg_field, rr_wrap_index_vec_i((((i:size - 1.0) %% .arg_w) + 1.0), ((floor(((i:size - 1.0) / .arg_w)) + 1.0) + 1.0), .arg_w, .arg_h))) + rr_gather(.arg_field, rr_wrap_index_vec_i((((i:size - 1.0) %% .arg_w) + 1.0), ((floor(((i:size - 1.0) / .arg_w)) + 1.0) - 1.0), .arg_w, .arg_h))) * 0.2) + ((((rr_gather(.arg_field, rr_wrap_index_vec_i(((((i:size - 1.0) %% .arg_w) + 1.0) - 1.0), ((floor(((i:size - 1.0) / .arg_w)) + 1.0) + 1.0), .arg_w, .arg_h)) + rr_gather(.arg_field, rr_wrap_index_vec_i(((((i:size - 1.0) %% .arg_w) + 1.0) + 1.0), ((floor(((i:size - 1.0) / .arg_w)) + 1.0) + 1.0), .arg_w, .arg_h))) + rr_gather(.arg_field, rr_wrap_index_vec_i(((((i:size - 1.0) %% .arg_w) + 1.0) - 1.0), ((floor(((i:size - 1.0) / .arg_w)) + 1.0) - 1.0), .arg_w, .arg_h))) + rr_gather(.arg_field, rr_wrap_index_vec_i(((((i:size - 1.0) %% .arg_w) + 1.0) + 1.0), ((floor(((i:size - 1.0) / .arg_w)) + 1.0) - 1.0), .arg_w, .arg_h))) * 0.05)) - .arg_field)
+  return(lap)
+}

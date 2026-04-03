@@ -1,0 +1,17 @@
+Sym_78 <- function(f, ys) 
+{
+  .arg_f <- f
+  .arg_ys <- ys
+  rot <- rep.int(0.0, length(.arg_ys))
+  if ((.arg_f == 2.0)) {
+    rot <- rr_assign_slice(rot, 1.0, 1.0, rep.int(1.0, 1.0))
+    return(rot)
+  } else {
+    if ((.arg_f == 4.0)) {
+      rot <- rr_assign_slice(rot, 1.0, 1.0, rep.int(3.0, 1.0))
+      return(rot)
+    } else {
+      return(rot)
+    }
+  }
+}

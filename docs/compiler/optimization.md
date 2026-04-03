@@ -222,12 +222,13 @@ The current `signal_pipeline` optimizer-tier benchmark in
 - `-O1/-O2` need to justify themselves through generic MIR/vectorization wins,
   not backend-specific special cases
 
-On the current 2026-03-24 snapshot, the useful comparison is the generic
+On the current 2026-04-03 snapshot, the useful comparison is still the generic
 optimizer tier itself:
 
-- RR O0 emitted R: benchmark-script output
-- RR O1 emitted R: benchmark-script output
-- RR O2 emitted R: benchmark-script output
+- RR O2 on GNU R: `331.4 ms` cold / `221.0 ms` warm
+- direct vectorized GNU R baseline: `362.6 ms` cold / `216.8 ms` warm
+- diffusion O2 reference points: `217.4 ms` / `25.5 ms` for `heat_diffusion`
+  and `208.8 ms` / `31.9 ms` for `reaction_diffusion`
 
 The important week-1 change is that the benchmark scripts now also record
 optimizer diagnostics for RR artifacts:

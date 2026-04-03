@@ -1216,6 +1216,10 @@ rr_same_len <- function(a,b, ctx="vector op") {
   }
 }
 
+rr_can_same_len <- function(a, b) {
+  length(a) == length(b)
+}
+
 rr_same_or_scalar <- function(a,b, ctx="vector op") {
   la <- length(a); lb <- length(b)
   # Follow R recycling semantics:
@@ -1238,6 +1242,92 @@ rr_same_or_scalar <- function(a,b, ctx="vector op") {
     )
   }
   invisible(TRUE)
+}
+
+rr_same_matrix_shape_or_scalar <- function(dest, src, ctx="matrix op") {
+  if (!is.matrix(dest)) {
+    rr_type_error(paste0(ctx, " dest must be a matrix"), "E1002", ctx)
+  }
+  if (is.matrix(src)) {
+    if (nrow(dest) != nrow(src) || ncol(dest) != ncol(src)) {
+      rr_value_error(
+        paste0(
+          ctx,
+          " shape mismatch (",
+          nrow(dest),
+          "x",
+          ncol(dest),
+          " vs ",
+          nrow(src),
+          "x",
+          ncol(src),
+          ")"
+        ),
+        "E2001",
+        ctx
+      )
+    }
+    return(invisible(TRUE))
+  }
+  if (length(src) == 1L) {
+    return(invisible(TRUE))
+  }
+  rr_value_error(
+    paste0(ctx, " source must be a scalar or matrix"),
+    "E2001",
+    ctx
+  )
+}
+
+rr_can_same_matrix_shape_or_scalar <- function(dest, src) {
+  if (!is.matrix(dest)) return(FALSE)
+  if (is.matrix(src)) {
+    return(nrow(dest) == nrow(src) && ncol(dest) == ncol(src))
+  }
+  length(src) == 1L
+}
+
+rr_same_array3_shape_or_scalar <- function(dest, src, ctx="array3 op") {
+  if (!is.array(dest) || length(dim(dest)) != 3L) {
+    rr_type_error(paste0(ctx, " dest must be a rank-3 array"), "E1002", ctx)
+  }
+  if (is.array(src)) {
+    sd <- dim(src)
+    dd <- dim(dest)
+    if (length(sd) != 3L || any(dd != sd)) {
+      rr_value_error(
+        paste0(
+          ctx,
+          " shape mismatch (",
+          paste(dd, collapse = "x"),
+          " vs ",
+          paste(sd, collapse = "x"),
+          ")"
+        ),
+        "E2001",
+        ctx
+      )
+    }
+    return(invisible(TRUE))
+  }
+  if (length(src) == 1L) {
+    return(invisible(TRUE))
+  }
+  rr_value_error(
+    paste0(ctx, " source must be a scalar or rank-3 array"),
+    "E2001",
+    ctx
+  )
+}
+
+rr_can_same_array3_shape_or_scalar <- function(dest, src) {
+  if (!is.array(dest) || length(dim(dest)) != 3L) return(FALSE)
+  if (is.array(src)) {
+    sd <- dim(src)
+    dd <- dim(dest)
+    return(length(sd) == 3L && all(dd == sd))
+  }
+  length(src) == 1L
 }
 
 rr_vector_scalar_fallback_enabled <- function(n, helper_cost) {
@@ -1634,6 +1724,103 @@ rr_col_binop_assign <- function(dest, lhs_src, rhs_src, col, r_start, r_end, op,
   dest
 }
 
+rr_matrix_binop_assign <- function(dest, lhs_src, rhs_src, r_start, r_end, c_start, c_end, op, ctx="matrix_map") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+
+  if (!is.matrix(dest)) {
+    rr_type_error(paste0(ctx, " dest must be a matrix"), "E1002", ctx)
+  }
+
+  rs <- to_i1(r_start, paste0(ctx, " row_start"))
+  re <- to_i1(r_end, paste0(ctx, " row_end"))
+  cs <- to_i1(c_start, paste0(ctx, " col_start"))
+  ce <- to_i1(c_end, paste0(ctx, " col_end"))
+  if (re < rs || ce < cs) return(dest)
+  if (rs < 1L || re > nrow(dest) || cs < 1L || ce > ncol(dest)) {
+    rr_bounds_error(
+      paste0(ctx, " matrix range out of bounds: rows [", rs, ", ", re, "] cols [", cs, ", ", ce, "]"),
+      "E2007",
+      ctx
+    )
+  }
+
+  to_matrix_slice <- function(src, label) {
+    if (is.matrix(src)) {
+      if (re > nrow(src) || ce > ncol(src)) {
+        rr_bounds_error(
+          paste0(ctx, " ", label, " source out of bounds"),
+          "E2007",
+          ctx
+        )
+      }
+      src[rs:re, cs:ce]
+    } else {
+      if (length(src) != 1L) {
+        rr_value_error(
+          paste0(ctx, " ", label, " source must be scalar or matrix"),
+          "E2001",
+          ctx
+        )
+      }
+      src
+    }
+  }
+
+  lv <- to_matrix_slice(lhs_src, "lhs")
+  rv <- to_matrix_slice(rhs_src, "rhs")
+
+  out <- switch(
+    as.character(op),
+    "+" = lv + rv,
+    "-" = lv - rv,
+    "*" = lv * rv,
+    "/" = lv / rv,
+    "%%" = lv %% rv,
+    rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+  )
+
+  dest[rs:re, cs:ce] <- out
+  dest
+}
+
+rr_tile_matrix_binop_assign <- function(dest, lhs_src, rhs_src, r_start, r_end, c_start, c_end, op, tile_r, tile_c, ctx="tile_matrix_map") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  rs <- to_i1(r_start, paste0(ctx, " row_start"))
+  re <- to_i1(r_end, paste0(ctx, " row_end"))
+  cs <- to_i1(c_start, paste0(ctx, " col_start"))
+  ce <- to_i1(c_end, paste0(ctx, " col_end"))
+  tr <- to_i1(tile_r, paste0(ctx, " tile_rows"))
+  tc <- to_i1(tile_c, paste0(ctx, " tile_cols"))
+  if (tr <= 0L || tc <= 0L) rr_value_error(paste0(ctx, " tile sizes must be > 0"), "E2001", ctx)
+  if (re < rs || ce < cs) return(dest)
+  r_cur <- rs
+  while (r_cur <= re) {
+    r_chunk_end <- min(re, r_cur + tr - 1L)
+    c_cur <- cs
+    while (c_cur <= ce) {
+      c_chunk_end <- min(ce, c_cur + tc - 1L)
+      dest <- rr_matrix_binop_assign(
+        dest, lhs_src, rhs_src, r_cur, r_chunk_end, c_cur, c_chunk_end, op, ctx
+      )
+      c_cur <- c_chunk_end + 1L
+    }
+    r_cur <- r_chunk_end + 1L
+  }
+  dest
+}
+
 rr_row_sum_range <- function(base, row, c_start, c_end, ctx="row_sum") {
   to_i1 <- function(v, what) {
     if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
@@ -1688,6 +1875,248 @@ rr_col_sum_range <- function(base, col, r_start, r_end, ctx="col_sum") {
     )
   }
   sum(base[rs:re, c])
+}
+
+rr_col_reduce_range <- function(base, col, r_start, r_end, op, ctx="col_reduce") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  if (!is.matrix(base)) {
+    rr_type_error(paste0(ctx, " base must be a matrix"), "E1002", ctx)
+  }
+  c <- to_i1(col, paste0(ctx, " col"))
+  rs <- to_i1(r_start, paste0(ctx, " row_start"))
+  re <- to_i1(r_end, paste0(ctx, " row_end"))
+  if (re < rs) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    ))
+  }
+  if (c < 1L || c > ncol(base)) {
+    rr_bounds_error(paste0(ctx, " col out of bounds: ", c), "E2007", ctx)
+  }
+  if (rs < 1L || re > nrow(base)) {
+    rr_bounds_error(
+      paste0(ctx, " row range out of bounds: [", rs, ", ", re, "]"),
+      "E2007",
+      ctx
+    )
+  }
+  vals <- base[rs:re, c]
+  switch(
+    as.character(op),
+    "sum" = sum(vals),
+    "prod" = prod(vals),
+    "min" = min(vals),
+    "max" = max(vals),
+    rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+  )
+}
+
+rr_tile_col_binop_assign <- function(dest, lhs_src, rhs_src, col, r_start, r_end, op, tile, ctx="tile_col_map") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  rs <- to_i1(r_start, paste0(ctx, " row_start"))
+  re <- to_i1(r_end, paste0(ctx, " row_end"))
+  t <- to_i1(tile, paste0(ctx, " tile"))
+  if (t <= 0L) rr_value_error(paste0(ctx, " tile must be > 0"), "E2001", ctx)
+  if (re < rs) return(dest)
+  cur <- rs
+  while (cur <= re) {
+    chunk_end <- min(re, cur + t - 1L)
+    dest <- rr_col_binop_assign(dest, lhs_src, rhs_src, col, cur, chunk_end, op, ctx)
+    cur <- chunk_end + 1L
+  }
+  dest
+}
+
+rr_tile_col_reduce_range <- function(base, col, r_start, r_end, op, tile, ctx="tile_col_reduce") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  rs <- to_i1(r_start, paste0(ctx, " row_start"))
+  re <- to_i1(r_end, paste0(ctx, " row_end"))
+  t <- to_i1(tile, paste0(ctx, " tile"))
+  if (t <= 0L) rr_value_error(paste0(ctx, " tile must be > 0"), "E2001", ctx)
+  if (re < rs) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    ))
+  }
+  acc <- switch(
+    as.character(op),
+    "sum" = 0,
+    "prod" = 1,
+    "min" = Inf,
+    "max" = -Inf,
+    rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+  )
+  cur <- rs
+  while (cur <= re) {
+    chunk_end <- min(re, cur + t - 1L)
+    chunk <- rr_col_reduce_range(base, col, cur, chunk_end, op, ctx)
+    acc <- switch(
+      as.character(op),
+      "sum" = acc + chunk,
+      "prod" = acc * chunk,
+      "min" = min(acc, chunk),
+      "max" = max(acc, chunk),
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    )
+    cur <- chunk_end + 1L
+  }
+  acc
+}
+
+rr_can_col_reduce_range <- function(base, col, r_start, r_end) {
+  to_i1 <- function(v) {
+    if (length(v) != 1L || is.na(v) || !is.numeric(v) || v != floor(v)) return(NA_integer_)
+    as.integer(v)
+  }
+  if (!is.matrix(base)) return(FALSE)
+  c <- to_i1(col)
+  rs <- to_i1(r_start)
+  re <- to_i1(r_end)
+  if (is.na(c) || is.na(rs) || is.na(re)) return(FALSE)
+  if (re < rs) return(TRUE)
+  c >= 1L && c <= ncol(base) && rs >= 1L && re <= nrow(base)
+}
+
+rr_matrix_reduce_rect <- function(base, r_start, r_end, c_start, c_end, op, ctx="matrix_reduce") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  if (!is.matrix(base)) {
+    rr_type_error(paste0(ctx, " base must be a matrix"), "E1002", ctx)
+  }
+  rs <- to_i1(r_start, paste0(ctx, " row_start"))
+  re <- to_i1(r_end, paste0(ctx, " row_end"))
+  cs <- to_i1(c_start, paste0(ctx, " col_start"))
+  ce <- to_i1(c_end, paste0(ctx, " col_end"))
+  if (re < rs || ce < cs) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    ))
+  }
+  if (rs < 1L || re > nrow(base) || cs < 1L || ce > ncol(base)) {
+    rr_bounds_error(
+      paste0(ctx, " matrix range out of bounds: rows [", rs, ", ", re, "] cols [", cs, ", ", ce, "]"),
+      "E2007",
+      ctx
+    )
+  }
+  slice <- base[rs:re, cs:ce]
+  switch(
+    as.character(op),
+    "sum" = sum(slice),
+    "prod" = prod(slice),
+    "min" = min(slice),
+    "max" = max(slice),
+    rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+  )
+}
+
+rr_tile_matrix_reduce_rect <- function(base, r_start, r_end, c_start, c_end, op, tile_r, tile_c, ctx="tile_matrix_reduce") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  rs <- to_i1(r_start, paste0(ctx, " row_start"))
+  re <- to_i1(r_end, paste0(ctx, " row_end"))
+  cs <- to_i1(c_start, paste0(ctx, " col_start"))
+  ce <- to_i1(c_end, paste0(ctx, " col_end"))
+  tr <- to_i1(tile_r, paste0(ctx, " tile_rows"))
+  tc <- to_i1(tile_c, paste0(ctx, " tile_cols"))
+  if (tr <= 0L || tc <= 0L) rr_value_error(paste0(ctx, " tile sizes must be > 0"), "E2001", ctx)
+  if (re < rs || ce < cs) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    ))
+  }
+
+  acc <- switch(
+    as.character(op),
+    "sum" = 0,
+    "prod" = 1,
+    "min" = Inf,
+    "max" = -Inf,
+    rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+  )
+  r_cur <- rs
+  while (r_cur <= re) {
+    r_chunk_end <- min(re, r_cur + tr - 1L)
+    c_cur <- cs
+    while (c_cur <= ce) {
+      c_chunk_end <- min(ce, c_cur + tc - 1L)
+      chunk <- rr_matrix_reduce_rect(base, r_cur, r_chunk_end, c_cur, c_chunk_end, op, ctx)
+      acc <- switch(
+        as.character(op),
+        "sum" = acc + chunk,
+        "prod" = acc * chunk,
+        "min" = min(acc, chunk),
+        "max" = max(acc, chunk),
+        rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+      )
+      c_cur <- c_chunk_end + 1L
+    }
+    r_cur <- r_chunk_end + 1L
+  }
+  acc
+}
+
+rr_can_matrix_reduce_rect <- function(base, r_start, r_end, c_start, c_end) {
+  to_i1 <- function(v) {
+    if (length(v) != 1L || is.na(v) || !is.numeric(v) || v != floor(v)) return(NA_integer_)
+    as.integer(v)
+  }
+  if (!is.matrix(base)) return(FALSE)
+  rs <- to_i1(r_start)
+  re <- to_i1(r_end)
+  cs <- to_i1(c_start)
+  ce <- to_i1(c_end)
+  if (is.na(rs) || is.na(re) || is.na(cs) || is.na(ce)) return(FALSE)
+  if (re < rs || ce < cs) return(TRUE)
+  rs >= 1L && re <= nrow(base) && cs >= 1L && ce <= ncol(base)
 }
 
 rr_array3_dims <- function(base, ctx="array3") {
@@ -1914,6 +2343,87 @@ rr_dim3_binop_assign <- function(dest, lhs_src, rhs_src, fixed_a, fixed_b, start
   rr_array3_assign_axis(dest, rr_array3_binop(lv, rv, op, ctx), 3L, fixed_a, fixed_b, idx, ctx)
 }
 
+rr_array3_binop_cube_assign <- function(dest, lhs_src, rhs_src, i_start, i_end, j_start, j_end, k_start, k_end, op, ctx="array3_cube_map") {
+  dims <- rr_array3_dims(dest, ctx)
+  ii <- rr_array3_range_idx(i_start, i_end, dims[[1L]], "dim1", ctx)
+  jj <- rr_array3_range_idx(j_start, j_end, dims[[2L]], "dim2", ctx)
+  kk <- rr_array3_range_idx(k_start, k_end, dims[[3L]], "dim3", ctx)
+  if (length(ii) == 0L || length(jj) == 0L || length(kk) == 0L) return(dest)
+
+  to_cube_slice <- function(src, label) {
+    if (is.array(src) && length(dim(src)) == 3L) {
+      sd <- rr_array3_dims(src, ctx)
+      if (max(ii) > sd[[1L]] || max(jj) > sd[[2L]] || max(kk) > sd[[3L]]) {
+        rr_bounds_error(
+          paste0(ctx, " ", label, " source out of bounds"),
+          "E2007",
+          ctx
+        )
+      }
+      return(src[ii, jj, kk, drop = FALSE])
+    }
+    if (length(src) != 1L) {
+      rr_value_error(
+        paste0(ctx, " ", label, " source must be scalar or rank-3 array"),
+        "E2001",
+        ctx
+      )
+    }
+    src
+  }
+
+  lv <- to_cube_slice(lhs_src, "lhs")
+  rv <- to_cube_slice(rhs_src, "rhs")
+  dest[ii, jj, kk] <- rr_array3_binop(lv, rv, op, ctx)
+  dest
+}
+
+rr_tile_array3_binop_cube_assign <- function(dest, lhs_src, rhs_src, i_start, i_end, j_start, j_end, k_start, k_end, op, tile_i, tile_j, tile_k, ctx="tile_array3_cube_map") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  is <- to_i1(i_start, paste0(ctx, " dim1_start"))
+  ie <- to_i1(i_end, paste0(ctx, " dim1_end"))
+  js <- to_i1(j_start, paste0(ctx, " dim2_start"))
+  je <- to_i1(j_end, paste0(ctx, " dim2_end"))
+  ks <- to_i1(k_start, paste0(ctx, " dim3_start"))
+  ke <- to_i1(k_end, paste0(ctx, " dim3_end"))
+  ti <- to_i1(tile_i, paste0(ctx, " tile_dim1"))
+  tj <- to_i1(tile_j, paste0(ctx, " tile_dim2"))
+  tk <- to_i1(tile_k, paste0(ctx, " tile_dim3"))
+  if (ti <= 0L || tj <= 0L || tk <= 0L) {
+    rr_value_error(paste0(ctx, " tile sizes must be > 0"), "E2001", ctx)
+  }
+  if (ie < is || je < js || ke < ks) return(dest)
+  i_cur <- is
+  while (i_cur <= ie) {
+    i_chunk_end <- min(ie, i_cur + ti - 1L)
+    j_cur <- js
+    while (j_cur <= je) {
+      j_chunk_end <- min(je, j_cur + tj - 1L)
+      k_cur <- ks
+      while (k_cur <= ke) {
+        k_chunk_end <- min(ke, k_cur + tk - 1L)
+        dest <- rr_array3_binop_cube_assign(
+          dest, lhs_src, rhs_src,
+          i_cur, i_chunk_end,
+          j_cur, j_chunk_end,
+          k_cur, k_chunk_end,
+          op, ctx
+        )
+        k_cur <- k_chunk_end + 1L
+      }
+      j_cur <- j_chunk_end + 1L
+    }
+    i_cur <- i_chunk_end + 1L
+  }
+  dest
+}
+
 rr_dim1_ifelse_assign <- function(dest, cond_lhs, cond_rhs, cmp, then_src, else_src, fixed_a, fixed_b, start, end, ctx="dim1_ifelse") {
   idx <- rr_array3_range_idx(start, end, rr_array3_dims(dest, ctx)[[1L]], "dim1", ctx)
   lhs <- rr_array3_materialize_axis_arg(cond_lhs, 1L, fixed_a, fixed_b, idx, "cond_lhs", ctx)
@@ -1997,6 +2507,112 @@ rr_dim1_reduce_range <- function(base, fixed_a, fixed_b, start, end, op, ctx="di
   rr_array3_reduce_apply(rr_array3_materialize_axis_arg(base, 1L, fixed_a, fixed_b, idx, "base", ctx), op, ctx)
 }
 
+rr_tile_dim1_binop_assign <- function(dest, lhs_src, rhs_src, fixed_a, fixed_b, start, end, op, tile, ctx="tile_dim1_map") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  s <- to_i1(start, paste0(ctx, " start"))
+  e <- to_i1(end, paste0(ctx, " end"))
+  t <- to_i1(tile, paste0(ctx, " tile"))
+  if (t <= 0L) rr_value_error(paste0(ctx, " tile must be > 0"), "E2001", ctx)
+  if (e < s) return(dest)
+  cur <- s
+  while (cur <= e) {
+    chunk_end <- min(e, cur + t - 1L)
+    dest <- rr_dim1_binop_assign(dest, lhs_src, rhs_src, fixed_a, fixed_b, cur, chunk_end, op, ctx)
+    cur <- chunk_end + 1L
+  }
+  dest
+}
+
+rr_tile_dim1_reduce_range <- function(base, fixed_a, fixed_b, start, end, op, tile, ctx="tile_dim1_reduce") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  s <- to_i1(start, paste0(ctx, " start"))
+  e <- to_i1(end, paste0(ctx, " end"))
+  t <- to_i1(tile, paste0(ctx, " tile"))
+  if (t <= 0L) rr_value_error(paste0(ctx, " tile must be > 0"), "E2001", ctx)
+  if (e < s) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    ))
+  }
+  acc <- switch(
+    as.character(op),
+    "sum" = 0,
+    "prod" = 1,
+    "min" = Inf,
+    "max" = -Inf,
+    rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+  )
+  cur <- s
+  while (cur <= e) {
+    chunk_end <- min(e, cur + t - 1L)
+    chunk <- rr_dim1_reduce_range(base, fixed_a, fixed_b, cur, chunk_end, op, ctx)
+    acc <- switch(
+      as.character(op),
+      "sum" = acc + chunk,
+      "prod" = acc * chunk,
+      "min" = min(acc, chunk),
+      "max" = max(acc, chunk),
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    )
+    cur <- chunk_end + 1L
+  }
+  acc
+}
+
+rr_can_dim1_reduce_range <- function(base, fixed_a, fixed_b, start, end) {
+  if (!is.array(base) || length(dim(base)) != 3L) return(FALSE)
+  to_i1 <- function(v) {
+    if (length(v) != 1L || is.na(v) || !is.numeric(v) || v != floor(v)) return(NA_integer_)
+    as.integer(v)
+  }
+  dims <- as.integer(dim(base))
+  fa <- to_i1(fixed_a)
+  fb <- to_i1(fixed_b)
+  s <- to_i1(start)
+  e <- to_i1(end)
+  if (is.na(fa) || is.na(fb) || is.na(s) || is.na(e)) return(FALSE)
+  if (fa < 1L || fa > dims[[2L]] || fb < 1L || fb > dims[[3L]]) return(FALSE)
+  if (e < s) return(TRUE)
+  s >= 1L && e <= dims[[1L]]
+}
+
+rr_can_array3_reduce_cube <- function(base, i_start, i_end, j_start, j_end, k_start, k_end) {
+  if (!is.array(base) || length(dim(base)) != 3L) return(FALSE)
+  to_i1 <- function(v) {
+    if (length(v) != 1L || is.na(v) || !is.numeric(v) || v != floor(v)) return(NA_integer_)
+    as.integer(v)
+  }
+  dims <- as.integer(dim(base))
+  is <- to_i1(i_start)
+  ie <- to_i1(i_end)
+  js <- to_i1(j_start)
+  je <- to_i1(j_end)
+  ks <- to_i1(k_start)
+  ke <- to_i1(k_end)
+  if (is.na(is) || is.na(ie) || is.na(js) || is.na(je) || is.na(ks) || is.na(ke)) return(FALSE)
+  if (ie < is || je < js || ke < ks) return(TRUE)
+  is >= 1L && ie <= dims[[1L]] &&
+    js >= 1L && je <= dims[[2L]] &&
+    ks >= 1L && ke <= dims[[3L]]
+}
+
 rr_dim2_reduce_range <- function(base, fixed_a, fixed_b, start, end, op, ctx="dim2_reduce") {
   idx <- rr_array3_range_idx(start, end, rr_array3_dims(base, ctx)[[2L]], "dim2", ctx)
   rr_array3_reduce_apply(rr_array3_materialize_axis_arg(base, 2L, fixed_a, fixed_b, idx, "base", ctx), op, ctx)
@@ -2005,6 +2621,95 @@ rr_dim2_reduce_range <- function(base, fixed_a, fixed_b, start, end, op, ctx="di
 rr_dim3_reduce_range <- function(base, fixed_a, fixed_b, start, end, op, ctx="dim3_reduce") {
   idx <- rr_array3_range_idx(start, end, rr_array3_dims(base, ctx)[[3L]], "dim3", ctx)
   rr_array3_reduce_apply(rr_array3_materialize_axis_arg(base, 3L, fixed_a, fixed_b, idx, "base", ctx), op, ctx)
+}
+
+rr_array3_reduce_cube <- function(base, i_start, i_end, j_start, j_end, k_start, k_end, op, ctx="array3_cube_reduce") {
+  dims <- rr_array3_dims(base, ctx)
+  ii <- rr_array3_range_idx(i_start, i_end, dims[[1L]], "dim1", ctx)
+  jj <- rr_array3_range_idx(j_start, j_end, dims[[2L]], "dim2", ctx)
+  kk <- rr_array3_range_idx(k_start, k_end, dims[[3L]], "dim3", ctx)
+  if (length(ii) == 0L || length(jj) == 0L || length(kk) == 0L) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported reduce op: ", op), "E2001", ctx)
+    ))
+  }
+  rr_array3_reduce_apply(base[ii, jj, kk, drop = FALSE], op, ctx)
+}
+
+rr_tile_array3_reduce_cube <- function(base, i_start, i_end, j_start, j_end, k_start, k_end, op, tile_i, tile_j, tile_k, ctx="tile_array3_cube_reduce") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  is <- to_i1(i_start, paste0(ctx, " dim1_start"))
+  ie <- to_i1(i_end, paste0(ctx, " dim1_end"))
+  js <- to_i1(j_start, paste0(ctx, " dim2_start"))
+  je <- to_i1(j_end, paste0(ctx, " dim2_end"))
+  ks <- to_i1(k_start, paste0(ctx, " dim3_start"))
+  ke <- to_i1(k_end, paste0(ctx, " dim3_end"))
+  ti <- to_i1(tile_i, paste0(ctx, " tile_dim1"))
+  tj <- to_i1(tile_j, paste0(ctx, " tile_dim2"))
+  tk <- to_i1(tile_k, paste0(ctx, " tile_dim3"))
+  if (ti <= 0L || tj <= 0L || tk <= 0L) {
+    rr_value_error(paste0(ctx, " tile sizes must be > 0"), "E2001", ctx)
+  }
+  if (ie < is || je < js || ke < ks) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported reduce op: ", op), "E2001", ctx)
+    ))
+  }
+  acc <- switch(
+    as.character(op),
+    "sum" = 0,
+    "prod" = 1,
+    "min" = Inf,
+    "max" = -Inf,
+    rr_value_error(paste0(ctx, " unsupported reduce op: ", op), "E2001", ctx)
+  )
+  i_cur <- is
+  while (i_cur <= ie) {
+    i_chunk_end <- min(ie, i_cur + ti - 1L)
+    j_cur <- js
+    while (j_cur <= je) {
+      j_chunk_end <- min(je, j_cur + tj - 1L)
+      k_cur <- ks
+      while (k_cur <= ke) {
+        k_chunk_end <- min(ke, k_cur + tk - 1L)
+        chunk <- rr_array3_reduce_cube(
+          base,
+          i_cur, i_chunk_end,
+          j_cur, j_chunk_end,
+          k_cur, k_chunk_end,
+          op, ctx
+        )
+        acc <- switch(
+          as.character(op),
+          "sum" = acc + chunk,
+          "prod" = acc * chunk,
+          "min" = min(acc, chunk),
+          "max" = max(acc, chunk),
+          rr_value_error(paste0(ctx, " unsupported reduce op: ", op), "E2001", ctx)
+        )
+        k_cur <- k_chunk_end + 1L
+      }
+      j_cur <- j_chunk_end + 1L
+    }
+    i_cur <- i_chunk_end + 1L
+  }
+  acc
 }
 
 rr_dim1_shift_assign <- function(dest, src, fixed_a, fixed_b, d_start, d_end, s_start, s_end, ctx="dim1_shift") {
@@ -2263,6 +2968,158 @@ if (.rr_env$fast_runtime) {
     dest[ii] <- values
     dest
   }
+}
+
+rr_can_same_or_scalar <- function(a, b) {
+  la <- length(a); lb <- length(b)
+  la == lb || la == 1L || lb == 1L || la == 0L || lb == 0L
+}
+
+rr_reduce_range <- function(base, start, end, op, ctx="reduce_range") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  s <- to_i1(start, paste0(ctx, " start"))
+  e <- to_i1(end, paste0(ctx, " end"))
+  if (e < s) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    ))
+  }
+  if (s < 1L || e > length(base)) {
+    rr_bounds_error(
+      paste0(ctx, " range out of bounds: [", s, ", ", e, "]"),
+      "E2007",
+      ctx
+    )
+  }
+  vals <- base[s:e]
+  switch(
+    as.character(op),
+    "sum" = sum(vals),
+    "prod" = prod(vals),
+    "min" = min(vals),
+    "max" = max(vals),
+    rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+  )
+}
+
+rr_can_reduce_range <- function(base, start, end) {
+  to_i1 <- function(v) {
+    if (length(v) != 1L || is.na(v) || !is.numeric(v) || v != floor(v)) return(NA_integer_)
+    as.integer(v)
+  }
+  s <- to_i1(start)
+  e <- to_i1(end)
+  if (is.na(s) || is.na(e)) return(FALSE)
+  if (e < s) return(TRUE)
+  s >= 1L && e <= length(base)
+}
+
+rr_tile_map_range <- function(dest, lhs_src, rhs_src, start, end, op, tile, ctx="tile_map") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  s <- to_i1(start, paste0(ctx, " start"))
+  e <- to_i1(end, paste0(ctx, " end"))
+  t <- to_i1(tile, paste0(ctx, " tile"))
+  if (t <= 0L) rr_value_error(paste0(ctx, " tile must be > 0"), "E2001", ctx)
+  if (e < s) return(dest)
+  if (s < 1L || e > length(dest)) {
+    rr_bounds_error(
+      paste0(ctx, " range out of bounds: [", s, ", ", e, "]"),
+      "E2007",
+      ctx
+    )
+  }
+
+  materialize <- function(src, cs, ce, label) {
+    if (length(src) == 1L) {
+      rep.int(src, ce - cs + 1L)
+    } else {
+      rr_index1_read_vec(src, cs:ce, paste0(ctx, " ", label))
+    }
+  }
+
+  cur <- s
+  while (cur <= e) {
+    chunk_end <- min(e, cur + t - 1L)
+    lv <- materialize(lhs_src, cur, chunk_end, "lhs")
+    rv <- materialize(rhs_src, cur, chunk_end, "rhs")
+    out <- switch(
+      as.character(op),
+      "+" = lv + rv,
+      "-" = lv - rv,
+      "*" = lv * rv,
+      "/" = lv / rv,
+      "%%" = lv %% rv,
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    )
+    dest <- rr_assign_slice(dest, cur, chunk_end, out, ctx)
+    cur <- chunk_end + 1L
+  }
+  dest
+}
+
+rr_tile_reduce_range <- function(base, start, end, op, tile, ctx="tile_reduce") {
+  to_i1 <- function(v, what) {
+    if (length(v) != 1L) rr_type_error(paste0(what, " must be scalar"), "E1002", what)
+    if (is.na(v)) rr_value_error(paste0(what, " is NA"), "E2001", what)
+    if (!is.numeric(v)) rr_type_error(paste0(what, " must be numeric"), "E1002", what)
+    if (v != floor(v)) rr_type_error(paste0(what, " must be integer"), "E1002", what)
+    as.integer(v)
+  }
+  s <- to_i1(start, paste0(ctx, " start"))
+  e <- to_i1(end, paste0(ctx, " end"))
+  t <- to_i1(tile, paste0(ctx, " tile"))
+  if (t <= 0L) rr_value_error(paste0(ctx, " tile must be > 0"), "E2001", ctx)
+  if (e < s) {
+    return(switch(
+      as.character(op),
+      "sum" = 0,
+      "prod" = 1,
+      "min" = Inf,
+      "max" = -Inf,
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    ))
+  }
+
+  acc <- switch(
+    as.character(op),
+    "sum" = 0,
+    "prod" = 1,
+    "min" = Inf,
+    "max" = -Inf,
+    rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+  )
+  cur <- s
+  while (cur <= e) {
+    chunk_end <- min(e, cur + t - 1L)
+    chunk <- rr_reduce_range(base, cur, chunk_end, op, ctx)
+    acc <- switch(
+      as.character(op),
+      "sum" = acc + chunk,
+      "prod" = acc * chunk,
+      "min" = min(acc, chunk),
+      "max" = max(acc, chunk),
+      rr_value_error(paste0(ctx, " unsupported op: ", op), "E2001", ctx)
+    )
+    cur <- chunk_end + 1L
+  }
+  acc
 }
 
 # -----------------------------------

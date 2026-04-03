@@ -1,0 +1,19 @@
+Sym_17 <- function(v) 
+{
+  .arg_v <- v
+  rr_mark(35L, 5L);
+  if (((((TRUE & rr_field_exists(.arg_v, "a")) & TRUE) & rr_field_exists(.arg_v, "b")) & TRUE)) {
+    x <- .arg_v[["a"]]
+    y <- .arg_v[["b"]]
+    .phi_30 <- (x + y)
+  } else {
+    rr_mark(36L, 5L);
+    if (((TRUE & rr_field_exists(.arg_v, "a")) & TRUE)) {
+      x_3 <- .arg_v[["a"]]
+      .phi_30 <- x_3
+    } else {
+      .phi_30 <- 0L
+    }
+  }
+  return(.phi_30)
+}

@@ -1,0 +1,36 @@
+Sym_66 <- function(f, x, ys, size) 
+{
+  .arg_f <- f
+  .arg_x <- x
+  .arg_ys <- ys
+  .arg_size <- size
+  width <- length(.arg_ys)
+  nf <- rep.int(.arg_f, width)
+  nx <- rep.int(.arg_x, width)
+  ny <- (.arg_ys - 1.0)
+  if ((.arg_f == 1.0)) {
+    return(rr_idx_cube_vec_i(replace(nf, 1.0, 6.0), nx, replace(ny, 1.0, size), .arg_size))
+  } else {
+    if ((.arg_f == 2.0)) {
+      return(rr_idx_cube_vec_i(replace(nf, 1.0, 6.0), replace(nx, 1.0, size), replace(ny, 1.0, x), .arg_size))
+    } else {
+      if ((.arg_f == 3.0)) {
+        return(rr_idx_cube_vec_i(replace(nf, 1.0, 6.0), replace(nx, 1.0, (.arg_size - (.arg_x - 1.0))), replace(ny, 1.0, 1.0), .arg_size))
+      } else {
+        if ((.arg_f == 4.0)) {
+          return(rr_idx_cube_vec_i(replace(nf, 1.0, 6.0), replace(nx, 1.0, 1.0), replace(ny, 1.0, (.arg_size - (.arg_x - 1.0))), .arg_size))
+        } else {
+          if ((.arg_f == 5.0)) {
+            return(rr_idx_cube_vec_i(replace(nf, 1.0, 1.0), nx, replace(ny, 1.0, size), .arg_size))
+          } else {
+            if ((.arg_f == 6.0)) {
+              return(rr_idx_cube_vec_i(replace(nf, 1.0, 3.0), replace(nx, 1.0, (.arg_size - (.arg_x - 1.0))), replace(ny, 1.0, 1.0), .arg_size))
+            } else {
+              return(rr_idx_cube_vec_i(nf, nx, ny, .arg_size))
+            }
+          }
+        }
+      }
+    }
+  }
+}

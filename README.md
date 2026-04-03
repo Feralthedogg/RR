@@ -3,7 +3,7 @@
 RR is an optimizing compiler for an R-oriented source language.
 It compiles `.rr` programs into self-contained `.R` output, using an SSA-like MIR pipeline,
 the `Tachyon` optimizer, and an embedded runtime for checks and helper operations.
-Current compiler line: `RR Tachyon v7.0.0`.
+Current compiler line: `RR Tachyon v8.0.0`.
 
 ## Documentation Sets
 
@@ -78,13 +78,19 @@ cargo run -- path/to/input.rr -o out.R --no-runtime -O2
 cargo run -- run . -O2
 ```
 
-`run` resolves `.` or a directory to `main.rr`.
+`run` resolves `.` or a directory to `src/main.rr` for managed projects, then
+falls back to root `main.rr` for legacy projects. The entry must define
+`fn main()`. If the source does not already call `main()` at top level, RR
+appends that call automatically for `run`.
 
-### Build a directory tree
+### Build a project
 
 ```bash
-cargo run -- build . --out-dir build -O2
+cargo run -- build . -O2
 ```
+
+If the target directory contains `src/main.rr` or `main.rr`, `build` compiles
+only that project entry into `Build/debug/` without executing it.
 
 ### Watch and recompile
 

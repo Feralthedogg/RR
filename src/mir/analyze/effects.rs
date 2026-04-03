@@ -32,6 +32,14 @@ fn rvalue_is_pure_inner(vid: ValueId, fn_ir: &FnIR, visiting: &mut HashSet<Value
                 && rvalue_is_pure_inner(*rhs, fn_ir, visiting)
         }
         ValueKind::Unary { rhs, .. } => rvalue_is_pure_inner(*rhs, fn_ir, visiting),
+        ValueKind::RecordLit { fields } => fields
+            .iter()
+            .all(|(_, value)| rvalue_is_pure_inner(*value, fn_ir, visiting)),
+        ValueKind::FieldGet { base, .. } => rvalue_is_pure_inner(*base, fn_ir, visiting),
+        ValueKind::FieldSet { base, value, .. } => {
+            rvalue_is_pure_inner(*base, fn_ir, visiting)
+                && rvalue_is_pure_inner(*value, fn_ir, visiting)
+        }
         ValueKind::Phi { args } => args
             .iter()
             .all(|(v, _)| rvalue_is_pure_inner(*v, fn_ir, visiting)),
@@ -135,17 +143,44 @@ pub fn call_is_pure(callee: &str) -> bool {
         | "rr_list_rest"
         | "rr_named_list"
         | "rr_row_sum_range"
+        | "rr_reduce_range"
+        | "rr_can_reduce_range"
+        | "rr_tile_map_range"
+        | "rr_tile_reduce_range"
         | "rr_col_sum_range"
+        | "rr_col_reduce_range"
+        | "rr_can_col_reduce_range"
+        | "rr_tile_col_binop_assign"
+        | "rr_tile_col_reduce_range"
+        | "rr_matrix_reduce_rect"
+        | "rr_can_matrix_reduce_rect"
+        | "rr_tile_matrix_binop_assign"
+        | "rr_tile_matrix_reduce_rect"
         | "rr_dim1_sum_range"
         | "rr_dim2_sum_range"
         | "rr_dim3_sum_range"
         | "rr_dim1_reduce_range"
+        | "rr_can_dim1_reduce_range"
+        | "rr_can_array3_reduce_cube"
+        | "rr_array3_reduce_cube"
+        | "rr_array3_binop_cube_assign"
+        | "rr_tile_array3_reduce_cube"
+        | "rr_tile_array3_binop_cube_assign"
+        | "rr_tile_dim1_binop_assign"
+        | "rr_tile_dim1_reduce_range"
         | "rr_dim2_reduce_range"
         | "rr_dim3_reduce_range"
         | "rr_dim1_read_values"
         | "rr_dim2_read_values"
         | "rr_dim3_read_values"
         | "rr_array3_gather_values"
+        | "rr_can_same_len"
+        | "rr_can_same_or_scalar"
+        | "rr_same_matrix_shape_or_scalar"
+        | "rr_same_array3_shape_or_scalar"
+        | "rr_can_same_matrix_shape_or_scalar"
+        | "rr_can_same_array3_shape_or_scalar"
+        | "rr_matrix_binop_assign"
         | "rr_index_vec_floor"
         | "rr_index1_read_vec"
         | "rr_index1_read_vec_floor"

@@ -1,0 +1,5 @@
+Sym_26 <- function(a) 
+{
+  .arg_a <- a
+  return((.arg_a + .arg_a))
+}

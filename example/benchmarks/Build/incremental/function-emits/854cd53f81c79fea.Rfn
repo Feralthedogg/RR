@@ -1,0 +1,25 @@
+Sym_1 <- function() 
+{
+  n <- 2048.0
+  x <- seq_len(n)
+  y <- seq_len(n)
+  z <- rep.int(0.0, n)
+  step <- 1.0
+  licm_44 <- (step + 1.0)
+  # rr-cse-pruned
+  repeat {
+    if (!(step <= 24.0)) break
+    # rr-cse-pruned
+    z <- ((((x + y) * 0.5) + (x * 0.25)) - (y * 0.1))
+    # rr-cse-pruned
+    x <- Sym_10(z)
+    step <- (step + 1.0)
+    x <- Sym_10(z)
+    next
+  }
+  rr_mark(125L, 5L);
+  print("vector_fusion_tail")
+  rr_mark(126L, 5L);
+  print(z[n])
+  return(Sym_11("vector_fusion_mean", Sym_12(z)))
+}

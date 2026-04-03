@@ -1,0 +1,14 @@
+Sym_76 <- function(f, ys) 
+{
+  .arg_f <- f
+  .arg_ys <- ys
+  if ((.arg_f == 5.0)) {
+    return(rep.int(1.0, length(.arg_ys)))
+  } else {
+    if ((.arg_f == 6.0)) {
+      return(rep.int(3.0, length(.arg_ys)))
+    } else {
+      return(rep.int(0.0, length(.arg_ys)))
+    }
+  }
+}

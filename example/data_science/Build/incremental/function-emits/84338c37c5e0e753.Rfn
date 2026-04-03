@@ -1,0 +1,56 @@
+Sym_1 <- function() 
+{
+  xs <- c(0.8, 1.1, 1.4, 1.8, 7.4, 7.8, 8.1, 8.5, 9.0, 9.3)
+  c1 <- 1.0
+  c2 <- 8.8
+  iter <- 1.0
+  repeat {
+    if (!(iter <= 8.0)) break
+    sum1 <- 0.0
+    sum2 <- 0.0
+    count1 <- 0.0
+    count2 <- 0.0
+    i <- 1.0
+    repeat {
+      if (!(i <= length(xs))) break
+      x <- xs[i]
+      if ((abs((x - c1)) <= abs((x - c2)))) {
+        sum1 <- (sum1 + x)
+        count1 <- (count1 + 1.0)
+      } else {
+        sum2 <- (sum2 + x)
+        count2 <- (count2 + 1.0)
+      }
+      i <- (i + 1.0)
+      next
+    }
+    if ((count1 > 0.0)) {
+      c1 <- (sum1 / count1)
+    } else {
+    }
+    if ((count2 > 0.0)) {
+      c2 <- (sum2 / count2)
+    } else {
+    }
+    iter <- (iter + 1.0)
+    next
+  }
+  inertia <- 0.0
+  i_11 <- 1.0
+  repeat {
+    if (!(i_11 <= length(xs))) break
+    x_12 <- xs[i_11]
+    d1 <- abs((x_12 - c1))
+    d2 <- abs((x_12 - c2))
+    best <- pmin(d1, d2)
+    # rr-cse-pruned
+    inertia <- (inertia + (best * best))
+    i_11 <- (i_11 + 1.0)
+    next
+  }
+  rr_mark(45L, 5L);
+  Sym_20("kmeans_c1", c1)
+  rr_mark(46L, 5L);
+  Sym_20("kmeans_c2", c2)
+  return(Sym_20("kmeans_inertia", inertia))
+}

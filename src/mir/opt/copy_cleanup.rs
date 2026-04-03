@@ -295,6 +295,57 @@ fn rewrite_value_aliases(
                 clone_value_with_kind(fn_ir, vid, ValueKind::Intrinsic { op, args: new_args })
             }
         }
+        ValueKind::RecordLit { fields } => {
+            let new_fields: Vec<_> = fields
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        rewrite_value_aliases(fn_ir, *value, aliases, changed),
+                    )
+                })
+                .collect();
+            if new_fields == fields {
+                vid
+            } else {
+                *changed = true;
+                clone_value_with_kind(fn_ir, vid, ValueKind::RecordLit { fields: new_fields })
+            }
+        }
+        ValueKind::FieldGet { base, field } => {
+            let new_base = rewrite_value_aliases(fn_ir, base, aliases, changed);
+            if new_base == base {
+                vid
+            } else {
+                *changed = true;
+                clone_value_with_kind(
+                    fn_ir,
+                    vid,
+                    ValueKind::FieldGet {
+                        base: new_base,
+                        field,
+                    },
+                )
+            }
+        }
+        ValueKind::FieldSet { base, field, value } => {
+            let new_base = rewrite_value_aliases(fn_ir, base, aliases, changed);
+            let new_value = rewrite_value_aliases(fn_ir, value, aliases, changed);
+            if new_base == base && new_value == value {
+                vid
+            } else {
+                *changed = true;
+                clone_value_with_kind(
+                    fn_ir,
+                    vid,
+                    ValueKind::FieldSet {
+                        base: new_base,
+                        field,
+                        value: new_value,
+                    },
+                )
+            }
+        }
         ValueKind::Index1D {
             base,
             idx,

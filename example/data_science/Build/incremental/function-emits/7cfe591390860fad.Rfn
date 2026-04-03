@@ -1,0 +1,7 @@
+Sym_1 <- function(x, rate, cap) 
+{
+  .arg_x <- x
+  .arg_rate <- rate
+  .arg_cap <- cap
+  return((.arg_x + ((.arg_rate * .arg_x) * (1.0 - (.arg_x / .arg_cap)))))
+}

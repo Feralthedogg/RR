@@ -1,0 +1,17 @@
+Sym_13 <- function(x) 
+{
+  .arg_x <- x
+  g <- (.arg_x / 2.0)
+  if ((g == 0.0)) {
+    return(0.0)
+  } else {
+    i <- 0.0
+    repeat {
+      if (!(i < 5.0)) break
+      g <- ((g + (.arg_x / g)) * 0.5)
+      i <- (i + 1.0)
+      next
+    }
+    return(g)
+  }
+}

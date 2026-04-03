@@ -275,10 +275,8 @@ impl<'a> Lexer<'a> {
                 }
             }
             Some('.') => {
-                // Check if float first? No, floats handled in digit branch if starts with digit.
-                // But .123 is valid float?
-                // Current lexer handles leading digit floats.
-                // If starts with ., check if next is digit?
+                // Support `.123` as a float literal before treating `.` as a
+                // standalone token.
                 let mut is_start_float = false;
                 {
                     let mut lookahead = self.chars.clone();

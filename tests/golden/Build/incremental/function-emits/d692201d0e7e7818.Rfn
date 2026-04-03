@@ -1,0 +1,23 @@
+Sym_1 <- function(n) 
+{
+  .arg_n <- n
+  s <- 0L
+  i <- 1L
+  repeat {
+    rr_mark(3L, 3L);
+    if (!(i <= .arg_n)) break
+    if ((i == 3L)) {
+      i <- (i + 1L)
+      next
+    } else {
+      if ((i == 6L)) {
+        break
+      } else {
+        s <- (s + i)
+        i <- (i + 1L)
+        next
+      }
+    }
+  }
+  return(s)
+}

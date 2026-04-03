@@ -1,0 +1,32 @@
+Sym_1 <- function() 
+{
+  n <- 24.0
+  field <- rep.int(0.0, n)
+  rr_mark(6L, 5L);
+  field[8.0] <- 1.0
+  rr_mark(7L, 5L);
+  field[9.0] <- 0.8
+  rr_mark(8L, 5L);
+  field[10.0] <- 0.4
+  c <- 0.25
+  step <- 1.0
+  licm_45 <- (step + 1.0)
+  # rr-cse-pruned
+  repeat {
+    if (!(step <= 20.0)) break
+    next_field <- Sym_7(field)
+    i <- 1.0
+    .__rr_cse_58 <- i:n
+    # rr-cse-pruned
+    next_field <- rr_assign_slice(next_field, i, n, (field - (c * (field - rr_gather(field, rr_wrap_index_vec_i((.__rr_cse_58 - 1.0), 1.0, n, 1.0))))))
+    field <- next_field
+    step <- (step + 1.0)
+    next
+  }
+  Sym_13(field)
+  rr_mark(125L, 5L);
+  print("advection_mass")
+  rr_mark(126L, 5L);
+  print(Sym_13(field))
+  return(Sym_12("advection_probe", field[12.0]))
+}

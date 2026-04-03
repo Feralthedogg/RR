@@ -1,0 +1,6 @@
+Sym_13 <- function(seed, v) 
+{
+  .arg_seed <- seed
+  .arg_v <- v
+  return((.arg_v + .arg_seed))
+}

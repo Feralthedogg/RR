@@ -1,0 +1,36 @@
+Sym_72 <- function(f, x, ys, size) 
+{
+  .arg_f <- f
+  .arg_x <- x
+  .arg_ys <- ys
+  .arg_size <- size
+  width <- length(.arg_ys)
+  nf <- rep.int(.arg_f, width)
+  nx <- rep.int(.arg_x, width)
+  ny <- (.arg_ys + 1.0)
+  if ((.arg_f == 1.0)) {
+    return(rr_idx_cube_vec_i(rr_assign_slice(nf, size, size, 5.0), nx, rr_assign_slice(ny, size, size, 1.0), .arg_size))
+  } else {
+    if ((.arg_f == 2.0)) {
+      return(rr_idx_cube_vec_i(rr_assign_slice(nf, size, size, 5.0), rr_assign_slice(nx, size, size, size), rr_assign_slice(ny, size, size, (.arg_size - (.arg_x - 1.0))), .arg_size))
+    } else {
+      if ((.arg_f == 3.0)) {
+        return(rr_idx_cube_vec_i(rr_assign_slice(nf, size, size, 5.0), rr_assign_slice(nx, size, size, (.arg_size - (.arg_x - 1.0))), rr_assign_slice(ny, size, size, size), .arg_size))
+      } else {
+        if ((.arg_f == 4.0)) {
+          return(rr_idx_cube_vec_i(rr_assign_slice(nf, size, size, 5.0), rr_assign_slice(nx, size, size, 1.0), rr_assign_slice(ny, size, size, x), .arg_size))
+        } else {
+          if ((.arg_f == 5.0)) {
+            return(rr_idx_cube_vec_i(rr_assign_slice(nf, size, size, 3.0), rr_assign_slice(nx, size, size, (.arg_size - (.arg_x - 1.0))), rr_assign_slice(ny, size, size, size), .arg_size))
+          } else {
+            if ((.arg_f == 6.0)) {
+              return(rr_idx_cube_vec_i(rr_assign_slice(nf, size, size, 1.0), nx, rr_assign_slice(ny, size, size, 1.0), .arg_size))
+            } else {
+              return(rr_idx_cube_vec_i(nf, nx, ny, .arg_size))
+            }
+          }
+        }
+      }
+    }
+  }
+}

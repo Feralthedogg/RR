@@ -1,0 +1,79 @@
+Sym_287 <- function(temp, q_v, q_c, q_r, q_i, q_s, q_g, size) 
+{
+  .arg_temp <- temp
+  .arg_q_v <- q_v
+  .arg_q_c <- q_c
+  .arg_q_r <- q_r
+  .arg_q_i <- q_i
+  .arg_q_s <- q_s
+  .arg_q_g <- q_g
+  .arg_size <- size
+  heat <- rep.int(0.0, .arg_size)
+  L_v <- 2500000.0
+  L_f <- 330000.0
+  L_s <- 2800000.0
+  cp <- 1004.0
+  i <- 1.0
+  # rr-cse-pruned
+  licm_71 <- -5.0
+  licm_83 <- -15.0
+  licm_105 <- (0.005 * L_s)
+  repeat {
+    if (!(i <= .arg_size)) break
+    ii <- i
+    T <- .arg_temp[i]
+    T_c <- (T - 273.15)
+    qv <- .arg_q_v[i]
+    qc <- .arg_q_c[i]
+    qr <- .arg_q_r[i]
+    qi <- .arg_q_i[i]
+    qs <- .arg_q_s[i]
+    qg <- .arg_q_g[i]
+    tendency_T <- 0.0
+    if ((T_c < licm_71)) {
+      if ((qc > 0.0001)) {
+        rate <- (0.01 * qc)
+        tendency_T <- (rate * L_f)
+      } else {
+      }
+      .__pc_src_tmp0 <- T_c
+      .__pc_src_tmp1 <- T
+      .__pc_src_tmp2 <- qv
+      .__pc_src_tmp3 <- qs
+      .__pc_src_tmp4 <- qg
+      T_c <- .__pc_src_tmp0
+      T <- .__pc_src_tmp1
+      qv <- .__pc_src_tmp2
+      qs <- .__pc_src_tmp3
+      qg <- .__pc_src_tmp4
+      ii <- i
+    } else {
+    }
+    if ((T_c < -15.0)) {
+      es_ice <- (6.11 * exp(((22.5 * T_c) / (T + 273.15))))
+      if ((qv > 0.01)) {
+        tendency_T <- (tendency_T + (0.005 * L_s))
+      } else {
+      }
+    } else {
+    }
+    if ((T_c > 0.0)) {
+      melt_rate <- 0.0
+      if ((qs > 0.0)) {
+        melt_rate <- (qs * 0.05)
+      } else {
+      }
+      if ((qg > 0.0)) {
+        melt_rate <- (melt_rate + (qg * 0.02))
+      } else {
+      }
+      tendency_T <- (tendency_T - (melt_rate * L_f))
+    } else {
+    }
+    rr_mark(1333L, 9L);
+    heat[rr_index1_write(ii, "index")] <- (tendency_T / cp)
+    i <- (i + 1.0)
+    next
+  }
+  return(heat)
+}

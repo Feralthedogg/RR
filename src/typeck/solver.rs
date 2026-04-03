@@ -835,6 +835,90 @@ fn validate_strict(all_fns: &FxHashMap<String, FnIR>) -> Vec<RRException> {
                     }
                 }
             }
+            if has_explicit_hints && let ValueKind::FieldGet { base, field } = &v.kind {
+                let base_term = &fn_ir.values[*base].value_term;
+                if base_term.has_exact_named_fields()
+                    && base_term.exact_field_value(field).is_none()
+                {
+                    errors.push(
+                        DiagnosticBuilder::new(
+                            "RR.TypeError",
+                            RRCode::E1002,
+                            Stage::Mir,
+                            format!(
+                                "strict mode field '{}' is not present in the visible dataframe schema for function '{}'",
+                                field, fname
+                            ),
+                        )
+                        .at(v.span)
+                        .constraint(
+                            v.span,
+                            format!("field '{}' must exist in the dataframe schema", field),
+                        )
+                        .use_site(v.span, "used here as a named dataframe field access")
+                        .fix("change the field name or widen/remove the dataframe schema hint")
+                        .build(),
+                    );
+                }
+            }
+            if has_explicit_hints && let ValueKind::FieldSet { base, field, value } = &v.kind {
+                let base_term = &fn_ir.values[*base].value_term;
+                if base_term.has_exact_named_fields() {
+                    let expected_field = base_term.exact_field_value(field);
+                    if expected_field.is_none() {
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.TypeError",
+                                RRCode::E1002,
+                                Stage::Mir,
+                                format!(
+                                    "strict mode field '{}' is not present in the visible dataframe schema for function '{}'",
+                                    field, fname
+                                ),
+                            )
+                            .at(v.span)
+                            .constraint(
+                                v.span,
+                                format!("field '{}' must exist in the dataframe schema", field),
+                            )
+                            .use_site(v.span, "used here as a named dataframe field assignment")
+                            .fix("change the field name or widen/remove the dataframe schema hint")
+                            .build(),
+                        );
+                    } else {
+                        let expected_field = expected_field.unwrap_or(TypeTerm::Any);
+                        let got_term = fn_ir.values[*value].value_term.clone();
+                        if !expected_field.is_any()
+                            && !got_term.is_any()
+                            && !expected_field.compatible_with(&got_term)
+                        {
+                            errors.push(
+                                DiagnosticBuilder::new(
+                                    "RR.TypeError",
+                                    RRCode::E1011,
+                                    Stage::Mir,
+                                    format!(
+                                        "dataframe field '{}' expects {:?}, got {:?} in function '{}'",
+                                        field, expected_field, got_term, fname
+                                    ),
+                                )
+                                .at(v.span)
+                                .origin(
+                                    fn_ir.values[*value].span,
+                                    format!("assigned field value is inferred as {:?}", got_term),
+                                )
+                                .constraint(
+                                    v.span,
+                                    format!("field '{}' is constrained to {:?}", field, expected_field),
+                                )
+                                .use_site(v.span, "used here as a dataframe field assignment")
+                                .fix("cast the assigned value or widen the dataframe schema hint")
+                                .build(),
+                            );
+                        }
+                    }
+                }
+            }
             if has_explicit_hints
                 && let ValueKind::Call { callee, args, .. } = &v.kind
                 && matches!(callee.as_str(), "rr_field_get" | "rr_field_set")
@@ -1617,6 +1701,23 @@ fn infer_value_type(
                 out = out.join(fn_ir.values[*a].value_ty);
             }
             out
+        }
+        ValueKind::RecordLit { fields } => type_state_from_term(&TypeTerm::NamedList(
+            fields
+                .iter()
+                .map(|(name, value)| (name.clone(), fn_ir.values[*value].value_term.clone()))
+                .collect(),
+        )),
+        ValueKind::FieldGet { base, field } => type_state_from_term(
+            &fn_ir.values[*base]
+                .value_term
+                .field_value_named(Some(field.as_str())),
+        ),
+        ValueKind::FieldSet { base, field, value } => {
+            let updated = fn_ir.values[*base]
+                .value_term
+                .updated_field_value_named(field, &fn_ir.values[*value].value_term);
+            refine_type_with_term(fn_ir.values[*base].value_ty, &updated)
         }
         ValueKind::Call {
             callee,

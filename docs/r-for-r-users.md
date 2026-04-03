@@ -252,7 +252,8 @@ Good:
 
 ```rr
 fn enrich(df: dataframe{left: vector<int>, right: vector<float>}) {
-  let out = rr_field_set(df, "right", rr_field_get(df, "right") + 1.0)
+  df.right = df.right + 1.0
+  let out = df
   out
 }
 ```

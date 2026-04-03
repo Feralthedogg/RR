@@ -1,0 +1,16 @@
+Sym_119 <- function(x, n_l, n_r, n_d, n_u, size) 
+{
+  n_d <- rr_index_vec_floor(n_d)
+  n_l <- rr_index_vec_floor(n_l)
+  n_r <- rr_index_vec_floor(n_r)
+  n_u <- rr_index_vec_floor(n_u)
+  .arg_x <- x
+  .arg_n_l <- n_l
+  .arg_n_r <- n_r
+  .arg_n_d <- n_d
+  .arg_n_u <- n_u
+  .arg_size <- size
+  # rr-cse-pruned
+  y <- ((4.0001 * .arg_x) - (((rr_gather(.arg_x, .arg_n_l) + rr_gather(.arg_x, .arg_n_r)) + rr_gather(.arg_x, .arg_n_d)) + rr_gather(.arg_x, .arg_n_u)))
+  return(y)
+}

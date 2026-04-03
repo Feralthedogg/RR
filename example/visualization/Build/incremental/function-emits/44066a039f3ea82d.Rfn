@@ -1,0 +1,17 @@
+Sym_1 <- function() 
+{
+  outfile <- "rr_stats_glm_predict_plot_modern.png"
+  train <- base::data.frame(x = c(-2L, -1L, 0L, 1L, 2L, 3L), y = c(-3.1, -1.4, 0.2, 2.0, 3.8, 5.9))
+  grid <- base::data.frame(x = c(-2L, -1L, 0L, 1L, 2L, 3L, 4L))
+  model <- stats::glm(stats::as.formula("y ~ x"), data = train)
+  predicted <- stats::predict(model, newdata = grid)
+  # rr-cse-pruned
+  fit <- base::data.frame(x = grid[["x"]], predicted = predicted)
+  # rr-cse-pruned
+  p <- ((((ggplot2::ggplot(train, ggplot2::aes(x = x, y = y)) + ggplot2::geom_point(color = "steelblue", size = 2.6)) + ggplot2::geom_line(data = fit, mapping = ggplot2::aes(x = x, y = predicted), color = "tomato", linewidth = 1.1)) + ggplot2::ggtitle("RR modern + stats::glm/predict")) + ggplot2::theme_minimal())
+  rr_mark(29L, 5L);
+  ggplot2::ggsave(filename = outfile, plot = p, width = 8L, height = 4.5, dpi = 120L)
+  rr_mark(30L, 5L);
+  print("saved_plot")
+  return(print(outfile))
+}

@@ -1,0 +1,6 @@
+Sym_4 <- function(f, x) 
+{
+  .arg_f <- f
+  .arg_x <- x
+  return(rr_call_closure(.arg_f, rr_call_closure(.arg_f, .arg_x)))
+}

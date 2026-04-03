@@ -8,8 +8,14 @@ pub enum Axis3D {
     Dim3,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum MemoryStrideClass {
+    Contiguous,
+    Strided,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum VectorAccessOperand3D {
+pub(crate) enum VectorAccessOperand3D {
     Scalar(ValueId),
     Vector(ValueId),
 }
@@ -515,9 +521,9 @@ pub(super) enum ProofOutcome {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct VectorApplySite {
-    pub(super) preheader: BlockId,
-    pub(super) exit_bb: BlockId,
+pub(crate) struct VectorApplySite {
+    pub(crate) preheader: BlockId,
+    pub(crate) exit_bb: BlockId,
 }
 
 #[derive(Clone, Copy)]
@@ -527,11 +533,11 @@ pub(super) struct VectorLoopRange {
 }
 
 #[derive(Debug)]
-pub(super) struct PreparedVectorAssignment {
-    pub(super) dest_var: VarId,
-    pub(super) out_val: ValueId,
-    pub(super) shadow_vars: Vec<VarId>,
-    pub(super) shadow_idx: Option<ValueId>,
+pub(crate) struct PreparedVectorAssignment {
+    pub(crate) dest_var: VarId,
+    pub(crate) out_val: ValueId,
+    pub(crate) shadow_vars: Vec<VarId>,
+    pub(crate) shadow_idx: Option<ValueId>,
 }
 
 #[derive(Clone, Copy)]

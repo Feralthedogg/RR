@@ -47,6 +47,10 @@ fn decode_seed(data: &[u8]) -> (u64, usize) {
     (seed, count)
 }
 
+fn selector(data: &[u8], idx: usize) -> usize {
+    data.get(idx).copied().unwrap_or(0) as usize
+}
+
 fn write_case(root: &Path, entry_src: &str, helper_src: Option<&str>) -> Option<PathBuf> {
     fs::create_dir_all(root).ok()?;
     let entry_path = root.join("entry.rr");
@@ -173,6 +177,19 @@ fn incremental_scenarios() -> [IncrementalScenario; 6] {
     ]
 }
 
+fn selected_compile_config(data: &[u8]) -> CompileConfig {
+    let configs = compile_configs();
+    configs[selector(data, 9) % configs.len()]
+}
+
+fn selected_incremental_scenarios(data: &[u8]) -> [IncrementalScenario; 2] {
+    let scenarios = incremental_scenarios();
+    [
+        scenarios[selector(data, 10) % 3],
+        scenarios[3 + (selector(data, 11) % 3)],
+    ]
+}
+
 fn compile_once(
     entry_path: &Path,
     entry_src: &str,
@@ -260,138 +277,140 @@ fn replay_incremental_compile(
     })
 }
 
-fn exercise_incremental(entry_path: &Path, entry_src: &str, seed_tag: u64) -> bool {
+fn exercise_incremental(
+    entry_path: &Path,
+    entry_src: &str,
+    seed_tag: u64,
+    cfg: CompileConfig,
+    scenarios: [IncrementalScenario; 2],
+) -> bool {
     let mut kept = false;
-    for cfg in compile_configs() {
-        for scenario in incremental_scenarios() {
-            let cache_dir = common::temp_case_root(
-                "incremental-cache",
-                seed_tag
-                    ^ (cfg.opt_level.label().as_bytes()[1] as u64)
-                    ^ common::stable_hash(&scenario.name),
-            );
-            let _ = fs::create_dir_all(&cache_dir);
-            let _quiet = common::ScopedEnvVar::set("RR_QUIET_LOG", Some("1"));
-            let cache_dir_str = cache_dir.to_string_lossy().to_string();
-            let _cache =
-                common::ScopedEnvVar::set("RR_INCREMENTAL_CACHE_DIR", Some(cache_dir_str.as_str()));
+    for scenario in scenarios {
+        let cache_dir = common::temp_case_root(
+            "incremental-cache",
+            seed_tag
+                ^ (cfg.opt_level.label().as_bytes()[1] as u64)
+                ^ common::stable_hash(&scenario.name),
+        );
+        let _ = fs::create_dir_all(&cache_dir);
+        let _quiet = common::ScopedEnvVar::set("RR_QUIET_LOG", Some("1"));
+        let cache_dir_str = cache_dir.to_string_lossy().to_string();
+        let _cache =
+            common::ScopedEnvVar::set("RR_INCREMENTAL_CACHE_DIR", Some(cache_dir_str.as_str()));
 
-            match scenario.name {
-                "phase1_runtime" => {
-                    let Some(first) =
-                        initial_incremental_compile(entry_path, entry_src, cfg, scenario, None)
-                    else {
-                        continue;
-                    };
-                    let second =
-                        replay_incremental_compile(entry_path, entry_src, cfg, scenario, None);
-                    assert_eq!(first.r_code, second.r_code);
-                    assert!(second.stats.phase1_artifact_hit);
-                    assert_helper_mode(&second.r_code, true);
-                    kept = true;
-                }
-                "phase2_runtime" => {
-                    let Some(first) =
-                        initial_incremental_compile(entry_path, entry_src, cfg, scenario, None)
-                    else {
-                        continue;
-                    };
-                    let second =
-                        replay_incremental_compile(entry_path, entry_src, cfg, scenario, None);
-                    assert_eq!(first.r_code, second.r_code);
-                    assert!(
-                        second.stats.phase2_emit_hits > 0 || second.stats.phase2_emit_misses == 0,
-                        "phase2 replay should observe cached function emits"
-                    );
-                    assert_helper_mode(&second.r_code, true);
-                    kept = true;
-                }
-                "phase3_runtime" => {
-                    let mut session = IncrementalSession::default();
-                    let Some(first) = initial_incremental_compile(
-                        entry_path,
-                        entry_src,
-                        cfg,
-                        scenario,
-                        Some(&mut session),
-                    ) else {
-                        continue;
-                    };
-                    let second = replay_incremental_compile(
-                        entry_path,
-                        entry_src,
-                        cfg,
-                        scenario,
-                        Some(&mut session),
-                    );
-                    assert_eq!(first.r_code, second.r_code);
-                    assert!(second.stats.phase3_memory_hit);
-                    assert_helper_mode(&second.r_code, true);
-                    kept = true;
-                }
-                "all_runtime" | "all_helper_only" => {
-                    let inject_runtime = scenario.output_opts.inject_runtime;
-                    let mut session = IncrementalSession::default();
-                    let Some(first) = initial_incremental_compile(
-                        entry_path,
-                        entry_src,
-                        cfg,
-                        scenario,
-                        Some(&mut session),
-                    ) else {
-                        continue;
-                    };
-                    let second = replay_incremental_compile(
-                        entry_path,
-                        entry_src,
-                        cfg,
-                        scenario,
-                        Some(&mut session),
-                    );
-                    assert_eq!(first.r_code, second.r_code);
-                    assert!(second.stats.phase3_memory_hit);
-                    assert_helper_mode(&second.r_code, inject_runtime);
-                    kept = true;
-                }
-                "all_strict_verify" => {
-                    let mut session = IncrementalSession::default();
-                    let Some(first) = initial_incremental_compile(
-                        entry_path,
-                        entry_src,
-                        cfg,
-                        scenario,
-                        Some(&mut session),
-                    ) else {
-                        continue;
-                    };
-                    let second = replay_incremental_compile(
-                        entry_path,
-                        entry_src,
-                        cfg,
-                        scenario,
-                        Some(&mut session),
-                    );
-                    let mut fresh_session = IncrementalSession::default();
-                    let third = replay_incremental_compile(
-                        entry_path,
-                        entry_src,
-                        cfg,
-                        scenario,
-                        Some(&mut fresh_session),
-                    );
-                    assert_eq!(first.r_code, second.r_code);
-                    assert_eq!(second.r_code, third.r_code);
-                    assert!(second.stats.phase3_memory_hit);
-                    assert!(second.stats.strict_verification_checked);
-                    assert!(second.stats.strict_verification_passed);
-                    assert!(third.stats.phase1_artifact_hit);
-                    assert!(third.stats.strict_verification_checked);
-                    assert!(third.stats.strict_verification_passed);
-                    assert_helper_mode(&third.r_code, true);
-                    kept = true;
-                }
-                _ => unreachable!("unknown incremental scenario"),
+        match scenario.name {
+            "phase1_runtime" => {
+                let Some(first) =
+                    initial_incremental_compile(entry_path, entry_src, cfg, scenario, None)
+                else {
+                    continue;
+                };
+                let second = replay_incremental_compile(entry_path, entry_src, cfg, scenario, None);
+                assert_eq!(first.r_code, second.r_code);
+                assert!(second.stats.phase1_artifact_hit);
+                assert_helper_mode(&second.r_code, true);
+                kept = true;
             }
+            "phase2_runtime" => {
+                let Some(first) =
+                    initial_incremental_compile(entry_path, entry_src, cfg, scenario, None)
+                else {
+                    continue;
+                };
+                let second = replay_incremental_compile(entry_path, entry_src, cfg, scenario, None);
+                assert_eq!(first.r_code, second.r_code);
+                assert!(
+                    second.stats.phase2_emit_hits > 0 || second.stats.phase2_emit_misses == 0,
+                    "phase2 replay should observe cached function emits"
+                );
+                assert_helper_mode(&second.r_code, true);
+                kept = true;
+            }
+            "phase3_runtime" => {
+                let mut session = IncrementalSession::default();
+                let Some(first) = initial_incremental_compile(
+                    entry_path,
+                    entry_src,
+                    cfg,
+                    scenario,
+                    Some(&mut session),
+                ) else {
+                    continue;
+                };
+                let second = replay_incremental_compile(
+                    entry_path,
+                    entry_src,
+                    cfg,
+                    scenario,
+                    Some(&mut session),
+                );
+                assert_eq!(first.r_code, second.r_code);
+                assert!(second.stats.phase3_memory_hit);
+                assert_helper_mode(&second.r_code, true);
+                kept = true;
+            }
+            "all_runtime" | "all_helper_only" => {
+                let inject_runtime = scenario.output_opts.inject_runtime;
+                let mut session = IncrementalSession::default();
+                let Some(first) = initial_incremental_compile(
+                    entry_path,
+                    entry_src,
+                    cfg,
+                    scenario,
+                    Some(&mut session),
+                ) else {
+                    continue;
+                };
+                let second = replay_incremental_compile(
+                    entry_path,
+                    entry_src,
+                    cfg,
+                    scenario,
+                    Some(&mut session),
+                );
+                assert_eq!(first.r_code, second.r_code);
+                assert!(second.stats.phase3_memory_hit);
+                assert_helper_mode(&second.r_code, inject_runtime);
+                kept = true;
+            }
+            "all_strict_verify" => {
+                let mut session = IncrementalSession::default();
+                let Some(first) = initial_incremental_compile(
+                    entry_path,
+                    entry_src,
+                    cfg,
+                    scenario,
+                    Some(&mut session),
+                ) else {
+                    continue;
+                };
+                let second = replay_incremental_compile(
+                    entry_path,
+                    entry_src,
+                    cfg,
+                    scenario,
+                    Some(&mut session),
+                );
+                let mut fresh_session = IncrementalSession::default();
+                let third = replay_incremental_compile(
+                    entry_path,
+                    entry_src,
+                    cfg,
+                    scenario,
+                    Some(&mut fresh_session),
+                );
+                assert_eq!(first.r_code, second.r_code);
+                assert_eq!(second.r_code, third.r_code);
+                assert!(second.stats.phase3_memory_hit);
+                assert!(second.stats.strict_verification_checked);
+                assert!(second.stats.strict_verification_passed);
+                assert!(third.stats.phase1_artifact_hit);
+                assert!(third.stats.strict_verification_checked);
+                assert!(third.stats.strict_verification_passed);
+                assert_helper_mode(&third.r_code, true);
+                kept = true;
+            }
+            _ => unreachable!("unknown incremental scenario"),
         }
     }
     kept
@@ -420,27 +439,52 @@ fn helper_pick(flag) {
 
     let root = case_root(data);
     let mut kept = false;
+    let cfg = selected_compile_config(data);
+    let scenarios = selected_incremental_scenarios(data);
 
-    for (case_idx, case) in cases.into_iter().enumerate() {
-        for (variant_idx, variant) in common::source_variants(&case.rr_src)
-            .into_iter()
-            .filter(|variant| !variant.starts_with("fn __fuzz_entry() {\n"))
-            .take(2)
-            .enumerate()
-        {
-            let base_root = root.join(format!("case_{case_idx}_base_{variant_idx}"));
-            if let Some(entry_path) = write_case(&base_root, &variant, None) {
-                kept |= exercise_incremental(&entry_path, &variant, common::stable_hash(&variant));
-            }
+    if cases.is_empty() {
+        return Corpus::Reject;
+    }
+    let Some(case) = cases.get(selector(data, 12) % cases.len()) else {
+        return Corpus::Reject;
+    };
+    let variants: Vec<String> = common::source_variants(&case.rr_src)
+        .into_iter()
+        .filter(|variant| !variant.starts_with("fn __fuzz_entry() {\n"))
+        .take(2)
+        .collect();
+    if variants.is_empty() {
+        return Corpus::Reject;
+    }
+    let Some(variant) = variants.get(selector(data, 13) % variants.len()) else {
+        return Corpus::Reject;
+    };
 
-            let imported = format!(
-                "import \"helper.rr\"\n{variant}\nprint(helper_bias(1L))\nprint(helper_pick(TRUE))\n"
+    // Keep each unit inexpensive so libFuzzer can honor short smoke deadlines.
+    if selector(data, 14) % 2 == 0 {
+        let base_root = root.join("base");
+        if let Some(entry_path) = write_case(&base_root, variant, None) {
+            kept |= exercise_incremental(
+                &entry_path,
+                variant,
+                common::stable_hash(variant),
+                cfg,
+                scenarios,
             );
-            let import_root = root.join(format!("case_{case_idx}_import_{variant_idx}"));
-            if let Some(entry_path) = write_case(&import_root, &imported, Some(helper_src)) {
-                kept |=
-                    exercise_incremental(&entry_path, &imported, common::stable_hash(&imported));
-            }
+        }
+    } else {
+        let imported = format!(
+            "import \"helper.rr\"\n{variant}\nprint(helper_bias(1L))\nprint(helper_pick(TRUE))\n"
+        );
+        let import_root = root.join("import");
+        if let Some(entry_path) = write_case(&import_root, &imported, Some(helper_src)) {
+            kept |= exercise_incremental(
+                &entry_path,
+                &imported,
+                common::stable_hash(&imported),
+                cfg,
+                scenarios,
+            );
         }
     }
 

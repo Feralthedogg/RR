@@ -282,6 +282,31 @@ impl MirLicm {
                 invariants.contains(lhs) && invariants.contains(rhs)
             }
             ValueKind::Unary { rhs, .. } => invariants.contains(rhs),
+            ValueKind::RecordLit { fields } => {
+                fields.iter().all(|(_, value)| invariants.contains(value))
+            }
+            ValueKind::FieldGet { base, .. } => {
+                if loop_ctx.has_impure_call || loop_ctx.has_unknown_mutation {
+                    return false;
+                }
+                let cls = alias::alias_class_for_base(fn_ir, *base);
+                if matches!(cls, alias::AliasClass::Unknown) {
+                    return false;
+                }
+                !loop_ctx.mutated_aliases.contains(&cls) && invariants.contains(base)
+            }
+            ValueKind::FieldSet { base, value, .. } => {
+                if loop_ctx.has_impure_call || loop_ctx.has_unknown_mutation {
+                    return false;
+                }
+                let cls = alias::alias_class_for_base(fn_ir, *base);
+                if matches!(cls, alias::AliasClass::Unknown) {
+                    return false;
+                }
+                !loop_ctx.mutated_aliases.contains(&cls)
+                    && invariants.contains(base)
+                    && invariants.contains(value)
+            }
             ValueKind::Range { start, end } => {
                 invariants.contains(start) && invariants.contains(end)
             }

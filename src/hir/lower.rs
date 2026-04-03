@@ -718,10 +718,9 @@ impl Lowerer {
 
     pub fn lower_module(&mut self, prog: ast::Program, mod_id: ModuleId) -> RR<HirModule> {
         let mut items = Vec::new();
-        // println!("Lowering module {:?} with {} statements", mod_id, prog.stmts.len());
         for stmt in prog.stmts {
-            // Top level statements become Module Items (Fn) or Stmt Items
-            // For now, treat everything as Item::Stmt unless it's a FnDecl
+            // Top-level function declarations stay as module items; all other
+            // top-level statements are preserved as statement items.
             match stmt.kind {
                 ast::StmtKind::FnDecl {
                     name,

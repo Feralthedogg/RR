@@ -1,0 +1,189 @@
+Sym_303 <- function() 
+{
+  rr_mark(1342L, 5L);
+  print("Initializing TESSERACT: UNIFIED MODEL (Ocean + Omega + Particles)...")
+  N <- 40.0
+  TOTAL <- ((6.0 * N) * N)
+  rr_mark(1357L, 5L);
+  print("  Building Topology...")
+  adj_l <- Sym_83(1.0, N)
+  adj_r <- Sym_83(2.0, N)
+  adj_d <- Sym_83(3.0, N)
+  adj_u <- Sym_83(4.0, N)
+  rr_mark(1368L, 5L);
+  print("  Allocating State...")
+  u <- Sym_17(TOTAL, 10.0, 3.0)
+  v <- Sym_17(TOTAL, 0.0, 3.0)
+  h <- Sym_17(TOTAL, 8000.0, 3.0)
+  temp <- Sym_17(TOTAL, 300.0, 3.0)
+  qv <- Sym_17(TOTAL, 0.015, 3.0)
+  qc <- Sym_17(TOTAL, 0.001, 3.0)
+  qr <- Sym_17(TOTAL, 0.0, 3.0)
+  qi <- Sym_17(TOTAL, 0.0, 3.0)
+  qs <- Sym_17(TOTAL, 0.0, 3.0)
+  qg <- Sym_17(TOTAL, 0.0, 3.0)
+  rr_mark(1390L, 5L);
+  print("  Typed/Parallel Feature Probe...")
+  probe_vec <- Sym_49(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))
+  probe_energy <- Sym_51(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))
+  probe_generic <- Sym_56(list(c(1.0), c(2.0), c(3.0)))
+  rr_mark(1394L, 5L);
+  print("    Probe Vec[1]:")
+  rr_mark(1395L, 5L);
+  print(probe_vec[1.0])
+  rr_mark(1396L, 5L);
+  print("    Probe Energy:")
+  rr_mark(1397L, 5L);
+  print(probe_energy)
+  rr_mark(1398L, 5L);
+  print("    Probe Generic Count:")
+  rr_mark(1399L, 5L);
+  print(probe_generic)
+  rr_mark(1402L, 5L);
+  print("  Building Extended Topology (WENO-5 Order)...")
+  adj_ll <- Sym_17(TOTAL, 0.0, 2.0)
+  adj_rr <- Sym_17(TOTAL, 0.0, 2.0)
+  i <- 1.0
+  ii <- 0.0
+  # rr-cse-pruned
+  licm_7 <- (6.0 * N)
+  licm_141 <- (licm_7 * N)
+  repeat {
+    if (!(i <= licm_141)) break
+    ii <- floor(i)
+    idx_l <- rr_index1_read(adj_l, ii, "index")
+    idx_r <- rr_index1_read(adj_r, ii, "index")
+    rr_mark(1423L, 9L);
+    adj_ll[rr_index1_write(ii, "index")] <- rr_index1_read(adj_l, rr_index1_read_idx(adj_l, ii, "index"), "index")
+    rr_mark(1425L, 9L);
+    adj_rr[rr_index1_write(ii, "index")] <- rr_index1_read(adj_r, rr_index1_read_idx(adj_r, ii, "index"), "index")
+    i <- (i + 1.0)
+    next
+  }
+  h_trn <- Sym_17(TOTAL, 0.0, 3.0)
+  coriolis <- Sym_17(TOTAL, 0.0, 3.0)
+  rr_mark(1436L, 5L);
+  print("  Initializing Environment...")
+  k <- 1.0
+  grid_sq <- (N * N)
+  mtn_h <- 4000.0
+  # rr-cse-pruned
+  repeat {
+    if (!(k <= TOTAL)) break
+    k0 <- (k - 1.0)
+    f_curr <- (floor((k0 / grid_sq)) + 1.0)
+    rem <- (k0 %% grid_sq)
+    x_curr <- (floor((rem / N)) + 1.0)
+    y_curr <- ((rem %% N) + 1.0)
+    if ((f_curr == 1.0)) {
+      dx_m <- (x_curr - 20.0)
+      dy_m <- (y_curr - 20.0)
+      # rr-cse-pruned
+      dist <- ((dx_m * dx_m) + (dy_m * dy_m))
+      rr_mark(1477L, 13L);
+      h_trn[k] <- (mtn_h / (1.0 + (dist * 0.1)))
+    } else {
+    }
+    lat <- Sym_37((floor(((k - 1.0) / grid_sq)) + 1.0), (floor((((k - 1.0) %% grid_sq) / N)) + 1.0), ((((k - 1.0) %% grid_sq) %% N) + 1.0), N)
+    rr_mark(1483L, 9L);
+    coriolis[k] <- (0.00014 * (lat / 90.0))
+    k <- (k + 1.0)
+    next
+  }
+  rr_mark(1489L, 5L);
+  print("  Verifying CG Solver (Pressure Poisson)...")
+  b_cg <- Sym_17(TOTAL, 1.0, 2.0)
+  x_cg <- Sym_123(b_cg, adj_l, adj_r, adj_d, adj_u, TOTAL)
+  rr_mark(1495L, 5L);
+  print("    CG Solve complete. Sample x:")
+  rr_mark(1497L, 5L);
+  print(x_cg[1L])
+  u_stage <- Sym_17(TOTAL, 0.0, 3.0)
+  u_new <- Sym_17(TOTAL, 0.0, 3.0)
+  steps <- 0.0
+  MAX_STEPS <- 5.0
+  dt <- 0.1
+  rr_mark(1510L, 5L);
+  print("  Initializing Lagrangian Drifters (1000 particles)...")
+  p_x <- Sym_183(1000.0)
+  p_y <- Sym_183(1000.0)
+  p_f <- Sym_17(1000.0, 1.0, 2.0)
+  rr_mark(1519L, 5L);
+  print("  Starting RK3 Integration...")
+  # rr-cse-pruned
+  licm_437 <- -1000.0
+  repeat {
+    if (!(steps < MAX_STEPS)) break
+    visc <- Sym_156(u, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    heat <- Sym_287(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+    adv_u <- Sym_268(u, u, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+    du1 <- Sym_171(u, v, h, h_trn, coriolis, visc, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    particles <- Sym_186(p_x, p_y, p_f, u, v, dt, N, TOTAL)
+    p_x <- rr_field_get(particles, "px")
+    p_y <- rr_field_get(particles, "py")
+    p_f <- rr_field_get(particles, "pf")
+    i <- 1.0
+    repeat {
+      if (!(i <= TOTAL)) break
+      ii <- floor(i)
+      rr_mark(1552L, 13L);
+      u_stage[rr_index1_write(ii, "index")] <- (rr_index1_read(u, ii, "index") + (dt * (rr_index1_read(du1, ii, "index") - rr_index1_read(adv_u, ii, "index"))))
+      i <- (i + 1.0)
+      next
+    }
+    visc2 <- Sym_156(u_stage, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    heat2 <- Sym_287(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+    adv_u2 <- Sym_268(u_stage, u_stage, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+    du2 <- Sym_171(u_stage, v, h, h_trn, coriolis, visc2, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    i <- 1.0
+    licm_404 <- (0.25 * dt)
+    repeat {
+      if (!(i <= TOTAL)) break
+      ii <- floor(i)
+      rr_mark(1572L, 13L);
+      u_stage[rr_index1_write(ii, "index")] <- (((0.75 * rr_index1_read(u, ii, "index")) + (0.25 * rr_index1_read(u_stage, ii, "index"))) + (licm_404 * (rr_index1_read(du2, ii, "index") - rr_index1_read(adv_u2, ii, "index"))))
+      i <- (i + 1.0)
+      next
+    }
+    visc3 <- Sym_156(u_stage, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    heat3 <- Sym_287(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+    adv_u3 <- Sym_268(u_stage, u_stage, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+    du3 <- Sym_171(u_stage, v, h, h_trn, coriolis, visc3, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    i <- 1.0
+    max_u <- -1000.0
+    heat <- Sym_287(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+    p_x <- rr_field_get(particles, "px")
+    p_y <- rr_field_get(particles, "py")
+    p_f <- rr_field_get(particles, "pf")
+    repeat {
+      if (!(i <= TOTAL)) break
+      ii <- floor(i)
+      rr_mark(1593L, 13L);
+      u_new[rr_index1_write(ii, "index")] <- (((0.3333 * rr_index1_read(u, ii, "index")) + (0.6667 * rr_index1_read(u_stage, ii, "index"))) + ((0.6667 * dt) * (rr_index1_read(du3, ii, "index") - rr_index1_read(adv_u3, ii, "index"))))
+      rr_mark(1596L, 13L);
+      u_new[rr_index1_write(ii, "index")] <- (rr_index1_read(u_new, ii, "index") + (rr_index1_read(heat, ii, "index") * 0.001))
+      if ((rr_index1_read(u_new, ii, "index") > max_u)) {
+        max_u <- rr_index1_read(u_new, ii, "index")
+      } else {
+      }
+      i <- (i + 1.0)
+      next
+    }
+    tmp_u <- u
+    u <- u_new
+    u_new <- tmp_u
+    rr_mark(1614L, 9L);
+    print("  Step Complete. Max U:")
+    rr_mark(1616L, 9L);
+    print(max_u)
+    rr_mark(1618L, 9L);
+    print("    Particle 1 Position (X):")
+    rr_mark(1620L, 9L);
+    print(p_x[1L])
+    steps <- (steps + 1.0)
+    next
+  }
+  rr_mark(1626L, 5L);
+  print("TESSERACT: UNIFIED Model Complete.")
+  return(0L)
+}

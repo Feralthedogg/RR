@@ -1,4 +1,9 @@
-use crate::error::{InternalCompilerError, RR, Stage};
+//! HIR-to-MIR lowering with sealed-SSA construction.
+//!
+//! This module turns structured HIR into the MIR form consumed by validation,
+//! optimization, and codegen while preserving user-visible control/data flow.
+
+use crate::error::{InternalCompilerError, RR, RRException, Stage};
 use crate::hir::def as hir;
 use crate::mir::flow::Facts;
 use crate::mir::*;
@@ -162,6 +167,173 @@ impl<'a> MirLowerer<'a> {
         )
     }
 
+    fn render_default_lit(lit: &hir::HirLit) -> String {
+        match lit {
+            hir::HirLit::Int(i) => format!("{i}L"),
+            hir::HirLit::Double(f) => {
+                let mut rendered = f.to_string();
+                if f.is_finite() && !rendered.contains(['.', 'e', 'E']) {
+                    rendered.push_str(".0");
+                }
+                rendered
+            }
+            hir::HirLit::Char(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+            hir::HirLit::Bool(true) => "TRUE".to_string(),
+            hir::HirLit::Bool(false) => "FALSE".to_string(),
+            hir::HirLit::NA => "NA".to_string(),
+            hir::HirLit::Null => "NULL".to_string(),
+        }
+    }
+
+    fn render_default_unop(op: &hir::HirUnOp) -> &'static str {
+        match op {
+            hir::HirUnOp::Not => "!",
+            hir::HirUnOp::Neg => "-",
+        }
+    }
+
+    fn render_default_binop(op: &hir::HirBinOp) -> &'static str {
+        match op {
+            hir::HirBinOp::Add => "+",
+            hir::HirBinOp::Sub => "-",
+            hir::HirBinOp::Mul => "*",
+            hir::HirBinOp::Div => "/",
+            hir::HirBinOp::Mod => "%%",
+            hir::HirBinOp::MatMul => "%*%",
+            hir::HirBinOp::And => "&",
+            hir::HirBinOp::Or => "|",
+            hir::HirBinOp::Eq => "==",
+            hir::HirBinOp::Ne => "!=",
+            hir::HirBinOp::Lt => "<",
+            hir::HirBinOp::Le => "<=",
+            hir::HirBinOp::Gt => ">",
+            hir::HirBinOp::Ge => ">=",
+        }
+    }
+
+    fn render_default_arg(&self, arg: &hir::HirArg) -> RR<String> {
+        match arg {
+            hir::HirArg::Pos(expr) => self.render_default_expr(expr),
+            hir::HirArg::Named { name, value } => {
+                let rendered_name = self
+                    .symbols
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| format!("arg_{}", name.0));
+                Ok(format!(
+                    "{rendered_name} = {}",
+                    self.render_default_expr(value)?
+                ))
+            }
+        }
+    }
+
+    fn render_default_expr(&self, expr: &hir::HirExpr) -> RR<String> {
+        match expr {
+            hir::HirExpr::Local(local) => self.var_names.get(local).cloned().ok_or_else(|| {
+                InternalCompilerError::new(
+                    Stage::Mir,
+                    format!(
+                        "missing local name while rendering default argument: {:?}",
+                        local
+                    ),
+                )
+                .into_exception()
+            }),
+            hir::HirExpr::Global(sym, _) => Ok(self
+                .symbols
+                .get(sym)
+                .cloned()
+                .unwrap_or_else(|| format!("Sym_{}", sym.0))),
+            hir::HirExpr::Lit(lit) => Ok(Self::render_default_lit(lit)),
+            hir::HirExpr::Unary { op, expr } => Ok(format!(
+                "{}({})",
+                Self::render_default_unop(op),
+                self.render_default_expr(expr)?
+            )),
+            hir::HirExpr::Binary { op, lhs, rhs } => Ok(format!(
+                "({} {} {})",
+                self.render_default_expr(lhs)?,
+                Self::render_default_binop(op),
+                self.render_default_expr(rhs)?
+            )),
+            hir::HirExpr::Call(call) => {
+                let callee = self.render_default_expr(call.callee.as_ref())?;
+                let args = call
+                    .args
+                    .iter()
+                    .map(|arg| self.render_default_arg(arg))
+                    .collect::<RR<Vec<_>>>()?;
+                Ok(format!("{callee}({})", args.join(", ")))
+            }
+            hir::HirExpr::Index { base, index } => {
+                let base = self.render_default_expr(base)?;
+                let index = index
+                    .iter()
+                    .map(|expr| self.render_default_expr(expr))
+                    .collect::<RR<Vec<_>>>()?;
+                Ok(format!("{base}[{}]", index.join(", ")))
+            }
+            hir::HirExpr::Field { base, name } => {
+                let base = self.render_default_expr(base)?;
+                let name = self
+                    .symbols
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| format!("field_{}", name.0));
+                Ok(format!("{base}[[\"{name}\"]]"))
+            }
+            hir::HirExpr::IfExpr {
+                cond,
+                then_expr,
+                else_expr,
+            } => Ok(format!(
+                "if ({}) {} else {}",
+                self.render_default_expr(cond)?,
+                self.render_default_expr(then_expr)?,
+                self.render_default_expr(else_expr)?
+            )),
+            hir::HirExpr::ListLit(fields) => {
+                let rendered = fields
+                    .iter()
+                    .map(|(name, value)| {
+                        let rendered_name = self
+                            .symbols
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| format!("field_{}", name.0));
+                        Ok(format!(
+                            "{rendered_name} = {}",
+                            self.render_default_expr(value)?
+                        ))
+                    })
+                    .collect::<RR<Vec<_>>>()?;
+                Ok(format!("list({})", rendered.join(", ")))
+            }
+            hir::HirExpr::VectorLit(values) => {
+                let rendered = values
+                    .iter()
+                    .map(|value| self.render_default_expr(value))
+                    .collect::<RR<Vec<_>>>()?;
+                Ok(format!("c({})", rendered.join(", ")))
+            }
+            hir::HirExpr::Range { start, end } => Ok(format!(
+                "{}:{}",
+                self.render_default_expr(start)?,
+                self.render_default_expr(end)?
+            )),
+            unsupported => Err(RRException::new(
+                "RR.SemanticError",
+                crate::error::RRCode::E1002,
+                crate::error::Stage::Mir,
+                format!(
+                    "default argument expression is not yet supported in MIR lowering: {:?}",
+                    unsupported
+                ),
+            )),
+        }
+    }
+
     pub fn new(
         name: String,
         params: Vec<String>,
@@ -213,7 +385,9 @@ impl<'a> MirLowerer<'a> {
 
     // Standardize Value Addition
     fn add_value(&mut self, kind: ValueKind, span: Span) -> ValueId {
-        self.fn_ir.add_value(kind, span, Facts::empty(), None)
+        let vid = self.fn_ir.add_value(kind, span, Facts::empty(), None);
+        self.annotate_new_value(vid);
+        vid
     }
 
     fn add_value_with_name(
@@ -222,7 +396,65 @@ impl<'a> MirLowerer<'a> {
         span: Span,
         var_name: Option<String>,
     ) -> ValueId {
-        self.fn_ir.add_value(kind, span, Facts::empty(), var_name)
+        let vid = self.fn_ir.add_value(kind, span, Facts::empty(), var_name);
+        self.annotate_new_value(vid);
+        vid
+    }
+
+    fn annotate_new_value(&mut self, vid: ValueId) {
+        match &self.fn_ir.values[vid].kind {
+            ValueKind::Call { callee, .. } => {
+                if let Some(kind) = builtin_kind_for_name(callee) {
+                    self.fn_ir
+                        .set_call_semantics(vid, CallSemantics::Builtin(kind));
+                    match kind {
+                        BuiltinKind::SeqAlong
+                        | BuiltinKind::SeqLen
+                        | BuiltinKind::C
+                        | BuiltinKind::Numeric
+                        | BuiltinKind::Character
+                        | BuiltinKind::Logical
+                        | BuiltinKind::Integer
+                        | BuiltinKind::Double
+                        | BuiltinKind::Rep
+                        | BuiltinKind::RepInt
+                        | BuiltinKind::Vector => {
+                            self.fn_ir
+                                .set_memory_layout_hint(vid, MemoryLayoutHint::Dense1D);
+                        }
+                        BuiltinKind::Matrix
+                        | BuiltinKind::Transpose
+                        | BuiltinKind::Diag
+                        | BuiltinKind::Rbind
+                        | BuiltinKind::Cbind
+                        | BuiltinKind::Crossprod
+                        | BuiltinKind::Tcrossprod => {
+                            self.fn_ir
+                                .set_memory_layout_hint(vid, MemoryLayoutHint::ColumnMajor2D);
+                        }
+                        BuiltinKind::Array => {
+                            self.fn_ir
+                                .set_memory_layout_hint(vid, MemoryLayoutHint::ColumnMajorND);
+                        }
+                        _ => {}
+                    }
+                } else if callee == "rr_call_closure" {
+                    self.fn_ir
+                        .set_call_semantics(vid, CallSemantics::ClosureDispatch);
+                } else if callee.starts_with("rr_") {
+                    self.fn_ir
+                        .set_call_semantics(vid, CallSemantics::RuntimeHelper);
+                } else {
+                    self.fn_ir
+                        .set_call_semantics(vid, CallSemantics::UserDefined);
+                }
+            }
+            ValueKind::Len { .. } | ValueKind::Range { .. } | ValueKind::Indices { .. } => {
+                self.fn_ir
+                    .set_memory_layout_hint(vid, MemoryLayoutHint::Dense1D);
+            }
+            _ => {}
+        }
     }
 
     // Core Helpers
@@ -472,6 +704,16 @@ impl<'a> MirLowerer<'a> {
 
     pub fn lower_fn(mut self, f: hir::HirFn) -> RR<FnIR> {
         self.fn_ir.span = f.span;
+        self.fn_ir.param_default_r_exprs = f
+            .params
+            .iter()
+            .map(|p| {
+                p.default
+                    .as_ref()
+                    .map(|expr| self.render_default_expr(expr))
+                    .transpose()
+            })
+            .collect::<RR<Vec<_>>>()?;
         self.fn_ir.param_spans = f.params.iter().map(|p| p.span).collect();
         self.fn_ir.param_ty_hints = f
             .params
@@ -671,15 +913,13 @@ impl<'a> MirLowerer<'a> {
                             .get(&name)
                             .cloned()
                             .unwrap_or_else(|| format!("field_{}", name.0));
-                        let field_lit =
-                            self.add_value(ValueKind::Const(Lit::Str(field_name)), span);
                         let base_clone = base.clone();
                         let base_id = self.lower_expr(base)?;
                         let set_id = self.add_value(
-                            ValueKind::Call {
-                                callee: "rr_field_set".to_string(),
-                                args: vec![base_id, field_lit, v],
-                                names: vec![None, None, None],
+                            ValueKind::FieldSet {
+                                base: base_id,
+                                field: field_name,
+                                value: v,
                             },
                             span,
                         );
@@ -920,13 +1160,10 @@ impl<'a> MirLowerer<'a> {
                     .get(&name)
                     .cloned()
                     .unwrap_or_else(|| format!("field_{}", name.0));
-                let field_lit =
-                    self.add_value(ValueKind::Const(Lit::Str(field_name)), Span::default());
                 Ok(self.add_value(
-                    ValueKind::Call {
-                        callee: "rr_field_get".to_string(),
-                        args: vec![b, field_lit],
-                        names: vec![None, None],
+                    ValueKind::FieldGet {
+                        base: b,
+                        field: field_name,
                     },
                     Span::default(),
                 ))
@@ -939,7 +1176,7 @@ impl<'a> MirLowerer<'a> {
                     ids.push(self.lower_expr(idx_expr)?);
                 }
                 match ids.as_slice() {
-                    [idx] => Ok(self.fn_ir.add_value(
+                    [idx] => Ok(self.add_value(
                         ValueKind::Index1D {
                             base: base_id,
                             idx: *idx,
@@ -947,20 +1184,16 @@ impl<'a> MirLowerer<'a> {
                             is_na_safe: false,
                         },
                         span,
-                        Facts::empty(),
-                        None,
                     )),
-                    [r, c] => Ok(self.fn_ir.add_value(
+                    [r, c] => Ok(self.add_value(
                         ValueKind::Index2D {
                             base: base_id,
                             r: *r,
                             c: *c,
                         },
                         span,
-                        Facts::empty(),
-                        None,
                     )),
-                    [i, j, k] => Ok(self.fn_ir.add_value(
+                    [i, j, k] => Ok(self.add_value(
                         ValueKind::Index3D {
                             base: base_id,
                             i: *i,
@@ -968,8 +1201,6 @@ impl<'a> MirLowerer<'a> {
                             k: *k,
                         },
                         span,
-                        Facts::empty(),
-                        None,
                     )),
                     _ => Err(crate::error::RRException::new(
                         "RR.SemanticError",
@@ -1023,43 +1254,26 @@ impl<'a> MirLowerer<'a> {
                     hir::HirExpr::Global(sym, _) => {
                         if let Some(name) = self.symbols.get(sym) {
                             if name.starts_with("rr_") {
-                                return Ok(self.fn_ir.add_value(
+                                return Ok(self.add_value(
                                     ValueKind::Call {
                                         callee: name.clone(),
                                         args: v_args,
                                         names: arg_names,
                                     },
                                     span,
-                                    Facts::empty(),
-                                    None,
                                 ));
                             }
                             if Self::allow_user_builtin_shadowing(name)
                                 && let Some(expected) = self.known_functions.get(name)
                             {
-                                if *expected != v_args.len() {
-                                    return Err(crate::error::RRException::new(
-                                        "RR.SemanticError",
-                                        crate::error::RRCode::E1002,
-                                        crate::error::Stage::Mir,
-                                        format!(
-                                            "function '{}' expects {} argument(s), got {}",
-                                            name,
-                                            expected,
-                                            v_args.len()
-                                        ),
-                                    )
-                                    .at(span));
-                                }
-                                return Ok(self.fn_ir.add_value(
+                                let _ = expected;
+                                return Ok(self.add_value(
                                     ValueKind::Call {
                                         callee: format!("Sym_{}", sym.0),
                                         args: v_args,
                                         names: arg_names,
                                     },
                                     span,
-                                    Facts::empty(),
-                                    None,
                                 ));
                             }
                             if name == "length" {
@@ -1157,29 +1371,25 @@ impl<'a> MirLowerer<'a> {
                                     | "rbind"
                                     | "cbind"
                             ) {
-                                return Ok(self.fn_ir.add_value(
+                                return Ok(self.add_value(
                                     ValueKind::Call {
                                         callee: name.clone(),
                                         args: v_args,
                                         names: arg_names,
                                     },
                                     span,
-                                    Facts::empty(),
-                                    None,
                                 ));
                             }
                             if Self::is_dynamic_fallback_builtin(name) {
                                 self.fn_ir
                                     .mark_hybrid_interop(Self::hybrid_interop_reason(name));
-                                return Ok(self.fn_ir.add_value(
+                                return Ok(self.add_value(
                                     ValueKind::Call {
                                         callee: name.clone(),
                                         args: v_args,
                                         names: arg_names,
                                     },
                                     span,
-                                    Facts::empty(),
-                                    None,
                                 ));
                             }
                             if Self::is_namespaced_r_call(name) {
@@ -1188,15 +1398,13 @@ impl<'a> MirLowerer<'a> {
                                         Self::opaque_package_reason(name),
                                     );
                                 }
-                                return Ok(self.fn_ir.add_value(
+                                return Ok(self.add_value(
                                     ValueKind::Call {
                                         callee: name.clone(),
                                         args: v_args,
                                         names: arg_names,
                                     },
                                     span,
-                                    Facts::empty(),
-                                    None,
                                 ));
                             }
                             if self.in_tidy_mask() && Self::is_tidy_helper_call(name) {
@@ -1205,41 +1413,24 @@ impl<'a> MirLowerer<'a> {
                                         Self::opaque_tidy_helper_reason(name),
                                     );
                                 }
-                                return Ok(self.fn_ir.add_value(
+                                return Ok(self.add_value(
                                     ValueKind::Call {
                                         callee: name.clone(),
                                         args: v_args,
                                         names: arg_names,
                                     },
                                     span,
-                                    Facts::empty(),
-                                    None,
                                 ));
                             }
                             if let Some(expected) = self.known_functions.get(name) {
-                                if *expected != v_args.len() {
-                                    return Err(crate::error::RRException::new(
-                                        "RR.SemanticError",
-                                        crate::error::RRCode::E1002,
-                                        crate::error::Stage::Mir,
-                                        format!(
-                                            "function '{}' expects {} argument(s), got {}",
-                                            name,
-                                            expected,
-                                            v_args.len()
-                                        ),
-                                    )
-                                    .at(span));
-                                }
-                                return Ok(self.fn_ir.add_value(
+                                let _ = expected;
+                                return Ok(self.add_value(
                                     ValueKind::Call {
                                         callee: format!("Sym_{}", sym.0),
                                         args: v_args,
                                         names: arg_names,
                                     },
                                     span,
-                                    Facts::empty(),
-                                    None,
                                 ));
                             }
                             let mut err = crate::error::RRException::new(
@@ -1271,15 +1462,13 @@ impl<'a> MirLowerer<'a> {
                         let mut dyn_names = Vec::with_capacity(arg_names.len() + 1);
                         dyn_names.push(None);
                         dyn_names.extend(arg_names);
-                        Ok(self.fn_ir.add_value(
+                        Ok(self.add_value(
                             ValueKind::Call {
                                 callee: "rr_call_closure".to_string(),
                                 args: dyn_args,
                                 names: dyn_names,
                             },
                             span,
-                            Facts::empty(),
-                            None,
                         ))
                     }
                 }
@@ -1359,28 +1548,16 @@ impl<'a> MirLowerer<'a> {
                 ))
             }
             hir::HirExpr::ListLit(fields) => {
-                // Preserve names via a runtime helper:
-                // rr_named_list("a", v1, "b", v2, ...)
                 let mut vals = Vec::new();
                 for (sym, e) in fields {
-                    let key = self
+                    let field = self
                         .symbols
                         .get(&sym)
                         .cloned()
                         .unwrap_or_else(|| format!("field_{}", sym.0));
-                    let k = self.add_value(ValueKind::Const(Lit::Str(key)), Span::default());
-                    vals.push(k);
-                    vals.push(self.lower_expr(e)?);
+                    vals.push((field, self.lower_expr(e)?));
                 }
-                let names = vec![None; vals.len()];
-                Ok(self.add_value(
-                    ValueKind::Call {
-                        callee: "rr_named_list".to_string(),
-                        args: vals,
-                        names,
-                    },
-                    Span::default(),
-                ))
+                Ok(self.add_value(ValueKind::RecordLit { fields: vals }, Span::default()))
             }
             hir::HirExpr::Range { start, end } => {
                 let s = self.lower_expr(*start)?;

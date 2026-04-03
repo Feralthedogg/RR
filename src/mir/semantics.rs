@@ -1,3 +1,8 @@
+//! Semantic and runtime-safety validation for MIR.
+//!
+//! The checks here defend the boundary between lowering/optimization and later
+//! codegen/runtime execution by rejecting invalid user-visible MIR states.
+
 use crate::diagnostic::{DiagnosticBuilder, finish_diagnostics};
 use crate::error::{RR, RRCode, RRException, Stage};
 use crate::mir::*;
@@ -19,17 +24,27 @@ pub fn validate_program(all_fns: &FxHashMap<String, FnIR>) -> RR<()> {
     let mut fn_names: Vec<String> = all_fns.keys().cloned().collect();
     fn_names.sort();
 
-    let mut user_arities: FxHashMap<String, usize> = FxHashMap::default();
+    let mut user_signatures: FxHashMap<String, UserFnSignature> = FxHashMap::default();
     let mut errors = Vec::new();
     for name in &fn_names {
         if let Some(fn_ir) = all_fns.get(name) {
-            user_arities.insert(name.clone(), fn_ir.params.len());
+            user_signatures.insert(
+                name.clone(),
+                UserFnSignature {
+                    param_names: fn_ir.params.clone(),
+                    has_default: fn_ir
+                        .param_default_r_exprs
+                        .iter()
+                        .map(Option::is_some)
+                        .collect(),
+                },
+            );
         }
     }
 
     for name in fn_names {
         if let Some(fn_ir) = all_fns.get(&name) {
-            errors.extend(validate_function(fn_ir, &user_arities));
+            errors.extend(validate_function(fn_ir, &user_signatures));
         }
     }
     finish_diagnostics(
@@ -70,15 +85,13 @@ where
     did_you_mean(name, candidates)
 }
 
-fn validate_function(fn_ir: &FnIR, user_arities: &FxHashMap<String, usize>) -> Vec<RRException> {
+fn validate_function(
+    fn_ir: &FnIR,
+    user_signatures: &FxHashMap<String, UserFnSignature>,
+) -> Vec<RRException> {
     let mut errors = Vec::new();
-    let reachable_blocks = collect_reachable_blocks(fn_ir);
-    let reachable_values = collect_reachable_values(fn_ir, &reachable_blocks);
     let mut assigned_vars: FxHashSet<String> = fn_ir.params.iter().cloned().collect();
-    for (bid, block) in fn_ir.blocks.iter().enumerate() {
-        if !reachable_blocks.contains(&bid) {
-            continue;
-        }
+    for block in &fn_ir.blocks {
         for ins in &block.instrs {
             if let Instr::Assign { dst, .. } = ins {
                 assigned_vars.insert(dst.clone());
@@ -86,10 +99,9 @@ fn validate_function(fn_ir: &FnIR, user_arities: &FxHashMap<String, usize>) -> V
         }
     }
 
-    for (vid, v) in fn_ir.values.iter().enumerate() {
-        if !reachable_values.contains(&vid) {
-            continue;
-        }
+    // Dead blocks still originate from user-written statements after terminators
+    // such as `return`, so semantic validation must not silently skip them.
+    for v in &fn_ir.values {
         match &v.kind {
             ValueKind::Load { var } => {
                 if !assigned_vars.contains(var)
@@ -111,8 +123,14 @@ fn validate_function(fn_ir: &FnIR, user_arities: &FxHashMap<String, usize>) -> V
                     errors.push(err);
                 }
             }
-            ValueKind::Call { callee, args, .. } => {
-                if let Err(e) = validate_call_target(callee, args.len(), v.span, user_arities) {
+            ValueKind::Call {
+                callee,
+                args,
+                names,
+            } => {
+                if let Err(e) =
+                    validate_call_target(callee, args.len(), names, v.span, user_signatures)
+                {
                     errors.push(e);
                 }
             }

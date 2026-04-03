@@ -1,0 +1,10 @@
+Sym_24 <- function(a, b) 
+{
+  .arg_a <- a
+  .arg_b <- b
+  if ((.arg_a < .arg_b)) {
+    return(.arg_a)
+  } else {
+    return(.arg_b)
+  }
+}

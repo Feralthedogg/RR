@@ -369,7 +369,7 @@ target/tmp/bench-python/bin/python3 scripts/bench_signal_pipeline.py \
 Refresh helper:
 
 ```bash
-scripts/refresh_benchmark_assets.sh --date 2026-03-27 --skip-renjin
+scripts/refresh_benchmark_assets.sh --date 2026-04-03 --skip-renjin
 ```
 
 The refresh helper rebuilds `target/release/RR` before timing and refreshes the
@@ -380,10 +380,10 @@ optimizer-matrix output into the published asset set.
 
 Artifacts:
 
-- raw data: [`signal-pipeline-runtime-2026-03-27.csv`](../assets/signal-pipeline-runtime-2026-03-27.csv)
+- raw data: [`signal-pipeline-runtime-2026-04-03.csv`](../assets/signal-pipeline-runtime-2026-04-03.csv)
 - chart:
 
-![Signal pipeline runtime comparison](../assets/signal-pipeline-runtime-2026-03-27.svg)
+![Signal pipeline runtime comparison](../assets/signal-pipeline-runtime-2026-04-03.svg)
 
 This slice used `target/release/RR` with `-O2 --no-incremental`, zero warmup
 runs, then three timed wall-clock runs per command. All non-parallel rows were
@@ -428,10 +428,10 @@ python3 scripts/bench_diffusion_backends.py --runs 3 --warmup 0
 
 Artifacts:
 
-- raw data: [`diffusion-backend-runtime-2026-03-27.csv`](../assets/diffusion-backend-runtime-2026-03-27.csv)
+- raw data: [`diffusion-backend-runtime-2026-04-03.csv`](../assets/diffusion-backend-runtime-2026-04-03.csv)
 - chart:
 
-![Diffusion backend runtime comparison](../assets/diffusion-backend-runtime-2026-03-27.svg)
+![Diffusion backend runtime comparison](../assets/diffusion-backend-runtime-2026-04-03.svg)
 
 These slices use `target/release/RR` with `-O0/-O1/-O2 --no-incremental`,
 zero warmup runs, then the requested timed wall-clock runs per command. Warm
@@ -445,8 +445,8 @@ Notes:
   diagnostics as the signal-pipeline slice, so cold/warm timings can be tied
   back to actual optimizer activity.
 - On the current signoff snapshot, the useful `-O2` reference points are
-  roughly `446.0 ms` / `57.9 ms` for `heat_diffusion` cold/warm and
-  `511.4 ms` / `68.2 ms` for `reaction_diffusion` cold/warm.
+  roughly `217.4 ms` / `25.5 ms` for `heat_diffusion` cold/warm and
+  `208.8 ms` / `31.9 ms` for `reaction_diffusion` cold/warm.
 
 ### Optimizer Candidate Slice
 
@@ -466,10 +466,10 @@ python3 scripts/bench_backend_candidates.py --runs 3 --warmup 0
 
 Artifacts:
 
-- raw data: [`backend-candidate-runtime-2026-03-27.csv`](../assets/backend-candidate-runtime-2026-03-27.csv)
+- raw data: [`backend-candidate-runtime-2026-04-03.csv`](../assets/backend-candidate-runtime-2026-04-03.csv)
 - chart:
 
-![Backend candidate runtime comparison](../assets/backend-candidate-runtime-2026-03-27.svg)
+![Backend candidate runtime comparison](../assets/backend-candidate-runtime-2026-04-03.svg)
 
 These slices use the same setup as the diffusion notes: fresh
 `target/release/RR`, RR `-O0/-O1/-O2` cold rows, matching warm rows, and the
@@ -488,11 +488,11 @@ RR optimization-level deltas on representative workloads:
 
 | Workload | O0 ms | O1 ms | O2 ms | O1/O0 | O2/O0 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `bootstrap` | `688.4 (8.9)` | `423.3 (14.1)` | `506.0 (30.1)` | `1.63x` | `1.36x` |
-| `heat` | `529.5 (74)` | `443.7 (34.9)` | `446.0 (29.2)` | `1.19x` | `1.19x` |
-| `orbital` | `466.6 (19.4)` | `466.3 (13.2)` | `407.7 (38)` | `1.00x` | `1.14x` |
-| `reaction` | `1212.3 (32.8)` | `493.0 (44.7)` | `511.4 (66.4)` | `2.46x` | `2.37x` |
-| `vector` | `979.9 (141.6)` | `387.8 (13.9)` | `336.4 (18.5)` | `2.53x` | `2.91x` |
+| `bootstrap` | `339.7 (14.8)` | `199.8 (9.9)` | `199.5 (9.9)` | `1.70x` | `1.70x` |
+| `heat` | `271.5 (18.7)` | `214.5 (8.1)` | `217.4 (5.4)` | `1.27x` | `1.25x` |
+| `orbital` | `234.3 (23.3)` | `209.5 (10.1)` | `214.0 (8.7)` | `1.12x` | `1.09x` |
+| `reaction` | `622.4 (4.3)` | `211.1 (2.6)` | `208.8 (3.9)` | `2.95x` | `2.98x` |
+| `vector` | `397.3 (22.1)` | `164.9 (8.8)` | `162.1 (4.3)` | `2.41x` | `2.45x` |
 
 Notes:
 

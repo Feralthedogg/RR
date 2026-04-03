@@ -125,3 +125,61 @@ mod tests {
     assert!(good_stdout.contains("no static findings"));
     assert!(good_stdout.contains("result: PASS (scan-only)"));
 }
+
+#[test]
+fn contributing_audit_all_scope_includes_fuzz_and_native_paths() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let script = root.join("scripts").join("contributing_audit.sh");
+
+    let expected_output = Command::new("bash")
+        .arg("-lc")
+        .arg("git ls-files -- CONTRIBUTING.md src tests docs scripts fuzz native | sort -u | wc -l")
+        .current_dir(&root)
+        .output()
+        .expect("failed to count expected audit files");
+    assert!(
+        expected_output.status.success(),
+        "expected scope count command failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&expected_output.stdout),
+        String::from_utf8_lossy(&expected_output.stderr)
+    );
+    let expected_files: usize = String::from_utf8_lossy(&expected_output.stdout)
+        .trim()
+        .parse()
+        .expect("expected file count should parse");
+
+    let audit_output = Command::new("bash")
+        .arg(&script)
+        .arg("--scan-only")
+        .arg("--all")
+        .output()
+        .expect("failed to execute contributing audit script for full scope");
+    assert!(
+        audit_output.status.success(),
+        "full-scope audit should pass\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&audit_output.stdout),
+        String::from_utf8_lossy(&audit_output.stderr)
+    );
+    let audit_stdout = String::from_utf8_lossy(&audit_output.stdout);
+    let scanned_line = audit_stdout
+        .lines()
+        .find(|line| line.starts_with("files scanned: "))
+        .expect("audit output should report scanned file count");
+    let scanned_files: usize = scanned_line
+        .trim_start_matches("files scanned: ")
+        .parse()
+        .expect("scanned file count should parse");
+    assert_eq!(
+        scanned_files, expected_files,
+        "contributing audit --all should cover CONTRIBUTING.md plus src/tests/docs/scripts/fuzz/native"
+    );
+}
+
+#[test]
+fn ci_contributing_audit_scope_mentions_fuzz_and_native() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let ci_script = fs::read_to_string(root.join("scripts").join("ci_contributing_audit.sh"))
+        .expect("failed to read ci contributing audit script");
+    assert!(ci_script.contains("^fuzz\\/"));
+    assert!(ci_script.contains("^native\\/"));
+}

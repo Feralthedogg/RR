@@ -1,0 +1,12 @@
+Sym_49__typed_impl <- function(a, b) 
+{
+  .arg_a <- a
+  .arg_b <- b
+  return(((.arg_a + .arg_b) * 0.5))
+}
+
+# rr-typed-parallel-wrapper
+Sym_49 <- function(a, b) 
+{
+  return(rr_parallel_typed_vec_call("Sym_49", Sym_49__typed_impl, c(1L, 2L), a, b))
+}

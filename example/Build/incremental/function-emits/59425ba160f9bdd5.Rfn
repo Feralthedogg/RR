@@ -1,0 +1,6 @@
+Sym_10 <- function(x) 
+{
+  .arg_x <- x
+  x2 <- (.arg_x * .arg_x)
+  return((((1.0 + .arg_x) + (x2 * 0.5)) + ((x2 * .arg_x) * 0.1666)))
+}

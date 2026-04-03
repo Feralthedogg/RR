@@ -1,0 +1,5 @@
+Sym_56 <- function(xs) 
+{
+  .arg_xs <- xs
+  return(length(.arg_xs))
+}

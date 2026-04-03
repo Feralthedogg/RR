@@ -725,6 +725,59 @@ fn collect_index_safety(
                 visit_limit,
             );
         }
+        ValueKind::RecordLit { fields } => {
+            for (_, value) in fields {
+                collect_index_safety(
+                    *value,
+                    bid,
+                    facts,
+                    fn_ir,
+                    canonical_ivs,
+                    one_based_ivs,
+                    na_states,
+                    safe_values,
+                    non_na_values,
+                    one_based_values,
+                    seen,
+                    node_visits,
+                    visit_limit,
+                );
+            }
+        }
+        ValueKind::FieldGet { base, .. } => collect_index_safety(
+            *base,
+            bid,
+            facts,
+            fn_ir,
+            canonical_ivs,
+            one_based_ivs,
+            na_states,
+            safe_values,
+            non_na_values,
+            one_based_values,
+            seen,
+            node_visits,
+            visit_limit,
+        ),
+        ValueKind::FieldSet { base, value, .. } => {
+            for child in [*base, *value] {
+                collect_index_safety(
+                    child,
+                    bid,
+                    facts,
+                    fn_ir,
+                    canonical_ivs,
+                    one_based_ivs,
+                    na_states,
+                    safe_values,
+                    non_na_values,
+                    one_based_values,
+                    seen,
+                    node_visits,
+                    visit_limit,
+                );
+            }
+        }
         ValueKind::Binary { lhs, rhs, .. } => {
             collect_index_safety(
                 *lhs,

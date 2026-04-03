@@ -1,0 +1,57 @@
+Sym_123 <- function(b, n_l, n_r, n_d, n_u, size) 
+{
+  .arg_b <- b
+  .arg_n_l <- n_l
+  .arg_n_r <- n_r
+  .arg_n_d <- n_d
+  .arg_n_u <- n_u
+  .arg_size <- size
+  x <- rep.int(0.0, .arg_size)
+  # rr-cse-pruned
+  r <- .arg_b
+  p <- .arg_b
+  rs_old <- Sym_117(r, r, .arg_size)
+  if (rr_truthy1(((is.na(rs_old) | (!(is.finite(rs_old)))) | (rs_old == 0.0)), "condition")) {
+    rs_old <- 0.0000001
+    x <- Sym_17(.arg_size, 0.0, 2.0)
+  } else {
+  }
+  # rr-cse-pruned
+  iter <- 1.0
+  licm_76 <- 0.0000001
+  # rr-cse-pruned
+  repeat {
+    if (!(iter <= 20.0)) break
+    Ap <- Sym_119(p, .arg_n_l, .arg_n_r, .arg_n_d, .arg_n_u, .arg_size)
+    p_Ap <- Sym_117(p, Ap, .arg_size)
+    if (((is.na(p_Ap) | (!(is.finite(p_Ap)))) | (p_Ap == 0.0))) {
+      p_Ap <- 0.0000001
+    } else {
+    }
+    alpha <- (rs_old / p_Ap)
+    if ((is.na(alpha) | (!(is.finite(alpha))))) {
+      alpha <- 0.0
+    } else {
+    }
+    # rr-cse-pruned
+    x <- (x + (alpha * p))
+    r <- (r - (alpha * Ap))
+    rs_new <- Sym_117(r, r, .arg_size)
+    if (rr_truthy1((is.na(rs_new) | (!(is.finite(rs_new)))), "condition")) {
+      rs_new <- rs_old
+    } else {
+      rs_new <- Sym_117(r, r, .arg_size)
+    }
+    beta <- (rs_new / rs_old)
+    if ((is.na(beta) | (!(is.finite(beta))))) {
+      beta <- 0.0
+    } else {
+    }
+    # rr-cse-pruned
+    p <- (r + (beta * p))
+    rs_old <- rs_new
+    iter <- (iter + 1.0)
+    next
+  }
+  return(x)
+}

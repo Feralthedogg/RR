@@ -163,6 +163,7 @@ format_name_into(node, &mut scratch);
 - `SHOULD` keep integer widths intentional in IR and optimizer logic.
 - `MUST` preserve RR language semantics when simulating target-language
   arithmetic in compiler code, including constant folding and evaluator helpers.
+- `MUST` preserve cross-compilation determinism: compiler host floating-point characteristics must not silently alter generated target behavior.
 - `MUST` add focused tests when changing constant folding, evaluator helpers,
   or overflow-sensitive logic.
 - `SHOULD` document when compiler-side arithmetic intentionally differs from
@@ -263,6 +264,7 @@ For performance-sensitive changes, contributors `SHOULD` attach benchmark eviden
 - `MUST` keep unsafe preconditions visible and locally checkable where practical.
 - `MUST` keep `unsafe` blocks minimal and narrowly scoped.
 - `SHOULD` add targeted tests for invariants relied on by `unsafe`.
+- `SHOULD` prefer `SmallVec` or `IndexMap` instead of manual pointer manipulation for common compiler patterns.
 
 ### 16) Experimental and Optional Behavior
 
@@ -270,7 +272,7 @@ For performance-sensitive changes, contributors `SHOULD` attach benchmark eviden
 - `MUST` keep the default pipeline deterministic and production-safe.
 - `SHOULD` ensure gated behavior is easy to disable during debugging and regression triage.
 
-### 17) Dependency and Crate Discipline
+### 17) Dependency and Compiler Build Times
 
 - `SHOULD` prefer the standard library and existing project utilities over new
   dependencies for small conveniences.
@@ -278,6 +280,7 @@ For performance-sensitive changes, contributors `SHOULD` attach benchmark eviden
   materially affect performance, compile time, portability, or determinism.
 - `MUST NOT` add dependencies or abstraction layers that hide stage semantics or
   runtime cost without clear payoff.
+- `SHOULD` avoid excessive generic bloat or heavy procedural macros in core types to keep the compiler's own build times reasonable.
 
 ### 18) Review Readability
 
@@ -287,6 +290,14 @@ For performance-sensitive changes, contributors `SHOULD` attach benchmark eviden
 - `SHOULD` comment non-obvious invariants, stage assumptions,
   lifetime/ownership constraints, and performance-sensitive tradeoffs.
 - `MUST NOT` add comments that restate obvious syntax.
+
+### 19) Commenting Rules
+
+- `MUST` explain the *why*, not the *what*. Code dictates what happens; comments should capture the underlying intent or workarounds.
+- `MUST` use structured prefixes for actionable comments (e.g., `// TODO(name/issue):`, `// FIXME:`, `// NOTE:`).
+- `MUST` document complex compiler algorithms, tricky performance optimizations, and non-obvious data transformations explicitly at the block level.
+- `SHOULD` delete stale comments immediately. A misleading comment is strictly worse than no comment.
+- `SHOULD` favor self-documenting code (clear variable and function naming) over inline comments whenever possible.
 
 ## Exception Process
 

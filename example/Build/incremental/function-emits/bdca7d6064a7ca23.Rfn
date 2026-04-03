@@ -1,0 +1,32 @@
+Sym_37 <- function(f, x, y, size) 
+{
+  .arg_f <- f
+  .arg_x <- x
+  .arg_y <- y
+  .arg_size <- size
+  .__rr_cse_5 <- (.arg_x / .arg_size)
+  u <- ((.__rr_cse_5 + .__rr_cse_5) - 1.0)
+  .__rr_cse_11 <- (.arg_y / .arg_size)
+  v <- ((.__rr_cse_11 + .__rr_cse_11) - 1.0)
+  lat <- 0.0
+  if ((.arg_f == 5.0)) {
+    .__rr_cse_7 <- (.__rr_cse_5 + .__rr_cse_5)
+    .__rr_cse_13 <- (.__rr_cse_11 + .__rr_cse_11)
+    lat <- (45.0 + ((1.0 - (((u * u) + (v * v)) * 0.25)) * 45.0))
+  } else {
+  }
+  if ((.arg_f == 6.0)) {
+    .__rr_cse_5 <- (.arg_x / .arg_size)
+    .__rr_cse_7 <- (.__rr_cse_5 + .__rr_cse_5)
+    .__rr_cse_11 <- (.arg_y / .arg_size)
+    .__rr_cse_13 <- (.__rr_cse_11 + .__rr_cse_11)
+    lat <- (-45.0 - ((1.0 - ((((.__rr_cse_7 - 1.0) * (.__rr_cse_7 - 1.0)) + ((.__rr_cse_13 - 1.0) * (.__rr_cse_13 - 1.0))) * 0.25)) * 45.0))
+  } else {
+  }
+  if ((.arg_f < 5.0)) {
+    .__rr_cse_11 <- (.arg_y / .arg_size)
+    lat <- (((.__rr_cse_11 + .__rr_cse_11) - 1.0) * 45.0)
+  } else {
+  }
+  return(lat)
+}

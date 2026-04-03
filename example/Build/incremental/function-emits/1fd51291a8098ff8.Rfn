@@ -1,0 +1,33 @@
+Sym_64 <- function(f, x, ys, size) 
+{
+  .arg_f <- f
+  .arg_x <- x
+  .arg_ys <- ys
+  .arg_size <- size
+  width <- length(.arg_ys)
+  if ((.arg_x < .arg_size)) {
+    return(rr_idx_cube_vec_i(rep.int(.arg_f, width), rep.int((.arg_x + 1.0), width), .arg_ys, .arg_size))
+  } else {
+    if ((.arg_f == 1.0)) {
+      return(rr_idx_cube_vec_i(rep.int(2.0, width), rep.int(1.0, width), .arg_ys, .arg_size))
+    } else {
+      if ((.arg_f == 2.0)) {
+        return(rr_idx_cube_vec_i(rep.int(3.0, width), rep.int(1.0, width), .arg_ys, .arg_size))
+      } else {
+        if ((.arg_f == 3.0)) {
+          return(rr_idx_cube_vec_i(rep.int(4.0, width), rep.int(1.0, width), .arg_ys, .arg_size))
+        } else {
+          if ((.arg_f == 4.0)) {
+            return(rr_idx_cube_vec_i(rep.int(1.0, width), rep.int(1.0, width), .arg_ys, .arg_size))
+          } else {
+            if ((.arg_f == 5.0)) {
+              return(rr_idx_cube_vec_i(rep.int(2.0, width), (.arg_size - (.arg_ys - 1.0)), rep.int(.arg_size, width), .arg_size))
+            } else {
+              return(rr_idx_cube_vec_i(rep.int(2.0, width), .arg_ys, rep.int(1.0, width), .arg_size))
+            }
+          }
+        }
+      }
+    }
+  }
+}

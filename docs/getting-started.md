@@ -42,8 +42,6 @@ fn main() {
   print(x)
   x
 }
-
-print(main())
 ```
 
 Compile it:
@@ -84,15 +82,17 @@ RR run . -O2
 ```
 
 `run .` resolves the current directory to `main.rr`.
+For project entry files, RR expects `fn main()` and automatically appends a
+top-level `main()` call during `run` if the file does not already contain one.
 
-### Build a Tree
+### Build a Project
 
 ```bash
-RR build . --out-dir build -O2
+RR build . -O2
 ```
 
-Use this when you want every `.rr` file under a directory compiled into a
-mirrored output tree.
+Use this when you want the project entry compiled into `Build/debug/` without
+executing it.
 
 ## What RR Emits
 

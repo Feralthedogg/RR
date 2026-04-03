@@ -1,0 +1,44 @@
+Sym_156 <- function(u, v, n_l, n_r, n_d, n_u, size) 
+{
+  .arg_u <- u
+  .arg_v <- v
+  .arg_n_l <- n_l
+  .arg_n_r <- n_r
+  .arg_n_d <- n_d
+  .arg_n_u <- n_u
+  .arg_size <- size
+  visc <- Sym_17(.arg_size, 0.0, 2.0)
+  Cs <- 0.15
+  DX <- 10000.0
+  mix_sq <- ((Cs * DX) * (Cs * DX))
+  i <- 1.0
+  # rr-cse-pruned
+  licm_68 <- (2.0 * DX)
+  licm_74 <- (2.0 * DX)
+  licm_81 <- (2.0 * DX)
+  licm_87 <- (2.0 * DX)
+  licm_16 <- (Cs * DX)
+  licm_17 <- (Cs * DX)
+  licm_95 <- (licm_16 * licm_17)
+  repeat {
+    if (!(i <= .arg_size)) break
+    ii <- floor(i)
+    l <- rr_index1_read_idx(.arg_n_l, ii, "index")
+    r <- rr_index1_read_idx(.arg_n_r, ii, "index")
+    d <- rr_index1_read_idx(.arg_n_d, ii, "index")
+    u_idx <- rr_index1_read_idx(.arg_n_u, ii, "index")
+    du_dx <- ((rr_index1_read(.arg_u, r, "index") - rr_index1_read(.arg_u, l, "index")) / licm_68)
+    du_dy <- ((rr_index1_read(.arg_u, u_idx, "index") - rr_index1_read(.arg_u, d, "index")) / licm_74)
+    dv_dx <- ((rr_index1_read(.arg_v, r, "index") - rr_index1_read(.arg_v, l, "index")) / licm_81)
+    dv_dy <- ((rr_index1_read(.arg_v, u_idx, "index") - rr_index1_read(.arg_v, d, "index")) / licm_87)
+    ten <- (du_dx - dv_dy)
+    shr <- (du_dy + dv_dx)
+    # rr-cse-pruned
+    def <- sqrt(((ten * ten) + (shr * shr)))
+    rr_mark(680L, 9L);
+    visc[rr_index1_write(ii, "index")] <- (licm_95 * def)
+    i <- (i + 1.0)
+    next
+  }
+  return(visc)
+}

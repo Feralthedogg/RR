@@ -1,0 +1,16 @@
+Sym_1 <- function() 
+{
+  csvfile <- "rr_readr_tidyr_ggplot2_pipeline_modern.csv"
+  outfile <- "rr_readr_tidyr_ggplot2_pipeline_modern.png"
+  wide <- base::data.frame(step = c(0L, 1L, 2L, 3L, 4L), value_a = c(0.2, 0.6, 1.0, 0.7, 0.3), value_b = c(0.1, 0.4, 0.9, 1.2, 1.0))
+  rr_mark(16L, 5L);
+  readr::write_csv(wide, csvfile)
+  loaded <- readr::read_csv(csvfile, show_col_types = FALSE)
+  long <- tidyr::pivot_longer(loaded, cols = c(value_a, value_b), names_to = "series", values_to = "value")
+  p <- ((((ggplot2::ggplot(long, ggplot2::aes(x = step, y = value, color = series)) + ggplot2::geom_line(linewidth = 1.2)) + ggplot2::geom_point(size = 2.2)) + ggplot2::ggtitle("RR modern + readr + tidyr + ggplot2: reshaped trace")) + ggplot2::theme_minimal())
+  rr_mark(31L, 5L);
+  ggplot2::ggsave(filename = outfile, plot = p, width = 8L, height = 4.5, dpi = 120L)
+  rr_mark(32L, 5L);
+  print("saved_plot")
+  return(print(outfile))
+}

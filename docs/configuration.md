@@ -108,8 +108,6 @@ Relevant driver flags:
 
 - `RR_VERIFY_EACH_PASS`
 - `RR_VERIFY_DUMP_DIR`
-- `RR_DEBUG_FNIR`
-  - dump selected optimized `FnIR` bodies while debugging optimizer/codegen issues
 - `RR_DEBUG_RAW_R_PATH`
   - write the pre-peephole emitted R artifact to a file before final cleanup/remap
 - `RR_PULSE_JSON_PATH`

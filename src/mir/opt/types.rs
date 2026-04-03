@@ -82,10 +82,42 @@ pub struct TachyonPulseStats {
     pub vector_applied_3d: usize,
     pub vector_applied_call_map_direct: usize,
     pub vector_applied_call_map_runtime: usize,
+    pub vector_legacy_poly_fallback_candidate_total: usize,
+    pub vector_legacy_poly_fallback_candidate_reductions: usize,
+    pub vector_legacy_poly_fallback_candidate_maps: usize,
+    pub vector_legacy_poly_fallback_applied_total: usize,
+    pub vector_legacy_poly_fallback_applied_reductions: usize,
+    pub vector_legacy_poly_fallback_applied_maps: usize,
     pub vector_trip_tier_tiny: usize,
     pub vector_trip_tier_small: usize,
     pub vector_trip_tier_medium: usize,
     pub vector_trip_tier_large: usize,
+    pub poly_loops_seen: usize,
+    pub poly_scops_detected: usize,
+    pub poly_rejected_cfg_shape: usize,
+    pub poly_rejected_non_affine: usize,
+    pub poly_rejected_effects: usize,
+    pub poly_affine_stmt_count: usize,
+    pub poly_access_relation_count: usize,
+    pub poly_dependence_solved: usize,
+    pub poly_schedule_attempted: usize,
+    pub poly_schedule_applied: usize,
+    pub poly_schedule_attempted_identity: usize,
+    pub poly_schedule_attempted_interchange: usize,
+    pub poly_schedule_attempted_skew2d: usize,
+    pub poly_schedule_attempted_tile1d: usize,
+    pub poly_schedule_attempted_tile2d: usize,
+    pub poly_schedule_attempted_tile3d: usize,
+    pub poly_schedule_applied_identity: usize,
+    pub poly_schedule_applied_interchange: usize,
+    pub poly_schedule_applied_skew2d: usize,
+    pub poly_schedule_applied_tile1d: usize,
+    pub poly_schedule_applied_tile2d: usize,
+    pub poly_schedule_applied_tile3d: usize,
+    pub poly_schedule_auto_fuse_selected: usize,
+    pub poly_schedule_auto_fission_selected: usize,
+    pub poly_schedule_auto_skew2d_selected: usize,
+    pub poly_schedule_backend_hint_selected: usize,
     pub proof_certified: usize,
     pub proof_applied: usize,
     pub proof_apply_failed: usize,
@@ -156,10 +188,48 @@ impl TachyonPulseStats {
         self.vector_applied_3d += other.vector_applied_3d;
         self.vector_applied_call_map_direct += other.vector_applied_call_map_direct;
         self.vector_applied_call_map_runtime += other.vector_applied_call_map_runtime;
+        self.vector_legacy_poly_fallback_candidate_total +=
+            other.vector_legacy_poly_fallback_candidate_total;
+        self.vector_legacy_poly_fallback_candidate_reductions +=
+            other.vector_legacy_poly_fallback_candidate_reductions;
+        self.vector_legacy_poly_fallback_candidate_maps +=
+            other.vector_legacy_poly_fallback_candidate_maps;
+        self.vector_legacy_poly_fallback_applied_total +=
+            other.vector_legacy_poly_fallback_applied_total;
+        self.vector_legacy_poly_fallback_applied_reductions +=
+            other.vector_legacy_poly_fallback_applied_reductions;
+        self.vector_legacy_poly_fallback_applied_maps +=
+            other.vector_legacy_poly_fallback_applied_maps;
         self.vector_trip_tier_tiny += other.vector_trip_tier_tiny;
         self.vector_trip_tier_small += other.vector_trip_tier_small;
         self.vector_trip_tier_medium += other.vector_trip_tier_medium;
         self.vector_trip_tier_large += other.vector_trip_tier_large;
+        self.poly_loops_seen += other.poly_loops_seen;
+        self.poly_scops_detected += other.poly_scops_detected;
+        self.poly_rejected_cfg_shape += other.poly_rejected_cfg_shape;
+        self.poly_rejected_non_affine += other.poly_rejected_non_affine;
+        self.poly_rejected_effects += other.poly_rejected_effects;
+        self.poly_affine_stmt_count += other.poly_affine_stmt_count;
+        self.poly_access_relation_count += other.poly_access_relation_count;
+        self.poly_dependence_solved += other.poly_dependence_solved;
+        self.poly_schedule_attempted += other.poly_schedule_attempted;
+        self.poly_schedule_applied += other.poly_schedule_applied;
+        self.poly_schedule_attempted_identity += other.poly_schedule_attempted_identity;
+        self.poly_schedule_attempted_interchange += other.poly_schedule_attempted_interchange;
+        self.poly_schedule_attempted_skew2d += other.poly_schedule_attempted_skew2d;
+        self.poly_schedule_attempted_tile1d += other.poly_schedule_attempted_tile1d;
+        self.poly_schedule_attempted_tile2d += other.poly_schedule_attempted_tile2d;
+        self.poly_schedule_attempted_tile3d += other.poly_schedule_attempted_tile3d;
+        self.poly_schedule_applied_identity += other.poly_schedule_applied_identity;
+        self.poly_schedule_applied_interchange += other.poly_schedule_applied_interchange;
+        self.poly_schedule_applied_skew2d += other.poly_schedule_applied_skew2d;
+        self.poly_schedule_applied_tile1d += other.poly_schedule_applied_tile1d;
+        self.poly_schedule_applied_tile2d += other.poly_schedule_applied_tile2d;
+        self.poly_schedule_applied_tile3d += other.poly_schedule_applied_tile3d;
+        self.poly_schedule_auto_fuse_selected += other.poly_schedule_auto_fuse_selected;
+        self.poly_schedule_auto_fission_selected += other.poly_schedule_auto_fission_selected;
+        self.poly_schedule_auto_skew2d_selected += other.poly_schedule_auto_skew2d_selected;
+        self.poly_schedule_backend_hint_selected += other.poly_schedule_backend_hint_selected;
         self.proof_certified += other.proof_certified;
         self.proof_applied += other.proof_applied;
         self.proof_apply_failed += other.proof_apply_failed;
@@ -233,10 +303,42 @@ impl TachyonPulseStats {
                 "  \"vector_applied_3d\": {},\n",
                 "  \"vector_applied_call_map_direct\": {},\n",
                 "  \"vector_applied_call_map_runtime\": {},\n",
+                "  \"vector_legacy_poly_fallback_candidate_total\": {},\n",
+                "  \"vector_legacy_poly_fallback_candidate_reductions\": {},\n",
+                "  \"vector_legacy_poly_fallback_candidate_maps\": {},\n",
+                "  \"vector_legacy_poly_fallback_applied_total\": {},\n",
+                "  \"vector_legacy_poly_fallback_applied_reductions\": {},\n",
+                "  \"vector_legacy_poly_fallback_applied_maps\": {},\n",
                 "  \"vector_trip_tier_tiny\": {},\n",
                 "  \"vector_trip_tier_small\": {},\n",
                 "  \"vector_trip_tier_medium\": {},\n",
                 "  \"vector_trip_tier_large\": {},\n",
+                "  \"poly_loops_seen\": {},\n",
+                "  \"poly_scops_detected\": {},\n",
+                "  \"poly_rejected_cfg_shape\": {},\n",
+                "  \"poly_rejected_non_affine\": {},\n",
+                "  \"poly_rejected_effects\": {},\n",
+                "  \"poly_affine_stmt_count\": {},\n",
+                "  \"poly_access_relation_count\": {},\n",
+                "  \"poly_dependence_solved\": {},\n",
+                "  \"poly_schedule_attempted\": {},\n",
+                "  \"poly_schedule_applied\": {},\n",
+                "  \"poly_schedule_attempted_identity\": {},\n",
+                "  \"poly_schedule_attempted_interchange\": {},\n",
+                "  \"poly_schedule_attempted_skew2d\": {},\n",
+                "  \"poly_schedule_attempted_tile1d\": {},\n",
+                "  \"poly_schedule_attempted_tile2d\": {},\n",
+                "  \"poly_schedule_attempted_tile3d\": {},\n",
+                "  \"poly_schedule_applied_identity\": {},\n",
+                "  \"poly_schedule_applied_interchange\": {},\n",
+                "  \"poly_schedule_applied_skew2d\": {},\n",
+                "  \"poly_schedule_applied_tile1d\": {},\n",
+                "  \"poly_schedule_applied_tile2d\": {},\n",
+                "  \"poly_schedule_applied_tile3d\": {},\n",
+                "  \"poly_schedule_auto_fuse_selected\": {},\n",
+                "  \"poly_schedule_auto_fission_selected\": {},\n",
+                "  \"poly_schedule_auto_skew2d_selected\": {},\n",
+                "  \"poly_schedule_backend_hint_selected\": {},\n",
                 "  \"proof_certified\": {},\n",
                 "  \"proof_applied\": {},\n",
                 "  \"proof_apply_failed\": {},\n",
@@ -304,10 +406,42 @@ impl TachyonPulseStats {
             self.vector_applied_3d,
             self.vector_applied_call_map_direct,
             self.vector_applied_call_map_runtime,
+            self.vector_legacy_poly_fallback_candidate_total,
+            self.vector_legacy_poly_fallback_candidate_reductions,
+            self.vector_legacy_poly_fallback_candidate_maps,
+            self.vector_legacy_poly_fallback_applied_total,
+            self.vector_legacy_poly_fallback_applied_reductions,
+            self.vector_legacy_poly_fallback_applied_maps,
             self.vector_trip_tier_tiny,
             self.vector_trip_tier_small,
             self.vector_trip_tier_medium,
             self.vector_trip_tier_large,
+            self.poly_loops_seen,
+            self.poly_scops_detected,
+            self.poly_rejected_cfg_shape,
+            self.poly_rejected_non_affine,
+            self.poly_rejected_effects,
+            self.poly_affine_stmt_count,
+            self.poly_access_relation_count,
+            self.poly_dependence_solved,
+            self.poly_schedule_attempted,
+            self.poly_schedule_applied,
+            self.poly_schedule_attempted_identity,
+            self.poly_schedule_attempted_interchange,
+            self.poly_schedule_attempted_skew2d,
+            self.poly_schedule_attempted_tile1d,
+            self.poly_schedule_attempted_tile2d,
+            self.poly_schedule_attempted_tile3d,
+            self.poly_schedule_applied_identity,
+            self.poly_schedule_applied_interchange,
+            self.poly_schedule_applied_skew2d,
+            self.poly_schedule_applied_tile1d,
+            self.poly_schedule_applied_tile2d,
+            self.poly_schedule_applied_tile3d,
+            self.poly_schedule_auto_fuse_selected,
+            self.poly_schedule_auto_fission_selected,
+            self.poly_schedule_auto_skew2d_selected,
+            self.poly_schedule_backend_hint_selected,
             self.proof_certified,
             self.proof_applied,
             self.proof_apply_failed,

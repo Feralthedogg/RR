@@ -1,0 +1,207 @@
+Sym_303 <- function() 
+{
+  rr_mark(1342L, 5L);
+  print("Initializing TESSERACT: UNIFIED MODEL (Ocean + Omega + Particles)...")
+  N <- 40.0
+  TOTAL <- ((6.0 * N) * N)
+  rr_mark(1350L, 5L);
+  print("  Building Topology...")
+  adj_l <- Sym_83(1.0, N)
+  adj_r <- Sym_83(2.0, N)
+  adj_d <- Sym_83(3.0, N)
+  adj_u <- Sym_83(4.0, N)
+  rr_mark(1361L, 5L);
+  print("  Allocating State...")
+  # rr-cse-pruned
+  h <- Sym_17(TOTAL, 8000.0, 3.0)
+  temp <- Sym_17(TOTAL, 300.0, 3.0)
+  qv <- Sym_17(TOTAL, 0.015, 3.0)
+  qc <- Sym_17(TOTAL, 0.001, 3.0)
+  qr <- Sym_17(TOTAL, 0.0, 3.0)
+  qi <- Sym_17(TOTAL, 0.0, 3.0)
+  qs <- Sym_17(TOTAL, 0.0, 3.0)
+  qg <- Sym_17(TOTAL, 0.0, 3.0)
+  rr_mark(1383L, 5L);
+  print("  Typed/Parallel Feature Probe...")
+  probe_vec <- Sym_49(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))
+  probe_energy <- Sym_51(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))
+  probe_generic <- length(list(c(1.0), c(2.0), c(3.0)))
+  rr_mark(1387L, 5L);
+  print("    Probe Vec[1]:")
+  rr_mark(1388L, 5L);
+  print(probe_vec[1.0])
+  rr_mark(1389L, 5L);
+  print("    Probe Energy:")
+  rr_mark(1390L, 5L);
+  print(probe_energy)
+  rr_mark(1391L, 5L);
+  print("    Probe Generic Count:")
+  rr_mark(1392L, 5L);
+  print(probe_generic)
+  rr_mark(1395L, 5L);
+  print("  Building Extended Topology (WENO-5 Order)...")
+  adj_ll <- Sym_17(TOTAL, 0.0, 2.0)
+  adj_rr <- Sym_17(TOTAL, 0.0, 2.0)
+  i <- 1.0
+  ii <- 0.0
+  # rr-cse-pruned
+  .tachyon_exprmap0_0 <- rr_gather(adj_l, rr_index_vec_floor(rr_index1_read_vec(adj_l, rr_index_vec_floor(i:((6.0 * N) * N)))))
+  .tachyon_exprmap1_0 <- rr_gather(adj_r, rr_index_vec_floor(rr_index1_read_vec(adj_r, rr_index_vec_floor(i:((6.0 * N) * N)))))
+  adj_ll <- rr_assign_slice(adj_ll, i, ((6.0 * N) * N), .tachyon_exprmap0_0)
+  adj_rr <- rr_assign_slice(adj_rr, i, ((6.0 * N) * N), .tachyon_exprmap1_0)
+  h_trn <- rep.int(0.0, TOTAL)
+  coriolis <- Sym_17(TOTAL, 0.0, 3.0)
+  rr_mark(1429L, 5L);
+  print("  Initializing Environment...")
+  k <- 1.0
+  grid_sq <- (N * N)
+  mtn_h <- 4000.0
+  # rr-cse-pruned
+  u <- Sym_17(TOTAL, 10.0, 3.0)
+  v <- Sym_17(TOTAL, 0.0, 3.0)
+  repeat {
+    if (!(k <= TOTAL)) break
+    k0 <- (k - 1.0)
+    f_curr <- (floor((k0 / grid_sq)) + 1.0)
+    rem <- (k0 %% grid_sq)
+    x_curr <- (floor((rem / N)) + 1.0)
+    y_curr <- ((rem %% N) + 1.0)
+    if ((f_curr == 1.0)) {
+      dx_m <- (x_curr - 20.0)
+      dy_m <- (y_curr - 20.0)
+      .__rr_cse_205 <- (rem / N)
+      .__rr_cse_206 <- floor(.__rr_cse_205)
+      .__rr_cse_209 <- (rem %% N)
+      dist <- ((dx_m * dx_m) + (dy_m * dy_m))
+      rr_mark(1470L, 13L);
+      h_trn[k] <- (mtn_h / (1.0 + (dist * 0.1)))
+    } else {
+    }
+    (floor(((k - 1.0) / grid_sq)) + 1.0)
+    (floor((((k - 1.0) %% grid_sq) / N)) + 1.0)
+    .__rr_cse_205 <- (((k - 1.0) %% grid_sq) / N)
+    .__rr_cse_206 <- floor(.__rr_cse_205)
+    .__rr_cse_652 <- ((.__rr_cse_206 + 1.0) / N)
+    inlined_39_u <- ((.__rr_cse_652 + .__rr_cse_652) - 1.0)
+    .__rr_cse_209 <- (((k - 1.0) %% grid_sq) %% N)
+    .__rr_cse_658 <- ((.__rr_cse_209 + 1.0) / N)
+    inlined_39_v <- ((.__rr_cse_658 + .__rr_cse_658) - 1.0)
+    inlined_39_lat <- 0.0
+    if (((floor(((k - 1.0) / grid_sq)) + 1.0) == 5.0)) {
+      .__rr_cse_205 <- (((k - 1.0) %% grid_sq) / N)
+      .__rr_cse_206 <- floor(.__rr_cse_205)
+      .__rr_cse_654 <- (.__rr_cse_652 + .__rr_cse_652)
+      .__rr_cse_209 <- (((k - 1.0) %% grid_sq) %% N)
+      .__rr_cse_660 <- (.__rr_cse_658 + .__rr_cse_658)
+      inlined_39_lat <- (45.0 + ((1.0 - (((inlined_39_u * inlined_39_u) + (inlined_39_v * inlined_39_v)) * 0.25)) * 45.0))
+    } else {
+    }
+    if (((floor(((k - 1.0) / grid_sq)) + 1.0) == 6.0)) {
+      .__rr_cse_205 <- (((k - 1.0) %% grid_sq) / N)
+      .__rr_cse_206 <- floor(.__rr_cse_205)
+      .__rr_cse_652 <- ((.__rr_cse_206 + 1.0) / N)
+      .__rr_cse_654 <- (.__rr_cse_652 + .__rr_cse_652)
+      .__rr_cse_209 <- (((k - 1.0) %% grid_sq) %% N)
+      .__rr_cse_658 <- ((.__rr_cse_209 + 1.0) / N)
+      .__rr_cse_660 <- (.__rr_cse_658 + .__rr_cse_658)
+      inlined_39_lat <- (-45.0 - ((1.0 - ((((.__rr_cse_654 - 1.0) * (.__rr_cse_654 - 1.0)) + ((.__rr_cse_660 - 1.0) * (.__rr_cse_660 - 1.0))) * 0.25)) * 45.0))
+    } else {
+    }
+    if (((floor(((k - 1.0) / grid_sq)) + 1.0) < 5.0)) {
+      .__rr_cse_209 <- (((k - 1.0) %% grid_sq) %% N)
+      .__rr_cse_658 <- ((.__rr_cse_209 + 1.0) / N)
+      inlined_39_lat <- (((.__rr_cse_658 + .__rr_cse_658) - 1.0) * 45.0)
+    } else {
+    }
+    lat <- inlined_39_lat
+    rr_mark(1476L, 9L);
+    coriolis[k] <- (0.00014 * (inlined_39_lat / 90.0))
+    k <- (k + 1.0)
+    next
+  }
+  rr_mark(1482L, 5L);
+  print("  Verifying CG Solver (Pressure Poisson)...")
+  b_cg <- rep.int(1.0, TOTAL)
+  x_cg <- Sym_123(b_cg, adj_l, adj_r, adj_d, adj_u, TOTAL)
+  rr_mark(1488L, 5L);
+  print("    CG Solve complete. Sample x:")
+  rr_mark(1490L, 5L);
+  print(x_cg[1L])
+  # rr-cse-pruned
+  u_new <- Sym_17(TOTAL, 0.0, 3.0)
+  steps <- 0.0
+  MAX_STEPS <- 5.0
+  dt <- 0.1
+  rr_mark(1503L, 5L);
+  print("  Initializing Lagrangian Drifters (1000 particles)...")
+  p_x <- Sym_183(1000.0)
+  p_y <- Sym_183(1000.0)
+  p_f <- Sym_17(1000.0, 1.0, 2.0)
+  rr_mark(1512L, 5L);
+  print("  Starting RK3 Integration...")
+  # rr-cse-pruned
+  licm_401 <- (0.25 * dt)
+  licm_434 <- -1000.0
+  licm_450 <- (0.6667 * dt)
+  repeat {
+    if (!(steps < MAX_STEPS)) break
+    visc <- Sym_156(u, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    heat <- Sym_287(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+    adv_u <- Sym_268(u, u, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+    du1 <- Sym_171(u, v, h, h_trn, coriolis, visc, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    particles <- Sym_186(p_x, p_y, p_f, u, v, dt, N, TOTAL)
+    p_x <- particles[["px"]]
+    p_y <- particles[["py"]]
+    p_f <- particles[["pf"]]
+    # rr-cse-pruned
+    u_stage <- (u + (dt * (du1 - adv_u)))
+    # rr-cse-pruned
+    visc2 <- Sym_156(u_stage, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    heat2 <- Sym_287(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+    # rr-cse-pruned
+    adv_u2 <- Sym_268(u_stage, u_stage, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+    du2 <- Sym_171(u_stage, v, h, h_trn, coriolis, visc2, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    # rr-cse-pruned
+    u_stage <- (((0.75 * u) + (0.25 * u_stage)) + (licm_401 * (du2 - adv_u2)))
+    # rr-cse-pruned
+    visc3 <- Sym_156(u_stage, v, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    heat3 <- Sym_287(temp, qv, qc, qr, qi, qs, qg, TOTAL)
+    # rr-cse-pruned
+    adv_u3 <- Sym_268(u_stage, u_stage, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+    du3 <- Sym_171(u_stage, v, h, h_trn, coriolis, visc3, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    i <- 1.0
+    max_u <- -1000.0
+    du3 <- Sym_171(u_stage, v, h, h_trn, coriolis, visc3, adj_l, adj_r, adj_d, adj_u, TOTAL)
+    adv_u3 <- Sym_268(u_stage, u_stage, adj_l, adj_r, adj_ll, adj_rr, TOTAL)
+    repeat {
+      if (!(i <= TOTAL)) break
+      ii <- i
+      rr_mark(1586L, 13L);
+      u_new[i] <- (((0.3333 * u[i]) + (0.6667 * u_stage[i])) + (licm_450 * (du3[i] - adv_u3[i])))
+      rr_mark(1589L, 13L);
+      u_new[i] <- (u_new[i] + (heat[i] * 0.001))
+      if ((u_new[i] > max_u)) {
+        max_u <- u_new[i]
+      } else {
+      }
+      i <- (i + 1.0)
+      next
+    }
+    tmp_u <- u
+    u <- u_new
+    u_new <- tmp_u
+    rr_mark(1607L, 9L);
+    print("  Step Complete. Max U:")
+    rr_mark(1609L, 9L);
+    print(max_u)
+    rr_mark(1611L, 9L);
+    print("    Particle 1 Position (X):")
+    rr_mark(1613L, 9L);
+    print(p_x[1L])
+    steps <- (steps + 1.0)
+    next
+  }
+  rr_mark(1619L, 5L);
+  print("TESSERACT: UNIFIED Model Complete.")
+  return(0L)
+}

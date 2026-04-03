@@ -75,6 +75,29 @@ main()
 }
 
 #[test]
+fn dead_bare_identifier_after_return_must_fail() {
+    let src = r#"
+fn main() {
+  return 0
+  foo
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "dead_bare_identifier.rr");
+    assert!(!ok, "compile must fail for dead bare identifier statements");
+    assert!(
+        stdout.contains("** (RR.SemanticError)"),
+        "missing semantic error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("undefined variable 'foo'"),
+        "missing dead-code undefined variable detail:\n{}",
+        stdout
+    );
+}
+
+#[test]
 fn undefined_function_must_fail() {
     let src = r#"
 fn main() {

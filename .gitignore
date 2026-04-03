@@ -2,3 +2,4 @@
 .idea
 .DS_Store
 /scripts/__pycache__
+example/Build

@@ -391,6 +391,16 @@ fn collect_fresh_returning_user_functions(all_fns: &FxHashMap<String, FnIR>) -> 
             ValueKind::Unary { rhs, .. } => {
                 value_is_functionally_pure(all_fns, fn_ir, *rhs, ctx, seen)
             }
+            ValueKind::RecordLit { fields } => fields
+                .iter()
+                .all(|(_, value)| value_is_functionally_pure(all_fns, fn_ir, *value, ctx, seen)),
+            ValueKind::FieldGet { base, .. } => {
+                value_is_functionally_pure(all_fns, fn_ir, *base, ctx, seen)
+            }
+            ValueKind::FieldSet { base, value, .. } => {
+                value_is_functionally_pure(all_fns, fn_ir, *base, ctx, seen)
+                    && value_is_functionally_pure(all_fns, fn_ir, *value, ctx, seen)
+            }
             ValueKind::Index1D { base, idx, .. } => {
                 value_is_functionally_pure(all_fns, fn_ir, *base, ctx, seen)
                     && value_is_functionally_pure(all_fns, fn_ir, *idx, ctx, seen)

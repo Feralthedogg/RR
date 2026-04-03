@@ -1,0 +1,13 @@
+Sym_1 <- function() 
+{
+  outfile <- "rr_tidyr_separate_unite_plot_modern.png"
+  raw <- base::data.frame(name = c("A:x", "A:y", "B:x", "B:y"), value = c(1.2, 2.4, 1.8, 3.1))
+  split <- tidyr::separate(raw, col = name, into = c("label", "grp"), sep = ":")
+  joined <- tidyr::unite(split, "combined", label, grp, sep = " / ")
+  p <- (((ggplot2::ggplot(joined, ggplot2::aes(x = combined, y = value)) + ggplot2::geom_col(fill = "steelblue")) + ggplot2::ggtitle("RR modern + tidyr::separate / unite")) + ggplot2::theme_bw())
+  rr_mark(21L, 5L);
+  ggplot2::ggsave(filename = outfile, plot = p, width = 8L, height = 4.5, dpi = 120L)
+  rr_mark(22L, 5L);
+  print("saved_plot")
+  return(print(outfile))
+}

@@ -1,0 +1,25 @@
+Sym_1 <- function() 
+{
+  s <- 999.0
+  i <- 1.0
+  r <- 0.0
+  beta <- 0.3
+  gamma <- 0.08
+  n <- 1000.0
+  peak_i <- 1.0
+  step <- 1.0
+  repeat {
+    if (!(step <= 40.0)) break
+    new_inf <- (((beta * s) * i) / n)
+    new_rec <- (gamma * i)
+    s <- (s - new_inf)
+    i <- ((i + new_inf) - new_rec)
+    r <- (r + new_rec)
+    peak_i <- pmax(peak_i, i)
+    step <- (step + 1.0)
+    next
+  }
+  rr_mark(21L, 5L);
+  Sym_13("sir_peak_infected", peak_i)
+  return(Sym_13("sir_final_recovered", r))
+}

@@ -105,6 +105,16 @@ pub(super) fn is_vector_safe_user_expr(
             is_vector_safe_user_expr(fn_ir, *start, user_whitelist, seen)
                 && is_vector_safe_user_expr(fn_ir, *end, user_whitelist, seen)
         }
+        ValueKind::RecordLit { fields } => fields
+            .iter()
+            .all(|(_, value)| is_vector_safe_user_expr(fn_ir, *value, user_whitelist, seen)),
+        ValueKind::FieldGet { base, .. } => {
+            is_vector_safe_user_expr(fn_ir, *base, user_whitelist, seen)
+        }
+        ValueKind::FieldSet { base, value, .. } => {
+            is_vector_safe_user_expr(fn_ir, *base, user_whitelist, seen)
+                && is_vector_safe_user_expr(fn_ir, *value, user_whitelist, seen)
+        }
         ValueKind::Index1D { .. } | ValueKind::Index2D { .. } | ValueKind::Index3D { .. } => false,
     }
 }

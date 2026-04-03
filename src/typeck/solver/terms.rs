@@ -946,6 +946,18 @@ pub(super) fn infer_value_term(
         ValueKind::Index1D { base, .. }
         | ValueKind::Index2D { base, .. }
         | ValueKind::Index3D { base, .. } => fn_ir.values[*base].value_term.index_element(),
+        ValueKind::RecordLit { fields } => TypeTerm::NamedList(
+            fields
+                .iter()
+                .map(|(name, value)| (name.clone(), fn_ir.values[*value].value_term.clone()))
+                .collect(),
+        ),
+        ValueKind::FieldGet { base, field } => fn_ir.values[*base]
+            .value_term
+            .field_value_named(Some(field.as_str())),
+        ValueKind::FieldSet { base, field, value } => fn_ir.values[*base]
+            .value_term
+            .updated_field_value_named(field, &fn_ir.values[*value].value_term),
         ValueKind::Load { var } => infer_package_binding_term(var).unwrap_or(TypeTerm::Any),
         ValueKind::RSymbol { .. } => TypeTerm::Any,
         ValueKind::Intrinsic { op, args } => {

@@ -40,7 +40,7 @@ fi
 mapfile -t AUDIT_FILES < <(
   git -C "$ROOT" diff-tree --root --no-commit-id --name-only -r HEAD --
   | awk '
-      /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^CONTRIBUTING\.md$/ {
+      /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^fuzz\// || /^native\// || /^CONTRIBUTING\.md$/ {
         print
       }
     '

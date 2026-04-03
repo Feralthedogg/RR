@@ -504,7 +504,10 @@ From `src/hir/lower.rs`:
 
 ## Function and Closure Semantics
 
-- Parameter defaults are supported in syntax
+- Parameter defaults are preserved for user-defined functions and re-emitted in
+  generated R function signatures
+- Named arguments are preserved on user-defined and supported interop call
+  paths, subject to the usual RR lowering restrictions on dynamic calls
 - Type hint aliases recognized in lowering include:
   - ints: `int`, `integer`, `i32`, `i64`, `isize`
   - floats: `float`, `double`, `numeric`, `f32`, `f64`
@@ -519,6 +522,17 @@ From `src/hir/lower.rs`:
   - `box<T>`
 - If a function/lambda body has no explicit `return` statements, the trailing expression statement is converted to an implicit return
 - Lambdas are lambda-lifted; captures are packed through runtime closure helpers
+
+## Record and List Lowering Notes
+
+- Record literals lower through RR helpers internally, but simple literal
+  record creation and field access are emitted back as direct R `list(...)` and
+  `[[...]]` forms in generated code
+- Simple field writes on a named mutable base lower back to direct
+  `base[["field"]] <- value` assignments during codegen
+- More complex record shapes can still pass through helper-based internal
+  lowering, so the most predictable path remains local literal construction and
+  literal field names
 
 ## Pipe/Try/Column/Unquote Lowering Notes
 

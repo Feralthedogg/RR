@@ -1,0 +1,41 @@
+Sym_171 <- function(u, v, h, h_trn, coriolis, visc, n_l, n_r, n_d, n_u, size) 
+{
+  .arg_u <- u
+  .arg_v <- v
+  .arg_h <- h
+  .arg_h_trn <- h_trn
+  .arg_coriolis <- coriolis
+  .arg_visc <- visc
+  .arg_n_l <- n_l
+  .arg_n_r <- n_r
+  .arg_n_d <- n_d
+  .arg_n_u <- n_u
+  .arg_size <- size
+  du <- Sym_17(.arg_size, 0.0, 2.0)
+  DX <- 10000.0
+  G <- 9.81
+  i <- 1.0
+  # rr-cse-pruned
+  licm_72 <- (2.0 * DX)
+  licm_91 <- (DX * DX)
+  repeat {
+    if (!(i <= .arg_size)) break
+    ii <- floor(i)
+    l <- rr_index1_read_idx(.arg_n_l, ii, "index")
+    r <- rr_index1_read_idx(.arg_n_r, ii, "index")
+    d <- rr_index1_read_idx(.arg_n_d, ii, "index")
+    u_idx <- rr_index1_read_idx(.arg_n_u, ii, "index")
+    # rr-cse-pruned
+    h_l <- (rr_index1_read(.arg_h, l, "index") + rr_index1_read(.arg_h_trn, l, "index"))
+    # rr-cse-pruned
+    h_r <- (rr_index1_read(.arg_h, r, "index") + rr_index1_read(.arg_h_trn, r, "index"))
+    pgf_x <- (0.0 - ((G * (h_r - h_l)) / licm_72))
+    cor_f <- (rr_index1_read(.arg_coriolis, ii, "index") * rr_index1_read(.arg_v, ii, "index"))
+    diff <- ((rr_index1_read(.arg_visc, ii, "index") * ((rr_index1_read(.arg_u, l, "index") - (2.0 * rr_index1_read(.arg_u, ii, "index"))) + rr_index1_read(.arg_u, r, "index"))) / licm_91)
+    rr_mark(735L, 9L);
+    du[rr_index1_write(ii, "index")] <- ((pgf_x + cor_f) + diff)
+    i <- (i + 1.0)
+    next
+  }
+  return(du)
+}

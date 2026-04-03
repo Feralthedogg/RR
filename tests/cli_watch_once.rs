@@ -255,11 +255,9 @@ fn watch_restores_output_when_artifact_is_missing_or_modified_without_source_cha
     fs::write(
         &main_path,
         r#"
-fn answer() {
+fn main() {
   return 1L
 }
-
-print(answer())
 "#,
     )
     .expect("failed to write main.rr");

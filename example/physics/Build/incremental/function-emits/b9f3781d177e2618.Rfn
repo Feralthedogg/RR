@@ -1,0 +1,8 @@
+Sym_39 <- function(xs) 
+{
+  .arg_xs <- xs
+  n <- length(.arg_xs)
+  # rr-cse-pruned
+  out <- xs
+  return(out)
+}

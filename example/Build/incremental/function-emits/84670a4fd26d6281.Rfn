@@ -1,0 +1,43 @@
+Sym_83 <- function(dir, size) 
+{
+  .arg_dir <- dir
+  .arg_size <- size
+  total <- ((6.0 * .arg_size) * .arg_size)
+  neighbors <- Sym_17(total, 0.0, 2.0)
+  ys <- seq_len(.arg_size)
+  f <- 1.0
+  licm_28 <- (.arg_dir == 1.0)
+  licm_35 <- (.arg_dir == 2.0)
+  licm_47 <- (.arg_dir == 3.0)
+  licm_59 <- (.arg_dir == 4.0)
+  repeat {
+    if (!(f <= 6.0)) break
+    x <- 1.0
+    repeat {
+      if (!(x <= .arg_size)) break
+      start <- rr_idx_cube_vec_i(f, x, 1.0, .arg_size)
+      end <- rr_idx_cube_vec_i(f, x, .arg_size, .arg_size)
+      if (licm_28) {
+        neighbors[start:end] <- Sym_60(f, x, ys, .arg_size)
+      } else {
+      }
+      if ((.arg_dir == 2.0)) {
+        neighbors[start:end] <- Sym_64(f, x, ys, .arg_size)
+      } else {
+      }
+      if ((.arg_dir == 3.0)) {
+        neighbors[start:end] <- Sym_66(f, x, ys, .arg_size)
+      } else {
+      }
+      if ((.arg_dir == 4.0)) {
+        neighbors[start:end] <- Sym_72(f, x, ys, .arg_size)
+      } else {
+      }
+      x <- (x + 1.0)
+      next
+    }
+    f <- (f + 1.0)
+    next
+  }
+  return(neighbors)
+}

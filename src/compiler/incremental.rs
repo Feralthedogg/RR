@@ -249,23 +249,27 @@ pub fn compile_with_configs_incremental(
 }
 
 pub fn module_tree_fingerprint(entry_path: &str, entry_input: &str) -> RR<u64> {
-    let modules = collect_module_fingerprints(entry_path, entry_input)?;
-    let mut payload = String::new();
-    payload.push_str(CACHE_VERSION);
-    for module in modules {
-        payload.push('|');
-        payload.push_str(&module.canonical_path.to_string_lossy());
-        payload.push(':');
-        payload.push_str(&module.content_hash.to_string());
-    }
-    Ok(stable_hash_bytes(payload.as_bytes()))
+    crate::pkg::with_project_root_hint(entry_path, || {
+        let modules = collect_module_fingerprints(entry_path, entry_input)?;
+        let mut payload = String::new();
+        payload.push_str(CACHE_VERSION);
+        for module in modules {
+            payload.push('|');
+            payload.push_str(&module.canonical_path.to_string_lossy());
+            payload.push(':');
+            payload.push_str(&module.content_hash.to_string());
+        }
+        Ok(stable_hash_bytes(payload.as_bytes()))
+    })
 }
 
 pub fn module_tree_snapshot(entry_path: &str, entry_input: &str) -> RR<Vec<(PathBuf, u64)>> {
-    Ok(collect_module_fingerprints(entry_path, entry_input)?
-        .into_iter()
-        .map(|module| (module.canonical_path, module.content_hash))
-        .collect())
+    crate::pkg::with_project_root_hint(entry_path, || {
+        Ok(collect_module_fingerprints(entry_path, entry_input)?
+            .into_iter()
+            .map(|module| (module.canonical_path, module.content_hash))
+            .collect())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -446,7 +450,6 @@ fn raw_r_debug_dump_requested() -> bool {
 
 fn collect_module_fingerprints(entry_path: &str, entry_input: &str) -> RR<Vec<ModuleFingerprint>> {
     let entry = normalize_module_path(Path::new(entry_path));
-    let entry_parent = entry.parent().unwrap_or(Path::new("."));
     let import_re = import_regex()?;
 
     let mut queue: Vec<PathBuf> = vec![entry.clone()];
@@ -498,9 +501,8 @@ fn collect_module_fingerprints(entry_path: &str, entry_input: &str) -> RR<Vec<Mo
             let Some(m) = cap.get(1) else {
                 continue;
             };
-            let raw_rel = m.as_str();
-            let dir = canonical.parent().unwrap_or(entry_parent);
-            let resolved = normalize_module_path(&dir.join(raw_rel));
+            let raw_import = m.as_str();
+            let resolved = crate::pkg::resolve_import_path(&canonical, raw_import)?;
             if !visited.contains(&resolved) {
                 queue.push(resolved);
             }
@@ -618,21 +620,31 @@ fn cache_root_for_entry(entry_path: &str) -> PathBuf {
         return PathBuf::from(v);
     }
 
-    let mut cur = normalize_module_path(Path::new(entry_path))
+    let normalized_entry = normalize_module_path(Path::new(entry_path));
+    let mut cur = normalized_entry
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
     loop {
-        let probe = cur.join("Cargo.toml");
-        if probe.is_file() {
-            return cur.join("target").join(".rr-cache");
+        let managed_root = cur.join("rr.mod").is_file()
+            || cur.join("src").join("main.rr").is_file()
+            || cur.join("src").join("lib.rr").is_file();
+        let legacy_root = cur.file_name().and_then(|name| name.to_str()) != Some("src")
+            && cur.join("main.rr").is_file();
+        if managed_root || legacy_root {
+            return cur.join("Build").join("incremental");
         }
         let Some(parent) = cur.parent() else {
             break;
         };
         cur = parent.to_path_buf();
     }
-    PathBuf::from("target").join(".rr-cache")
+    normalized_entry
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Build")
+        .join("incremental")
 }
 
 fn artifact_paths(cache_root: &Path, key: &str) -> (PathBuf, PathBuf) {

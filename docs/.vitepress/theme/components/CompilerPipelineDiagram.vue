@@ -4,14 +4,14 @@ const code = String.raw`flowchart TD
     SRC["Entry source + imported modules"] --> SA
 
     subgraph FRONTEND["Source Analysis + Canonicalization"]
-      SA["1. Source Analysis<br/>parse + scope resolution<br/>module loading<br/>AST -> HIR lowering"]
+      SA["1. Source Analysis<br/>module loading + parse + HIR lowering<br/>pipeline/phases/source_emit.rs"]
       CA["2. Canonicalization<br/>HIR desugaring / normalization"]
       SA --> CA
     end
 
     subgraph MIR["MIR Synthesis + Static Validation"]
-      SSA["3. SSA Graph Synthesis<br/>HIR -> FnIR / CFG / SSA-like values"]
-      TY["Type analysis<br/>analyze_program_with_compiler_parallel"]
+      SSA["3. MIR Synthesis<br/>HIR -> FnIR / CFG / SSA-like values"]
+      TY["Type + term analysis<br/>typeck/solver.rs + typeck/sigs/*"]
       SEM["Static validation<br/>semantic + runtime-safety validation"]
       CA --> SSA
       SSA --> TY
@@ -22,7 +22,7 @@ const code = String.raw`flowchart TD
 
     subgraph TACHYON["Tachyon"]
       O0["4. Tachyon Stabilization<br/>-O0 safe/codegen-ready rewrites"]
-      O12["4. Tachyon Optimization<br/>-O1/-O2 aggressive passes<br/>SCCP / GVN / LICM / BCE / DCE / TCO<br/>vectorization / reductions / de-SSA"]
+      O12["4. Tachyon Optimization<br/>-O1/-O2 passes<br/>SCCP / GVN / LICM / BCE / DCE / vectorization / poly / de-SSA"]
     end
 
     OPTSEL -->|"-O0"| O0
@@ -32,10 +32,12 @@ const code = String.raw`flowchart TD
     O12 --> VERIFY
 
     subgraph EMIT["Emission + Artifact Finalization"]
-      EMITR["5. R Code Emission<br/>structurize CFG<br/>emit functions + source maps<br/>peephole cleanup"]
-      RT["6. Runtime Injection<br/>full runtime or helper-only (--no-runtime)<br/>append compile-time policy"]
+      EMITR["5. R Code Emission<br/>structurize CFG<br/>emit function fragments + source maps<br/>codegen/mir_emit.rs + codegen/emit/*"]
+      CLEAN["6. Artifact cleanup<br/>raw_rewrites + peephole canonicalization<br/>pipeline/* + compiler/peephole/*"]
+      RT["7. Runtime Injection<br/>runtime subset + policy bootstrap<br/>helper-only or full runtime"]
       VERIFY --> EMITR
-      EMITR --> RT
+      EMITR --> CLEAN
+      CLEAN --> RT
     end
 
     RT --> ART["Final .R artifact + source map"]

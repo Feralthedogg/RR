@@ -293,6 +293,14 @@ impl TachyonEngine {
                 ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => {
                     stack.extend(args.iter().copied());
                 }
+                ValueKind::RecordLit { fields } => {
+                    stack.extend(fields.iter().map(|(_, value)| *value));
+                }
+                ValueKind::FieldGet { base, .. } => stack.push(*base),
+                ValueKind::FieldSet { base, value, .. } => {
+                    stack.push(*base);
+                    stack.push(*value);
+                }
                 ValueKind::Index1D { base, idx, .. } => {
                     stack.push(*base);
                     stack.push(*idx);

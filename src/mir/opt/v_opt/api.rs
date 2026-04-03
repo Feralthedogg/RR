@@ -17,9 +17,11 @@ use super::planning::{
 };
 use super::proof;
 use super::transform::{apply_vectorization, try_apply_vectorization_transactionally};
+use super::types::MemoryStrideClass;
 use super::types::{CallMapLoweringMode, ProofFallbackReason, ProofOutcome};
 use crate::mir::opt::loop_analysis::{LoopAnalyzer, LoopInfo};
-use crate::mir::{BlockId, FnIR};
+use crate::mir::opt::poly::is_generated_poly_loop_var_name;
+use crate::mir::{BlockId, FnIR, Terminator};
 use rustc_hash::FxHashSet;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -64,6 +66,12 @@ pub struct VOptStats {
     pub applied_3d: usize,
     pub applied_call_map_direct: usize,
     pub applied_call_map_runtime: usize,
+    pub legacy_poly_fallback_candidate_total: usize,
+    pub legacy_poly_fallback_candidate_reductions: usize,
+    pub legacy_poly_fallback_candidate_maps: usize,
+    pub legacy_poly_fallback_applied_total: usize,
+    pub legacy_poly_fallback_applied_reductions: usize,
+    pub legacy_poly_fallback_applied_maps: usize,
     pub trip_tier_tiny: usize,
     pub trip_tier_small: usize,
     pub trip_tier_medium: usize,
@@ -131,15 +139,34 @@ pub fn optimize_with_stats(fn_ir: &mut FnIR) -> VOptStats {
     optimize_with_stats_with_whitelist(fn_ir, &FxHashSet::default())
 }
 
+fn vectorization_disabled_from_env() -> bool {
+    std::env::var("RR_DISABLE_VECTORIZE")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
 pub fn optimize_with_stats_with_whitelist(
     fn_ir: &mut FnIR,
     user_call_whitelist: &FxHashSet<String>,
 ) -> VOptStats {
+    if vectorization_disabled_from_env() {
+        return VOptStats::default();
+    }
     let mut stats = VOptStats::default();
     let trace_enabled = vectorize_trace_enabled();
     let proof_enabled = proof_engine_enabled();
     let analyzer = LoopAnalyzer::new(fn_ir);
-    let loops = analyzer.find_loops();
+    let reachable = reachable_blocks(fn_ir);
+    let loops = analyzer
+        .find_loops()
+        .into_iter()
+        .filter(|lp| reachable.contains(&lp.header))
+        .collect::<Vec<_>>();
 
     for (loop_idx, lp) in loops.iter().enumerate() {
         stats.loops_seen += 1;
@@ -163,6 +190,19 @@ pub fn optimize_with_stats_with_whitelist(
                 lp.limit_adjust,
                 body_ids
             );
+        }
+        if lp
+            .iv
+            .as_ref()
+            .and_then(|iv| induction_origin_var(fn_ir, iv.phi_val))
+            .as_deref()
+            .is_some_and(is_generated_poly_loop_var_name)
+        {
+            if trace_enabled {
+                eprintln!("   [vec-skip] {}: generated-poly-loop", fn_ir.name,);
+            }
+            stats.record_skip(VectorizeSkipReason::NoSupportedPattern);
+            continue;
         }
         let has_nested_loop = loops.iter().enumerate().any(|(other_idx, other)| {
             other_idx != loop_idx
@@ -263,6 +303,35 @@ pub fn optimize_with_stats_with_whitelist(
     }
 
     stats
+}
+
+fn reachable_blocks(fn_ir: &FnIR) -> FxHashSet<BlockId> {
+    let mut reachable = FxHashSet::default();
+    let mut stack = vec![fn_ir.entry];
+    reachable.insert(fn_ir.entry);
+
+    while let Some(bb) = stack.pop() {
+        match &fn_ir.blocks[bb].term {
+            Terminator::Goto(target) => {
+                if reachable.insert(*target) {
+                    stack.push(*target);
+                }
+            }
+            Terminator::If {
+                then_bb, else_bb, ..
+            } => {
+                if reachable.insert(*then_bb) {
+                    stack.push(*then_bb);
+                }
+                if reachable.insert(*else_bb) {
+                    stack.push(*else_bb);
+                }
+            }
+            Terminator::Return(_) | Terminator::Unreachable => {}
+        }
+    }
+
+    reachable
 }
 
 fn trace_proof_outcome(fn_ir: &FnIR, lp: &LoopInfo, outcome: &ProofOutcome) {
@@ -477,6 +546,59 @@ fn record_plan_counts(stats: &mut VOptStats, fn_ir: &FnIR, plan: &VectorPlan, ap
             CallMapLoweringMode::RuntimeAuto { .. } => *callmap_runtime += 1,
         }
     }
+
+    record_legacy_poly_fallback_counts(stats, plan, applied);
+}
+
+fn is_legacy_poly_fallback_plan(plan: &VectorPlan) -> bool {
+    matches!(
+        plan,
+        VectorPlan::Reduce { .. }
+            | VectorPlan::Reduce2DRowSum { .. }
+            | VectorPlan::Reduce2DColSum { .. }
+            | VectorPlan::Reduce3D { .. }
+            | VectorPlan::Map { .. }
+            | VectorPlan::Map2DRow { .. }
+            | VectorPlan::Map2DCol { .. }
+            | VectorPlan::Map3D { .. }
+    )
+}
+
+fn record_legacy_poly_fallback_counts(stats: &mut VOptStats, plan: &VectorPlan, applied: bool) {
+    if !crate::mir::opt::poly::poly_enabled() || !is_legacy_poly_fallback_plan(plan) {
+        return;
+    }
+    let is_reduction = matches!(
+        plan,
+        VectorPlan::Reduce { .. }
+            | VectorPlan::Reduce2DRowSum { .. }
+            | VectorPlan::Reduce2DColSum { .. }
+            | VectorPlan::Reduce3D { .. }
+    );
+    let is_map = matches!(
+        plan,
+        VectorPlan::Map { .. }
+            | VectorPlan::Map2DRow { .. }
+            | VectorPlan::Map2DCol { .. }
+            | VectorPlan::Map3D { .. }
+    );
+    if applied {
+        stats.legacy_poly_fallback_applied_total += 1;
+        if is_reduction {
+            stats.legacy_poly_fallback_applied_reductions += 1;
+        }
+        if is_map {
+            stats.legacy_poly_fallback_applied_maps += 1;
+        }
+    } else {
+        stats.legacy_poly_fallback_candidate_total += 1;
+        if is_reduction {
+            stats.legacy_poly_fallback_candidate_reductions += 1;
+        }
+        if is_map {
+            stats.legacy_poly_fallback_candidate_maps += 1;
+        }
+    }
 }
 
 fn vector_plan_trace_label_with_lowering(fn_ir: &FnIR, plan: &VectorPlan) -> String {
@@ -634,10 +756,39 @@ fn vector_plan_base_tier(plan: &VectorPlan) -> u8 {
     }
 }
 
+fn vector_plan_stride_class(plan: &VectorPlan) -> MemoryStrideClass {
+    match plan {
+        VectorPlan::Reduce2DRowSum { .. } | VectorPlan::Map2DRow { .. } => {
+            MemoryStrideClass::Strided
+        }
+        VectorPlan::Reduce2DColSum { .. } | VectorPlan::Map2DCol { .. } => {
+            MemoryStrideClass::Contiguous
+        }
+        VectorPlan::Reduce3D { axis, .. }
+        | VectorPlan::Map3D { axis, .. }
+        | VectorPlan::CallMap3D { axis, .. }
+        | VectorPlan::CallMap3DGeneral { axis, .. }
+        | VectorPlan::ExprMap3D { axis, .. }
+        | VectorPlan::CondMap3D { axis, .. }
+        | VectorPlan::CondMap3DGeneral { axis, .. }
+        | VectorPlan::ShiftedMap3D { axis, .. }
+        | VectorPlan::RecurrenceAddConst3D { axis, .. }
+        | VectorPlan::ScatterExprMap3D { axis, .. } => match axis {
+            Axis3D::Dim1 => MemoryStrideClass::Contiguous,
+            Axis3D::Dim2 | Axis3D::Dim3 => MemoryStrideClass::Strided,
+        },
+        _ => MemoryStrideClass::Contiguous,
+    }
+}
+
 pub(super) fn vector_plan_profit_tier(fn_ir: &FnIR, lp: &LoopInfo, plan: &VectorPlan) -> u8 {
     let base = vector_plan_base_tier(plan);
     let trip = trip_count_tier(fn_ir, lp);
     let helper_penalty = (estimate_vector_plan_helper_cost(fn_ir, plan) / 6).min(3) as u8;
+    let stride_penalty = u8::from(matches!(
+        vector_plan_stride_class(plan),
+        MemoryStrideClass::Strided
+    ));
     match plan {
         VectorPlan::CallMap {
             callee,
@@ -646,19 +797,22 @@ pub(super) fn vector_plan_profit_tier(fn_ir: &FnIR, lp: &LoopInfo, plan: &Vector
             shadow_vars,
             ..
         } => match choose_call_map_lowering(fn_ir, callee, args, *whole_dest, shadow_vars) {
-            CallMapLoweringMode::DirectVector => base + trip.saturating_sub(helper_penalty),
+            CallMapLoweringMode::DirectVector => {
+                base + trip.saturating_sub(helper_penalty.saturating_add(stride_penalty))
+            }
             CallMapLoweringMode::RuntimeAuto { .. } => {
-                (base.saturating_sub(1)) + trip.saturating_sub(helper_penalty)
+                (base.saturating_sub(1))
+                    + trip.saturating_sub(helper_penalty.saturating_add(stride_penalty))
             }
         },
-        _ => base + trip.saturating_sub(helper_penalty),
+        _ => base + trip.saturating_sub(helper_penalty.saturating_add(stride_penalty)),
     }
 }
 
 pub(super) fn vector_plan_score(plan: &VectorPlan) -> (u8, u8, u8) {
     match plan {
-        VectorPlan::Reduce2DRowSum { .. } => (120, 0, 0),
-        VectorPlan::Reduce2DColSum { .. } => (119, 0, 0),
+        VectorPlan::Reduce2DColSum { .. } => (120, 0, 0),
+        VectorPlan::Reduce2DRowSum { .. } => (119, 0, 0),
         VectorPlan::Reduce3D {
             kind: ReduceKind::Sum,
             axis: Axis3D::Dim1,
@@ -829,8 +983,8 @@ pub(super) fn vector_plan_score(plan: &VectorPlan) -> (u8, u8, u8) {
         VectorPlan::ExprMap3D {
             axis: Axis3D::Dim3, ..
         } => (77, 1, 0),
-        VectorPlan::Map2DRow { .. } => (82, 0, 0),
-        VectorPlan::Map2DCol { .. } => (81, 0, 0),
+        VectorPlan::Map2DCol { .. } => (82, 0, 0),
+        VectorPlan::Map2DRow { .. } => (81, 0, 0),
         VectorPlan::Map3D {
             axis: Axis3D::Dim1, ..
         } => (80, 0, 0),

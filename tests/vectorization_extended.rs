@@ -617,8 +617,8 @@ print(mat_col_reduce(3, 4, 2))
         "expected col matrix vectorization to use rr_col_binop_assign(...)"
     );
     assert!(
-        code.contains("rr_row_sum_range("),
-        "expected row-reduction vectorization to use rr_row_sum_range(...)"
+        !code.contains("rr_row_sum_range("),
+        "expected strided row-reduction to stay scalar under column-major safety policy"
     );
     assert!(
         code.contains("rr_col_sum_range("),

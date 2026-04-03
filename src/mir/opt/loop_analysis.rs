@@ -341,18 +341,42 @@ impl<'a> LoopAnalyzer<'a> {
             else {
                 return vid;
             };
-            let floor_like = matches!(callee.as_str(), "floor" | "ceiling" | "trunc");
-            let single_positional = args.len() == 1
-                && names.len() <= 1
-                && names
-                    .first()
-                    .and_then(std::option::Option::as_ref)
-                    .is_none();
-            if !(floor_like && single_positional) {
+            if !self.call_is_floor_like(vid, callee, args, names) {
                 return vid;
             }
             vid = args[0];
         }
+    }
+
+    fn call_is_single_positional(&self, args: &[ValueId], names: &[Option<String>]) -> bool {
+        args.len() == 1
+            && names.len() <= 1
+            && names
+                .first()
+                .and_then(std::option::Option::as_ref)
+                .is_none()
+    }
+
+    fn call_is_floor_like(
+        &self,
+        vid: ValueId,
+        callee: &str,
+        args: &[ValueId],
+        names: &[Option<String>],
+    ) -> bool {
+        if !self.call_is_single_positional(args, names) {
+            return false;
+        }
+        self.fn_ir
+            .call_semantics(vid)
+            .and_then(|semantics| match semantics {
+                CallSemantics::Builtin(kind) => Some(kind.is_floor_like()),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                builtin_kind_for_name(callee.strip_prefix("base::").unwrap_or(callee))
+                    .is_some_and(BuiltinKind::is_floor_like)
+            })
     }
 
     fn find_seed_assignment_outside_loop(
@@ -436,20 +460,10 @@ impl<'a> LoopAnalyzer<'a> {
                 callee,
                 args,
                 names,
-            } => {
-                let floor_like = matches!(callee.as_str(), "floor" | "ceiling" | "trunc");
-                let single_positional = args.len() == 1
-                    && names.len() <= 1
-                    && names
-                        .first()
-                        .and_then(std::option::Option::as_ref)
-                        .is_none();
-                if floor_like && single_positional {
-                    self.analyze_step_rec(args[0], phi_id, seen_vals, seen_vars)
-                } else {
-                    None
-                }
-            }
+            } => self
+                .call_is_floor_like(val_id, callee, args, names)
+                .then(|| self.analyze_step_rec(args[0], phi_id, seen_vals, seen_vars))
+                .flatten(),
             ValueKind::Binary { op, lhs, rhs } => {
                 if self.value_depends_on_phi(*lhs, phi_id)
                     && let Some(n) = self.const_integral_value(*rhs)
@@ -562,6 +576,14 @@ impl<'a> LoopAnalyzer<'a> {
                     rec(analyzer, *start, phi_id, seen_vals)
                         || rec(analyzer, *end, phi_id, seen_vals)
                 }
+                ValueKind::RecordLit { fields } => fields
+                    .iter()
+                    .any(|(_, value)| rec(analyzer, *value, phi_id, seen_vals)),
+                ValueKind::FieldGet { base, .. } => rec(analyzer, *base, phi_id, seen_vals),
+                ValueKind::FieldSet { base, value, .. } => {
+                    rec(analyzer, *base, phi_id, seen_vals)
+                        || rec(analyzer, *value, phi_id, seen_vals)
+                }
                 ValueKind::Index1D { base, idx, .. } => {
                     rec(analyzer, *base, phi_id, seen_vals)
                         || rec(analyzer, *idx, phi_id, seen_vals)
@@ -633,15 +655,7 @@ impl<'a> LoopAnalyzer<'a> {
                 args,
                 names,
             } => {
-                let floor_like = matches!(callee.as_str(), "floor" | "ceiling" | "trunc");
-                let single_positional = args.len() == 1
-                    && names.len() <= 1
-                    && names
-                        .first()
-                        .and_then(std::option::Option::as_ref)
-                        .is_none();
-                floor_like
-                    && single_positional
+                self.call_is_floor_like(candidate, callee, args, names)
                     && self.is_phi_equivalent_rec(args[0], phi_id, seen, seen_vars)
             }
             _ => false,
@@ -744,20 +758,10 @@ impl<'a> LoopAnalyzer<'a> {
                     callee,
                     args,
                     names,
-                } => {
-                    let floor_like = matches!(callee.as_str(), "floor" | "ceiling" | "trunc");
-                    let single_positional = args.len() == 1
-                        && names.len() <= 1
-                        && names
-                            .first()
-                            .and_then(std::option::Option::as_ref)
-                            .is_none();
-                    if floor_like && single_positional {
-                        rec(analyzer, args[0], seen_vals, seen_vars)
-                    } else {
-                        None
-                    }
-                }
+                } => analyzer
+                    .call_is_floor_like(vid, callee, args, names)
+                    .then(|| rec(analyzer, args[0], seen_vals, seen_vars))
+                    .flatten(),
                 _ => None,
             }
         }

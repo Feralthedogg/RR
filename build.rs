@@ -27,9 +27,11 @@ fn collect_rs_files(root: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
 }
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(rr_has_isl)");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-env-changed=RR_ISL_LIB_DIR");
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
     let mut files = Vec::new();
@@ -59,4 +61,26 @@ fn main() {
     }
 
     println!("cargo:rustc-env=RR_COMPILER_BUILD_HASH={hash:016x}");
+
+    let isl_candidates = std::env::var_os("RR_ISL_LIB_DIR")
+        .map(PathBuf::from)
+        .into_iter()
+        .chain([
+            PathBuf::from("/opt/homebrew/lib"),
+            PathBuf::from("/usr/local/lib"),
+            PathBuf::from("/usr/lib"),
+        ]);
+    for dir in isl_candidates {
+        let dylib = dir.join("libisl.dylib");
+        let so = dir.join("libisl.so");
+        let archive = dir.join("libisl.a");
+        if dylib.exists() || so.exists() || archive.exists() {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+            println!("cargo:rustc-link-lib=dylib=isl");
+            println!("cargo:rustc-cfg=rr_has_isl");
+            println!("cargo:rustc-env=RR_HAS_ISL=1");
+            return;
+        }
+    }
+    println!("cargo:rustc-env=RR_HAS_ISL=0");
 }

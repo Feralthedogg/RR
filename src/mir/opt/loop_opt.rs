@@ -357,6 +357,16 @@ impl MirLoopOptimizer {
                     out.push(*arg);
                 }
             }
+            ValueKind::RecordLit { fields } => {
+                for (_, value) in fields {
+                    out.push(*value);
+                }
+            }
+            ValueKind::FieldGet { base, .. } => out.push(*base),
+            ValueKind::FieldSet { base, value, .. } => {
+                out.push(*base);
+                out.push(*value);
+            }
             ValueKind::Index1D { base, idx, .. } => {
                 out.push(*base);
                 out.push(*idx);

@@ -1,0 +1,8 @@
+Sym_52 <- function(xs) 
+{
+  .arg_xs <- xs
+  # rr-cse-pruned
+  n <- length(.arg_xs)
+  s <- sum(abs(.arg_xs))
+  return(s)
+}
