@@ -1,3 +1,8 @@
+binary-skip|^fuzz/corpus/generated_pipeline/seed_03$
+binary-skip|^fuzz/corpus/generated_pipeline/seed_04$
+binary-skip|^fuzz/corpus_smoke/generated_pipeline/seed_03$
+binary-skip|^fuzz/corpus_smoke/generated_pipeline/seed_04$
+binary-skip|^scripts/lib/__pycache__/triage_reduce\.cpython-312\.pyc$
 current-dir-review|^src/compiler/incremental\.rs$
 current-dir-review|^src/compiler/pipeline\.rs$
 mutable-global-review|^src/compiler/scheduler\.rs$
