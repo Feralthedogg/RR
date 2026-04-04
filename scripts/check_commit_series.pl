@@ -20,6 +20,8 @@ my $verify_buildability = 0;
 my $skip_buildability = 0;
 my $build_command;
 my $print_plan = 0;
+my $require_trailers = 0;
+my $skip_trailers = 0;
 
 GetOptions(
     'base=s'              => \$base,
@@ -29,7 +31,12 @@ GetOptions(
     'skip-buildability'   => \$skip_buildability,
     'build-command=s'     => \$build_command,
     'print-plan'          => \$print_plan,
-) or die "usage: $0 [--repo PATH] [--base SHA] [--commit-list-file PATH] [--verify-buildability] [--skip-buildability] [--build-command CMD] [--print-plan]\n";
+    'require-trailers'    => \$require_trailers,
+    'skip-trailers'       => \$skip_trailers,
+) or die "usage: $0 [--repo PATH] [--base SHA] [--commit-list-file PATH] [--verify-buildability] [--skip-buildability] [--build-command CMD] [--print-plan] [--require-trailers] [--skip-trailers]\n";
+
+die "--require-trailers and --skip-trailers cannot be used together\n"
+    if $require_trailers && $skip_trailers;
 
 my $root = abs_path($repo // File::Spec->catdir($Bin, '..'));
 my $policy = load_subsystems_policy(File::Spec->catfile($root, 'policy', 'subsystems.toml'));
@@ -202,6 +209,7 @@ sub verify_buildability_for_commits {
 my $event = read_event();
 my $base_sha = defined $base ? $base : read_base_from_event($event);
 my $commits = $commit_list_file ? slurp_lines($commit_list_file) : read_commits_from_git($base_sha);
+my $enforce_trailers = $require_trailers ? 1 : ($skip_trailers ? 0 : 1);
 
 if (!@{$commits}) {
     print "no commits in series scope\n";
@@ -226,22 +234,24 @@ for my $commit (@{$commits}) {
         push @errors, "$commit subject prefix '$1' is not allowed for touched subsystems (" . join(', ', @touched) . ")";
     }
 
-    my $trailers = parse_trailers($body);
-    check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{required_commit_trailers});
-    if (exists $trailers->{Subsystem}) {
-        my $subsystem_text = lc join "\n", @{$trailers->{Subsystem}};
-        for my $name (@touched) {
-            push @errors, "$commit trailer 'Subsystem:' must mention touched subsystem '$name'"
-                if index($subsystem_text, lc($name)) < 0;
+    if ($enforce_trailers) {
+        my $trailers = parse_trailers($body);
+        check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{required_commit_trailers});
+        if (exists $trailers->{Subsystem}) {
+            my $subsystem_text = lc join "\n", @{$trailers->{Subsystem}};
+            for my $name (@touched) {
+                push @errors, "$commit trailer 'Subsystem:' must mention touched subsystem '$name'"
+                    if index($subsystem_text, lc($name)) < 0;
+            }
         }
-    }
 
-    check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{perf_commit_trailers})
-        if any_matches($files, $policy->{meta}{perf_sensitive_prefixes});
-    check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{dependency_commit_trailers})
-        if touches_dependency_file($files, $policy->{meta}{dependency_files});
-    check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{exception_commit_trailers})
-        if any_matches($files, $policy->{meta}{exception_sensitive_prefixes});
+        check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{perf_commit_trailers})
+            if any_matches($files, $policy->{meta}{perf_sensitive_prefixes});
+        check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{dependency_commit_trailers})
+            if touches_dependency_file($files, $policy->{meta}{dependency_files});
+        check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{exception_commit_trailers})
+            if any_matches($files, $policy->{meta}{exception_sensitive_prefixes});
+    }
 
     if ($print_plan) {
         print "commit=$commit\n";

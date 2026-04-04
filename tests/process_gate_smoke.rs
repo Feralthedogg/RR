@@ -408,6 +408,76 @@ fn commit_series_check_enforces_trailers_and_supports_buildability_smoke() {
 }
 
 #[test]
+fn commit_series_check_can_skip_trailer_enforcement_for_push_style_runs() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("process_gate_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let sandbox = common::unique_dir(&sandbox_root, "series_skip_trailers");
+    fs::create_dir_all(sandbox.join("src").join("compiler")).expect("failed to create src dir");
+    fs::create_dir_all(sandbox.join("policy")).expect("failed to create policy dir");
+
+    fs::copy(
+        root.join("policy").join("subsystems.toml"),
+        sandbox.join("policy").join("subsystems.toml"),
+    )
+    .expect("failed to copy subsystem policy");
+
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&sandbox)
+            .output()
+            .expect("failed to run git");
+        assert!(
+            output.status.success(),
+            "git command failed: {:?}\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    git(&["init"]);
+    git(&["config", "user.email", "rr@example.com"]);
+    git(&["config", "user.name", "RR Test"]);
+
+    fs::write(
+        sandbox.join("src").join("compiler").join("incremental.rs"),
+        "pub fn base() -> usize { 1 }\n",
+    )
+    .expect("failed to write initial file");
+    git(&["add", "."]);
+    git(&["commit", "-m", "incremental: initial base"]);
+
+    fs::write(
+        sandbox.join("src").join("compiler").join("incremental.rs"),
+        "pub fn base() -> usize { 2 }\n",
+    )
+    .expect("failed to update file");
+    git(&["add", "."]);
+    git(&["commit", "-m", "incremental: push-safe change"]);
+
+    let script = root.join("scripts").join("check_commit_series.pl");
+    let output = Command::new("perl")
+        .arg(&script)
+        .arg("--repo")
+        .arg(&sandbox)
+        .arg("--verify-buildability")
+        .arg("--build-command")
+        .arg("perl -e 'exit 0'")
+        .arg("--skip-trailers")
+        .current_dir(&root)
+        .output()
+        .expect("failed to run push-style commit series check");
+    assert!(
+        output.status.success(),
+        "push-style commit series should pass without trailers\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn failure_bundle_builder_writes_summary_and_logs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("process_gate_smoke");

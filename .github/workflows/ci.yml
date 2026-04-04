@@ -77,8 +77,13 @@ jobs:
       - name: Commit Metadata Check
         run: perl scripts/check_commit_metadata.pl
 
-      - name: Commit Series Check
-        run: perl scripts/check_commit_series.pl --verify-buildability
+      - name: Commit Series Check (PR)
+        if: github.event_name == 'pull_request'
+        run: perl scripts/check_commit_series.pl --verify-buildability --require-trailers
+
+      - name: Commit Series Check (Push)
+        if: github.event_name == 'push'
+        run: perl scripts/check_commit_series.pl --verify-buildability --skip-trailers
 
       - name: Subsystem Ownership Check
         run: perl scripts/check_subsystem_ownership.pl --print-plan
