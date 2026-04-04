@@ -18,6 +18,12 @@ required_pr_sections = [
 ignored_paths = [
   "docs/assets/",
   "tests/golden/Build/",
+  "Rplots.pdf",
+  "stats4_profile_plot.pdf",
+  "stats_misc_qqnorm.png",
+  "stats_signal_spec_plot.png",
+  "stats_stepfun_plot.png",
+  "native/rr_native.o",
 ]
 required_commit_trailers = [
   "Subsystem",
@@ -73,10 +79,14 @@ owners = [
   "@Feralthedogg",
 ]
 paths = [
+  ".gitignore",
   "CONTRIBUTING.md",
   ".github/",
+  "docs/compiler/",
   "policy/",
+  "scripts/",
   "scripts/contributing_audit.pl",
+  "scripts/contributing_audit.sh",
   "scripts/ci_contributing_audit.sh",
   "scripts/ci_contributing_semantic_audit.sh",
   "scripts/check_commit_series.pl",

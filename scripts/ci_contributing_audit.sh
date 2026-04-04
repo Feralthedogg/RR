@@ -37,15 +37,23 @@ if git -C "$ROOT" rev-parse --verify HEAD^ >/dev/null 2>&1; then
     "$(git -C "$ROOT" rev-parse --verify HEAD^)"
 fi
 
-mapfile -t AUDIT_FILES < <(
-  git -C "$ROOT" diff-tree --root --no-commit-id --name-only -r HEAD --
-  | awk '
-      /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^fuzz\// || /^native\// || /^policy\// || /^\.github\/pull_request_template\.md$/ || /^CONTRIBUTING\.md$/ {
-        print
-      }
-    '
-  | sort -u
-)
+AUDIT_FILES=()
+AUDIT_FILES_RAW="$(
+  git -C "$ROOT" diff-tree --root --no-commit-id --name-only -r HEAD -- \
+    | awk '
+        /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^fuzz\// || /^native\// || /^policy\// || /^\.github\/pull_request_template\.md$/ || /^CONTRIBUTING\.md$/ {
+          print
+        }
+      ' \
+    | sort -u
+)"
+
+if [[ -n "$AUDIT_FILES_RAW" ]]; then
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    AUDIT_FILES+=("$line")
+  done <<< "$AUDIT_FILES_RAW"
+fi
 
 if [[ ${#AUDIT_FILES[@]} -gt 0 ]]; then
   exec perl "$ROOT/scripts/contributing_audit.pl" --scan-only --files "${AUDIT_FILES[@]}"

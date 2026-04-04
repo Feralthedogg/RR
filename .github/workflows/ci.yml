@@ -65,7 +65,7 @@ jobs:
 
   pr-evidence:
     name: Process Gates
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -84,11 +84,13 @@ jobs:
         run: perl scripts/check_subsystem_ownership.pl --print-plan
 
       - name: Subsystem Review Check
+        if: github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: perl scripts/check_subsystem_reviews.pl --print-plan
 
       - name: PR Evidence Check
+        if: github.event_name == 'pull_request'
         run: python3 scripts/check_pr_evidence.py
 
       - name: Build Failure Bundle
@@ -344,6 +346,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.1 --locked
 
       - name: Fuzz Smoke
         run: FUZZ_SECONDS=5 ./scripts/fuzz_smoke.sh
