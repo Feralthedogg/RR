@@ -1,0 +1,519 @@
+[meta]
+title = "Contributing to RR (Compiler Code Style)"
+subtitle = "This file is generated from `policy/contributing_rules.toml`. Edit the policy file, not the rendered Markdown."
+current_line = "RR Tachyon v1.0.0"
+manual_audit_status_date = "2026-04-04"
+
+[scope]
+intro = "This guide applies to RR compiler implementation work under `src/**`, `tests/**`, `scripts/**`, `docs/**`, and verification tooling. It does not define style for user-authored `.rr` programs."
+target_style = [
+  "predictable behavior",
+  "explicit control/data flow",
+  "performance-aware by default",
+]
+tagline = "Think Power-of-Ten discipline, practical compiler edition."
+applies = [
+  "compiler frontend, MIR, optimizer, codegen, runtime bridge, and CLI paths",
+  "tests, fuzz targets, regression harnesses, and verification scripts",
+  "documentation that defines verification or externally visible compiler behavior",
+]
+excludes = [
+  "user-authored RR source style",
+  "generated R formatting details when semantics stay the same",
+]
+core_principles = [
+  "Determinism over cleverness.",
+  "Explicit cost over hidden convenience.",
+  "Simple control flow over dense abstractions.",
+  "Measured performance over speculative micro-optimization.",
+]
+rule_levels = [
+  "`MUST`: required for new or modified compiler work.",
+  "`SHOULD`: expected unless there is a documented reason to deviate.",
+  "`MAY`: optional guidance when it improves clarity, safety, or speed.",
+  "When a rule is unclear, prefer the interpretation that preserves determinism, explicitness, and reviewability.",
+]
+
+[contributing_summary]
+scope_lines = [
+  "Applies: compiler, runtime, CLI, tests, verification tooling, and behavior-defining docs.",
+  "Excludes: user-authored `.rr` style and generated R formatting when semantics stay the same.",
+]
+rule_titles = [
+  "Deterministic Output and Traversal",
+  "Error Model (User Error vs Compiler Fault)",
+  "Testing and Validation Requirements",
+  "Hot Path Discipline",
+  "Unsafe Code Policy",
+  "Commenting Rules",
+]
+rule_summaries = [
+  "`MUST` keep output, diagnostics, cache keys, dumps, and snapshots deterministic; never rely on hash order or unfixed RNG.",
+  "`MUST` use `RRException` for user-facing failures and ICE for compiler bugs; expected user failures `MUST NOT` `panic!` or silently fallback.",
+  "`MUST` make `perl scripts/contributing_audit.pl`, `cargo check`, `cargo clippy --all-targets -- -D warnings`, and at least one minimal targeted test pass; `SHOULD` use `scripts/verify_cleanroom.sh` when you need a cleanroom result.",
+  "`MUST` keep hot paths free of hidden allocation such as `to_string()` or `clone()` in loops, and `#[inline(always)]` still `MUST` carry benchmark evidence.",
+  "`MUST` keep `unsafe` adjacent to `// SAFETY:` with a real reason safe alternatives are insufficient and a narrow/local scope.",
+  "`MUST` explain why, use structured `TODO/FIXME/NOTE`, and `SHOULD` delete stale comments immediately.",
+]
+exception_summary = "1. Document why. 2. State impact and scope. 3. Add targeted tests or benchmark evidence when relevant."
+checklist_items = [
+  "Behavior is deterministic for the same input and configuration.",
+  "Relevant tests and checks were executed, including `perl scripts/contributing_audit.pl`, `cargo check`, `cargo clippy --all-targets -- -D warnings`, and at least one minimal targeted test.",
+  "Touched semantic areas such as cache behavior, fallback behavior, numeric semantics, and IR invariants were reviewed for correctness.",
+  "`unsafe`, mutable global state, and environment-sensitive paths were reviewed to confirm they cannot change compilation correctness.",
+  "Docs updated if CLI/runtime/error semantics changed.",
+]
+
+[[rules]]
+number = 1
+title = "Control Flow and Function Shape"
+guidance = [
+  "`MUST` keep normal-path nesting shallow; prefer early returns and early continues.",
+  "`SHOULD` keep each function focused on one concern and split long branch-heavy functions before adding more complexity.",
+  "`SHOULD` separate pure computation from side-effect orchestration when doing so improves reviewability.",
+  "`MUST NOT` hide side effects inside chained combinators when a `for` loop is clearer.",
+]
+
+[[rules]]
+number = 2
+title = "Deterministic Output and Traversal"
+guidance = [
+  "`MUST` produce deterministic externally visible behavior from identical input and configuration.",
+  "`MUST NOT` depend on hash iteration order for emitted code, diagnostics, cache keys, dumps, or snapshots.",
+  "`MUST` control RNG seeds anywhere behavior would otherwise vary between runs.",
+  "`MUST` define stable tie-break rules whenever multiple valid traversal or emission orders exist.",
+  "`SHOULD` sort keys or use deterministic structures whenever order matters.",
+]
+
+[[rules]]
+number = 3
+title = "Hot Path Discipline"
+context = [
+  "Treat paths as hot when they run per token, node, instruction, emitted unit, or show up in profiles as material cost centers.",
+  "Typical RR hot paths include parser scanning, lowering, analysis, optimization inner loops, and codegen traversal.",
+]
+guidance = [
+  "`MUST` avoid hidden allocation, hashing, formatting, regex compilation, or path work inside hot loops.",
+  "`MUST NOT` allocate temporary `String` values for debug-only output inside hot loops unless gated behind a debug or trace condition.",
+  "`SHOULD` hoist invariants out of loops and pre-allocate with `with_capacity` when growth is predictable.",
+  "`SHOULD` make non-trivial cost visible in API shape.",
+  "`MUST NOT` add `#[inline(always)]` without benchmark evidence.",
+]
+bad_example = "let names = nodes.iter().map(|n| n.to_string()).collect::<Vec<_>>();"
+good_example = "let names: Vec<&str> = nodes.iter().map(|n| n.as_str()).collect();\nformat_name_into(node, &mut scratch);"
+
+[[rules]]
+number = 4
+title = "Ownership and Allocation"
+guidance = [
+  "`MUST` default to borrowing for read-only paths.",
+  "`MUST` justify `clone()` in hot paths or when copying large or long-lived compiler data.",
+  "`SHOULD` prefer borrowing, indexing, interning, or arena-backed handles over cloning in pass-heavy pipelines.",
+  "`SHOULD` keep ownership choices explicit at pass boundaries and avoid tight-loop copies of large structures.",
+]
+
+[[rules]]
+number = 5
+title = "Pass Ownership and IR Growth"
+guidance = [
+  "`MUST` define which pass owns mutation rights for each IR stage.",
+  "`MUST NOT` mix unrelated transformations in a single pass or mutate owned IR from non-owning passes without explicit documentation.",
+  "`MUST` avoid unbounded or super-linear IR growth without explicit justification and documented worst-case complexity.",
+  "`SHOULD` add stress coverage when a transformation can materially increase IR size.",
+]
+
+[[rules]]
+number = 6
+title = "Error Model (User Error vs Compiler Fault)"
+guidance = [
+  "`MUST` use structured diagnostics (`RRException`) for user-facing errors.",
+  "`MUST` reserve internal-fault paths (`InternalCompilerError` / `ICE9001`) for compiler bugs or violated invariants.",
+  "`MUST NOT` use `panic!` for expected user-input failures.",
+  "`MUST NOT` silently fall back in ways that change correctness or hide failures.",
+  "`SHOULD` attach actionable notes when users can fix the problem.",
+]
+
+[[rules]]
+number = 7
+title = "Numeric and Conversion Safety"
+guidance = [
+  "`MUST` make overflow behavior explicit with checked, saturating, or wrapping operations where relevant.",
+  "`MUST` avoid unchecked casts when truncation or sign changes are possible.",
+  "`MUST` preserve RR language semantics in constant folding, evaluators, and compiler-side arithmetic.",
+  "`MUST` add focused tests when changing overflow-sensitive or conversion-sensitive logic.",
+  "`SHOULD` cover min, max, sign, truncation, and division or modulo edge cases.",
+]
+
+[[rules]]
+number = 8
+title = "Module Boundaries and Naming"
+guidance = [
+  "`MUST` keep module boundaries coherent with pipeline stages.",
+  "`SHOULD` keep pass entrypoints, validation steps, and data model definitions discoverable from names alone.",
+  "`SHOULD` prefer existing naming conventions such as `*_from_env`, `*_with_configs`, `run_*_phase`, and `validate_*`.",
+  "`MUST NOT` introduce aliases or utility modules that hide stage ownership.",
+]
+
+[[rules]]
+number = 9
+title = "Caching and Memoization"
+guidance = [
+  "`MUST` ensure cache keys are deterministic and include all correctness-affecting inputs.",
+  "`MUST NOT` let caches change externally visible behavior except for performance.",
+  "`MUST NOT` allow stale or partially invalid entries to influence correctness.",
+  "`MUST` include compiler version or build identity, output mode, and semantic-affecting flags in persisted cache keys.",
+  "`SHOULD` document invalidation assumptions and keep a cache-bypass path available for debugging.",
+]
+
+[[rules]]
+number = 10
+title = "Global State"
+guidance = [
+  "`MUST NOT` introduce mutable global state that affects compilation results.",
+  "`SHOULD` pass required context explicitly through parameters or structured context objects.",
+]
+
+[[rules]]
+number = 11
+title = "Environment Independence"
+guidance = [
+  "`MUST NOT` depend on wall-clock time, system randomness, locale, current working directory, or environment-specific paths for compilation results.",
+  "`SHOULD` normalize environment-dependent inputs before they affect correctness.",
+]
+
+[[rules]]
+number = 12
+title = "Testing and Validation Requirements"
+intro = "For non-trivial changes, contributors `MUST` make the repository verification flow pass:"
+guidance = [
+  "`perl scripts/contributing_audit.pl`",
+  "use `scripts/verify_cleanroom.sh` when the worktree is dirty or when you need a clean-checkout style result",
+  "`cargo check`",
+  "`cargo clippy --all-targets -- -D warnings`",
+  "at least one minimal targeted test that isolates the changed behavior, invariant, or regression surface",
+]
+extra = [
+  "When touching parser, pipeline, or type-solver logic, contributors `SHOULD` run fuzz smoke (`cargo +nightly fuzz run parser ...`, `cargo +nightly fuzz run pipeline ...`, `cargo +nightly fuzz run type_solver ...`).",
+  "Performance-sensitive changes `SHOULD` carry benchmark evidence with command, baseline vs changed result, workload, and enough environment detail for rough reproduction.",
+]
+
+[[rules]]
+number = 13
+title = "IR Debuggability and Developer Ergonomics"
+guidance = [
+  "`MUST` preserve stage-specific IR invariants across pass boundaries.",
+  "`MUST` document new invariants where they are introduced and exercise verifier or `validate_*` hooks after non-trivial rewrites.",
+  "`SHOULD` make dump compatibility expectations explicit when IR shape changes invalidate prior artifacts.",
+  "`SHOULD` keep IR dumps readable, diffable, and deterministic.",
+]
+
+[[rules]]
+number = 14
+title = "Logging and Tracing"
+guidance = [
+  "`SHOULD` use structured logging at pass boundaries and major phase transitions.",
+  "`MUST NOT` emit debug or log formatting inside hot loops unless gated behind debug or trace conditions.",
+  "`SHOULD` prefer concise phase summaries over noisy per-node logging.",
+  "`SHOULD` keep debug output deterministic when it appears in tests or bug reports.",
+]
+
+[[rules]]
+number = 15
+title = "Unsafe Code Policy"
+guidance = [
+  "`MUST NOT` use `unsafe` unless it is necessary and justified.",
+  "`MUST` include an adjacent `// SAFETY:` comment explaining the invariant contract.",
+  "`SHOULD` explain why safe alternatives were insufficient.",
+  "`MUST` keep unsafe preconditions visible, locally checkable, and narrowly scoped.",
+  "`SHOULD` add targeted tests for invariants relied on by `unsafe`.",
+]
+
+[[rules]]
+number = 16
+title = "Experimental and Optional Behavior"
+guidance = [
+  "`SHOULD` gate experimental optimizations or unstable behavior behind explicit flags.",
+  "`MUST` keep the default pipeline deterministic and production-safe.",
+  "`SHOULD` keep gated behavior easy to disable during debugging and regression triage.",
+]
+
+[[rules]]
+number = 17
+title = "Dependency and Compiler Build Times"
+guidance = [
+  "`SHOULD` prefer the standard library and existing project utilities over new dependencies for small conveniences.",
+  "`MUST` get maintainer approval before adding external crates that materially affect performance, compile time, portability, or determinism.",
+  "`MUST NOT` add abstractions that hide stage semantics or runtime cost without clear payoff.",
+  "`SHOULD` avoid unnecessary generic bloat or heavy procedural macro use in core types.",
+]
+
+[[rules]]
+number = 18
+title = "Review Readability"
+guidance = [
+  "`MUST` favor code that a reviewer can reason about quickly.",
+  "`SHOULD` use Rustdoc on public APIs and core transform entrypoints whose design intent is not obvious locally.",
+  "`SHOULD` comment non-obvious invariants, assumptions, and performance tradeoffs.",
+  "`MUST NOT` add comments that restate obvious syntax.",
+]
+
+[[rules]]
+number = 19
+title = "Commenting Rules"
+guidance = [
+  "`MUST` explain the why, not the what.",
+  "`MUST` use structured prefixes for actionable comments such as `// TODO(name/issue):`, `// FIXME:`, and `// NOTE:`.",
+  "`MUST` document complex algorithms, tricky optimizations, and non-obvious transformations explicitly at the block level.",
+  "`SHOULD` delete stale comments immediately and prefer self-documenting names over redundant inline comments.",
+]
+
+[exception_process]
+steps = [
+  "Document why the exception exists in code comment or PR text.",
+  "Include expected impact on correctness, performance, or maintainability.",
+  "State the affected scope when it is not obvious locally.",
+  "Add focused tests or benchmark evidence when relevant.",
+]
+
+[pr_checklist]
+items = [
+  "Behavior is deterministic for the same input and configuration.",
+  "Relevant tests and checks were executed, including `perl scripts/contributing_audit.pl` and at least one minimal targeted test for the changed behavior or invariant.",
+  "Touched semantic areas such as cache behavior, fallback behavior, numeric semantics, and IR invariants were reviewed for correctness.",
+  "`unsafe`, mutable global state, and environment-sensitive paths were reviewed to confirm they cannot change compilation correctness.",
+  "Docs updated if CLI/runtime/error semantics changed.",
+]
+
+[audit]
+status_items = [
+  "Static audit enforces deterministic-path hazards such as `panic!`, `unwrap()`, `dbg!`, structured comment prefixes, `unsafe` safety notes, `static mut`, mutable globals, wall-clock access, cwd and temp path sensitivity, and hash-order review heuristics.",
+  "Semantic smoke lanes cover cache correctness, determinism, numeric semantics, fallback correctness, pass verification, and fuzz smoke.",
+  "CI now runs diff-scoped static audit, full-scope semantic audit, subsystem-specific matrices, commit-series/process gates, owner-review checks, required-check contract validation, failure bundles, perf governance reporting, and base-ref perf delta checks.",
+]
+fast_audit_commands = [
+  "perl scripts/contributing_audit.pl",
+  "cargo check",
+  "cargo clippy --all-targets -- -D warnings",
+  "bash scripts/test_tier.sh tier0",
+  "bash scripts/test_tier.sh tier1",
+  "bash scripts/optimizer_suite.sh legality",
+  "FUZZ_SECONDS=1 ./scripts/fuzz_smoke.sh",
+]
+scan_only_commands = [
+  "perl scripts/contributing_audit.pl --scan-only",
+]
+cleanroom_commands = [
+  "scripts/verify_cleanroom.sh",
+  "scripts/verify_cleanroom.sh --files src/syntax/parse.rs tests/statement_boundaries.rs",
+  "scripts/verify_cleanroom.sh --fast --files scripts/verify_cleanroom.sh",
+]
+semantic_lanes = [
+  "incremental/cache correctness: `incremental_phase1`, `incremental_phase2`, `incremental_phase3`, `incremental_auto`, `incremental_strict_verify`, `cli_incremental_default`",
+  "numeric semantics and optimizer meaning: `sccp_overflow_regression`, `rr_logic_equivalence_matrix`, `opt_level_equivalence`, `numeric_property_differential`",
+  "fallback/runtime correctness: `hybrid_fallback`, `parallel_optional_fallback_semantics`, `native_optional_fallback`, `poly_vopt_fallback`, `runtime_semantics_regression`, `fallback_correctness_matrix`",
+  "determinism and environment independence: `commercial_determinism`, `compiler_parallel_equivalence`, `hermetic_determinism`, and dual-seed `random_differential`",
+]
+extended_checks = [
+  "bash scripts/optimizer_suite.sh heavy",
+  "bash scripts/perf_gate.sh",
+  "perl scripts/perf_governance.pl",
+  "perl scripts/perf_delta_gate.pl",
+  "FUZZ_SECONDS=5 ./scripts/fuzz_smoke.sh",
+  "cargo test -q --test example_perf_smoke -- --ignored --nocapture",
+]
+manual_review = [
+  "Confirm externally visible behavior is still deterministic anywhere ordering, hashing, or parallel scheduling could matter.",
+  "Confirm touched semantic areas such as cache behavior, fallback behavior, numeric semantics, and IR invariants still match intent.",
+  "Confirm hot paths did not pick up hidden allocation, formatting, clone cost, or other non-obvious work beyond what automation can prove.",
+  "Confirm `unsafe`, mutable global state, wall-clock access, cwd access, and temp-path usage cannot change compilation correctness.",
+  "Confirm docs, benchmark evidence, and any exception notes are still accurate rather than placeholder text.",
+]
+watch_items = [
+  "`src/mir/opt/v_opt/`: vector materialization and interop lowering remain structurally complex.",
+  "`src/codegen/mir_emit.rs`: emitted-R construction is sensitive to hidden allocation regressions.",
+  "`src/compiler/incremental.rs`: cache keys, strict verify, and source-map drift remain high-value failure points.",
+]
+focus_paths = [
+  "src/compiler/pipeline.rs",
+  "src/compiler/incremental.rs",
+  "src/mir/verify.rs",
+  "src/mir/opt.rs",
+  "src/mir/opt/",
+  "src/codegen/mir_emit.rs",
+  "src/runtime/mod.rs",
+]
+notes = [
+  "`cargo test -q` is the baseline gate, not proof of correctness.",
+  "`--skip-semantic-smoke` exists only for audit-wiring work.",
+  "Use `docs/compiler/testing.md` for suite selection details and `CONTRIBUTING.md` for rule intent.",
+]
+
+[testing]
+audience = [
+  "which test layer should catch a regression",
+  "which local command matches CI",
+  "when to use cleanroom, audit, determinism, cache, fallback, or fuzz flows",
+]
+verification_goals = [
+  "did meaning stay the same?",
+  "did emitted R keep the expected shape?",
+  "did runtime helper policy stay intact?",
+  "did optimization stay within budget?",
+]
+prerequisites = [
+  "Most Rust-only tests need only `cargo`.",
+  "Tests that execute generated R require `Rscript` in `PATH`.",
+]
+primary_commands = [
+  "cargo fmt --all --check",
+  "cargo test -q",
+  "cargo clippy --all-targets -- -D warnings",
+]
+focused_commands = [
+  "cargo test -q --test vectorization_extended",
+  "cargo test -q --test case_regressions",
+]
+audit_helper = [
+  "perl scripts/contributing_audit.pl",
+  "perl scripts/contributing_audit.pl --scan-only",
+]
+cleanroom_helper = [
+  "scripts/verify_cleanroom.sh",
+  "scripts/verify_cleanroom.sh --files src/syntax/parse.rs tests/statement_boundaries.rs",
+  "scripts/verify_cleanroom.sh --fast --files scripts/verify_cleanroom.sh",
+]
+ci_model = [
+  "focused local regression first",
+  "standard local stack second",
+  "diff-scoped static audit and full-scope semantic CI audit as confirmation",
+]
+
+[[testing.families]]
+title = "Frontend and Syntax"
+items = [
+  "syntax_errors.rs",
+  "parse_multi_errors.rs",
+  "statement_boundaries.rs",
+]
+summary = "Parsing, syntax diagnostics, and recovery boundaries."
+
+[[testing.families]]
+title = "Optimization Correctness"
+items = [
+  "vectorization_extended.rs",
+  "vectorization_phi_ifelse.rs",
+  "benchmark_vectorization.rs",
+  "sccp_overflow_regression.rs",
+  "opt_level_equivalence.rs",
+  "rr_logic_equivalence_matrix.rs",
+  "numeric_property_differential.rs",
+]
+summary = "Optimizer legality, numeric semantics, and emitted-artifact parity."
+
+[[testing.families]]
+title = "Incremental Compile and Cache Correctness"
+items = [
+  "incremental_phase1.rs",
+  "incremental_phase2.rs",
+  "incremental_phase3.rs",
+  "incremental_auto.rs",
+  "incremental_strict_verify.rs",
+  "cli_incremental_default.rs",
+  "cache_equivalence_matrix.rs",
+]
+summary = "Artifact cache invalidation, emit-cache reuse, strict verify, and output-mode separation."
+
+[[testing.families]]
+title = "Runtime, Fallback, and Environment Independence"
+items = [
+  "runtime_contract.rs",
+  "runtime_semantics_regression.rs",
+  "hybrid_fallback.rs",
+  "parallel_optional_fallback_semantics.rs",
+  "native_optional_fallback.rs",
+  "fallback_correctness_matrix.rs",
+  "hermetic_determinism.rs",
+]
+summary = "Fallback correctness, runtime subset injection, and hermetic determinism behavior."
+
+[[testing.families]]
+title = "Stress and Determinism"
+items = [
+  "commercial_determinism.rs",
+  "random_differential.rs",
+  "pass_verify_examples.rs",
+  "compiler_parallel_equivalence.rs",
+]
+summary = "Determinism-sensitive, generated-program differential, and pass-by-pass verifier fences."
+
+[[testing.families]]
+title = "Verification Tooling"
+items = [
+  "contributing_audit_smoke.rs",
+  "recommended_package_coverage_smoke.rs",
+  "verification_summary_smoke.rs",
+  "triage_reduce_smoke.rs",
+]
+summary = "Audit, reporting, and triage-tool behavior."
+
+[automation]
+generated_files = [
+  "CONTRIBUTING.md",
+  "docs/compiler/contributing-audit.md",
+  "docs/compiler/testing.md",
+  ".github/pull_request_template.md",
+]
+pr_required_sections = [
+  "## Verification",
+  "## Benchmark Evidence",
+  "## Dependency Impact",
+  "## Exceptions",
+]
+perf_sensitive_prefixes = [
+  "src/compiler/",
+  "src/hir/",
+  "src/mir/",
+  "src/codegen/",
+  "src/runtime/",
+  "tests/perf_regression_gate.rs",
+  "scripts/perf_gate.sh",
+]
+dependency_files = [
+  "Cargo.toml",
+  "Cargo.lock",
+]
+exception_sensitive_prefixes = [
+  "CONTRIBUTING.md",
+  "policy/",
+  "scripts/contributing_audit.pl",
+  "scripts/check_pr_evidence.py",
+]
+
+[pr_template]
+intro = [
+  "Fill every section with concrete evidence or an explicit rationale. Do not leave placeholders.",
+  "The PR evidence check reads these headings directly.",
+]
+metadata_sections = [
+  "## Why",
+  "## Risk",
+  "## Test Plan",
+  "## Performance Impact",
+  "## Subsystems",
+]
+verification_prompts = [
+  "Commands run and the scope they covered.",
+  "Any targeted tests or semantic smoke you relied on.",
+]
+benchmark_prompts = [
+  "If performance-sensitive paths changed, include command, workload, and baseline vs changed result.",
+  "If not performance-sensitive, state why.",
+]
+dependency_prompts = [
+  "List any dependency changes and whether approval was needed.",
+  "Call out portability, determinism, or build-time impact.",
+]
+exception_prompts = [
+  "List any deliberate rule exceptions and why they are justified.",
+  "If none, say so explicitly.",
+]
