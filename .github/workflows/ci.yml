@@ -345,6 +345,10 @@ jobs:
     timeout-minutes: 120
     needs:
       - tier0
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_STRIP: "none"
+      RUSTUP_TOOLCHAIN: nightly-2026-01-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -354,7 +358,8 @@ jobs:
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-01-15
+          components: rust-src, llvm-tools-preview
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -364,13 +369,11 @@ jobs:
         with:
           r-version: release
 
-      - name: Install Static ISL Dependencies
+      - name: Install Fuzz Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
-
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --version 0.13.1 --locked
+          sudo apt-get install -y --no-install-recommends clang lld libisl-dev libgmp-dev
+          cargo install cargo-fuzz --version 0.13.1 --locked
 
       - name: Fuzz Smoke
         run: FUZZ_SECONDS=5 ./scripts/fuzz_smoke.sh
