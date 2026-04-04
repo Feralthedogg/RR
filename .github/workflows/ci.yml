@@ -74,6 +74,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+          isl_dir="$(dpkg -L libisl-dev | grep '/libisl.a$' | head -n1 | xargs dirname)"
+          gmp_dir="$(dpkg -L libgmp-dev | grep '/libgmp.a$' | head -n1 | xargs dirname)"
+          test -n "$isl_dir" && test -f "$isl_dir/libisl.a"
+          test -n "$gmp_dir" && test -f "$gmp_dir/libgmp.a"
+          echo "RR_ISL_LIB_DIR=$isl_dir" >> "$GITHUB_ENV"
+          echo "RR_GMP_LIB_DIR=$gmp_dir" >> "$GITHUB_ENV"
+
       - name: Commit Metadata Check
         run: perl scripts/check_commit_metadata.pl
 
