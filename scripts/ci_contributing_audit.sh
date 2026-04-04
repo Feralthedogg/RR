@@ -29,18 +29,18 @@ print(base)
 
 BASE_SHA="$(read_base_sha)"
 if [[ -n "$BASE_SHA" ]]; then
-  exec bash "$ROOT/scripts/contributing_audit.sh" --scan-only --base "$BASE_SHA"
+  exec perl "$ROOT/scripts/contributing_audit.pl" --scan-only --base "$BASE_SHA"
 fi
 
 if git -C "$ROOT" rev-parse --verify HEAD^ >/dev/null 2>&1; then
-  exec bash "$ROOT/scripts/contributing_audit.sh" --scan-only --base \
+  exec perl "$ROOT/scripts/contributing_audit.pl" --scan-only --base \
     "$(git -C "$ROOT" rev-parse --verify HEAD^)"
 fi
 
 mapfile -t AUDIT_FILES < <(
   git -C "$ROOT" diff-tree --root --no-commit-id --name-only -r HEAD --
   | awk '
-      /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^fuzz\// || /^native\// || /^CONTRIBUTING\.md$/ {
+      /^src\// || /^tests\// || /^docs\// || /^scripts\// || /^fuzz\// || /^native\// || /^policy\// || /^\.github\/pull_request_template\.md$/ || /^CONTRIBUTING\.md$/ {
         print
       }
     '
@@ -48,7 +48,7 @@ mapfile -t AUDIT_FILES < <(
 )
 
 if [[ ${#AUDIT_FILES[@]} -gt 0 ]]; then
-  exec bash "$ROOT/scripts/contributing_audit.sh" --scan-only --files "${AUDIT_FILES[@]}"
+  exec perl "$ROOT/scripts/contributing_audit.pl" --scan-only --files "${AUDIT_FILES[@]}"
 fi
 
-exec bash "$ROOT/scripts/contributing_audit.sh" --scan-only
+exec perl "$ROOT/scripts/contributing_audit.pl" --scan-only

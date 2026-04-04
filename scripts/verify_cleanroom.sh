@@ -34,9 +34,10 @@ Default behavior:
       cargo fmt --all --check
       cargo check
       cargo clippy --all-targets -- -D warnings
+      python3 scripts/render_contributing_docs.py --check
       cargo test -q --no-fail-fast
       RR_VERIFY_EACH_PASS=1 cargo test -q --test pass_verify_examples
-      bash scripts/contributing_audit.sh --all --scan-only
+      perl scripts/contributing_audit.pl --all --scan-only
       FUZZ_SECONDS=1 ./scripts/fuzz_smoke.sh
       cd docs && pnpm install --frozen-lockfile && pnpm docs:build
 
@@ -177,7 +178,7 @@ run_step() {
 ensure_runtime_support_files() {
   local rel src dst
   local -a required=(
-    "scripts/contributing_audit.sh"
+    "scripts/contributing_audit.pl"
   )
   if [[ $SKIP_FUZZ -eq 0 && $FAST -eq 0 ]]; then
     required+=("scripts/fuzz_smoke.sh")
@@ -255,12 +256,13 @@ ensure_cleanroom_docs_deps
 run_step "Format Check" cargo fmt --all --check
 run_step "Cargo Check" cargo check
 run_step "Clippy" cargo clippy --all-targets -- -D warnings
+run_step "Generated Contributing Docs" python3 scripts/render_contributing_docs.py --check
 if [[ $FAST -eq 0 ]]; then
   run_step "Tests" cargo test -q --no-fail-fast
   run_step "Pass Verify" env RR_VERIFY_EACH_PASS=1 cargo test -q --test pass_verify_examples
 fi
 ensure_runtime_support_files
-run_step "Contributing Audit" bash scripts/contributing_audit.sh --all --scan-only
+run_step "Contributing Audit" perl scripts/contributing_audit.pl --all --scan-only
 
 if [[ $SKIP_FUZZ -eq 0 && $FAST -eq 0 ]]; then
   run_step "Fuzz Smoke" env FUZZ_SECONDS=1 ./scripts/fuzz_smoke.sh

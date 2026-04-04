@@ -1,0 +1,12 @@
+[package]
+name = "rr-contributing-ast-audit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "visit"] }

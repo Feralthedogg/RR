@@ -72,6 +72,8 @@ RR_LIBRARY_PACKAGE_TESTS=(
 )
 
 RR_TIER0_FAST_TESTS=(
+  contributing_audit_smoke
+  process_gate_smoke
   syntax_errors
   semantic_errors
   parse_multi_errors
@@ -226,23 +228,26 @@ RR_OPTIMIZER_HEAVY_TESTS=(
 
 RR_TIER2_MAIN_TESTS=(
   benchmark_examples_smoke
+  cache_equivalence_matrix
   callmap_user_mixed
   case_regressions
   cli_commands
   commercial_negative_corpus
   commercial_stress_differential
   comprehensive_all
-  contributing_audit_smoke
   example_numeric_regression
   example_simulations
   example_visualization
+  fallback_correctness_matrix
   fuzz_regression_no_panic_invalid_mir
   golden
+  hermetic_determinism
   incremental_phase1
   incremental_phase2
   incremental_phase3
   incremental_strict_verify
   native_optional_fallback
+  numeric_property_differential
   output_hygiene
   parallel_optional_fallback_semantics
   r_output_optimization_audit

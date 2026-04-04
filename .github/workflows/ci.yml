@@ -11,6 +11,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 defaults:
   run:
@@ -49,12 +50,350 @@ jobs:
       - name: Format
         run: cargo fmt --check
 
+      - name: Generated Contributing Docs
+        run: python3 scripts/render_contributing_docs.py --check
+
+      - name: Required CI Contract
+        run: perl scripts/check_required_ci_jobs.pl
+
       - name: Contributing Audit
         shell: bash
         run: bash scripts/ci_contributing_audit.sh
 
       - name: Tier 0 Fast Tests
         run: bash scripts/test_tier.sh tier0
+
+  pr-evidence:
+    name: Process Gates
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Commit Metadata Check
+        run: perl scripts/check_commit_metadata.pl
+
+      - name: Commit Series Check
+        run: perl scripts/check_commit_series.pl --verify-buildability
+
+      - name: Subsystem Ownership Check
+        run: perl scripts/check_subsystem_ownership.pl --print-plan
+
+      - name: Subsystem Review Check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: perl scripts/check_subsystem_reviews.pl --print-plan
+
+      - name: PR Evidence Check
+        run: python3 scripts/check_pr_evidence.py
+
+      - name: Build Failure Bundle
+        if: failure()
+        run: |
+          mkdir -p .artifacts/ci
+          perl scripts/build_failure_bundle.pl \
+            --bundle-dir .artifacts/ci/process-gates-bundle \
+            --label process-gates
+
+      - name: Upload Failure Bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-gates-bundle
+          path: .artifacts/ci/process-gates-bundle
+
+  rust-matrix:
+    name: Rust Matrix / ${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs:
+      - tier0
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - stable
+          - beta
+          - nightly
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust (${{ matrix.channel }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.channel }}
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+
+      - name: Cargo Check
+        run: cargo check
+
+      - name: Process Smokes
+        run: cargo test -q --test contributing_audit_smoke --test process_gate_smoke
+
+      - name: Build Failure Bundle
+        if: failure()
+        run: |
+          mkdir -p .artifacts/ci
+          perl scripts/build_failure_bundle.pl \
+            --bundle-dir .artifacts/ci/rust-matrix-${{ matrix.channel }}-bundle \
+            --label rust-matrix-${{ matrix.channel }}
+
+      - name: Upload Failure Bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-matrix-${{ matrix.channel }}-bundle
+          path: .artifacts/ci/rust-matrix-${{ matrix.channel }}-bundle
+
+  r-runtime-matrix:
+    name: R Runtime Matrix / ${{ matrix.r-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs:
+      - tier0
+    strategy:
+      fail-fast: false
+      matrix:
+        r-version:
+          - release
+          - oldrel-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.r-version }}
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+
+      - name: Runtime Matrix
+        run: cargo test -q --test runtime_semantics_regression --test hermetic_determinism
+
+      - name: Build Failure Bundle
+        if: failure()
+        run: |
+          mkdir -p .artifacts/ci
+          perl scripts/build_failure_bundle.pl \
+            --bundle-dir .artifacts/ci/r-runtime-matrix-${{ matrix.r-version }}-bundle \
+            --label r-runtime-matrix-${{ matrix.r-version }}
+
+      - name: Upload Failure Bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-runtime-matrix-${{ matrix.r-version }}-bundle
+          path: .artifacts/ci/r-runtime-matrix-${{ matrix.r-version }}-bundle
+
+  semantic-audit:
+    name: Semantic Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs:
+      - tier0
+    env:
+      RR_RANDOM_DIFFERENTIAL_COUNT: "8"
+      RR_RANDOM_DIFFERENTIAL_SEED: "0xA11CE5EED55AA11C"
+      RR_RANDOM_DIFFERENTIAL_SECOND_SEED: "0x5EED123456789ABC"
+      RR_SEMANTIC_AUDIT_SCOPE: all
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+
+      - name: Install Rscript
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core
+
+      - name: Semantic Contributing Audit
+        run: |
+          set -o pipefail
+          mkdir -p .artifacts/ci
+          bash scripts/ci_contributing_semantic_audit.sh | tee .artifacts/ci/semantic-audit.log
+
+      - name: Warning Debt Check
+        run: perl scripts/check_new_warnings.pl --baseline policy/warning_baseline.txt --log .artifacts/ci/semantic-audit.log
+
+      - name: Build Failure Bundle
+        if: failure()
+        run: |
+          perl scripts/build_failure_bundle.pl \
+            --bundle-dir .artifacts/ci/semantic-audit-bundle \
+            --label semantic-audit \
+            --log .artifacts/ci/semantic-audit.log
+
+      - name: Upload Failure Bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semantic-audit-bundle
+          path: .artifacts/ci/semantic-audit-bundle
+
+  subsystem-matrix:
+    name: Subsystem Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs:
+      - tier0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+
+      - name: Install Rscript
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core
+
+      - name: Run Subsystem Matrix
+        run: perl scripts/ci_subsystem_matrix.pl --mode diff
+
+      - name: Build Failure Bundle
+        if: failure()
+        run: |
+          mkdir -p .artifacts/ci
+          perl scripts/build_failure_bundle.pl \
+            --bundle-dir .artifacts/ci/subsystem-matrix-bundle \
+            --label subsystem-matrix
+
+      - name: Upload Failure Bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subsystem-matrix-bundle
+          path: .artifacts/ci/subsystem-matrix-bundle
+
+  nightly-stress:
+    name: Nightly Stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs:
+      - tier0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+
+      - name: Install Static ISL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
+
+      - name: Fuzz Smoke
+        run: FUZZ_SECONDS=5 ./scripts/fuzz_smoke.sh
+
+      - name: Perf Governance
+        run: |
+          mkdir -p .artifacts/ci
+          perl scripts/perf_governance.pl --report .artifacts/ci/perf-governance.json
+
+      - name: Perf Delta Gate
+        run: |
+          perl scripts/perf_delta_gate.pl \
+            --head-report .artifacts/ci/perf-head.json \
+            --base-report .artifacts/ci/perf-base.json \
+            --compare-report .artifacts/ci/perf-compare.json
+
+      - name: Upload Perf Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-governance-report
+          path: .artifacts/ci/perf-governance.json
+          if-no-files-found: ignore
+
+      - name: Upload Perf Delta Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-delta-report
+          path: |
+            .artifacts/ci/perf-head.json
+            .artifacts/ci/perf-base.json
+            .artifacts/ci/perf-compare.json
+          if-no-files-found: ignore
+
+      - name: Build Failure Bundle
+        if: failure()
+        run: |
+          perl scripts/build_failure_bundle.pl \
+            --bundle-dir .artifacts/ci/nightly-stress-bundle \
+            --label nightly-stress \
+            --log .artifacts/ci/perf-governance.json \
+            --log .artifacts/ci/perf-compare.json
+
+      - name: Upload Failure Bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-stress-bundle
+          path: .artifacts/ci/nightly-stress-bundle
 
   platform-build:
     name: Platform Build / ${{ matrix.label }}

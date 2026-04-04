@@ -1,0 +1,18 @@
+# RR subsystem ownership
+
+* @Feralthedogg
+
+/.github/ @Feralthedogg
+/policy/ @Feralthedogg
+/CONTRIBUTING.md @Feralthedogg
+/scripts/ @Feralthedogg
+/src/compiler/incremental.rs @Feralthedogg
+/src/compiler/pipeline.rs @Feralthedogg @levish0
+/src/compiler/scheduler.rs @Feralthedogg @levish0
+/src/hir/ @Feralthedogg @levish0
+/src/typeck/ @Feralthedogg @levish0
+/src/mir/opt/ @Feralthedogg @levish0
+/src/runtime/ @Feralthedogg
+/src/codegen/ @Feralthedogg @levish0
+/src/pkg/ @Feralthedogg
+/tests/ @Feralthedogg
