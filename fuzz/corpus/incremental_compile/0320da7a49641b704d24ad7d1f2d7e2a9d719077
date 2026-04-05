@@ -1,6 +1,0 @@
-fn step(x, v) {(x * x + 1) *float 2)
-  return v + 0.1 * a
-}
-
-fn mainfn step(x() {
-  x

@@ -1,3 +1,0 @@
-fn step(x, v) {
-  a = 0 - xexport / ((x * x + 1) * 2)
-in();

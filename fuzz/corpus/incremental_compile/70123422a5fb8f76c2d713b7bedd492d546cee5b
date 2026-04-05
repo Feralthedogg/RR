@@ -1,8 +1,0 @@
-fn main() {
-  x = 1
- = 1
- function y = 2
-  print(x + y)
-}
-
-main(n();

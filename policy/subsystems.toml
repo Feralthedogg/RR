@@ -83,6 +83,7 @@ paths = [
   "CONTRIBUTING.md",
   ".github/",
   "docs/compiler/",
+  "fuzz/",
   "policy/",
   "scripts/",
   "scripts/contributing_audit.pl",

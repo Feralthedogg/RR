@@ -75,6 +75,7 @@ owners = [
 paths = [
   "CONTRIBUTING.md",
   ".github/",
+  "fuzz/",
   "policy/",
   "scripts/contributing_audit.pl",
   "scripts/ci_contributing_audit.sh",

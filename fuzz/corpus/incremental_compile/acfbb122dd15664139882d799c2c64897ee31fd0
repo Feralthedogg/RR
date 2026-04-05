@@ -1,9 +1,0 @@
-fn step(x, v) {
-  a = 0 - x / ((x . x + {
-  a = 0 - x / ((x *1) * 2)
-  letreturn v + 0.1 fn t* a
-}
-
-fn main() {
-  x = 1.0
-  v =tereturnp(x 0.0,
