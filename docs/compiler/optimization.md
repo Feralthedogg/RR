@@ -68,10 +68,11 @@ Important rules:
   - stabilization only
   - still performs mandatory helper canonicalization and de-SSA
 - `-O1`
-  - optimizing pipeline
+  - optimizing pipeline with the `Balanced` heavy-tier schedule
 - `-O2`
-  - currently runs the same optimizing pipeline as `-O1`
-  - RR currently distinguishes `-O0` from optimized mode, not `-O1` from `-O2`
+  - optimizing pipeline with adaptive heavy-tier phase ordering
+  - currently chooses between `Balanced`, `ComputeHeavy`, and
+    `ControlFlowHeavy` schedules per function
 
 ## Program-Level Strategy
 
@@ -215,20 +216,11 @@ Related knobs:
 Backend-aware lowering only pays off when the hot path stays on the
 backend-aware path end to end.
 
-The current `signal_pipeline` optimizer-tier benchmark in
-[Testing and Quality Gates](testing.md) is now the clearest cautionary example:
+The current benchmark slices below are the clearest cautionary example:
 
 - plain emitted R stays close to idiomatic vectorized GNU R
 - `-O1/-O2` need to justify themselves through generic MIR/vectorization wins,
   not backend-specific special cases
-
-On the current 2026-04-03 snapshot, the useful comparison is still the generic
-optimizer tier itself:
-
-- RR O2 on GNU R: `331.4 ms` cold / `221.0 ms` warm
-- direct vectorized GNU R baseline: `362.6 ms` cold / `216.8 ms` warm
-- diffusion O2 reference points: `217.4 ms` / `25.5 ms` for `heat_diffusion`
-  and `208.8 ms` / `31.9 ms` for `reaction_diffusion`
 
 The important week-1 change is that the benchmark scripts now also record
 optimizer diagnostics for RR artifacts:
@@ -245,10 +237,54 @@ The practical rule is:
   still demonstrably alive
 - tie every performance claim back to emitted-shape and pulse diagnostics
 
-On the current week-4 signoff snapshot, the diffusion slice is also a useful
-sanity check that the generic path is still doing real work: `heat_diffusion`
-and `reaction_diffusion` both stay in the same broad O2 band instead of
-needing benchmark-specific backend lowering to look competitive.
+<!-- BEGIN GENERATED BENCHMARK SNAPSHOT -->
+### Benchmark Snapshots
+
+Refreshed with `scripts/refresh_benchmark_assets.sh --date 2026-04-05 --skip-renjin`.
+
+#### Signal Pipeline Public Slice
+
+[CSV](../assets/signal-pipeline-runtime-2026-04-05.csv) · [SVG](../assets/signal-pipeline-runtime-2026-04-05.svg)
+
+![Signal Pipeline Runtime Comparison](../assets/signal-pipeline-runtime-2026-04-05.svg)
+
+- RR O2 on GNU R: `382.4 ms` cold / `252.2 ms` warm
+- direct vectorized GNU R baseline: `416.8 ms` cold / `237.8 ms` warm
+- NumPy: `188.3 ms`; C O3 native: `27.9 ms`
+- emitted RR O2 artifact on this snapshot: `74` lines, `1` repeat loop, `4` vectorized loops
+
+#### Diffusion Optimizer Slice
+
+[CSV](../assets/diffusion-backend-runtime-2026-04-05.csv) · [SVG](../assets/diffusion-backend-runtime-2026-04-05.svg)
+
+![Diffusion Optimizer Tier Comparison](../assets/diffusion-backend-runtime-2026-04-05.svg)
+
+- useful `-O2` reference points: `231.9 ms` / `26.7 ms` for `heat_diffusion` cold/warm and `249.2 ms` / `36.7 ms` for `reaction_diffusion` cold/warm
+
+| Workload | O0 ms | O1 ms | O2 ms | O0/O1 | O0/O2 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `heat` | `283.1 (17.8)` | `239.8 (10)` | `231.9 (4.5)` | `1.18x` | `1.22x` |
+| `reaction` | `747.3 (76.9)` | `238.2 (13.6)` | `249.2 (4.9)` | `3.14x` | `3.00x` |
+
+#### Optimizer Candidate Slice
+
+[CSV](../assets/backend-candidate-runtime-2026-04-05.csv) · [SVG](../assets/backend-candidate-runtime-2026-04-05.svg)
+
+![Optimizer Candidate Workload Comparison](../assets/backend-candidate-runtime-2026-04-05.svg)
+
+| Workload | O0 ms | O1 ms | O2 ms | O0/O1 | O0/O2 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `bootstrap` | `396.2 (29.4)` | `236.3 (13.9)` | `260.0 (14.4)` | `1.68x` | `1.52x` |
+| `orbital` | `232.4 (10.3)` | `218.8 (15.9)` | `222.6 (10.3)` | `1.06x` | `1.04x` |
+| `vector` | `369.7 (7.2)` | `189.7 (15)` | `177.6 (15)` | `1.95x` | `2.08x` |
+
+Notes:
+
+- `bootstrap_resample` gets most of its gain at `-O1`; `-O2` is still ahead of `-O0`, but not the best point on this snapshot.
+- `orbital_sweep` is effectively flat on this snapshot, with warm `-O1/-O2` at `85.7 ms` and `86.4 ms`.
+- `vector_fusion` splits cold and warm leadership: `-O2` is best cold, while `-O1` stays better on the warm path.
+- Renjin rows were skipped for this snapshot.
+<!-- END GENERATED BENCHMARK SNAPSHOT -->
 
 The inverse rule matters just as much:
 
@@ -256,11 +292,11 @@ The inverse rule matters just as much:
 - already-compact emitted vector R can still be the best answer
 - irregular gather-heavy kernels may flatten out or regress even after fusion
 
-The current backend-candidate slice shows both sides:
+The optimizer-candidate slice above shows both sides:
 
-- `orbital_sweep` improves a lot in warm runs after whole-run fusion
-- `vector_fusion` gets slower because emitted R was already a compact whole-vector affine expression
-- `bootstrap_resample` stays roughly flat because the gather-heavy resample loop does not benefit much from the fused helper boundary
+- `bootstrap_resample` gets a real generic-tier win, but the current best point is `-O1`, not `-O2`
+- `orbital_sweep` stays roughly flat, so backend-aware shaping is not buying much there
+- `vector_fusion` only moves modestly after `-O1`, which is the reminder that the emitted vector R was already close to the useful shape
 
 Tachyon should therefore prefer fewer backend crossings with larger,
 proof-backed kernels over many small “technically native” calls, but only when

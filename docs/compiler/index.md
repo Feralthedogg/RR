@@ -11,6 +11,8 @@ and stay in the user docs flow.
 
 - [Compiler Pipeline](pipeline.md): end-to-end compile flow from source loading
   to emitted `.R`
+- [Adaptive Phase Ordering Design](adaptive-phase-ordering.md): proposed
+  function-sensitive scheduling for Tachyon heavy-tier passes
 - [Parallel Compilation Design](parallel-compilation.md): where compile-time
   parallelism lives and what it is allowed to do
 - [IR Model](ir-model.md): HIR and MIR structure, invariants, and ownership
@@ -43,8 +45,9 @@ If you are debugging a wrong-code or emitted-R issue:
 If you are changing scheduling or compile latency:
 
 1. Read [Parallel Compilation Design](parallel-compilation.md).
-2. Read [Compiler Pipeline](pipeline.md).
-3. Read [Testing and Quality Gates](testing.md).
+2. Read [Adaptive Phase Ordering Design](adaptive-phase-ordering.md).
+3. Read [Compiler Pipeline](pipeline.md).
+4. Read [Testing and Quality Gates](testing.md).
 
 If you are preparing a patch for review:
 

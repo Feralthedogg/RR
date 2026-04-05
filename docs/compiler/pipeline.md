@@ -147,6 +147,13 @@ Relevant path:
 - bounded interprocedural inlining
 - global de-SSA before emission
 
+The important policy split is now:
+
+- `-O1`
+  - uses the baseline `Balanced` heavy-tier schedule
+- `-O2`
+  - enables adaptive heavy-tier phase ordering by default
+
 Relevant path:
 
 - `src/mir/opt.rs`

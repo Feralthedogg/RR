@@ -112,6 +112,10 @@ Relevant driver flags:
   - write the pre-peephole emitted R artifact to a file before final cleanup/remap
 - `RR_PULSE_JSON_PATH`
   - write `TachyonPulseStats` JSON diagnostics for a compile to the given path
+- `RR_PHASE_ORDERING`
+  - `off|balanced|auto` override the heavy-tier phase-ordering policy explicitly
+- `RR_PHASE_ORDERING_TRACE`
+  - emit per-function adaptive phase-ordering classification and schedule traces
 - `RR_POLY_ENABLE`
   - `auto`/unset enables poly optimization automatically when RR was built with ISL support
 - `RR_POLY_BACKEND`

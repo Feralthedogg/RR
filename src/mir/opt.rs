@@ -20,6 +20,8 @@ mod config;
 mod copy_cleanup;
 #[path = "opt/helpers.rs"]
 mod helpers;
+#[path = "opt/phase_order.rs"]
+mod phase_order;
 #[path = "opt/plan.rs"]
 mod plan;
 #[path = "opt/safety.rs"]
@@ -49,10 +51,12 @@ pub mod type_specialize;
 #[path = "opt/v_opt/mod.rs"]
 pub mod v_opt;
 
-use self::types::{FunctionBudgetProfile, ProgramOptPlan};
+use self::types::{FunctionBudgetProfile, FunctionPhasePlan, PhaseScheduleId, ProgramOptPlan};
 pub use self::types::{TachyonProgress, TachyonProgressTier, TachyonPulseStats};
 
-pub struct TachyonEngine;
+pub struct TachyonEngine {
+    phase_ordering_default_mode: types::PhaseOrderingMode,
+}
 
 // Backward compatibility alias for older call sites.
 pub type MirOptimizer = TachyonEngine;
@@ -65,7 +69,17 @@ impl Default for TachyonEngine {
 
 impl TachyonEngine {
     pub fn new() -> Self {
-        Self
+        Self {
+            phase_ordering_default_mode: types::PhaseOrderingMode::Off,
+        }
+    }
+
+    pub(crate) fn with_phase_ordering_default_mode(
+        phase_ordering_default_mode: types::PhaseOrderingMode,
+    ) -> Self {
+        Self {
+            phase_ordering_default_mode,
+        }
     }
 
     fn verify_or_panic(fn_ir: &FnIR, stage: &str) {
@@ -987,6 +1001,15 @@ impl TachyonEngine {
         }
     }
 
+    fn fn_is_self_recursive(fn_ir: &FnIR) -> bool {
+        fn_ir.values.iter().any(|value| {
+            matches!(
+                &value.kind,
+                ValueKind::Call { callee, .. } if callee == &fn_ir.name
+            )
+        })
+    }
+
     fn run_program_with_stats_inner(
         &self,
         all_fns: &mut FxHashMap<String, FnIR>,
@@ -1094,6 +1117,17 @@ impl TachyonEngine {
         Self::restore_functions(all_fns, restored_tier_a);
         Self::debug_wrap_candidates(all_fns);
 
+        let heavy_phase_plans = if run_heavy_tier {
+            let selected_functions = if plan.selective_mode {
+                Some(&plan.selected_functions)
+            } else {
+                None
+            };
+            self.collect_function_phase_plans(all_fns, &ordered_names, selected_functions)
+        } else {
+            FxHashMap::default()
+        };
+
         let wrap_index_helpers = if run_heavy_tier {
             Self::collect_wrap_index_helpers(all_fns)
         } else {
@@ -1166,12 +1200,7 @@ impl TachyonEngine {
                 let _ = Self::verify_or_reject(&mut fn_ir, "SkipOpt/ConservativeInterop");
                 return (name, fn_ir, local_stats);
             }
-            if fn_ir.values.iter().any(|value| {
-                matches!(
-                    &value.kind,
-                    ValueKind::Call { callee, .. } if callee == &fn_ir.name
-                )
-            }) {
+            if Self::fn_is_self_recursive(&fn_ir) {
                 local_stats.skipped_functions += 1;
                 let _ = Self::verify_or_reject(&mut fn_ir, "SkipOpt/SelfRecursive");
                 return (name, fn_ir, local_stats);
@@ -1188,10 +1217,15 @@ impl TachyonEngine {
                 return (name, fn_ir, local_stats);
             }
             local_stats.optimized_functions += 1;
-            let s = self.run_function_with_stats_with_proven(
+            let phase_plan = heavy_phase_plans
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| self.build_legacy_function_phase_plan(&name));
+            let s = self.run_function_with_phase_plan_with_proven(
                 &mut fn_ir,
                 &callmap_user_whitelist,
                 proven_floor_param_slots.get(&name),
+                &phase_plan,
             );
             local_stats.accumulate(s);
             (name, fn_ir, local_stats)
@@ -1375,12 +1409,29 @@ impl TachyonEngine {
         callmap_user_whitelist: &FxHashSet<String>,
         proven_param_slots: Option<&FxHashSet<usize>>,
     ) -> TachyonPulseStats {
+        let phase_plan = self.build_legacy_function_phase_plan(&fn_ir.name);
+        self.run_function_with_phase_plan_with_proven(
+            fn_ir,
+            callmap_user_whitelist,
+            proven_param_slots,
+            &phase_plan,
+        )
+    }
+
+    fn run_function_with_phase_plan_with_proven(
+        &self,
+        fn_ir: &mut FnIR,
+        callmap_user_whitelist: &FxHashSet<String>,
+        proven_param_slots: Option<&FxHashSet<usize>>,
+        phase_plan: &FunctionPhasePlan,
+    ) -> TachyonPulseStats {
         let floor_helpers = FxHashSet::default();
-        self.run_function_with_proven_index_slots(
+        self.run_function_with_proven_index_slots_with_phase_plan(
             fn_ir,
             callmap_user_whitelist,
             proven_param_slots,
             &floor_helpers,
+            phase_plan,
         )
     }
 
@@ -1391,7 +1442,34 @@ impl TachyonEngine {
         proven_param_slots: Option<&FxHashSet<usize>>,
         floor_helpers: &FxHashSet<String>,
     ) -> TachyonPulseStats {
+        let phase_plan = self.build_legacy_function_phase_plan(&fn_ir.name);
+        self.run_function_with_proven_index_slots_with_phase_plan(
+            fn_ir,
+            callmap_user_whitelist,
+            proven_param_slots,
+            floor_helpers,
+            &phase_plan,
+        )
+    }
+
+    fn run_function_with_proven_index_slots_with_phase_plan(
+        &self,
+        fn_ir: &mut FnIR,
+        callmap_user_whitelist: &FxHashSet<String>,
+        proven_param_slots: Option<&FxHashSet<usize>>,
+        floor_helpers: &FxHashSet<String>,
+        phase_plan: &FunctionPhasePlan,
+    ) -> TachyonPulseStats {
         let mut stats = TachyonPulseStats::default();
+        match phase_plan.profile {
+            types::PhaseProfileKind::Balanced => stats.phase_profile_balanced_functions += 1,
+            types::PhaseProfileKind::ComputeHeavy => {
+                stats.phase_profile_compute_heavy_functions += 1
+            }
+            types::PhaseProfileKind::ControlFlowHeavy => {
+                stats.phase_profile_control_flow_heavy_functions += 1
+            }
+        }
         let mut changed = true;
         let loop_opt = loop_opt::MirLoopOptimizer::new();
         let mut iterations = 0;
@@ -1421,6 +1499,9 @@ impl TachyonEngine {
             Self::debug_stage_dump(fn_ir, "After ParamIndexCanonicalize");
         }
         seen_hashes.insert(Self::fn_ir_fingerprint(fn_ir));
+        let mut current_schedule = phase_plan.schedule;
+        let mut fallback_used = false;
+        let mut control_flow_structural_skipped = false;
 
         while changed && iterations < max_iters {
             if start_time.elapsed().as_millis() > Self::max_fn_opt_ms() {
@@ -1429,248 +1510,61 @@ impl TachyonEngine {
             changed = false;
             iterations += 1;
             let before_hash = Self::fn_ir_fingerprint(fn_ir);
-
-            // 1. Structural Transformations
-            let mut pass_changed = false;
-            let run_heavy_structural = !(heavy_pass_budgeted && iterations > 1);
-
-            if run_heavy_structural {
-                let type_spec_changed = type_specialize::optimize(fn_ir);
-                Self::maybe_verify(fn_ir, "After TypeSpecialize");
-                Self::debug_stage_dump(fn_ir, "After TypeSpecialize");
-                pass_changed |= type_spec_changed;
-
-                let p_stats = poly::optimize_with_stats(fn_ir);
-                stats.poly_loops_seen += p_stats.loops_seen;
-                stats.poly_scops_detected += p_stats.scops_detected;
-                stats.poly_rejected_cfg_shape += p_stats.rejected_cfg_shape;
-                stats.poly_rejected_non_affine += p_stats.rejected_non_affine;
-                stats.poly_rejected_effects += p_stats.rejected_effects;
-                stats.poly_affine_stmt_count += p_stats.affine_stmt_count;
-                stats.poly_access_relation_count += p_stats.access_relation_count;
-                stats.poly_dependence_solved += p_stats.dependence_solved;
-                stats.poly_schedule_attempted += p_stats.schedule_attempted;
-                stats.poly_schedule_applied += p_stats.schedule_applied;
-                stats.poly_schedule_attempted_identity += p_stats.schedule_attempted_identity;
-                stats.poly_schedule_attempted_interchange += p_stats.schedule_attempted_interchange;
-                stats.poly_schedule_attempted_skew2d += p_stats.schedule_attempted_skew2d;
-                stats.poly_schedule_attempted_tile1d += p_stats.schedule_attempted_tile1d;
-                stats.poly_schedule_attempted_tile2d += p_stats.schedule_attempted_tile2d;
-                stats.poly_schedule_attempted_tile3d += p_stats.schedule_attempted_tile3d;
-                stats.poly_schedule_applied_identity += p_stats.schedule_applied_identity;
-                stats.poly_schedule_applied_interchange += p_stats.schedule_applied_interchange;
-                stats.poly_schedule_applied_skew2d += p_stats.schedule_applied_skew2d;
-                stats.poly_schedule_applied_tile1d += p_stats.schedule_applied_tile1d;
-                stats.poly_schedule_applied_tile2d += p_stats.schedule_applied_tile2d;
-                stats.poly_schedule_applied_tile3d += p_stats.schedule_applied_tile3d;
-                stats.poly_schedule_auto_fuse_selected += p_stats.schedule_auto_fuse_selected;
-                stats.poly_schedule_auto_fission_selected += p_stats.schedule_auto_fission_selected;
-                stats.poly_schedule_auto_skew2d_selected += p_stats.schedule_auto_skew2d_selected;
-                stats.poly_schedule_backend_hint_selected += p_stats.schedule_backend_hint_selected;
-                pass_changed |= p_stats.schedule_applied > 0;
-
-                // Vectorization
-                let v_stats =
-                    v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
-                stats.vectorized += v_stats.vectorized;
-                stats.reduced += v_stats.reduced;
-                stats.vector_loops_seen += v_stats.loops_seen;
-                stats.vector_skipped += v_stats.skipped;
-                stats.vector_skip_no_iv += v_stats.skip_no_iv;
-                stats.vector_skip_non_canonical_bound += v_stats.skip_non_canonical_bound;
-                stats.vector_skip_unsupported_cfg_shape += v_stats.skip_unsupported_cfg_shape;
-                stats.vector_skip_indirect_index_access += v_stats.skip_indirect_index_access;
-                stats.vector_skip_store_effects += v_stats.skip_store_effects;
-                stats.vector_skip_no_supported_pattern += v_stats.skip_no_supported_pattern;
-                stats.vector_candidate_total += v_stats.candidate_total;
-                stats.vector_candidate_reductions += v_stats.candidate_reductions;
-                stats.vector_candidate_conditionals += v_stats.candidate_conditionals;
-                stats.vector_candidate_recurrences += v_stats.candidate_recurrences;
-                stats.vector_candidate_shifted += v_stats.candidate_shifted;
-                stats.vector_candidate_call_maps += v_stats.candidate_call_maps;
-                stats.vector_candidate_expr_maps += v_stats.candidate_expr_maps;
-                stats.vector_candidate_scatters += v_stats.candidate_scatters;
-                stats.vector_candidate_cube_slices += v_stats.candidate_cube_slices;
-                stats.vector_candidate_basic_maps += v_stats.candidate_basic_maps;
-                stats.vector_candidate_multi_exprs += v_stats.candidate_multi_exprs;
-                stats.vector_candidate_2d += v_stats.candidate_2d;
-                stats.vector_candidate_3d += v_stats.candidate_3d;
-                stats.vector_candidate_call_map_direct += v_stats.candidate_call_map_direct;
-                stats.vector_candidate_call_map_runtime += v_stats.candidate_call_map_runtime;
-                stats.vector_applied_total += v_stats.applied_total;
-                stats.vector_applied_reductions += v_stats.applied_reductions;
-                stats.vector_applied_conditionals += v_stats.applied_conditionals;
-                stats.vector_applied_recurrences += v_stats.applied_recurrences;
-                stats.vector_applied_shifted += v_stats.applied_shifted;
-                stats.vector_applied_call_maps += v_stats.applied_call_maps;
-                stats.vector_applied_expr_maps += v_stats.applied_expr_maps;
-                stats.vector_applied_scatters += v_stats.applied_scatters;
-                stats.vector_applied_cube_slices += v_stats.applied_cube_slices;
-                stats.vector_applied_basic_maps += v_stats.applied_basic_maps;
-                stats.vector_applied_multi_exprs += v_stats.applied_multi_exprs;
-                stats.vector_applied_2d += v_stats.applied_2d;
-                stats.vector_applied_3d += v_stats.applied_3d;
-                stats.vector_applied_call_map_direct += v_stats.applied_call_map_direct;
-                stats.vector_applied_call_map_runtime += v_stats.applied_call_map_runtime;
-                stats.vector_legacy_poly_fallback_candidate_total +=
-                    v_stats.legacy_poly_fallback_candidate_total;
-                stats.vector_legacy_poly_fallback_candidate_reductions +=
-                    v_stats.legacy_poly_fallback_candidate_reductions;
-                stats.vector_legacy_poly_fallback_candidate_maps +=
-                    v_stats.legacy_poly_fallback_candidate_maps;
-                stats.vector_legacy_poly_fallback_applied_total +=
-                    v_stats.legacy_poly_fallback_applied_total;
-                stats.vector_legacy_poly_fallback_applied_reductions +=
-                    v_stats.legacy_poly_fallback_applied_reductions;
-                stats.vector_legacy_poly_fallback_applied_maps +=
-                    v_stats.legacy_poly_fallback_applied_maps;
-                stats.vector_trip_tier_tiny += v_stats.trip_tier_tiny;
-                stats.vector_trip_tier_small += v_stats.trip_tier_small;
-                stats.vector_trip_tier_medium += v_stats.trip_tier_medium;
-                stats.vector_trip_tier_large += v_stats.trip_tier_large;
-                stats.proof_certified += v_stats.proof_certified;
-                stats.proof_applied += v_stats.proof_applied;
-                stats.proof_apply_failed += v_stats.proof_apply_failed;
-                stats.proof_fallback_pattern += v_stats.proof_fallback_pattern;
-                for (dst, src) in stats
-                    .proof_fallback_reason_counts
-                    .iter_mut()
-                    .zip(v_stats.proof_fallback_reason_counts)
+            let pre_iteration_fn_ir =
+                if matches!(current_schedule, PhaseScheduleId::ControlFlowHeavy)
+                    && iterations == 1
+                    && !fallback_used
                 {
-                    *dst += src;
-                }
-                let v_changed = v_stats.changed();
-                Self::maybe_verify(fn_ir, "After Vectorization");
-                Self::debug_stage_dump(fn_ir, "After Vectorization");
-                pass_changed |= v_changed;
-
-                let type_spec_post_vec = type_specialize::optimize(fn_ir);
-                Self::maybe_verify(fn_ir, "After TypeSpecialize(PostVec)");
-                Self::debug_stage_dump(fn_ir, "After TypeSpecialize(PostVec)");
-                pass_changed |= type_spec_post_vec;
-
-                // TCO
-                let tco_changed = tco::optimize(fn_ir);
-                if tco_changed {
-                    stats.tco_hits += 1;
-                }
-                Self::maybe_verify(fn_ir, "After TCO");
-                Self::debug_stage_dump(fn_ir, "After TCO");
-                pass_changed |= tco_changed;
-            }
-
-            if pass_changed {
-                changed = true;
-                // Intensive cleanup after structural changes
-                let sc_changed = self.simplify_cfg(fn_ir);
-                if sc_changed {
-                    stats.simplify_hits += 1;
-                }
-                Self::maybe_verify(fn_ir, "After Structural SimplifyCFG");
-                Self::debug_stage_dump(fn_ir, "After Structural SimplifyCFG");
-                let dce_changed = self.dce(fn_ir);
-                if dce_changed {
-                    stats.dce_hits += 1;
-                }
-                Self::maybe_verify(fn_ir, "After Structural DCE");
-                Self::debug_stage_dump(fn_ir, "After Structural DCE");
-                changed |= sc_changed || dce_changed;
-            }
-
-            // 2. Standard optimization passes
-            let sc_changed = self.simplify_cfg(fn_ir);
-            if sc_changed {
-                stats.simplify_hits += 1;
-            }
-            Self::maybe_verify(fn_ir, "After SimplifyCFG");
-            Self::debug_stage_dump(fn_ir, "After SimplifyCFG");
-            changed |= sc_changed;
-
-            let sccp_changed = sccp::MirSCCP::new().optimize(fn_ir);
-            if sccp_changed {
-                stats.sccp_hits += 1;
-            }
-            Self::maybe_verify(fn_ir, "After SCCP");
-            Self::debug_stage_dump(fn_ir, "After SCCP");
-            changed |= sccp_changed;
-
-            let intr_changed = intrinsics::optimize(fn_ir);
-            if intr_changed {
-                stats.intrinsics_hits += 1;
-            }
-            Self::maybe_verify(fn_ir, "After Intrinsics");
-            Self::debug_stage_dump(fn_ir, "After Intrinsics");
-            changed |= intr_changed;
-
-            let gvn_changed = if Self::gvn_enabled() {
-                let c = gvn::optimize(fn_ir);
-                if c {
-                    stats.gvn_hits += 1;
-                }
-                c
-            } else {
-                false
-            };
-            Self::maybe_verify(fn_ir, "After GVN");
-            Self::debug_stage_dump(fn_ir, "After GVN");
-            changed |= gvn_changed;
-
-            let simplify_changed = simplify::optimize(fn_ir);
-            if simplify_changed {
-                stats.simplify_hits += 1;
-            }
-            Self::maybe_verify(fn_ir, "After Simplify");
-            Self::debug_stage_dump(fn_ir, "After Simplify");
-            changed |= simplify_changed;
-
-            let dce_changed = self.dce(fn_ir);
-            if dce_changed {
-                stats.dce_hits += 1;
-            }
-            Self::maybe_verify(fn_ir, "After DCE");
-            Self::debug_stage_dump(fn_ir, "After DCE");
-            changed |= dce_changed;
-
-            if !(heavy_pass_budgeted && iterations > 1) {
-                let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
-                stats.simplified_loops += loop_changed_count;
-                let loop_changed = loop_changed_count > 0;
-                Self::maybe_verify(fn_ir, "After LoopOpt");
-                Self::debug_stage_dump(fn_ir, "After LoopOpt");
-                changed |= loop_changed;
-
-                let licm_changed = if Self::licm_enabled() && Self::licm_allowed_for_fn(fn_ir) {
-                    let c = licm::MirLicm::new().optimize(fn_ir);
-                    if c {
-                        stats.licm_hits += 1;
-                    }
-                    c
+                    Some(fn_ir.clone())
                 } else {
-                    false
+                    None
                 };
-                Self::maybe_verify(fn_ir, "After LICM");
-                Self::debug_stage_dump(fn_ir, "After LICM");
-                changed |= licm_changed;
+            let pre_iteration_stats = if pre_iteration_fn_ir.is_some() {
+                Some(stats)
+            } else {
+                None
+            };
 
-                let fresh_changed = fresh_alloc::optimize(fn_ir);
-                if fresh_changed {
-                    stats.fresh_alloc_hits += 1;
-                }
-                Self::maybe_verify(fn_ir, "After FreshAlloc");
-                Self::debug_stage_dump(fn_ir, "After FreshAlloc");
-                changed |= fresh_changed;
-
-                let bce_changed = bce::optimize(fn_ir);
-                if bce_changed {
-                    stats.bce_hits += 1;
-                }
-                Self::maybe_verify(fn_ir, "After BCE");
-                Self::debug_stage_dump(fn_ir, "After BCE");
-                changed |= bce_changed;
-            }
+            let run_budgeted_passes = !(heavy_pass_budgeted && iterations > 1);
+            let iteration_result = self.run_heavy_phase_schedule_iteration(
+                current_schedule,
+                fn_ir,
+                callmap_user_whitelist,
+                &loop_opt,
+                &mut stats,
+                run_budgeted_passes,
+            );
+            changed |= iteration_result.changed;
+            control_flow_structural_skipped |= iteration_result.skipped_structural;
             // check_elimination remains disabled.
 
             let after_hash = Self::fn_ir_fingerprint(fn_ir);
+            if matches!(current_schedule, PhaseScheduleId::ControlFlowHeavy)
+                && iterations == 1
+                && !fallback_used
+                && Self::control_flow_should_fallback_to_balanced(iteration_result)
+            {
+                if let Some(saved_fn_ir) = pre_iteration_fn_ir {
+                    *fn_ir = saved_fn_ir;
+                }
+                if let Some(saved_stats) = pre_iteration_stats {
+                    stats = saved_stats;
+                }
+                if phase_plan.trace_requested {
+                    eprintln!(
+                        "   [phase-order] {} fallback control-flow-heavy -> balanced non_structural_changes={} structural_progress={} skipped_structural={}",
+                        fn_ir.name,
+                        iteration_result.non_structural_changes,
+                        iteration_result.structural_progress,
+                        iteration_result.skipped_structural
+                    );
+                }
+                current_schedule = PhaseScheduleId::Balanced;
+                fallback_used = true;
+                stats.phase_schedule_fallbacks += 1;
+                changed = true;
+                continue;
+            }
             if after_hash == before_hash {
                 break;
             }
@@ -1679,6 +1573,9 @@ impl TachyonEngine {
                 break;
             }
             changed |= after_hash != before_hash;
+        }
+        if control_flow_structural_skipped {
+            stats.control_flow_structural_skip_functions += 1;
         }
 
         // Final polishing pass
@@ -2196,5 +2093,70 @@ mod tests {
                 other
             ),
         }
+    }
+
+    #[test]
+    fn parse_phase_ordering_mode_defaults_to_off() {
+        assert_eq!(
+            TachyonEngine::parse_phase_ordering_mode(None),
+            super::types::PhaseOrderingMode::Off
+        );
+        assert_eq!(
+            TachyonEngine::parse_phase_ordering_mode(Some("")),
+            super::types::PhaseOrderingMode::Off
+        );
+        assert_eq!(
+            TachyonEngine::parse_phase_ordering_mode(Some("unknown")),
+            super::types::PhaseOrderingMode::Off
+        );
+    }
+
+    #[test]
+    fn parse_phase_ordering_mode_accepts_supported_values() {
+        assert_eq!(
+            TachyonEngine::parse_phase_ordering_mode(Some("off")),
+            super::types::PhaseOrderingMode::Off
+        );
+        assert_eq!(
+            TachyonEngine::parse_phase_ordering_mode(Some("balanced")),
+            super::types::PhaseOrderingMode::Balanced
+        );
+        assert_eq!(
+            TachyonEngine::parse_phase_ordering_mode(Some("AUTO")),
+            super::types::PhaseOrderingMode::Auto
+        );
+    }
+
+    #[test]
+    fn legacy_phase_plan_keeps_balanced_schedule_for_all_modes() {
+        for mode in [
+            super::types::PhaseOrderingMode::Off,
+            super::types::PhaseOrderingMode::Balanced,
+            super::types::PhaseOrderingMode::Auto,
+        ] {
+            let plan = super::types::FunctionPhasePlan::legacy("demo".to_string(), mode, false);
+            assert_eq!(plan.function, "demo");
+            assert_eq!(plan.mode, mode);
+            assert_eq!(plan.profile, super::types::PhaseProfileKind::Balanced);
+            assert_eq!(plan.schedule, super::types::PhaseScheduleId::Balanced);
+            assert!(plan.features.is_none());
+            assert!(!plan.trace_requested);
+        }
+    }
+
+    #[test]
+    fn phase_ordering_opt_level_default_maps_o1_and_o2() {
+        assert_eq!(
+            TachyonEngine::phase_ordering_opt_level_default(crate::compiler::OptLevel::O0),
+            super::types::PhaseOrderingMode::Off
+        );
+        assert_eq!(
+            TachyonEngine::phase_ordering_opt_level_default(crate::compiler::OptLevel::O1),
+            super::types::PhaseOrderingMode::Balanced
+        );
+        assert_eq!(
+            TachyonEngine::phase_ordering_opt_level_default(crate::compiler::OptLevel::O2),
+            super::types::PhaseOrderingMode::Auto
+        );
     }
 }

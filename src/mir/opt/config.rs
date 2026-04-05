@@ -1,3 +1,4 @@
+use super::types::{FunctionPhasePlan, PhaseOrderingMode};
 use super::*;
 
 impl TachyonEngine {
@@ -141,6 +142,74 @@ impl TachyonEngine {
 
     pub(super) fn gvn_enabled() -> bool {
         true
+    }
+
+    pub(super) fn parse_phase_ordering_mode(raw: Option<&str>) -> PhaseOrderingMode {
+        match raw
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            None | Some("off") => PhaseOrderingMode::Off,
+            Some("balanced") => PhaseOrderingMode::Balanced,
+            Some("auto") => PhaseOrderingMode::Auto,
+            Some(_) => PhaseOrderingMode::Off,
+        }
+    }
+
+    pub(super) fn phase_ordering_mode() -> PhaseOrderingMode {
+        let raw = env::var("RR_PHASE_ORDERING").ok();
+        Self::parse_phase_ordering_mode(raw.as_deref())
+    }
+
+    pub(crate) fn phase_ordering_mode_with_default(
+        default_mode: PhaseOrderingMode,
+    ) -> PhaseOrderingMode {
+        match env::var("RR_PHASE_ORDERING") {
+            Ok(raw) => Self::parse_phase_ordering_mode(Some(raw.as_str())),
+            Err(_) => default_mode,
+        }
+    }
+
+    pub(super) fn phase_ordering_trace_enabled() -> bool {
+        Self::env_bool("RR_PHASE_ORDERING_TRACE", false)
+    }
+
+    pub(crate) const fn phase_ordering_opt_level_default(
+        opt_level: crate::compiler::OptLevel,
+    ) -> PhaseOrderingMode {
+        match opt_level {
+            crate::compiler::OptLevel::O0 => PhaseOrderingMode::Off,
+            crate::compiler::OptLevel::O1 => PhaseOrderingMode::Balanced,
+            crate::compiler::OptLevel::O2 => PhaseOrderingMode::Auto,
+        }
+    }
+
+    pub(crate) fn phase_ordering_default_mode_for_opt_level(
+        opt_level: crate::compiler::OptLevel,
+    ) -> PhaseOrderingMode {
+        Self::phase_ordering_opt_level_default(opt_level)
+    }
+
+    pub(crate) fn phase_ordering_mode_for_opt_level(
+        opt_level: crate::compiler::OptLevel,
+    ) -> PhaseOrderingMode {
+        Self::phase_ordering_mode_with_default(Self::phase_ordering_default_mode_for_opt_level(
+            opt_level,
+        ))
+    }
+
+    pub(super) fn resolved_phase_ordering_mode(&self) -> PhaseOrderingMode {
+        Self::phase_ordering_mode_with_default(self.phase_ordering_default_mode)
+    }
+
+    pub(super) fn build_legacy_function_phase_plan(&self, function: &str) -> FunctionPhasePlan {
+        FunctionPhasePlan::legacy(
+            function.to_string(),
+            self.resolved_phase_ordering_mode(),
+            Self::phase_ordering_trace_enabled(),
+        )
     }
 
     pub(super) fn profile_use_path() -> Option<String> {

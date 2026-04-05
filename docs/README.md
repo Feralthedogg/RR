@@ -9,7 +9,7 @@ repository, but the reading order is user-first: how to write RR, compile it,
 and run it comes before compiler structure. Compiler contributor manuals live
 under `docs/compiler/`.
 
-Current compiler line: `RR Tachyon v1.0.0`.
+Current compiler line: `RR Tachyon v1.1.0`.
 
 ## Manual Organization
 
@@ -52,6 +52,7 @@ If you are working on the compiler:
 - [Compiler Dev Docs](compiler/index.md)
 - [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md)
 - [Compiler Pipeline](compiler/pipeline.md)
+- [Adaptive Phase Ordering Design](compiler/adaptive-phase-ordering.md)
 - [Parallel Compilation Design](compiler/parallel-compilation.md)
 - [IR Model](compiler/ir-model.md)
 - [Tachyon Engine](compiler/optimization.md)

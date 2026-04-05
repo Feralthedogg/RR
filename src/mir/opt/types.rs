@@ -15,6 +15,105 @@ pub(super) struct CubeIndexReturnVars {
     pub(super) size_var: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PhaseOrderingMode {
+    #[default]
+    Off,
+    Balanced,
+    Auto,
+}
+
+impl PhaseOrderingMode {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Balanced => "balanced",
+            Self::Auto => "auto",
+        }
+    }
+
+    pub(super) const fn initial_schedule(self) -> PhaseScheduleId {
+        match self {
+            Self::Off | Self::Balanced | Self::Auto => PhaseScheduleId::Balanced,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum PhaseProfileKind {
+    #[default]
+    Balanced,
+    ComputeHeavy,
+    ControlFlowHeavy,
+}
+
+impl PhaseProfileKind {
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Balanced => "balanced",
+            Self::ComputeHeavy => "compute-heavy",
+            Self::ControlFlowHeavy => "control-flow-heavy",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum PhaseScheduleId {
+    #[default]
+    Balanced,
+    ComputeHeavy,
+    ControlFlowHeavy,
+}
+
+impl PhaseScheduleId {
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Balanced => "balanced",
+            Self::ComputeHeavy => "compute-heavy",
+            Self::ControlFlowHeavy => "control-flow-heavy",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct FunctionPhaseFeatures {
+    pub(super) ir_size: usize,
+    pub(super) block_count: usize,
+    pub(super) loop_count: usize,
+    pub(super) canonical_loop_count: usize,
+    pub(super) branch_terms: usize,
+    pub(super) phi_count: usize,
+    pub(super) arithmetic_values: usize,
+    pub(super) intrinsic_values: usize,
+    pub(super) call_values: usize,
+    pub(super) side_effecting_calls: usize,
+    pub(super) index_values: usize,
+    pub(super) store_instrs: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FunctionPhasePlan {
+    pub(super) function: String,
+    pub(super) mode: PhaseOrderingMode,
+    pub(super) profile: PhaseProfileKind,
+    pub(super) schedule: PhaseScheduleId,
+    pub(super) features: Option<FunctionPhaseFeatures>,
+    pub(super) trace_requested: bool,
+}
+
+impl FunctionPhasePlan {
+    pub(super) fn legacy(function: String, mode: PhaseOrderingMode, trace_requested: bool) -> Self {
+        Self {
+            function,
+            mode,
+            profile: PhaseProfileKind::Balanced,
+            schedule: mode.initial_schedule(),
+            features: None,
+            trace_requested,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TachyonProgressTier {
     Always,
@@ -136,6 +235,11 @@ pub struct TachyonPulseStats {
     pub inline_rounds: usize,
     pub inline_cleanup_hits: usize,
     pub de_ssa_hits: usize,
+    pub phase_profile_balanced_functions: usize,
+    pub phase_profile_compute_heavy_functions: usize,
+    pub phase_profile_control_flow_heavy_functions: usize,
+    pub phase_schedule_fallbacks: usize,
+    pub control_flow_structural_skip_functions: usize,
     pub always_tier_functions: usize,
     pub optimized_functions: usize,
     pub skipped_functions: usize,
@@ -254,6 +358,12 @@ impl TachyonPulseStats {
         self.inline_rounds += other.inline_rounds;
         self.inline_cleanup_hits += other.inline_cleanup_hits;
         self.de_ssa_hits += other.de_ssa_hits;
+        self.phase_profile_balanced_functions += other.phase_profile_balanced_functions;
+        self.phase_profile_compute_heavy_functions += other.phase_profile_compute_heavy_functions;
+        self.phase_profile_control_flow_heavy_functions +=
+            other.phase_profile_control_flow_heavy_functions;
+        self.phase_schedule_fallbacks += other.phase_schedule_fallbacks;
+        self.control_flow_structural_skip_functions += other.control_flow_structural_skip_functions;
         self.always_tier_functions += other.always_tier_functions;
         self.optimized_functions += other.optimized_functions;
         self.skipped_functions += other.skipped_functions;
@@ -356,6 +466,11 @@ impl TachyonPulseStats {
                 "  \"inline_rounds\": {},\n",
                 "  \"inline_cleanup_hits\": {},\n",
                 "  \"de_ssa_hits\": {},\n",
+                "  \"phase_profile_balanced_functions\": {},\n",
+                "  \"phase_profile_compute_heavy_functions\": {},\n",
+                "  \"phase_profile_control_flow_heavy_functions\": {},\n",
+                "  \"phase_schedule_fallbacks\": {},\n",
+                "  \"control_flow_structural_skip_functions\": {},\n",
                 "  \"always_tier_functions\": {},\n",
                 "  \"optimized_functions\": {},\n",
                 "  \"skipped_functions\": {},\n",
@@ -459,6 +574,11 @@ impl TachyonPulseStats {
             self.inline_rounds,
             self.inline_cleanup_hits,
             self.de_ssa_hits,
+            self.phase_profile_balanced_functions,
+            self.phase_profile_compute_heavy_functions,
+            self.phase_profile_control_flow_heavy_functions,
+            self.phase_schedule_fallbacks,
+            self.control_flow_structural_skip_functions,
             self.always_tier_functions,
             self.optimized_functions,
             self.skipped_functions,

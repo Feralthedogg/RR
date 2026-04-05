@@ -261,7 +261,14 @@ fn compile_with_pipeline_request(
         )?;
 
         let mut all_fns = program.take_all_fns_map()?;
-        run_tachyon_phase(&ui, TOTAL_STEPS, optimize, &mut all_fns, &scheduler)?;
+        run_tachyon_phase(
+            &ui,
+            TOTAL_STEPS,
+            optimize,
+            request.opt_level,
+            &mut all_fns,
+            &scheduler,
+        )?;
         verify_emittable_program(&all_fns)?;
         program.restore_all_fns_map(all_fns)?;
         let top_level_call_names = program.top_level_call_names();

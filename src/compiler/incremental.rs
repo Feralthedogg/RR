@@ -554,9 +554,13 @@ fn build_artifact_key(
     output_options: CompileOutputOptions,
 ) -> String {
     let mut payload = String::new();
+    let phase_ordering_mode =
+        crate::mir::opt::TachyonEngine::phase_ordering_mode_for_opt_level(opt_level);
     payload.push_str(CACHE_VERSION);
     payload.push('|');
     payload.push_str(opt_level.label());
+    payload.push('|');
+    payload.push_str(phase_ordering_mode.label());
     payload.push('|');
     payload.push_str(type_cfg.mode.as_str());
     payload.push('|');

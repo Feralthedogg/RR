@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="900" viewBox="0 0 980 900" role="img" aria-labelledby="title desc">
+  <title id="title">Optimizer Candidate Workload Comparison</title>
+  <desc id="desc">Mean wall-clock runtime in milliseconds for RR candidate workloads across optimization tiers.</desc>
+  <rect width="980" height="900" fill="#fcfcf8"/>
+  <text x="24" y="34" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#16212b">Optimizer Candidate Workload Comparison</text>
+  <text x="24" y="56" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#4b5b67">Vector fusion, orbital sweep, bootstrap resample; Apple M4; RR O0/O1/O2 cold and warm timing</text>
+  <line x1="390" y1="86" x2="390" y2="840" stroke="#9aa8b2" stroke-width="1"/>
+  <line x1="390" y1="840" x2="910" y2="840" stroke="#9aa8b2" stroke-width="1"/>
+  <g font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#5d6b75">
+    <text x="390" y="858" text-anchor="middle">0</text>
+    <text x="494" y="858" text-anchor="middle">79</text>
+    <text x="598" y="858" text-anchor="middle">158</text>
+    <text x="702" y="858" text-anchor="middle">238</text>
+    <text x="806" y="858" text-anchor="middle">317</text>
+    <text x="910" y="858" text-anchor="middle">396</text>
+  </g>
+  <g font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#16212b">
+    <text x="24" y="102">Vector Fusion RR O0</text>
+    <text x="24" y="142">Vector Fusion RR O0 warm x10</text>
+    <text x="24" y="182">Vector Fusion RR O1</text>
+    <text x="24" y="222">Vector Fusion RR O1 warm x10</text>
+    <text x="24" y="262">Vector Fusion RR O2</text>
+    <text x="24" y="302">Vector Fusion RR O2 warm x10</text>
+    <text x="24" y="342">Orbital Sweep RR O0</text>
+    <text x="24" y="382">Orbital Sweep RR O0 warm x10</text>
+    <text x="24" y="422">Orbital Sweep RR O1</text>
+    <text x="24" y="462">Orbital Sweep RR O1 warm x10</text>
+    <text x="24" y="502">Orbital Sweep RR O2</text>
+    <text x="24" y="542">Orbital Sweep RR O2 warm x10</text>
+    <text x="24" y="582">Bootstrap Resample RR O0</text>
+    <text x="24" y="622">Bootstrap Resample RR O0 warm x10</text>
+    <text x="24" y="662">Bootstrap Resample RR O1</text>
+    <text x="24" y="702">Bootstrap Resample RR O1 warm x10</text>
+    <text x="24" y="742">Bootstrap Resample RR O2</text>
+    <text x="24" y="782">Bootstrap Resample RR O2 warm x10</text>
+  </g>
+  <rect x="390" y="86" width="485.2" height="22" fill="#6d597a" rx="4"/>
+  <text x="885.2" y="102" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">369.7 ms ± 7.2</text>
+  <rect x="390" y="126" width="333.0" height="22" fill="#b07aa1" rx="4"/>
+  <text x="733.0" y="142" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">253.7 ms ± 14.4</text>
+  <rect x="390" y="166" width="249.0" height="22" fill="#457b9d" rx="4"/>
+  <text x="649.0" y="182" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">189.7 ms ± 15.0</text>
+  <rect x="390" y="206" width="25.7" height="22" fill="#74a7d4" rx="4"/>
+  <text x="425.7" y="222" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">19.6 ms ± 0.7</text>
+  <rect x="390" y="246" width="233.1" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="633.1" y="262" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">177.6 ms ± 15.0</text>
+  <rect x="390" y="286" width="29.3" height="22" fill="#8fd0c4" rx="4"/>
+  <text x="429.3" y="302" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">22.3 ms ± 2.5</text>
+  <rect x="390" y="326" width="305.0" height="22" fill="#6d597a" rx="4"/>
+  <text x="705.0" y="342" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">232.4 ms ± 10.3</text>
+  <rect x="390" y="366" width="111.0" height="22" fill="#b07aa1" rx="4"/>
+  <text x="511.0" y="382" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">84.6 ms ± 4.3</text>
+  <rect x="390" y="406" width="287.2" height="22" fill="#457b9d" rx="4"/>
+  <text x="687.2" y="422" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">218.8 ms ± 15.9</text>
+  <rect x="390" y="446" width="112.5" height="22" fill="#74a7d4" rx="4"/>
+  <text x="512.5" y="462" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">85.7 ms ± 8.2</text>
+  <rect x="390" y="486" width="292.2" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="692.2" y="502" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">222.6 ms ± 10.3</text>
+  <rect x="390" y="526" width="113.4" height="22" fill="#8fd0c4" rx="4"/>
+  <text x="513.4" y="542" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">86.4 ms ± 1.0</text>
+  <rect x="390" y="566" width="520.0" height="22" fill="#6d597a" rx="4"/>
+  <text x="920.0" y="582" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">396.2 ms ± 29.4</text>
+  <rect x="390" y="606" width="261.7" height="22" fill="#b07aa1" rx="4"/>
+  <text x="661.7" y="622" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">199.4 ms ± 16.1</text>
+  <rect x="390" y="646" width="310.1" height="22" fill="#457b9d" rx="4"/>
+  <text x="710.1" y="662" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">236.3 ms ± 13.9</text>
+  <rect x="390" y="686" width="70.6" height="22" fill="#74a7d4" rx="4"/>
+  <text x="470.6" y="702" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">53.8 ms ± 4.7</text>
+  <rect x="390" y="726" width="341.2" height="22" fill="#2a9d8f" rx="4"/>
+  <text x="741.2" y="742" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">260.0 ms ± 14.4</text>
+  <rect x="390" y="766" width="79.1" height="22" fill="#8fd0c4" rx="4"/>
+  <text x="479.1" y="782" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#16212b">60.3 ms ± 1.7</text>
+  <g font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#4b5b67">
+    <text x="24" y="878">Source data: backend_candidate_bench.csv</text>
+  </g>
+</svg>

@@ -2,7 +2,7 @@
 
 This page is the driver manual for RR.
 
-Current compiler line: `RR Tachyon v1.0.0`.
+Current compiler line: `RR Tachyon v1.1.0`.
 
 ## Audience
 
@@ -758,9 +758,14 @@ at `--keep-r` so you can inspect the generated artifact.
 - `--bin`
 - `--lib`
 
-Today RR distinguishes `-O0` from optimized mode. `-O1` and `-O2` currently
-run the same optimizing pipeline, so the difference is naming/intent rather
-than pass selection.
+RR now distinguishes all three optimization tiers:
+
+- `-O0`
+  - stabilization only
+- `-O1`
+  - optimizing pipeline with the baseline `Balanced` schedule
+- `-O2`
+  - optimizing pipeline with adaptive phase ordering enabled by default
 
 ### Type and Backend Policy
 

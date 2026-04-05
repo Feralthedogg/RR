@@ -10,10 +10,15 @@ pub(crate) fn run_tachyon_phase(
     ui: &CliLog,
     total_steps: usize,
     optimize: bool,
+    opt_level: OptLevel,
     all_fns: &mut FxHashMap<String, crate::mir::def::FnIR>,
     scheduler: &CompilerScheduler,
 ) -> crate::error::RR<()> {
-    let tachyon = crate::mir::opt::TachyonEngine::new();
+    let phase_ordering_default_mode =
+        crate::mir::opt::TachyonEngine::phase_ordering_default_mode_for_opt_level(opt_level);
+    let tachyon = crate::mir::opt::TachyonEngine::with_phase_ordering_default_mode(
+        phase_ordering_default_mode,
+    );
     let step_opt = ui.step_start(
         4,
         total_steps,
@@ -221,6 +226,21 @@ pub(crate) fn run_tachyon_phase(
                     pulse_stats.vector_applied_call_map_runtime
                 ));
             }
+        }
+        if pulse_stats.phase_profile_balanced_functions > 0
+            || pulse_stats.phase_profile_compute_heavy_functions > 0
+            || pulse_stats.phase_profile_control_flow_heavy_functions > 0
+            || pulse_stats.phase_schedule_fallbacks > 0
+            || pulse_stats.control_flow_structural_skip_functions > 0
+        {
+            ui.step_line_ok(&format!(
+                "PhaseOrder: balanced {} | compute {} | control {} | fallback {} | ctrl-skip {}",
+                pulse_stats.phase_profile_balanced_functions,
+                pulse_stats.phase_profile_compute_heavy_functions,
+                pulse_stats.phase_profile_control_flow_heavy_functions,
+                pulse_stats.phase_schedule_fallbacks,
+                pulse_stats.control_flow_structural_skip_functions
+            ));
         }
         if pulse_stats.poly_loops_seen > 0 || pulse_stats.poly_scops_detected > 0 {
             ui.step_line_ok(&format!(
