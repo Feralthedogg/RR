@@ -136,6 +136,13 @@ sub unique_sorted {
     return sort @out;
 }
 
+sub base_ref_usable {
+    my ($ref) = @_;
+    return 0 if !defined $ref || !length $ref;
+    return 0 if !run_status('git', '-C', $ROOT, 'rev-parse', '--verify', "$ref^{commit}");
+    return run_status('git', '-C', $ROOT, 'merge-base', $ref, 'HEAD');
+}
+
 sub in_scope_path {
     my ($path) = @_;
     $path = normalize_path($path);
@@ -163,7 +170,7 @@ sub collect_all_files {
 sub collect_changed_files {
     return () if !in_git_worktree();
     my @paths;
-    if (length $BASE_REF) {
+    if (length $BASE_REF && base_ref_usable($BASE_REF)) {
         push @paths, capture_lines('git', '-C', $ROOT, 'diff', '--name-only', "$BASE_REF...", '--');
     }
     push @paths, capture_lines('git', '-C', $ROOT, 'diff', '--name-only', 'HEAD', '--');

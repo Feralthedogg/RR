@@ -8,6 +8,13 @@ COMMON_ARGS=(
   --skip-fuzz
 )
 
+base_sha_usable() {
+  local base_sha="${1:-}"
+  [[ -n "$base_sha" ]] || return 1
+  git -C "$ROOT" rev-parse --verify "${base_sha}^{commit}" >/dev/null 2>&1 || return 1
+  git -C "$ROOT" merge-base "$base_sha" HEAD >/dev/null 2>&1
+}
+
 read_base_sha() {
   python3 -c '
 import json
@@ -38,7 +45,7 @@ case "$SCOPE" in
     ;;
   diff)
     BASE_SHA="$(read_base_sha)"
-    if [[ -n "$BASE_SHA" ]]; then
+    if [[ -n "$BASE_SHA" ]] && base_sha_usable "$BASE_SHA"; then
       exec perl "$ROOT/scripts/contributing_audit.pl" "${COMMON_ARGS[@]}" --base "$BASE_SHA"
     fi
     if git -C "$ROOT" rev-parse --verify HEAD^ >/dev/null 2>&1; then
