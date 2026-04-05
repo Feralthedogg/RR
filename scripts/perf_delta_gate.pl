@@ -9,6 +9,7 @@ use File::Temp qw(tempdir);
 use FindBin qw($Bin);
 use Getopt::Long qw(GetOptions);
 use JSON::PP qw(decode_json);
+use File::Spec ();
 
 my $base;
 my $repo;
@@ -62,9 +63,38 @@ sub read_base_from_event {
     return q{};
 }
 
+sub run_status {
+    my (@cmd) = @_;
+    open my $null, '>', File::Spec->devnull() or die "failed to open devnull: $!";
+    open my $stdout_old, '>&', \*STDOUT or die "failed to dup STDOUT: $!";
+    open my $stderr_old, '>&', \*STDERR or die "failed to dup STDERR: $!";
+    open STDOUT, '>&', $null or die "failed to redirect STDOUT: $!";
+    open STDERR, '>&', $null or die "failed to redirect STDERR: $!";
+    my $status = system(@cmd);
+    open STDOUT, '>&', $stdout_old or die "failed to restore STDOUT: $!";
+    open STDERR, '>&', $stderr_old or die "failed to restore STDERR: $!";
+    close $stdout_old;
+    close $stderr_old;
+    close $null;
+    return $status == 0;
+}
+
+sub base_ref_usable {
+    my ($ref) = @_;
+    return 0 if !defined $ref || $ref eq q{};
+    return 0 if !run_status('git', '-C', $root, 'rev-parse', '--verify', "$ref^{commit}");
+    return run_status('git', '-C', $root, 'merge-base', $ref, 'HEAD');
+}
+
 my $event = read_event();
 my $base_ref = defined $base ? $base : read_base_from_event($event);
-if (!defined $base_ref || $base_ref eq q{}) {
+if (!base_ref_usable($base_ref) && run_status('git', '-C', $root, 'rev-parse', '--verify', 'HEAD^')) {
+    my $fallback = qx{git -C "$root" rev-parse --verify HEAD^};
+    chomp $fallback;
+    $base_ref = $fallback;
+}
+
+if (!base_ref_usable($base_ref)) {
     print "skip: no base ref available for perf delta gate\n";
     exit 0;
 }
