@@ -19,6 +19,31 @@ const PHYSICS_ARTIFACT_EQUIV_CASES: &[&str] = &[
     "reaction_diffusion_1d",
 ];
 
+const HELPER_PRESERVE_EQUIV_FIXTURE: &str = r#"
+fn unused_preserved(xs) {
+    let acc = 0.0
+    let i = 1.0
+    while i <= length(xs) {
+        acc += xs[i]
+        i += 1.0
+    }
+    acc
+}
+
+fn live_summary() {
+    let xs = c(3.0, 5.0, 7.0)
+    let ys = (xs + 1.0) * 2.0
+    let meta = {second: ys[2.0], total: sum(ys), avg: mean(ys)}
+    print("artifact fixture")
+    print(meta.second)
+    print(meta.total)
+    print(meta.avg)
+    return 0.0
+}
+
+print(live_summary())
+"#;
+
 fn packages_available(rscript: &str, packages: &[&str]) -> bool {
     let package_checks = packages
         .iter()
@@ -164,7 +189,7 @@ fn signal_pipeline_helper_only_matches_runtime_injected_stdout() {
 }
 
 #[test]
-fn tesseract_default_helper_and_preserve_modes_match_stdout() {
+fn fixture_default_helper_and_preserve_modes_match_stdout() {
     let _guard = env_lock().lock().expect("env lock poisoned");
     let rscript = match rscript_path() {
         Some(p) if rscript_available(&p) => p,
@@ -176,16 +201,21 @@ fn tesseract_default_helper_and_preserve_modes_match_stdout() {
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
-    let rr_src = root.join("example").join("tesseract.rr");
     let out_dir = root
         .join("target")
         .join("tests")
-        .join("artifact_mode_equivalence_tesseract");
-    fs::create_dir_all(&out_dir).expect("failed to create tesseract equivalence dir");
+        .join("artifact_mode_equivalence_fixture");
+    fs::create_dir_all(&out_dir).expect("failed to create fixture equivalence dir");
 
-    let runtime_out = out_dir.join("tesseract_runtime.R");
-    let helper_out = out_dir.join("tesseract_helper.R");
-    let preserve_out = out_dir.join("tesseract_preserve.R");
+    // Keep this runtime-equivalence check lightweight. The full tesseract example
+    // already has dedicated compile/runtime coverage elsewhere.
+    let rr_src = out_dir.join("fixture.rr");
+    fs::write(&rr_src, HELPER_PRESERVE_EQUIV_FIXTURE)
+        .expect("failed to write artifact-mode equivalence fixture");
+
+    let runtime_out = out_dir.join("fixture_runtime.R");
+    let helper_out = out_dir.join("fixture_helper.R");
+    let preserve_out = out_dir.join("fixture_preserve.R");
 
     compile_with_flags(&rr_bin, &rr_src, &runtime_out, &["-O2"]);
     compile_with_flags(&rr_bin, &rr_src, &helper_out, &["-O2", "--no-runtime"]);
@@ -200,26 +230,23 @@ fn tesseract_default_helper_and_preserve_modes_match_stdout() {
     let helper_run = run_rscript(&rscript, &helper_out);
     let preserve_run = run_rscript(&rscript, &preserve_out);
 
-    assert_eq!(runtime_run.status, 0, "default tesseract artifact failed");
-    assert_eq!(
-        helper_run.status, 0,
-        "helper-only tesseract artifact failed"
-    );
+    assert_eq!(runtime_run.status, 0, "default fixture artifact failed");
+    assert_eq!(helper_run.status, 0, "helper-only fixture artifact failed");
     assert_eq!(
         preserve_run.status, 0,
-        "preserve-all-defs tesseract artifact failed"
+        "preserve-all-defs fixture artifact failed"
     );
 
     let runtime_stdout = normalize(&runtime_run.stdout);
     assert_eq!(
         runtime_stdout,
         normalize(&helper_run.stdout),
-        "tesseract stdout mismatch between default and helper-only artifacts"
+        "fixture stdout mismatch between default and helper-only artifacts"
     );
     assert_eq!(
         runtime_stdout,
         normalize(&preserve_run.stdout),
-        "tesseract stdout mismatch between default and preserve-all-defs artifacts"
+        "fixture stdout mismatch between default and preserve-all-defs artifacts"
     );
 }
 
