@@ -3,10 +3,32 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCOPE="${RR_SEMANTIC_AUDIT_SCOPE:-all}"
+PROFILE="${RR_SEMANTIC_AUDIT_PROFILE:-full}"
 
 COMMON_ARGS=(
   --skip-fuzz
 )
+
+case "$PROFILE" in
+  full)
+    ;;
+  light)
+    COMMON_ARGS+=(
+      --skip-pass-verify
+      --skip-semantic-smoke
+    )
+    ;;
+  scan-only)
+    COMMON_ARGS+=(
+      --scan-only
+    )
+    ;;
+  *)
+    echo "unknown RR_SEMANTIC_AUDIT_PROFILE: $PROFILE" >&2
+    echo "expected one of: full, light, scan-only" >&2
+    exit 2
+    ;;
+esac
 
 base_sha_usable() {
   local base_sha="${1:-}"
