@@ -992,8 +992,11 @@ fn maybe_emit_raw_debug_output(
             if let Some(cached_output) = cache.load_raw_rewrite(cache_key)? {
                 cached_output
             } else {
-                let rewritten =
-                    apply_full_raw_rewrites(assembled_output.to_string(), pure_user_calls, output_opts);
+                let rewritten = apply_full_raw_rewrites(
+                    assembled_output.to_string(),
+                    pure_user_calls,
+                    output_opts,
+                );
                 cache.store_raw_rewrite(cache_key, &rewritten)?;
                 rewritten
             }
@@ -1259,9 +1262,9 @@ pub(crate) fn emit_r_functions_cached(
         format_duration(step_emit.elapsed())
     ));
 
-    let optimized_fragment_variants_ready = emitted_fragments.iter().all(|fragment| {
-        fragment.optimized_code.is_some() && fragment.optimized_map.is_some()
-    });
+    let optimized_fragment_variants_ready = emitted_fragments
+        .iter()
+        .all(|fragment| fragment.optimized_code.is_some() && fragment.optimized_map.is_some());
     let optimized_assembly_key = cache.map(|_| {
         crate::compiler::pipeline::optimized_assembly_cache_key(
             &final_output,
@@ -1325,18 +1328,18 @@ pub(crate) fn emit_r_functions_cached(
         && optimized_fragment_variants_ready
         && cached_optimized_final_source_map.is_some()
         && cache.is_some_and(|c| {
-            optimized_assembly_key.as_deref().is_some_and(|key| {
-                c.has_optimized_assembly_safe(key).unwrap_or(false)
-            })
+            optimized_assembly_key
+                .as_deref()
+                .is_some_and(|key| c.has_optimized_assembly_safe(key).unwrap_or(false))
         });
     let optimized_fragment_raw_fast_path = !optimized_fragment_fast_path
         && cache.is_some()
         && optimized_fragment_variants_ready
         && cached_optimized_final_source_map.is_some()
         && cache.is_some_and(|c| {
-            optimized_assembly_key.as_deref().is_some_and(|key| {
-                c.has_optimized_raw_assembly_safe(key).unwrap_or(false)
-            })
+            optimized_assembly_key
+                .as_deref()
+                .is_some_and(|key| c.has_optimized_raw_assembly_safe(key).unwrap_or(false))
         });
     let optimized_fragment_peephole_fast_path = !optimized_fragment_fast_path
         && !optimized_fragment_raw_fast_path
@@ -1344,10 +1347,9 @@ pub(crate) fn emit_r_functions_cached(
         && optimized_fragment_variants_ready
         && cached_optimized_final_source_map.is_some()
         && cache.is_some_and(|c| {
-            optimized_assembly_key.as_deref().is_some_and(|key| {
-                c.has_optimized_peephole_assembly_safe(key)
-                    .unwrap_or(false)
-            })
+            optimized_assembly_key
+                .as_deref()
+                .is_some_and(|key| c.has_optimized_peephole_assembly_safe(key).unwrap_or(false))
         });
     if optimized_fragment_fast_path {
         let fast_started = Instant::now();
@@ -1428,7 +1430,8 @@ pub(crate) fn emit_r_functions_cached(
                     optimized_fragment_fast_path_peephole_hits: 0,
                     quote_wrap_elapsed_ns: quote_wrap_elapsed_ns.load(Ordering::Relaxed) as u128,
                     fragment_assembly_elapsed_ns,
-                    raw_rewrite_elapsed_ns: fast_started.elapsed().as_nanos() + raw_debug_elapsed_ns,
+                    raw_rewrite_elapsed_ns: fast_started.elapsed().as_nanos()
+                        + raw_debug_elapsed_ns,
                     peephole_elapsed_ns: 0,
                     source_map_remap_elapsed_ns: 0,
                     quoted_wrapped_functions: quoted_wrapped_functions.load(Ordering::Relaxed),

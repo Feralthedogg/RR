@@ -107,18 +107,21 @@ fn clear_optimized_reuse_artifacts(cache_dir: &PathBuf) {
     let entries = fs::read_dir(&fn_cache_dir).expect("function cache dir should exist");
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
-            name.ends_with(".Roptfn")
-                || name.ends_with(".optmap")
-                || name.ends_with(".optfrag.meta")
-                || name.ends_with(".Roptasm")
-                || name.ends_with(".optasm.map")
-                || name.ends_with(".optasm.meta")
-                || name.ends_with(".optfinal.map")
-                || name.ends_with(".optok")
-                || name.ends_with(".optrawok")
-                || name.ends_with(".optpeeok")
-        })
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.ends_with(".Roptfn")
+                    || name.ends_with(".optmap")
+                    || name.ends_with(".optfrag.meta")
+                    || name.ends_with(".Roptasm")
+                    || name.ends_with(".optasm.map")
+                    || name.ends_with(".optasm.meta")
+                    || name.ends_with(".optfinal.map")
+                    || name.ends_with(".optok")
+                    || name.ends_with(".optrawok")
+                    || name.ends_with(".optpeeok")
+            })
         {
             let _ = fs::remove_file(&path);
         }
@@ -150,8 +153,7 @@ fn corrupt_peephole_caches(cache_dir: &PathBuf) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "Rpee") {
-            fs::write(&path, "corrupted-peephole\n")
-                .expect("failed to corrupt peephole cache");
+            fs::write(&path, "corrupted-peephole\n").expect("failed to corrupt peephole cache");
             corrupted_any = true;
         }
     }

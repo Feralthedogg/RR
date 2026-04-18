@@ -390,13 +390,14 @@ main()
     let second_profile: Value =
         serde_json::from_str(&fs::read_to_string(&profile_second).expect("read second profile"))
             .expect("parse second compile profile json");
-    let direct_hits = second_profile["emit"]["breakdown"]["optimized_fragment_fast_path_direct_hits"]
-        .as_u64()
-        .unwrap_or(0);
-    let final_artifact_hits = second_profile["emit"]["breakdown"]
-        ["optimized_fragment_final_artifact_hits"]
-        .as_u64()
-        .unwrap_or(0);
+    let direct_hits =
+        second_profile["emit"]["breakdown"]["optimized_fragment_fast_path_direct_hits"]
+            .as_u64()
+            .unwrap_or(0);
+    let final_artifact_hits =
+        second_profile["emit"]["breakdown"]["optimized_fragment_final_artifact_hits"]
+            .as_u64()
+            .unwrap_or(0);
     assert!(
         direct_hits + final_artifact_hits > 0,
         "expected direct fragment or optimized final artifact hit with raw debug output enabled"
@@ -453,7 +454,10 @@ fn no_incremental_cli_nontrivial_program_uses_optimized_final_artifact_after_cac
             .env("RR_INCREMENTAL_CACHE_DIR", &cache_dir)
             .status()
             .expect("failed to seed optimized final artifact cache");
-        assert!(status.success(), "optimized final artifact seed compile failed");
+        assert!(
+            status.success(),
+            "optimized final artifact seed compile failed"
+        );
     }
 
     clear_whole_output_emit_caches(&cache_dir);
@@ -528,7 +532,10 @@ fn no_incremental_cli_corrupted_optimized_final_artifact_falls_back_safely() {
             .env("RR_INCREMENTAL_CACHE_DIR", &cache_dir)
             .status()
             .expect("failed to seed optimized final artifact cache");
-        assert!(status.success(), "optimized final artifact seed compile failed");
+        assert!(
+            status.success(),
+            "optimized final artifact seed compile failed"
+        );
     }
 
     let fn_cache_dir = cache_dir.join("function-emits");
@@ -644,9 +651,10 @@ fn no_incremental_cli_signal_pipeline_warm_compile_skips_raw_and_peephole() {
     let direct_hits = profile["emit"]["breakdown"]["optimized_fragment_fast_path_direct_hits"]
         .as_u64()
         .unwrap_or(0);
-    let final_artifact_hits = profile["emit"]["breakdown"]["optimized_fragment_final_artifact_hits"]
-        .as_u64()
-        .unwrap_or(0);
+    let final_artifact_hits =
+        profile["emit"]["breakdown"]["optimized_fragment_final_artifact_hits"]
+            .as_u64()
+            .unwrap_or(0);
     assert!(
         direct_hits + final_artifact_hits > 0,
         "expected signal pipeline warm compile to hit an optimized reuse tier"

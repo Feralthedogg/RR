@@ -197,9 +197,8 @@ pub fn compile_with_configs_with_options_and_compiler_parallel_and_profile(
     profile: Option<&mut CompileProfile>,
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
     let cache_root = crate::compiler::incremental::cache_root_for_entry(entry_path);
-    let fn_cache = crate::compiler::incremental::DiskFnEmitCache::new(
-        cache_root.join("function-emits"),
-    );
+    let fn_cache =
+        crate::compiler::incremental::DiskFnEmitCache::new(cache_root.join("function-emits"));
     let optimized_mir_cache_root = cache_root.join("optimized-mir");
     let (code, map, _, _) = compile_with_pipeline_request(CompilePipelineRequest {
         entry_path,

@@ -211,7 +211,9 @@ fn print_usage() {
     eprintln!("  --incremental[=auto|off|1|1,2|1,2,3|all] Enable incremental compile phases");
     eprintln!("  --incremental-phases <...>                Same as above (separate arg form)");
     eprintln!("  --no-incremental                          Disable automatic incremental compile");
-    eprintln!("  --cold                                   Bypass warm compile caches for this compile");
+    eprintln!(
+        "  --cold                                   Bypass warm compile caches for this compile"
+    );
     eprintln!(
         "  --strict-incremental-verify               Extra validation gate for incremental mode"
     );
@@ -993,11 +995,7 @@ fn with_compile_cache_override<T>(cold_compile: bool, f: impl FnOnce() -> T) -> 
     }
     static COLD_CACHE_COUNTER: AtomicUsize = AtomicUsize::new(0);
     let seq = COLD_CACHE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let temp_root = env::temp_dir().join(format!(
-        "rr-cold-compile-{}-{}",
-        std::process::id(),
-        seq
-    ));
+    let temp_root = env::temp_dir().join(format!("rr-cold-compile-{}-{}", std::process::id(), seq));
     let _ = fs::remove_dir_all(&temp_root);
     fs::create_dir_all(&temp_root).expect("failed to create cold compile cache dir");
     let previous = env::var_os("RR_INCREMENTAL_CACHE_DIR");

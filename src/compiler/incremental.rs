@@ -371,8 +371,7 @@ impl EmitFunctionCache for DiskFnEmitCache {
             Ok(line_map) => line_map,
             Err(_) => return Ok(None),
         };
-        let Some(meta) = read_cached_code_map_artifact_meta(&meta_path, "rr-peephole-meta")
-        else {
+        let Some(meta) = read_cached_code_map_artifact_meta(&meta_path, "rr-peephole-meta") else {
             return Ok(None);
         };
         if code_line_map_artifact_hash("rr-peephole-hash-v1", &code, &line_map) != meta.content_hash
@@ -441,7 +440,8 @@ impl EmitFunctionCache for DiskFnEmitCache {
             Ok(map) => map,
             Err(_) => return Ok(None),
         };
-        let Some(meta) = read_cached_code_map_artifact_meta(&meta_path, "rr-optimized-fragment-meta")
+        let Some(meta) =
+            read_cached_code_map_artifact_meta(&meta_path, "rr-optimized-fragment-meta")
         else {
             return Ok(None);
         };
@@ -525,12 +525,7 @@ impl EmitFunctionCache for DiskFnEmitCache {
         Ok(Some((code, map)))
     }
 
-    fn store_optimized_assembly_artifact(
-        &self,
-        key: &str,
-        code: &str,
-        map: &[MapEntry],
-    ) -> RR<()> {
+    fn store_optimized_assembly_artifact(&self, key: &str, code: &str, map: &[MapEntry]) -> RR<()> {
         let (code_path, map_path) = self.optimized_assembly_artifact_paths(key);
         let meta_path = self.optimized_assembly_meta_path(key);
         if let Some(parent) = code_path.parent() {
