@@ -989,7 +989,10 @@ impl Drop for ScopedCompileCacheOverride {
     }
 }
 
-fn with_compile_cache_override<T>(cold_compile: bool, f: impl FnOnce() -> T) -> T {
+fn with_compile_cache_override<T>(
+    cold_compile: bool,
+    f: impl FnOnce() -> Result<T, RRException>,
+) -> Result<T, RRException> {
     if !cold_compile {
         return f();
     }
@@ -997,7 +1000,19 @@ fn with_compile_cache_override<T>(cold_compile: bool, f: impl FnOnce() -> T) -> 
     let seq = COLD_CACHE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp_root = env::temp_dir().join(format!("rr-cold-compile-{}-{}", std::process::id(), seq));
     let _ = fs::remove_dir_all(&temp_root);
-    fs::create_dir_all(&temp_root).expect("failed to create cold compile cache dir");
+    if let Err(err) = fs::create_dir_all(&temp_root) {
+        return Err(RRException::new(
+            "RR.RuntimeError",
+            RRCode::E2001,
+            Stage::Runner,
+            format!(
+                "failed to create cold compile cache directory '{}': {}",
+                temp_root.display(),
+                err
+            ),
+        )
+        .help("retry without --cold, or point TMPDIR at a writable location"));
+    }
     let previous = env::var_os("RR_INCREMENTAL_CACHE_DIR");
     // SAFETY: The CLI applies this override only for the duration of one
     // compile call and restores the previous value immediately after.

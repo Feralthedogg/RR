@@ -544,6 +544,7 @@ main()
         .arg("run")
         .arg(".")
         .arg("--no-incremental")
+        .arg("--cold")
         .output()
         .expect("failed to run rr run with unwritable generated artifact path");
 

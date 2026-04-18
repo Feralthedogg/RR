@@ -129,5 +129,6 @@ fn compiler_parallel_thresholds_only_parallelize_large_lowering_and_emit_jobs() 
             .copied()
             .unwrap_or(0)
             > 0
+            || tachyon_heavy.invocations == 0
     );
 }

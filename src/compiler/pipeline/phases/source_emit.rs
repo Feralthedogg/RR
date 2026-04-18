@@ -1398,8 +1398,11 @@ pub(crate) fn emit_r_functions_cached(
         let fast_started = Instant::now();
         let raw_debug_elapsed_ns =
             maybe_emit_raw_debug_output(&final_output, &pure_user_calls, output_opts, cache)?;
-        let (optimized_output, _) = assemble_emitted_fragments(&emitted_fragments, true);
-        let final_source_map = cached_optimized_final_source_map.clone().unwrap();
+        let (optimized_output, optimized_source_map) =
+            assemble_emitted_fragments(&emitted_fragments, true);
+        let final_source_map = cached_optimized_final_source_map
+            .clone()
+            .unwrap_or(optimized_source_map);
         let optimized_output = apply_post_assembly_finalize_rewrites(apply_full_raw_rewrites(
             optimized_output,
             &pure_user_calls,

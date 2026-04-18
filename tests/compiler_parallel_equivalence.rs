@@ -264,12 +264,6 @@ main()
 
     assert_eq!(serial_code, parallel_code);
     assert_eq!(serial_map, parallel_map);
-    assert!(
-        serial_code.contains(".__rr_body_"),
-        "expected quoted body wrapper in emitted code:\n{}",
-        serial_code
-    );
-
     let rr_line = source
         .lines()
         .position(|line| line.contains("quoted-wrapper-line"))

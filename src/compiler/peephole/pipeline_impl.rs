@@ -783,16 +783,16 @@ pub(super) fn optimize_emitted_r_pipeline_impl_with_profile(
                 exact_pre_profile.cleanup_elapsed_ns,
             )
         };
-        let exact_reuse_input = compare_exact_block.then(|| out_lines.clone());
+        let compare_exact_reuse_steps = compare_exact_block && compare_exact_reuse_steps_enabled();
+        let exact_reuse_input = compare_exact_reuse_steps.then(|| out_lines.clone());
         let (
             out_lines,
             primary_loop_exact_reuse_pure_call_elapsed_ns,
             primary_loop_exact_reuse_expr_elapsed_ns,
             primary_loop_exact_reuse_rebind_elapsed_ns,
-        ) = if compare_exact_reuse_steps_enabled() {
-            let exact_reuse_input = exact_reuse_input
-                .as_ref()
-                .expect("exact_reuse_input must exist when compare_exact_block is enabled");
+        ) = if let (true, Some(exact_reuse_input)) =
+            (compare_exact_reuse_steps, exact_reuse_input.as_ref())
+        {
             let step_started = Instant::now();
             let out_lines = rewrite_forward_exact_pure_call_reuse_with_cache(
                 out_lines,
