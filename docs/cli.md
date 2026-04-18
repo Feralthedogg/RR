@@ -755,6 +755,9 @@ at `--keep-r` so you can inspect the generated artifact.
 - `-O2`
 - `-o <file>`
 - `--out-dir <dir>`
+- `--compile-mode <standard|fast-dev>`
+- `--profile-compile`
+- `--profile-compile-out <file>`
 - `--bin`
 - `--lib`
 

@@ -1495,7 +1495,7 @@ fn verify_strict_artifact_match(
     Ok(())
 }
 
-fn attach_incremental_cache_recovery_guidance(
+pub(crate) fn attach_incremental_cache_recovery_guidance(
     mut err: RRException,
     cache_root: Option<&Path>,
 ) -> RRException {

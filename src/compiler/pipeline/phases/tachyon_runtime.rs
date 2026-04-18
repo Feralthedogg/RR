@@ -7,6 +7,7 @@
 
 use super::super::*;
 use crate::compiler::pipeline::compile_output_cache_salt;
+use crate::error::{RRCode, RRException};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -99,16 +100,21 @@ fn store_optimized_program_artifact(
     all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
     run_profile: &crate::mir::opt::TachyonRunProfile,
 ) -> crate::error::RR<()> {
+    let recovery_root = cache_root.parent().unwrap_or(cache_root);
     fs::create_dir_all(cache_root).map_err(|e| {
-        InternalCompilerError::new(
-            Stage::Opt,
-            format!(
-                "failed to create optimized MIR cache dir '{}': {}",
-                cache_root.display(),
-                e
+        crate::compiler::incremental::attach_incremental_cache_recovery_guidance(
+            RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Opt,
+                format!(
+                    "failed to create cache directory '{}': {}",
+                    cache_root.display(),
+                    e
+                ),
             ),
+            Some(recovery_root),
         )
-        .into_exception()
     })?;
     let mut functions: Vec<(String, crate::mir::def::FnIR)> = all_fns
         .iter()
@@ -134,11 +140,15 @@ fn store_optimized_program_artifact(
         .into_exception()
     })?;
     fs::write(optimized_program_artifact_path(cache_root, key), payload).map_err(|e| {
-        InternalCompilerError::new(
-            Stage::Opt,
-            format!("failed to write optimized MIR artifact '{}': {}", key, e),
+        crate::compiler::incremental::attach_incremental_cache_recovery_guidance(
+            RRException::new(
+                "RR.CompilerError",
+                RRCode::ICE9001,
+                Stage::Opt,
+                format!("failed to write optimized MIR artifact '{}': {}", key, e),
+            ),
+            Some(recovery_root),
         )
-        .into_exception()
     })
 }
 
