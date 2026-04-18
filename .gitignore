@@ -5,3 +5,6 @@
 .DS_Store
 /scripts/__pycache__
 /scripts/contributing_ast_audit/target
+/proifile.json
+/.rr-cache
+.rr-cache/

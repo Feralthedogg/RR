@@ -1,7 +1,8 @@
 use super::{
-    FxHashMap, FxHashSet, IDENT_PATTERN, assign_re, compile_regex, count_unquoted_braces,
-    expr_idents, indexed_store_base_re, latest_literal_assignment_before,
-    parse_repeat_guard_cmp_line, plain_ident_re, strip_redundant_outer_parens,
+    FxHashMap, FxHashSet, IDENT_PATTERN, PeepholeAnalysisCache, assign_re,
+    collapse_identical_if_else_tail_assignments_late_ir, compile_regex, count_unquoted_braces,
+    expr_idents, latest_literal_assignment_before, parse_repeat_guard_cmp_line, plain_ident_re,
+    strip_redundant_identical_pure_rebinds_ir, strip_unreachable_sym_helpers_ir,
 };
 use regex::{Captures, Regex};
 use std::sync::OnceLock;
@@ -163,74 +164,7 @@ pub(super) fn collapse_common_if_else_tail_assignments(lines: Vec<String>) -> Ve
 }
 
 pub(super) fn collapse_identical_if_else_tail_assignments_late(lines: Vec<String>) -> Vec<String> {
-    let mut out = lines;
-    let mut i = 0usize;
-    while i < out.len() {
-        let trimmed = out[i].trim();
-        if !(trimmed.starts_with("if ") && trimmed.ends_with('{')) {
-            i += 1;
-            continue;
-        }
-        let Some((else_idx, end_idx)) = find_if_else_bounds(&out, i) else {
-            i += 1;
-            continue;
-        };
-
-        let then_lines: Vec<usize> = ((i + 1)..else_idx)
-            .filter(|idx| {
-                let t = out[*idx].trim();
-                !t.is_empty()
-            })
-            .collect();
-        let else_lines: Vec<usize> = ((else_idx + 1)..end_idx)
-            .filter(|idx| {
-                let t = out[*idx].trim();
-                !t.is_empty()
-            })
-            .collect();
-
-        let mut t = then_lines.len();
-        let mut e = else_lines.len();
-        let mut shared = Vec::<(usize, usize, String)>::new();
-        while t > 0 && e > 0 {
-            let then_idx = then_lines[t - 1];
-            let else_line_idx = else_lines[e - 1];
-            let then_trimmed = out[then_idx].trim();
-            let else_trimmed = out[else_line_idx].trim();
-            if then_trimmed != else_trimmed {
-                break;
-            }
-            if assign_re()
-                .and_then(|re| re.captures(then_trimmed))
-                .is_none()
-            {
-                break;
-            }
-            shared.push((then_idx, else_line_idx, then_trimmed.to_string()));
-            t -= 1;
-            e -= 1;
-        }
-
-        if shared.is_empty() {
-            i = end_idx + 1;
-            continue;
-        }
-
-        shared.reverse();
-        let indent_len = out[i].len() - out[i].trim_start().len();
-        let indent = " ".repeat(indent_len);
-        for (then_idx, else_idx_line, _) in &shared {
-            out[*then_idx].clear();
-            out[*else_idx_line].clear();
-        }
-        let mut insert_at = end_idx + 1;
-        for (_, _, assign) in &shared {
-            out.insert(insert_at, format!("{indent}{assign}"));
-            insert_at += 1;
-        }
-        i = insert_at;
-    }
-    out
+    collapse_identical_if_else_tail_assignments_late_ir(lines)
 }
 
 pub(super) fn rewrite_safe_loop_index_write_calls(lines: Vec<String>) -> Vec<String> {
@@ -448,118 +382,19 @@ pub(super) fn line_is_within_loop_body(lines: &[String], idx: usize) -> bool {
     })
 }
 
-fn is_identical_pure_rebind_candidate(
-    lhs: &str,
-    rhs: &str,
-    pure_user_calls: &FxHashSet<String>,
-) -> bool {
-    let lhs = lhs.trim();
-    let rhs = rhs.trim();
-    plain_ident_re().is_some_and(|re| re.is_match(lhs))
-        && !lhs.starts_with(".arg_")
-        && !lhs.starts_with(".__rr_cse_")
-        && rhs.contains('(')
-        && expr_has_only_pure_calls(rhs, pure_user_calls)
-}
-
 pub(super) fn strip_redundant_identical_pure_rebinds(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
-    let mut out = lines;
-    for idx in 0..out.len() {
-        let trimmed = out[idx].trim().to_string();
-        let Some(caps) = assign_re().and_then(|re| re.captures(&trimmed)) else {
-            continue;
-        };
-        let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
-        let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
-        if !is_identical_pure_rebind_candidate(lhs, rhs, pure_user_calls) {
-            continue;
-        }
-        let rhs_canonical = strip_redundant_outer_parens(rhs);
-        let deps: FxHashSet<String> = expr_idents(rhs).into_iter().collect();
-        let cur_indent = out[idx].len() - out[idx].trim_start().len();
-        let mut depth = 0usize;
-        let mut crossed_enclosing_if_boundary = false;
-        let mut removable = false;
-        for prev_idx in (0..idx).rev() {
-            let prev_line = out[prev_idx].as_str();
-            let prev_trimmed = prev_line.trim();
-            if prev_trimmed.is_empty() {
-                continue;
-            }
-            if prev_line.contains("<- function") {
-                break;
-            }
-            if prev_trimmed == "}" {
-                depth += 1;
-                continue;
-            }
-            if is_branch_open_boundary(prev_trimmed) || is_loop_open_boundary(prev_trimmed) {
-                if depth > 0 {
-                    depth -= 1;
-                    if depth == 0 && is_branch_open_boundary(prev_trimmed) {
-                        break;
-                    }
-                    continue;
-                }
-                if is_branch_open_boundary(prev_trimmed) {
-                    let can_cross_current_if = !crossed_enclosing_if_boundary
-                        && (prev_trimmed.starts_with("if ") || prev_trimmed.starts_with("if("));
-                    if can_cross_current_if {
-                        crossed_enclosing_if_boundary = true;
-                        continue;
-                    }
-                    break;
-                }
-                continue;
-            }
-            if let Some(base) = indexed_store_base_re()
-                .and_then(|re| re.captures(prev_trimmed))
-                .and_then(|caps| caps.name("base").map(|m| m.as_str().trim().to_string()))
-            {
-                if base == lhs || deps.contains(&base) {
-                    break;
-                }
-                continue;
-            }
-            let Some(prev_caps) = assign_re().and_then(|re| re.captures(prev_trimmed)) else {
-                continue;
-            };
-            let prev_lhs = prev_caps
-                .name("lhs")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .trim();
-            let prev_rhs = prev_caps
-                .name("rhs")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .trim();
-            if prev_lhs == lhs {
-                if depth == 0 {
-                    let prev_indent = out[prev_idx].len() - out[prev_idx].trim_start().len();
-                    let same_scope_rebind = prev_indent == cur_indent;
-                    let enclosing_if_rebind =
-                        crossed_enclosing_if_boundary && prev_indent < cur_indent;
-                    if strip_redundant_outer_parens(prev_rhs) == rhs_canonical
-                        && (same_scope_rebind || enclosing_if_rebind)
-                    {
-                        removable = true;
-                    }
-                }
-                break;
-            }
-            if deps.contains(prev_lhs) {
-                break;
-            }
-        }
-        if removable {
-            out[idx].clear();
-        }
-    }
-    out
+    strip_redundant_identical_pure_rebinds_ir(lines, pure_user_calls)
+}
+
+pub(super) fn strip_redundant_identical_pure_rebinds_with_cache(
+    lines: Vec<String>,
+    pure_user_calls: &FxHashSet<String>,
+    _cache: &mut PeepholeAnalysisCache,
+) -> Vec<String> {
+    strip_redundant_identical_pure_rebinds_ir(lines, pure_user_calls)
 }
 
 fn find_if_else_bounds(lines: &[String], if_idx: usize) -> Option<(usize, usize)> {
@@ -689,7 +524,12 @@ pub(super) fn expr_has_only_pure_calls(expr: &str, pure_user_calls: &FxHashSet<S
     {
         return false;
     }
-    let Some(re) = compile_regex(format!(r"(?P<callee>{})\s*\(", IDENT_PATTERN)) else {
+    fn pure_call_ident_re() -> Option<&'static Regex> {
+        static RE: OnceLock<Option<Regex>> = OnceLock::new();
+        RE.get_or_init(|| compile_regex(format!(r"(?P<callee>{})\s*\(", IDENT_PATTERN)))
+            .as_ref()
+    }
+    let Some(re) = pure_call_ident_re() else {
         return false;
     };
     re.captures_iter(expr).all(|caps| {
@@ -741,126 +581,5 @@ pub(super) fn unquoted_sym_refs(line: &str) -> Vec<String> {
 }
 
 pub(super) fn strip_unreachable_sym_helpers(lines: Vec<String>) -> Vec<String> {
-    #[derive(Clone)]
-    struct FnRange {
-        name: String,
-        start: usize,
-        end: usize,
-    }
-
-    let mut ranges = Vec::<FnRange>::new();
-    let mut idx = 0usize;
-    while idx < lines.len() {
-        let trimmed = lines[idx].trim();
-        if trimmed.starts_with("Sym_") && trimmed.contains("<- function") {
-            let Some((name, _)) = trimmed.split_once("<- function") else {
-                idx += 1;
-                continue;
-            };
-            let Some(end) = find_matching_block_end(&lines, idx) else {
-                break;
-            };
-            ranges.push(FnRange {
-                name: name.trim().to_string(),
-                start: idx,
-                end,
-            });
-            idx = end + 1;
-            continue;
-        }
-        idx += 1;
-    }
-    if ranges.is_empty() {
-        return lines;
-    }
-
-    let mut name_to_range = FxHashMap::default();
-    for range in &ranges {
-        name_to_range.insert(range.name.clone(), range.clone());
-    }
-
-    let sym_top_is_empty_entrypoint = |range: &FnRange| {
-        let mut saw_return_null = false;
-        for line in lines.iter().take(range.end).skip(range.start + 1) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed == "{" || trimmed == "}" {
-                continue;
-            }
-            if trimmed == "return(NULL)" {
-                saw_return_null = true;
-                continue;
-            }
-            if !unquoted_sym_refs(trimmed).is_empty() {
-                return false;
-            }
-            return false;
-        }
-        saw_return_null
-    };
-
-    let mut roots = FxHashSet::default();
-    if name_to_range.contains_key("Sym_top_0") {
-        roots.insert("Sym_top_0".to_string());
-    }
-    let mut line_idx = 0usize;
-    while line_idx < lines.len() {
-        if let Some(range) = ranges.iter().find(|range| range.start == line_idx) {
-            line_idx = range.end + 1;
-            continue;
-        }
-        for name in unquoted_sym_refs(lines[line_idx].as_str()) {
-            if name_to_range.contains_key(&name) {
-                roots.insert(name);
-            }
-        }
-        line_idx += 1;
-    }
-    if roots.is_empty() {
-        return lines;
-    }
-    if roots.len() == 1
-        && roots.contains("Sym_top_0")
-        && name_to_range
-            .get("Sym_top_0")
-            .is_some_and(sym_top_is_empty_entrypoint)
-    {
-        return lines;
-    }
-
-    let mut reachable = roots.clone();
-    let mut work: Vec<String> = roots.into_iter().collect();
-    while let Some(name) = work.pop() {
-        let Some(range) = name_to_range.get(&name) else {
-            continue;
-        };
-        for line in lines.iter().take(range.end).skip(range.start + 1) {
-            for callee in unquoted_sym_refs(line.as_str()) {
-                if name_to_range.contains_key(&callee) && reachable.insert(callee.clone()) {
-                    work.push(callee);
-                }
-            }
-        }
-    }
-
-    let mut out = Vec::with_capacity(lines.len());
-    let mut cursor = 0usize;
-    for range in ranges {
-        while cursor < range.start {
-            out.push(lines[cursor].clone());
-            cursor += 1;
-        }
-        if reachable.contains(&range.name) {
-            while cursor <= range.end {
-                out.push(lines[cursor].clone());
-                cursor += 1;
-            }
-        } else {
-            cursor = range.end + 1;
-        }
-    }
-    while cursor < lines.len() {
-        out.push(lines[cursor].clone());
-        cursor += 1;
-    }
-    out
+    strip_unreachable_sym_helpers_ir(lines)
 }

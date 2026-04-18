@@ -254,7 +254,40 @@ The important policy points are:
 - default CLI mode is `auto`
 - normal compile uses phase 1 and phase 2 when possible
 - live sessions such as `watch` may also use phase 3 memory reuse
+- direct non-incremental compile paths still reuse warm backend artifacts when
+  the cache root is stable
+- `--cold` runs one compile against an empty temporary cache root without
+  clearing the normal warm cache
 - `--strict-incremental-verify` rebuilds and compares cached output instead of trusting it blindly
+
+### Warm Cache Hierarchy
+
+The warm path is no longer one cache tier. The current hierarchy is:
+
+1. phase 3 in-memory final artifact reuse
+2. phase 1 on-disk final artifact reuse
+3. optimized MIR reuse
+4. function emit reuse
+5. optimized fragment reuse
+6. exact final optimized emitted-R artifact reuse
+7. raw rewrite / peephole whole-output cache reuse
+
+The important implementation rule is:
+
+- each higher tier is allowed to bypass lower tiers only when its artifact is
+  either exact-by-construction or guarded by explicit cache validation
+
+So a warm compile can now skip:
+
+- Tachyon
+- emitted function reconstruction
+- whole-output raw rewrite
+- whole-output peephole
+
+without treating stale or malformed cache files as authoritative. Opportunistic
+tiers such as emitted-function cache, optimized-fragment cache, raw rewrite
+cache, and peephole cache fall back to a safe miss if their artifacts are
+missing, malformed, unreadable, or fail integrity checks.
 
 ## Validation Boundaries
 

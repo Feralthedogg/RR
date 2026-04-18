@@ -123,6 +123,47 @@ impl RBackend {
             );
         }
         Self::rewrite_safe_scalar_loop_index_helpers(&mut self.output);
+        Self::rewrite_branch_local_identical_alloc_rebinds(&mut self.output);
+        Self::hoist_branch_local_pure_scalar_assigns_used_after_branch(&mut self.output);
+        Self::rewrite_single_use_scalar_index_aliases(&mut self.output);
+        Self::rewrite_immediate_and_guard_named_scalar_exprs(&mut self.output);
+        Self::rewrite_two_use_named_scalar_exprs(&mut self.output);
+        Self::rewrite_small_multiuse_scalar_index_aliases(&mut self.output);
+        Self::rewrite_one_or_two_use_named_scalar_index_reads_in_straight_line_region(
+            &mut self.output,
+        );
+        Self::rewrite_named_scalar_pure_call_aliases(&mut self.output);
+        Self::rewrite_loop_index_alias_ii(&mut self.output);
+        Self::strip_dead_zero_seed_ii(&mut self.output);
+        Self::rewrite_slice_bound_aliases(&mut self.output);
+        Self::rewrite_particle_idx_alias(&mut self.output);
+        Self::rewrite_adjacent_duplicate_symbol_assignments(&mut self.output);
+        Self::rewrite_duplicate_pure_call_assignments(
+            &mut self.output,
+            self.analysis.known_pure_user_calls.as_ref(),
+        );
+        Self::strip_noop_self_assignments(&mut self.output);
+        Self::rewrite_temp_uses_after_named_copy(&mut self.output);
+        Self::strip_noop_temp_copy_roundtrips(&mut self.output);
+        Self::strip_dead_simple_scalar_assigns(&mut self.output);
+        Self::strip_shadowed_simple_scalar_seed_assigns(&mut self.output);
+        Self::strip_dead_seq_len_locals(&mut self.output);
+        Self::strip_redundant_branch_local_vec_fill_rebinds(&mut self.output);
+        Self::strip_unused_raw_arg_aliases(&mut self.output);
+        Self::rewrite_readonly_raw_arg_aliases(&mut self.output);
+        Self::strip_empty_else_blocks(&mut self.output);
+        Self::collapse_nested_else_if_blocks(&mut self.output);
+        Self::rewrite_guard_scalar_literals(&mut self.output);
+        Self::rewrite_loop_guard_scalar_literals(&mut self.output);
+        Self::rewrite_single_assignment_loop_seed_literals(&mut self.output);
+        Self::rewrite_sym210_loop_seed(&mut self.output);
+        Self::rewrite_seq_len_full_overwrite_inits(&mut self.output);
+        Self::restore_missing_repeat_loop_counter_updates(&mut self.output);
+        Self::restore_constant_one_guard_repeat_loop_counters(&mut self.output);
+        Self::rewrite_literal_named_list_calls(&mut self.output);
+        Self::rewrite_literal_field_get_calls(&mut self.output);
+        Self::strip_redundant_tail_assign_slice_return(&mut self.output);
+        Self::strip_unreachable_sym_helpers(&mut self.output);
         if std::env::var_os("RR_DEBUG_EMIT_POST_SAFE_REWRITE").is_some() {
             eprintln!(
                 "=== RR_DEBUG_EMIT_POST_SAFE_REWRITE {} ===\n{}",
@@ -136,7 +177,11 @@ impl RBackend {
                 fn_ir.name, self.output
             );
         }
+        Self::strip_terminal_repeat_nexts(&mut self.output);
         Self::prune_dead_cse_temps(&mut self.output);
+        Self::strip_orphan_rr_cse_pruned_markers(&mut self.output);
+        Self::strip_single_blank_spacers(&mut self.output);
+        Self::compact_blank_lines(&mut self.output);
         if std::env::var_os("RR_DEBUG_EMIT_POST_PRUNE").is_some() {
             eprintln!(
                 "=== RR_DEBUG_EMIT_POST_PRUNE {} ===\n{}",
@@ -271,17 +316,21 @@ impl RBackend {
         {
             return bound;
         }
+        if let Some(alias) = self.resolve_live_same_kind_scalar_alias(val_id, values) {
+            return alias;
+        }
         let rendered =
             self.resolve_bound_temp_expr(val_id, values, params, &mut FxHashSet::default());
         if Self::is_plain_symbol_expr(rendered.as_str()) {
             return rendered;
         }
-        self.find_live_plain_symbol_for_exact_expr(rendered.as_str(), values, params)
+        self.find_live_plain_symbol_for_exact_expr(val_id, rendered.as_str(), values, params)
             .unwrap_or(rendered)
     }
 
     fn find_live_plain_symbol_for_exact_expr(
         &self,
+        val_id: usize,
         expr: &str,
         values: &[Value],
         params: &[String],
@@ -296,6 +345,77 @@ impl RBackend {
                 values,
             );
             if bound_expr != expr {
+                continue;
+            }
+            if candidate.is_some() {
+                return None;
+            }
+            candidate = Some(var.clone());
+        }
+        if candidate.is_some() {
+            return candidate;
+        }
+
+        let target_expanded = self.resolve_expanded_scalar_expr_for_equivalence(
+            val_id,
+            values,
+            params,
+            &mut FxHashSet::default(),
+        );
+        let mut expanded_candidate: Option<String> = None;
+        for (var, (bound_val_id, version)) in &self.value_tracker.var_value_bindings {
+            if var.starts_with('.') || self.current_var_version(var) != *version {
+                continue;
+            }
+            let bound_expanded = self.resolve_expanded_scalar_expr_for_equivalence(
+                *bound_val_id,
+                values,
+                params,
+                &mut FxHashSet::default(),
+            );
+            if bound_expanded != target_expanded {
+                continue;
+            }
+            if expanded_candidate.is_some() {
+                return None;
+            }
+            expanded_candidate = Some(var.clone());
+        }
+        expanded_candidate
+    }
+
+    fn resolve_live_same_kind_scalar_alias(
+        &self,
+        val_id: usize,
+        values: &[Value],
+    ) -> Option<String> {
+        if !self.can_reuse_live_expr_alias(val_id, values) {
+            return None;
+        }
+        if !matches!(
+            values.get(val_id).map(|value| &value.kind),
+            Some(
+                ValueKind::Binary { .. }
+                    | ValueKind::Unary { .. }
+                    | ValueKind::FieldGet { .. }
+                    | ValueKind::Len { .. }
+                    | ValueKind::Indices { .. }
+                    | ValueKind::Range { .. }
+                    | ValueKind::Call { .. }
+            )
+        ) {
+            return None;
+        }
+
+        let mut candidate: Option<String> = None;
+        for (var, (bound_val_id, version)) in &self.value_tracker.var_value_bindings {
+            if var.starts_with('.') || self.current_var_version(var) != *version {
+                continue;
+            }
+            let same_value = *bound_val_id == val_id;
+            let same_kind = values.get(*bound_val_id).map(|value| &value.kind)
+                == values.get(val_id).map(|value| &value.kind);
+            if !same_value && !same_kind {
                 continue;
             }
             if candidate.is_some() {
@@ -727,6 +847,33 @@ impl RBackend {
         render_emit::build_plain_arg_list(self, args, values, params)
     }
 
+    fn resolve_preferred_plain_symbol_expr(
+        &self,
+        val_id: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        if let Some(bound) = self.resolve_bound_value(val_id)
+            && Self::is_plain_symbol_expr(bound.as_str())
+            && !bound.starts_with('.')
+        {
+            return bound;
+        }
+        if let Some(alias) = self.resolve_live_same_kind_scalar_alias(val_id, values) {
+            return alias;
+        }
+        self.resolve_val(val_id, values, params, false)
+    }
+
+    fn resolve_preferred_scalar_call_arg_expr(
+        &self,
+        val_id: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        self.resolve_preferred_plain_symbol_expr(val_id, values, params)
+    }
+
     fn intrinsic_helper(op: IntrinsicOp) -> &'static str {
         render_emit::intrinsic_helper(op)
     }
@@ -830,6 +977,173 @@ impl RBackend {
 
     fn rewrite_safe_scalar_loop_index_helpers(output: &mut String) {
         rewrite_emit::rewrite_safe_scalar_loop_index_helpers(output)
+    }
+
+    fn rewrite_branch_local_identical_alloc_rebinds(output: &mut String) {
+        rewrite_emit::rewrite_branch_local_identical_alloc_rebinds(output)
+    }
+
+    fn hoist_branch_local_pure_scalar_assigns_used_after_branch(output: &mut String) {
+        rewrite_emit::hoist_branch_local_pure_scalar_assigns_used_after_branch(output)
+    }
+
+    fn rewrite_single_use_scalar_index_aliases(output: &mut String) {
+        rewrite_emit::rewrite_single_use_scalar_index_aliases(output)
+    }
+
+    fn rewrite_immediate_and_guard_named_scalar_exprs(output: &mut String) {
+        rewrite_emit::rewrite_immediate_and_guard_named_scalar_exprs(output)
+    }
+
+    fn rewrite_two_use_named_scalar_exprs(output: &mut String) {
+        rewrite_emit::rewrite_two_use_named_scalar_exprs(output)
+    }
+
+    fn rewrite_small_multiuse_scalar_index_aliases(output: &mut String) {
+        rewrite_emit::rewrite_small_multiuse_scalar_index_aliases(output)
+    }
+
+    fn rewrite_one_or_two_use_named_scalar_index_reads_in_straight_line_region(
+        output: &mut String,
+    ) {
+        rewrite_emit::rewrite_one_or_two_use_named_scalar_index_reads_in_straight_line_region(
+            output,
+        )
+    }
+
+    fn rewrite_named_scalar_pure_call_aliases(output: &mut String) {
+        rewrite_emit::rewrite_named_scalar_pure_call_aliases(output)
+    }
+
+    fn rewrite_loop_index_alias_ii(output: &mut String) {
+        rewrite_emit::rewrite_loop_index_alias_ii(output)
+    }
+
+    fn strip_dead_zero_seed_ii(output: &mut String) {
+        rewrite_emit::strip_dead_zero_seed_ii(output)
+    }
+
+    fn rewrite_slice_bound_aliases(output: &mut String) {
+        rewrite_emit::rewrite_slice_bound_aliases(output)
+    }
+
+    fn rewrite_particle_idx_alias(output: &mut String) {
+        rewrite_emit::rewrite_particle_idx_alias(output)
+    }
+
+    fn rewrite_adjacent_duplicate_symbol_assignments(output: &mut String) {
+        rewrite_emit::rewrite_adjacent_duplicate_symbol_assignments(output)
+    }
+
+    fn rewrite_duplicate_pure_call_assignments(
+        output: &mut String,
+        pure_user_calls: &FxHashSet<String>,
+    ) {
+        rewrite_emit::rewrite_duplicate_pure_call_assignments(output, pure_user_calls)
+    }
+
+    fn strip_noop_self_assignments(output: &mut String) {
+        rewrite_emit::strip_noop_self_assignments(output)
+    }
+
+    fn rewrite_temp_uses_after_named_copy(output: &mut String) {
+        rewrite_emit::rewrite_temp_uses_after_named_copy(output)
+    }
+
+    fn strip_noop_temp_copy_roundtrips(output: &mut String) {
+        rewrite_emit::strip_noop_temp_copy_roundtrips(output)
+    }
+
+    fn strip_dead_simple_scalar_assigns(output: &mut String) {
+        rewrite_emit::strip_dead_simple_scalar_assigns(output)
+    }
+
+    fn strip_shadowed_simple_scalar_seed_assigns(output: &mut String) {
+        rewrite_emit::strip_shadowed_simple_scalar_seed_assigns(output)
+    }
+
+    fn strip_dead_seq_len_locals(output: &mut String) {
+        rewrite_emit::strip_dead_seq_len_locals(output)
+    }
+
+    fn strip_redundant_branch_local_vec_fill_rebinds(output: &mut String) {
+        rewrite_emit::strip_redundant_branch_local_vec_fill_rebinds(output)
+    }
+
+    fn strip_unused_raw_arg_aliases(output: &mut String) {
+        rewrite_emit::strip_unused_raw_arg_aliases(output)
+    }
+
+    fn rewrite_readonly_raw_arg_aliases(output: &mut String) {
+        rewrite_emit::rewrite_readonly_raw_arg_aliases(output)
+    }
+
+    fn strip_empty_else_blocks(output: &mut String) {
+        rewrite_emit::strip_empty_else_blocks(output)
+    }
+
+    fn collapse_nested_else_if_blocks(output: &mut String) {
+        rewrite_emit::collapse_nested_else_if_blocks(output)
+    }
+
+    fn rewrite_guard_scalar_literals(output: &mut String) {
+        rewrite_emit::rewrite_guard_scalar_literals(output)
+    }
+
+    fn rewrite_loop_guard_scalar_literals(output: &mut String) {
+        rewrite_emit::rewrite_loop_guard_scalar_literals(output)
+    }
+
+    fn rewrite_single_assignment_loop_seed_literals(output: &mut String) {
+        rewrite_emit::rewrite_single_assignment_loop_seed_literals(output)
+    }
+
+    fn rewrite_sym210_loop_seed(output: &mut String) {
+        rewrite_emit::rewrite_sym210_loop_seed(output)
+    }
+
+    fn rewrite_seq_len_full_overwrite_inits(output: &mut String) {
+        rewrite_emit::rewrite_seq_len_full_overwrite_inits(output)
+    }
+
+    fn restore_missing_repeat_loop_counter_updates(output: &mut String) {
+        rewrite_emit::restore_missing_repeat_loop_counter_updates(output)
+    }
+
+    fn restore_constant_one_guard_repeat_loop_counters(output: &mut String) {
+        rewrite_emit::restore_constant_one_guard_repeat_loop_counters(output)
+    }
+
+    fn rewrite_literal_named_list_calls(output: &mut String) {
+        rewrite_emit::rewrite_literal_named_list_calls(output)
+    }
+
+    fn rewrite_literal_field_get_calls(output: &mut String) {
+        rewrite_emit::rewrite_literal_field_get_calls(output)
+    }
+
+    fn strip_unreachable_sym_helpers(output: &mut String) {
+        rewrite_emit::strip_unreachable_sym_helpers(output)
+    }
+
+    fn strip_redundant_tail_assign_slice_return(output: &mut String) {
+        rewrite_emit::strip_redundant_tail_assign_slice_return(output)
+    }
+
+    fn strip_single_blank_spacers(output: &mut String) {
+        rewrite_emit::strip_single_blank_spacers(output)
+    }
+
+    fn compact_blank_lines(output: &mut String) {
+        rewrite_emit::compact_blank_lines(output)
+    }
+
+    fn strip_terminal_repeat_nexts(output: &mut String) {
+        rewrite_emit::strip_terminal_repeat_nexts(output)
+    }
+
+    fn strip_orphan_rr_cse_pruned_markers(output: &mut String) {
+        rewrite_emit::strip_orphan_rr_cse_pruned_markers(output)
     }
 
     fn infer_generated_poly_loop_step(

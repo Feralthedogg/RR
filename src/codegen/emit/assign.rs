@@ -179,8 +179,8 @@ pub(super) fn try_resolve_whole_range_call_map_rhs(
         return None;
     }
     let callee_name = this.const_string_value(args[3], values)?;
-    let vector_slots = this.resolve_val(args[5], values, params, false);
-    let helper_cost = this.resolve_val(args[4], values, params, false);
+    let vector_slots = this.resolve_preferred_plain_symbol_expr(args[5], values, params);
+    let helper_cost = this.resolve_preferred_plain_symbol_expr(args[4], values, params);
     let rendered_args: Vec<String> = args[6..]
         .iter()
         .map(|arg| {
@@ -230,8 +230,8 @@ pub(super) fn try_resolve_whole_auto_call_map_rhs(
         return None;
     }
     let callee_name = this.const_string_value(args[1], values)?;
-    let helper_cost = this.resolve_val(args[2], values, params, false);
-    let vector_slots = this.resolve_val(args[3], values, params, false);
+    let helper_cost = this.resolve_preferred_plain_symbol_expr(args[2], values, params);
+    let vector_slots = this.resolve_preferred_plain_symbol_expr(args[3], values, params);
     let rendered_args: Vec<String> = args[4..]
         .iter()
         .map(|arg| this.resolve_bound_temp_expr(*arg, values, params, &mut FxHashSet::default()))
@@ -738,7 +738,7 @@ pub(super) fn whole_dest_end_matches_known_var(
     values: &[Value],
     params: &[String],
 ) -> bool {
-    let end_rendered = this.resolve_val(end, values, params, false);
+    let end_rendered = this.resolve_preferred_plain_symbol_expr(end, values, params);
     let end_canonical = this.resolve_known_full_end_expr(end, values, params);
     this.known_full_end_expr_for_var(var)
         .is_some_and(|known| known == end_rendered || end_canonical.as_deref() == Some(known))
@@ -797,19 +797,19 @@ pub(super) fn idx_cube_row_size_expr(
     {
         return None;
     }
-    let start_face = this.resolve_val(start_args[0], values, params, false);
-    let end_face = this.resolve_val(end_args[0], values, params, false);
-    let start_x = this.resolve_val(start_args[1], values, params, false);
-    let end_x = this.resolve_val(end_args[1], values, params, false);
-    let start_size = this.resolve_val(start_args[3], values, params, false);
-    let end_size = this.resolve_val(end_args[3], values, params, false);
+    let start_face = this.resolve_preferred_plain_symbol_expr(start_args[0], values, params);
+    let end_face = this.resolve_preferred_plain_symbol_expr(end_args[0], values, params);
+    let start_x = this.resolve_preferred_plain_symbol_expr(start_args[1], values, params);
+    let end_x = this.resolve_preferred_plain_symbol_expr(end_args[1], values, params);
+    let start_size = this.resolve_preferred_plain_symbol_expr(start_args[3], values, params);
+    let end_size = this.resolve_preferred_plain_symbol_expr(end_args[3], values, params);
     if start_face != end_face || start_x != end_x || start_size != end_size {
         return None;
     }
     if !this.value_is_known_one(start_args[2], values) {
         return None;
     }
-    let end_y = this.resolve_val(end_args[2], values, params, false);
+    let end_y = this.resolve_preferred_plain_symbol_expr(end_args[2], values, params);
     if end_y != start_size {
         return None;
     }
@@ -834,7 +834,8 @@ pub(super) fn value_matches_known_length_expr(
         Some(ValueKind::Load { var }) => {
             this.resolve_bound_value_id(var).is_some_and(|bound| {
                 value_matches_known_length_expr(this, bound, target_end_expr, values, params)
-            }) || this.resolve_val(val_id, values, params, false) == target_end_expr
+            }) || this.resolve_preferred_plain_symbol_expr(val_id, values, params)
+                == target_end_expr
         }
         Some(ValueKind::Param { index }) => this.resolve_param(*index, params) == target_end_expr,
         Some(ValueKind::Call { args, .. }) | Some(ValueKind::Intrinsic { args, .. }) => {
@@ -842,7 +843,8 @@ pub(super) fn value_matches_known_length_expr(
                 value_matches_known_length_expr(this, *arg, target_end_expr, values, params)
             }) || (args.iter().any(|arg| {
                 this.value_can_be_allocator_scalar_arg(*arg, values)
-                    && this.resolve_val(*arg, values, params, false) == target_end_expr
+                    && this.resolve_preferred_plain_symbol_expr(*arg, values, params)
+                        == target_end_expr
             }) && args
                 .iter()
                 .any(|arg| !this.value_can_be_allocator_scalar_arg(*arg, values)))
@@ -881,7 +883,7 @@ pub(super) fn value_is_full_dest_end(
     if !seen.insert(base) {
         return false;
     }
-    let end_rendered = this.resolve_val(end, values, params, false);
+    let end_rendered = this.resolve_preferred_plain_symbol_expr(end, values, params);
     let end_canonical = this.resolve_known_full_end_expr(end, values, params);
     let ok = match values.get(base).map(|v| &v.kind) {
         Some(ValueKind::Call { callee, args, .. })
@@ -893,7 +895,8 @@ pub(super) fn value_is_full_dest_end(
             let len_idx = this
                 .fresh_allocation_len_arg_index(callee.as_str(), args, values)
                 .unwrap_or(0);
-            let len_rendered = this.resolve_val(args[len_idx], values, params, false);
+            let len_rendered =
+                this.resolve_preferred_plain_symbol_expr(args[len_idx], values, params);
             len_rendered == end_rendered
                 || this
                     .resolve_known_full_end_expr(args[len_idx], values, params)
@@ -909,7 +912,7 @@ pub(super) fn value_is_full_dest_end(
             .resolve_bound_value_id(var)
             .is_some_and(|bound| value_is_full_dest_end(this, bound, end, values, params, seen)),
         Some(ValueKind::Len { base: len_base }) => {
-            this.resolve_val(*len_base, values, params, false) == end_rendered
+            this.resolve_preferred_plain_symbol_expr(*len_base, values, params) == end_rendered
                 || this
                     .resolve_known_full_end_expr(*len_base, values, params)
                     .zip(end_canonical.as_ref())

@@ -1,12 +1,17 @@
 use super::super::{
-    assign_re, assign_slice_re, compile_regex, expr_idents, find_matching_block_end,
-    literal_one_re, literal_positive_re, plain_ident_re,
+    assign_re, assign_slice_re, compile_regex, literal_one_re, literal_positive_re, plain_ident_re,
+    strip_redundant_nested_temp_reassigns_ir, strip_redundant_tail_assign_slice_return_ir,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 pub(in super::super) fn rewrite_temp_minus_one_scaled_to_named_scalar(
     lines: Vec<String>,
 ) -> Vec<String> {
+    if !lines.iter().any(|line| line.contains(".__rr_cse_"))
+        || !lines.iter().any(|line| line.contains("- 1"))
+    {
+        return lines;
+    }
     let mut out = lines;
     let Some(assign_re) = assign_re() else {
         return out;
@@ -58,159 +63,13 @@ pub(in super::super) fn rewrite_temp_minus_one_scaled_to_named_scalar(
 }
 
 pub(in super::super) fn strip_redundant_nested_temp_reassigns(lines: Vec<String>) -> Vec<String> {
-    let out = lines;
-    let mut remove = vec![false; out.len()];
-    for idx in 0..out.len() {
-        let trimmed = out[idx].trim();
-        let Some(caps) = assign_re().and_then(|re| re.captures(trimmed)) else {
-            continue;
-        };
-        let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
-        let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
-        if !lhs.starts_with(".__rr_cse_") {
-            continue;
-        }
-        let deps: FxHashSet<String> = expr_idents(rhs).into_iter().collect();
-        let cur_indent = out[idx].len() - out[idx].trim_start().len();
-        let mut j = idx;
-        while j > 0 {
-            j -= 1;
-            let prev = out[j].trim();
-            if prev.is_empty() {
-                continue;
-            }
-            if out[j].contains("<- function")
-                || prev == "repeat {"
-                || prev.starts_with("while")
-                || prev.starts_with("for")
-            {
-                break;
-            }
-            if let Some(prev_caps) = assign_re().and_then(|re| re.captures(prev)) {
-                let prev_lhs = prev_caps
-                    .name("lhs")
-                    .map(|m| m.as_str())
-                    .unwrap_or("")
-                    .trim();
-                let prev_rhs = prev_caps
-                    .name("rhs")
-                    .map(|m| m.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if prev_lhs == lhs {
-                    if prev_rhs == lhs {
-                        continue;
-                    }
-                    let prev_indent = out[j].len() - out[j].trim_start().len();
-                    if prev_rhs == rhs && prev_indent < cur_indent {
-                        remove[idx] = true;
-                    }
-                    break;
-                }
-                if deps.contains(prev_lhs) {
-                    break;
-                }
-            }
-        }
-    }
-    out.into_iter()
-        .enumerate()
-        .filter_map(|(idx, line)| (!remove[idx]).then_some(line))
-        .collect()
+    strip_redundant_nested_temp_reassigns_ir(lines)
 }
 
 pub(in super::super) fn strip_redundant_tail_assign_slice_return(
     lines: Vec<String>,
 ) -> Vec<String> {
-    let mut out = lines;
-    let mut fn_start = 0usize;
-    while fn_start < out.len() {
-        while fn_start < out.len() && !out[fn_start].contains("<- function") {
-            fn_start += 1;
-        }
-        if fn_start >= out.len() {
-            break;
-        }
-        let Some(fn_end) = find_matching_block_end(&out, fn_start) else {
-            break;
-        };
-
-        let Some(return_idx) = previous_non_empty_line(&out, fn_end) else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-        let return_trimmed = out[return_idx].trim();
-        let Some(ret_var) = return_trimmed
-            .strip_prefix("return(")
-            .and_then(|s| s.strip_suffix(')'))
-            .map(str::trim)
-        else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-
-        let Some(assign_idx) = previous_non_empty_line(&out, return_idx) else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-        let assign_trimmed = out[assign_idx].trim();
-        let Some(caps) = assign_re().and_then(|re| re.captures(assign_trimmed)) else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-        let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
-        let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
-        if lhs != ret_var {
-            fn_start = fn_end + 1;
-            continue;
-        }
-
-        let Some(assign_caps) = assign_slice_re().and_then(|re| re.captures(rhs)) else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-        let dest = assign_caps
-            .name("dest")
-            .map(|m| m.as_str())
-            .unwrap_or("")
-            .trim();
-        let start = assign_caps
-            .name("start")
-            .map(|m| m.as_str())
-            .unwrap_or("")
-            .trim();
-        let end = assign_caps
-            .name("end")
-            .map(|m| m.as_str())
-            .unwrap_or("")
-            .trim();
-        let temp = assign_caps
-            .name("rest")
-            .map(|m| m.as_str())
-            .unwrap_or("")
-            .trim();
-        if dest != ret_var
-            || !literal_one_re().is_some_and(|re| re.is_match(start))
-            || !plain_ident_re().is_some_and(|re| re.is_match(temp))
-        {
-            fn_start = fn_end + 1;
-            continue;
-        }
-
-        if function_has_non_empty_repeat_whole_assign(&out[fn_start..fn_end], ret_var, end, temp)
-            || function_has_matching_exprmap_whole_assign(
-                &out[fn_start..fn_end],
-                ret_var,
-                end,
-                temp,
-            )
-        {
-            out[assign_idx].clear();
-        }
-
-        fn_start = fn_end + 1;
-    }
-    out
+    strip_redundant_tail_assign_slice_return_ir(lines)
 }
 
 fn function_has_matching_exprmap_whole_assign(

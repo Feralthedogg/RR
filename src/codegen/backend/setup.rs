@@ -33,6 +33,7 @@ impl MirEmitter {
     ) -> Self {
         Self::with_analysis_options(
             known_fresh_result_calls,
+            FxHashSet::default(),
             FxHashMap::default(),
             direct_builtin_vector_math,
         )
@@ -40,11 +41,13 @@ impl MirEmitter {
 
     pub fn with_analysis_options(
         known_fresh_result_calls: FxHashSet<String>,
+        known_pure_user_calls: FxHashSet<String>,
         seq_len_param_end_slots_by_fn: FxHashMap<String, FxHashMap<usize, usize>>,
         direct_builtin_vector_math: bool,
     ) -> Self {
         Self::with_shared_analysis_options(
             Arc::new(known_fresh_result_calls),
+            Arc::new(known_pure_user_calls),
             Arc::new(seq_len_param_end_slots_by_fn),
             direct_builtin_vector_math,
         )
@@ -52,12 +55,14 @@ impl MirEmitter {
 
     pub fn with_shared_analysis_options(
         known_fresh_result_calls: Arc<FxHashSet<String>>,
+        known_pure_user_calls: Arc<FxHashSet<String>>,
         seq_len_param_end_slots_by_fn: Arc<FxHashMap<String, FxHashMap<usize, usize>>>,
         direct_builtin_vector_math: bool,
     ) -> Self {
         Self {
             backend: RBackend::with_shared_analysis_options(
                 known_fresh_result_calls,
+                known_pure_user_calls,
                 seq_len_param_end_slots_by_fn,
                 direct_builtin_vector_math,
             ),
@@ -90,6 +95,7 @@ impl RBackend {
     ) -> Self {
         Self::with_analysis_options(
             known_fresh_result_calls,
+            FxHashSet::default(),
             FxHashMap::default(),
             direct_builtin_vector_math,
         )
@@ -97,11 +103,13 @@ impl RBackend {
 
     pub fn with_analysis_options(
         known_fresh_result_calls: FxHashSet<String>,
+        known_pure_user_calls: FxHashSet<String>,
         seq_len_param_end_slots_by_fn: FxHashMap<String, FxHashMap<usize, usize>>,
         direct_builtin_vector_math: bool,
     ) -> Self {
         Self::with_shared_analysis_options(
             Arc::new(known_fresh_result_calls),
+            Arc::new(known_pure_user_calls),
             Arc::new(seq_len_param_end_slots_by_fn),
             direct_builtin_vector_math,
         )
@@ -109,6 +117,7 @@ impl RBackend {
 
     pub fn with_shared_analysis_options(
         known_fresh_result_calls: Arc<FxHashSet<String>>,
+        known_pure_user_calls: Arc<FxHashSet<String>>,
         seq_len_param_end_slots_by_fn: Arc<FxHashMap<String, FxHashMap<usize, usize>>>,
         direct_builtin_vector_math: bool,
     ) -> Self {
@@ -123,6 +132,7 @@ impl RBackend {
             loop_analysis: LoopAnalysisContext::default(),
             analysis: EmitAnalysisContext::new(
                 known_fresh_result_calls,
+                known_pure_user_calls,
                 seq_len_param_end_slots_by_fn,
                 direct_builtin_vector_math,
             ),

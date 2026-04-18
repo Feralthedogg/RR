@@ -31,6 +31,7 @@ pub(crate) use helper_raw_rewrites::*;
 
 #[path = "pipeline/scalar_raw_rewrites.rs"]
 mod scalar_raw_rewrites;
+#[cfg(test)]
 pub(crate) use scalar_raw_rewrites::*;
 
 #[path = "pipeline/cleanup_raw_rewrites.rs"]
@@ -52,6 +53,10 @@ pub(crate) use function_props::*;
 #[path = "pipeline/compile_api.rs"]
 mod compile_api;
 pub use compile_api::*;
+
+#[path = "pipeline/profile.rs"]
+mod profile;
+pub use profile::*;
 
 #[path = "pipeline/loop_repairs.rs"]
 mod loop_repairs;
@@ -91,6 +96,29 @@ pub enum ParallelMode {
     Off,
     Optional,
     Required,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum CompileMode {
+    #[default]
+    Standard,
+    FastDev,
+}
+
+impl CompileMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::FastDev => "fast-dev",
+        }
+    }
+
+    pub fn disabled_pass_groups(self) -> &'static [&'static str] {
+        match self {
+            Self::Standard => &[],
+            Self::FastDev => &["poly", "vectorize", "inline"],
+        }
+    }
 }
 
 fn raw_same_var_is_na_or_not_finite_re() -> &'static Regex {
@@ -200,6 +228,7 @@ pub struct CompileOutputOptions {
     pub preserve_all_defs: bool,
     pub strict_let: bool,
     pub warn_implicit_decl: bool,
+    pub compile_mode: CompileMode,
 }
 
 impl Default for CompileOutputOptions {
@@ -209,6 +238,7 @@ impl Default for CompileOutputOptions {
             preserve_all_defs: false,
             strict_let: true,
             warn_implicit_decl: false,
+            compile_mode: CompileMode::Standard,
         }
     }
 }
@@ -628,6 +658,93 @@ fn normalize_module_path(path: &Path) -> PathBuf {
 pub(crate) trait EmitFunctionCache: Send + Sync {
     fn load(&self, key: &str) -> crate::error::RR<Option<(String, Vec<MapEntry>)>>;
     fn store(&self, key: &str, code: &str, map: &[MapEntry]) -> crate::error::RR<()>;
+
+    fn load_raw_rewrite(&self, _key: &str) -> crate::error::RR<Option<String>> {
+        Ok(None)
+    }
+
+    fn store_raw_rewrite(&self, _key: &str, _code: &str) -> crate::error::RR<()> {
+        Ok(())
+    }
+
+    fn load_peephole(&self, _key: &str) -> crate::error::RR<Option<(String, Vec<u32>)>> {
+        Ok(None)
+    }
+
+    fn store_peephole(&self, _key: &str, _code: &str, _line_map: &[u32]) -> crate::error::RR<()> {
+        Ok(())
+    }
+
+    fn load_optimized_fragment(
+        &self,
+        _key: &str,
+    ) -> crate::error::RR<Option<(String, Vec<MapEntry>)>> {
+        Ok(None)
+    }
+
+    fn store_optimized_fragment(
+        &self,
+        _key: &str,
+        _code: &str,
+        _map: &[MapEntry],
+    ) -> crate::error::RR<()> {
+        Ok(())
+    }
+
+    fn load_optimized_assembly_artifact(
+        &self,
+        _key: &str,
+    ) -> crate::error::RR<Option<(String, Vec<MapEntry>)>> {
+        Ok(None)
+    }
+
+    fn store_optimized_assembly_artifact(
+        &self,
+        _key: &str,
+        _code: &str,
+        _map: &[MapEntry],
+    ) -> crate::error::RR<()> {
+        Ok(())
+    }
+
+    fn load_optimized_assembly_source_map(
+        &self,
+        _key: &str,
+    ) -> crate::error::RR<Option<Vec<MapEntry>>> {
+        Ok(None)
+    }
+
+    fn store_optimized_assembly_source_map(
+        &self,
+        _key: &str,
+        _map: &[MapEntry],
+    ) -> crate::error::RR<()> {
+        Ok(())
+    }
+
+    fn has_optimized_assembly_safe(&self, _key: &str) -> crate::error::RR<bool> {
+        Ok(false)
+    }
+
+    fn store_optimized_assembly_safe(&self, _key: &str) -> crate::error::RR<()> {
+        Ok(())
+    }
+
+    fn has_optimized_raw_assembly_safe(&self, _key: &str) -> crate::error::RR<bool> {
+        Ok(false)
+    }
+
+    fn store_optimized_raw_assembly_safe(&self, _key: &str) -> crate::error::RR<()> {
+        Ok(())
+    }
+
+    fn has_optimized_peephole_assembly_safe(&self, _key: &str) -> crate::error::RR<bool> {
+        Ok(false)
+    }
+
+    fn store_optimized_peephole_assembly_safe(&self, _key: &str) -> crate::error::RR<()> {
+        Ok(())
+    }
 }
 
 fn stable_hash_bytes(bytes: &[u8]) -> u64 {
@@ -693,6 +810,7 @@ pub(crate) fn compile_output_cache_salt() -> u64 {
         ^ stable_hash_bytes(include_str!("peephole/helpers/helper_calls.rs").as_bytes())
         ^ stable_hash_bytes(include_str!("peephole/helpers/metric.rs").as_bytes())
         ^ stable_hash_bytes(include_str!("peephole/dead_code.rs").as_bytes())
+        ^ stable_hash_bytes(include_str!("peephole/emitted_ir.rs").as_bytes())
         ^ stable_hash_bytes(include_str!("peephole/core_utils.rs").as_bytes())
         ^ stable_hash_bytes(include_str!("peephole/expr_reuse.rs").as_bytes())
         ^ stable_hash_bytes(include_str!("peephole/expr_reuse/temp_tail.rs").as_bytes())
@@ -711,11 +829,106 @@ pub(crate) fn compile_output_cache_salt() -> u64 {
         ^ stable_hash_bytes(include_str!("peephole/vector.rs").as_bytes())
 }
 
+pub(crate) fn peephole_output_cache_key(
+    raw_output: &str,
+    direct_builtin_call_map: bool,
+    pure_user_calls: &FxHashSet<String>,
+    fresh_user_calls: &FxHashSet<String>,
+    preserve_all_defs: bool,
+    compile_mode: CompileMode,
+) -> String {
+    let mut pure_names = pure_user_calls.iter().cloned().collect::<Vec<_>>();
+    pure_names.sort();
+    let mut fresh_names = fresh_user_calls.iter().cloned().collect::<Vec<_>>();
+    fresh_names.sort();
+    let payload = format!(
+        "rr-peephole-v1|{}|{}|{}|{}|{:?}|{:?}|{}",
+        compile_output_cache_salt(),
+        direct_builtin_call_map,
+        preserve_all_defs,
+        compile_mode.as_str(),
+        pure_names,
+        fresh_names,
+        raw_output,
+    );
+    format!("{:016x}", stable_hash_bytes(payload.as_bytes()))
+}
+
+pub(crate) fn optimized_fragment_output_cache_key(
+    emitted_fragment: &str,
+    direct_builtin_call_map: bool,
+    pure_user_calls: &FxHashSet<String>,
+    fresh_user_calls: &FxHashSet<String>,
+    preserve_all_defs: bool,
+    compile_mode: CompileMode,
+) -> String {
+    let mut pure_names = pure_user_calls.iter().cloned().collect::<Vec<_>>();
+    pure_names.sort();
+    let mut fresh_names = fresh_user_calls.iter().cloned().collect::<Vec<_>>();
+    fresh_names.sort();
+    let payload = format!(
+        "rr-opt-frag-v1|{}|{}|{}|{}|{:?}|{:?}|{}",
+        compile_output_cache_salt(),
+        direct_builtin_call_map,
+        preserve_all_defs,
+        compile_mode.as_str(),
+        pure_names,
+        fresh_names,
+        emitted_fragment,
+    );
+    format!("{:016x}", stable_hash_bytes(payload.as_bytes()))
+}
+
+pub(crate) fn optimized_assembly_cache_key(
+    raw_output: &str,
+    direct_builtin_call_map: bool,
+    pure_user_calls: &FxHashSet<String>,
+    fresh_user_calls: &FxHashSet<String>,
+    preserve_all_defs: bool,
+    compile_mode: CompileMode,
+) -> String {
+    let mut pure_names = pure_user_calls.iter().cloned().collect::<Vec<_>>();
+    pure_names.sort();
+    let mut fresh_names = fresh_user_calls.iter().cloned().collect::<Vec<_>>();
+    fresh_names.sort();
+    let payload = format!(
+        "rr-opt-asm-v1|{}|{}|{}|{}|{:?}|{:?}|{}",
+        compile_output_cache_salt(),
+        direct_builtin_call_map,
+        preserve_all_defs,
+        compile_mode.as_str(),
+        pure_names,
+        fresh_names,
+        raw_output,
+    );
+    format!("{:016x}", stable_hash_bytes(payload.as_bytes()))
+}
+
+pub(crate) fn raw_rewrite_output_cache_key(
+    raw_output: &str,
+    pure_user_calls: &FxHashSet<String>,
+    preserve_all_defs: bool,
+    compile_mode: CompileMode,
+) -> String {
+    let mut pure_names = pure_user_calls.iter().cloned().collect::<Vec<_>>();
+    pure_names.sort();
+    let payload = format!(
+        "rr-raw-rewrite-v1|{}|{}|{}|{:?}|{}",
+        compile_output_cache_salt(),
+        preserve_all_defs,
+        compile_mode.as_str(),
+        pure_names,
+        raw_output,
+    );
+    format!("{:016x}", stable_hash_bytes(payload.as_bytes()))
+}
+
 fn fn_emit_cache_key(
     fn_ir: &crate::mir::def::FnIR,
     opt_level: OptLevel,
     type_cfg: TypeConfig,
     parallel_cfg: ParallelConfig,
+    compile_mode: CompileMode,
     seq_len_param_end_slots: Option<&FxHashMap<usize, usize>>,
 ) -> String {
     let mut seq_len_summary: Vec<(usize, usize)> = seq_len_param_end_slots
@@ -723,7 +936,7 @@ fn fn_emit_cache_key(
         .unwrap_or_default();
     seq_len_summary.sort_unstable();
     let payload = format!(
-        "rr-fn-emit-v3|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{:?}",
+        "rr-fn-emit-v4|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{:?}",
         fn_ir.name,
         opt_level.label(),
         type_cfg.mode.as_str(),
@@ -731,6 +944,7 @@ fn fn_emit_cache_key(
         parallel_cfg.mode.as_str(),
         parallel_cfg.backend.as_str(),
         parallel_cfg.threads,
+        compile_mode.as_str(),
         fn_emit_cache_salt(),
         fn_ir,
         seq_len_summary,

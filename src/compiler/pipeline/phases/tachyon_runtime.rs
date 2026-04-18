@@ -6,18 +6,157 @@
 //! the required runtime subset and configuration.
 
 use super::super::*;
+use crate::compiler::pipeline::compile_output_cache_salt;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CachedOptimizedProgramArtifact {
+    schema: String,
+    compiler_version: String,
+    opt_level: String,
+    compile_mode: String,
+    functions: Vec<(String, crate::mir::def::FnIR)>,
+    pulse_stats: crate::mir::opt::TachyonPulseStats,
+    pass_timings: crate::mir::opt::TachyonPassTimings,
+    active_pass_groups: Vec<String>,
+    plan_summary: Vec<String>,
+}
+
+fn stable_hash_bytes_local(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET_BASIS;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn optimized_program_cache_key(
+    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+    opt_level: OptLevel,
+    compile_mode: CompileMode,
+) -> crate::error::RR<String> {
+    let mut functions: Vec<(String, crate::mir::def::FnIR)> = all_fns
+        .iter()
+        .map(|(name, fn_ir)| (name.clone(), fn_ir.clone()))
+        .collect();
+    functions.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+    let payload = serde_json::to_vec(&(opt_level.label(), compile_mode.as_str(), &functions))
+        .map_err(|e| {
+            InternalCompilerError::new(
+                Stage::Opt,
+                format!("failed to serialize optimized MIR cache key payload: {}", e),
+            )
+            .into_exception()
+        })?;
+    Ok(format!(
+        "{:016x}",
+        stable_hash_bytes_local(payload.as_slice()) ^ compile_output_cache_salt()
+    ))
+}
+
+fn optimized_program_artifact_path(cache_root: &Path, key: &str) -> PathBuf {
+    cache_root.join(format!("{}.json", key))
+}
+
+fn load_optimized_program_artifact(
+    cache_root: &Path,
+    key: &str,
+    opt_level: OptLevel,
+    compile_mode: CompileMode,
+) -> crate::error::RR<Option<CachedOptimizedProgramArtifact>> {
+    let path = optimized_program_artifact_path(cache_root, key);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let payload = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(None),
+    };
+    let artifact: CachedOptimizedProgramArtifact = match serde_json::from_slice(&payload) {
+        Ok(artifact) => artifact,
+        Err(_) => return Ok(None),
+    };
+    if artifact.schema != "rr-optimized-mir-artifact"
+        || artifact.compiler_version != env!("CARGO_PKG_VERSION")
+        || artifact.opt_level != opt_level.label()
+        || artifact.compile_mode != compile_mode.as_str()
+    {
+        return Ok(None);
+    }
+    Ok(Some(artifact))
+}
+
+fn store_optimized_program_artifact(
+    cache_root: &Path,
+    key: &str,
+    opt_level: OptLevel,
+    compile_mode: CompileMode,
+    all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
+    run_profile: &crate::mir::opt::TachyonRunProfile,
+) -> crate::error::RR<()> {
+    fs::create_dir_all(cache_root).map_err(|e| {
+        InternalCompilerError::new(
+            Stage::Opt,
+            format!(
+                "failed to create optimized MIR cache dir '{}': {}",
+                cache_root.display(),
+                e
+            ),
+        )
+        .into_exception()
+    })?;
+    let mut functions: Vec<(String, crate::mir::def::FnIR)> = all_fns
+        .iter()
+        .map(|(name, fn_ir)| (name.clone(), fn_ir.clone()))
+        .collect();
+    functions.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+    let artifact = CachedOptimizedProgramArtifact {
+        schema: "rr-optimized-mir-artifact".to_string(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        opt_level: opt_level.label().to_string(),
+        compile_mode: compile_mode.as_str().to_string(),
+        functions,
+        pulse_stats: run_profile.pulse_stats,
+        pass_timings: run_profile.pass_timings.clone(),
+        active_pass_groups: run_profile.active_pass_groups.clone(),
+        plan_summary: run_profile.plan_summary.clone(),
+    };
+    let payload = serde_json::to_vec_pretty(&artifact).map_err(|e| {
+        InternalCompilerError::new(
+            Stage::Opt,
+            format!("failed to serialize optimized MIR artifact: {}", e),
+        )
+        .into_exception()
+    })?;
+    fs::write(optimized_program_artifact_path(cache_root, key), payload).map_err(|e| {
+        InternalCompilerError::new(
+            Stage::Opt,
+            format!("failed to write optimized MIR artifact '{}': {}", key, e),
+        )
+        .into_exception()
+    })
+}
+
 pub(crate) fn run_tachyon_phase(
     ui: &CliLog,
     total_steps: usize,
     optimize: bool,
     opt_level: OptLevel,
+    compile_mode: CompileMode,
     all_fns: &mut FxHashMap<String, crate::mir::def::FnIR>,
     scheduler: &CompilerScheduler,
-) -> crate::error::RR<()> {
+    optimized_mir_cache_root: Option<&Path>,
+) -> crate::error::RR<TachyonPhaseMetrics> {
     let phase_ordering_default_mode =
         crate::mir::opt::TachyonEngine::phase_ordering_default_mode_for_opt_level(opt_level);
-    let tachyon = crate::mir::opt::TachyonEngine::with_phase_ordering_default_mode(
+    let tachyon = crate::mir::opt::TachyonEngine::with_phase_ordering_default_mode_and_compile_mode(
         phase_ordering_default_mode,
+        compile_mode,
     );
     let step_opt = ui.step_start(
         4,
@@ -75,8 +214,33 @@ pub(crate) fn run_tachyon_phase(
     for msg in opaque_msgs {
         ui.warn(&msg);
     }
-    let mut pulse_stats = crate::mir::opt::TachyonPulseStats::default();
-    if optimize {
+    let mut run_profile = crate::mir::opt::TachyonRunProfile::default();
+    let optimized_cache_key = if optimize {
+        optimized_program_cache_key(all_fns, opt_level, compile_mode)?
+    } else {
+        String::new()
+    };
+    let mut optimized_cache_hit = false;
+    if optimize
+        && let Some(cache_root) = optimized_mir_cache_root
+        && let Some(artifact) = load_optimized_program_artifact(
+            cache_root,
+            optimized_cache_key.as_str(),
+            opt_level,
+            compile_mode,
+        )?
+    {
+        all_fns.clear();
+        all_fns.extend(artifact.functions.into_iter());
+        run_profile = crate::mir::opt::TachyonRunProfile {
+            pulse_stats: artifact.pulse_stats,
+            pass_timings: artifact.pass_timings,
+            active_pass_groups: artifact.active_pass_groups,
+            plan_summary: artifact.plan_summary,
+        };
+        optimized_cache_hit = true;
+        ui.trace("tachyon-cache", "optimized MIR cache hit");
+    } else if optimize {
         if ui.detailed && ui.slow_step_ms > 0 {
             let slow_after = Duration::from_millis(ui.slow_step_ms as u64);
             let repeat_after = Duration::from_millis(ui.slow_step_repeat_ms as u64);
@@ -108,20 +272,33 @@ pub(crate) fn run_tachyon_phase(
                     ),
                 );
             };
-            pulse_stats = tachyon.run_program_with_progress_and_scheduler(
+            run_profile = tachyon.run_program_with_profile_and_progress_scheduler(
                 all_fns,
                 scheduler,
                 &mut progress_cb,
             );
         } else {
-            pulse_stats = tachyon.run_program_with_scheduler(all_fns, scheduler);
+            run_profile = tachyon.run_program_with_profile_and_scheduler(all_fns, scheduler);
         }
     } else {
         tachyon.stabilize_for_codegen(all_fns);
     }
     crate::mir::semantics::validate_program(all_fns)?;
     crate::mir::semantics::validate_runtime_safety(all_fns)?;
-    maybe_write_pulse_stats_json(&pulse_stats);
+    if optimize
+        && !optimized_cache_hit
+        && let Some(cache_root) = optimized_mir_cache_root
+    {
+        store_optimized_program_artifact(
+            cache_root,
+            optimized_cache_key.as_str(),
+            opt_level,
+            compile_mode,
+            all_fns,
+            &run_profile,
+        )?;
+    }
+    maybe_write_pulse_stats_json(&run_profile.pulse_stats);
     if let Some(debug_names) = std::env::var_os("RR_DEBUG_FNIR") {
         let wanted: std::collections::HashSet<String> = debug_names
             .to_string_lossy()
@@ -144,6 +321,7 @@ pub(crate) fn run_tachyon_phase(
             }
         }
     }
+    let pulse_stats = &run_profile.pulse_stats;
     if optimize {
         ui.step_line_ok(&format!(
             "Vectorized: {} | Reduced: {} | Simplified: {} loops",
@@ -348,7 +526,19 @@ pub(crate) fn run_tachyon_phase(
         ));
     }
 
-    Ok(())
+    Ok(TachyonPhaseMetrics {
+        elapsed_ns: step_opt.elapsed().as_nanos(),
+        optimized_mir_cache_hit: optimized_cache_hit,
+        pulse_stats: run_profile.pulse_stats,
+        pass_timings: run_profile.pass_timings,
+        disabled_pass_groups: compile_mode
+            .disabled_pass_groups()
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect(),
+        active_pass_groups: run_profile.active_pass_groups,
+        plan_summary: run_profile.plan_summary,
+    })
 }
 
 pub(crate) fn inject_runtime_prelude(

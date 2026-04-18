@@ -21,7 +21,7 @@ pub(super) fn resolve_index1d_expr(
     {
         return b;
     }
-    let i = this.resolve_val(idx, values, params, false);
+    let i = this.resolve_preferred_plain_symbol_expr(idx, values, params);
     if (is_safe && is_na_safe) || this.can_elide_index_expr(idx, values, params) {
         format!("{}[{}]", b, i)
     } else {
@@ -38,8 +38,8 @@ pub(super) fn resolve_index2d_expr(
     params: &[String],
 ) -> String {
     let b = this.resolve_read_base(base, values, params);
-    let rr = this.resolve_val(r, values, params, false);
-    let cc = this.resolve_val(c, values, params, false);
+    let rr = this.resolve_preferred_plain_symbol_expr(r, values, params);
+    let cc = this.resolve_preferred_plain_symbol_expr(c, values, params);
     let r_idx = if this.can_elide_index_expr(r, values, params) {
         rr
     } else {
@@ -63,9 +63,9 @@ pub(super) fn resolve_index3d_expr(
     params: &[String],
 ) -> String {
     let b = this.resolve_read_base(base, values, params);
-    let i_val = this.resolve_val(i, values, params, false);
-    let j_val = this.resolve_val(j, values, params, false);
-    let k_val = this.resolve_val(k, values, params, false);
+    let i_val = this.resolve_preferred_plain_symbol_expr(i, values, params);
+    let j_val = this.resolve_preferred_plain_symbol_expr(j, values, params);
+    let k_val = this.resolve_preferred_plain_symbol_expr(k, values, params);
     let i_idx = if this.can_elide_index_expr(i, values, params) {
         i_val
     } else {
@@ -90,7 +90,7 @@ pub(super) fn resolve_cond(
     values: &[Value],
     params: &[String],
 ) -> String {
-    let c = this.resolve_val(cond, values, params, false);
+    let c = this.resolve_preferred_plain_symbol_expr(cond, values, params);
     let typed_bool_scalar = matches!(values[cond].value_term, TypeTerm::Logical)
         && values[cond].value_ty.shape == ShapeTy::Scalar;
     if values[cond].value_ty.is_logical_scalar_non_na()

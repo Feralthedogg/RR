@@ -1,6 +1,107 @@
 use super::*;
 
 impl RBackend {
+    fn single_positional_call_arg(
+        values: &[Value],
+        val_id: usize,
+        callee_name: &str,
+    ) -> Option<usize> {
+        let ValueKind::Call {
+            callee,
+            args,
+            names,
+        } = &values.get(val_id)?.kind
+        else {
+            return None;
+        };
+        if callee != callee_name || args.len() != 1 {
+            return None;
+        }
+        if names
+            .first()
+            .and_then(std::option::Option::as_ref)
+            .is_some()
+        {
+            return None;
+        }
+        Some(args[0])
+    }
+
+    fn negated_single_positional_call_arg(
+        values: &[Value],
+        val_id: usize,
+        callee_name: &str,
+    ) -> Option<usize> {
+        let ValueKind::Unary {
+            op: UnaryOp::Not,
+            rhs,
+        } = &values.get(val_id)?.kind
+        else {
+            return None;
+        };
+        Self::single_positional_call_arg(values, *rhs, callee_name)
+    }
+
+    fn eq_zero_operand(values: &[Value], val_id: usize) -> Option<usize> {
+        let ValueKind::Binary {
+            op: BinOp::Eq,
+            lhs,
+            rhs,
+        } = &values.get(val_id)?.kind
+        else {
+            return None;
+        };
+        match (&values.get(*lhs)?.kind, &values.get(*rhs)?.kind) {
+            (ValueKind::Const(Lit::Int(0)), _) => Some(*rhs),
+            (ValueKind::Const(Lit::Float(v)), _) if *v == 0.0 => Some(*rhs),
+            (_, ValueKind::Const(Lit::Int(0))) => Some(*lhs),
+            (_, ValueKind::Const(Lit::Float(v))) if *v == 0.0 => Some(*lhs),
+            _ => None,
+        }
+    }
+
+    fn try_simplify_same_var_non_finite_guard(
+        &self,
+        lhs: usize,
+        rhs: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> Option<String> {
+        for (is_na_side, not_finite_side) in [(lhs, rhs), (rhs, lhs)] {
+            let na_arg = Self::single_positional_call_arg(values, is_na_side, "is.na")?;
+            let finite_arg =
+                Self::negated_single_positional_call_arg(values, not_finite_side, "is.finite")?;
+            let na_expr = self.resolve_preferred_plain_symbol_expr(na_arg, values, params);
+            let finite_expr = self.resolve_preferred_plain_symbol_expr(finite_arg, values, params);
+            if na_expr == finite_expr {
+                return Some(format!("!(is.finite({finite_expr}))"));
+            }
+        }
+        None
+    }
+
+    fn try_simplify_not_finite_or_zero_guard(
+        &self,
+        lhs: usize,
+        rhs: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> Option<String> {
+        for (not_finite_side, zero_side) in [(lhs, rhs), (rhs, lhs)] {
+            let finite_arg =
+                Self::negated_single_positional_call_arg(values, not_finite_side, "is.finite")?;
+            let zero_arg = Self::eq_zero_operand(values, zero_side)?;
+            let finite_expr = self.resolve_preferred_plain_symbol_expr(finite_arg, values, params);
+            let zero_expr = self.resolve_preferred_plain_symbol_expr(zero_arg, values, params);
+            if finite_expr == zero_expr {
+                return Some(format!(
+                    "(!(is.finite({finite_expr})) | ({zero_expr} == 0))"
+                ));
+            }
+        }
+        None
+    }
+
     pub(super) fn named_mutable_base_expr(
         val_id: usize,
         values: &[Value],
@@ -74,19 +175,19 @@ impl RBackend {
                     .map(|(name, value)| {
                         format!(
                             "{name} = {}",
-                            self.resolve_val(*value, values, params, false)
+                            self.resolve_preferred_plain_symbol_expr(*value, values, params)
                         )
                     })
                     .collect::<Vec<_>>();
                 format!("list({})", rendered.join(", "))
             }
             ValueKind::FieldGet { base, field } => {
-                let base = self.resolve_val(*base, values, params, false);
+                let base = self.resolve_preferred_plain_symbol_expr(*base, values, params);
                 format!(r#"{base}[["{field}"]]"#)
             }
             ValueKind::FieldSet { base, field, value } => {
-                let base = self.resolve_val(*base, values, params, false);
-                let value = self.resolve_val(*value, values, params, false);
+                let base = self.resolve_preferred_plain_symbol_expr(*base, values, params);
+                let value = self.resolve_preferred_plain_symbol_expr(*value, values, params);
                 format!(r#"rr_field_set({base}, "{field}", {value})"#)
             }
             ValueKind::Binary { op, lhs, rhs } => {
@@ -102,19 +203,22 @@ impl RBackend {
                 self.resolve_intrinsic_expr(*op, args, values, params)
             }
             ValueKind::Len { base } => {
-                format!("length({})", self.resolve_val(*base, values, params, false))
+                format!(
+                    "length({})",
+                    self.resolve_preferred_plain_symbol_expr(*base, values, params)
+                )
             }
             ValueKind::Range { start, end } => {
                 format!(
                     "{}:{}",
-                    self.resolve_val(*start, values, params, false),
-                    self.resolve_val(*end, values, params, false)
+                    self.resolve_preferred_plain_symbol_expr(*start, values, params),
+                    self.resolve_preferred_plain_symbol_expr(*end, values, params)
                 )
             }
             ValueKind::Indices { base } => {
                 format!(
                     "(seq_along({}) - 1L)",
-                    self.resolve_val(*base, values, params, false)
+                    self.resolve_preferred_plain_symbol_expr(*base, values, params)
                 )
             }
             ValueKind::Index1D {
@@ -153,8 +257,20 @@ impl RBackend {
         values: &[Value],
         params: &[String],
     ) -> String {
-        let mut l = self.resolve_val(lhs, values, params, false);
-        let mut r = self.resolve_val(rhs, values, params, false);
+        let mut l = self.resolve_preferred_plain_symbol_expr(lhs, values, params);
+        let mut r = self.resolve_preferred_plain_symbol_expr(rhs, values, params);
+        if let Some(bound_l) = self.resolve_bound_value(lhs)
+            && Self::is_plain_symbol_expr(bound_l.as_str())
+            && !bound_l.starts_with('.')
+        {
+            l = bound_l;
+        }
+        if let Some(bound_r) = self.resolve_bound_value(rhs)
+            && Self::is_plain_symbol_expr(bound_r.as_str())
+            && !bound_r.starts_with('.')
+        {
+            r = bound_r;
+        }
         if let Some(origin_var) = self.resolve_live_const_origin_var(lhs, values) {
             l = origin_var;
         }
@@ -173,6 +289,18 @@ impl RBackend {
                 && l == origin_var
             {
                 r = origin_var.to_string();
+            }
+        }
+        if matches!(op, BinOp::Or) {
+            if let Some(simplified) =
+                self.try_simplify_same_var_non_finite_guard(lhs, rhs, values, params)
+            {
+                return simplified;
+            }
+            if let Some(simplified) =
+                self.try_simplify_not_finite_or_zero_guard(lhs, rhs, values, params)
+            {
+                return simplified;
             }
         }
         if matches!(op, BinOp::Add)
@@ -228,6 +356,12 @@ impl RBackend {
         values: &[Value],
         params: &[String],
     ) -> String {
+        if matches!(op, UnaryOp::Not)
+            && let Some(arg) = Self::single_positional_call_arg(values, rhs, "is.finite")
+        {
+            let rendered = self.resolve_preferred_plain_symbol_expr(arg, values, params);
+            return format!("!(is.finite({rendered}))");
+        }
         if matches!(op, UnaryOp::Neg) {
             match values.get(rhs).map(|value| &value.kind) {
                 Some(ValueKind::Const(Lit::Int(v))) => {
@@ -241,7 +375,7 @@ impl RBackend {
                 _ => {}
             }
         }
-        let r = self.resolve_val(rhs, values, params, false);
+        let r = self.resolve_preferred_plain_symbol_expr(rhs, values, params);
         format!("({}({}))", Self::unary_op_str(op), r)
     }
 
@@ -259,8 +393,8 @@ impl RBackend {
             && names.iter().take(2).all(std::option::Option::is_none)
             && self.can_elide_index_expr(args[1], values, params)
         {
-            let base = self.resolve_val(args[0], values, params, false);
-            let idx = self.resolve_val(args[1], values, params, false);
+            let base = self.resolve_preferred_plain_symbol_expr(args[0], values, params);
+            let idx = self.resolve_preferred_plain_symbol_expr(args[1], values, params);
             return format!("{}[{}]", base, idx);
         }
         if callee == "rr_index1_write"
@@ -271,7 +405,7 @@ impl RBackend {
                 .is_none()
             && self.can_elide_index_expr(args[0], values, params)
         {
-            return self.resolve_val(args[0], values, params, false);
+            return self.resolve_preferred_plain_symbol_expr(args[0], values, params);
         }
         if matches!(callee, "rr_index1_read_vec" | "rr_index1_read_vec_floor")
             && args.len() >= 2
@@ -288,7 +422,7 @@ impl RBackend {
                     &mut FxHashSet::default(),
                 )
             {
-                return self.resolve_val(base, values, params, false);
+                return self.resolve_preferred_plain_symbol_expr(base, values, params);
             }
         }
         if let Some((base, idx)) = Self::floor_index_read_components(callee, args, names, values) {
@@ -301,10 +435,10 @@ impl RBackend {
                     &mut FxHashSet::default(),
                 )
             {
-                return self.resolve_val(base, values, params, false);
+                return self.resolve_preferred_plain_symbol_expr(base, values, params);
             }
-            let b = self.resolve_val(base, values, params, false);
-            let i = self.resolve_val(idx, values, params, false);
+            let b = self.resolve_preferred_plain_symbol_expr(base, values, params);
+            let i = self.resolve_preferred_plain_symbol_expr(idx, values, params);
             return format!("rr_index1_read_idx({}, {}, \"index\")", b, i);
         }
         if callee == "rr_named_list"
@@ -319,7 +453,7 @@ impl RBackend {
                         fields.push(format!(
                             "{} = {}",
                             name,
-                            self.resolve_val(pair[1], values, params, false)
+                            self.resolve_preferred_plain_symbol_expr(pair[1], values, params)
                         ));
                     }
                     _ => {
@@ -338,11 +472,11 @@ impl RBackend {
             && let Some(ValueKind::Const(Lit::Str(name))) =
                 values.get(args[1]).map(|value| &value.kind)
         {
-            let base = self.resolve_val(args[0], values, params, false);
+            let base = self.resolve_preferred_plain_symbol_expr(args[0], values, params);
             return format!(r#"{base}[["{name}"]]"#);
         }
         if Self::can_elide_identity_floor_call(callee, args, names, values) {
-            return self.resolve_val(args[0], values, params, false);
+            return self.resolve_preferred_plain_symbol_expr(args[0], values, params);
         }
         if !self.analysis.direct_builtin_vector_math
             && val.value_ty.shape == ShapeTy::Vector
@@ -351,7 +485,7 @@ impl RBackend {
         {
             let resolved: Vec<String> = args
                 .iter()
-                .map(|arg| self.resolve_val(*arg, values, params, false))
+                .map(|arg| self.resolve_preferred_plain_symbol_expr(*arg, values, params))
                 .collect();
             match (callee, resolved.as_slice()) {
                 ("abs", [arg]) => return format!("rr_intrinsic_vec_abs_f64({arg})"),
@@ -367,7 +501,7 @@ impl RBackend {
                 self.resolve_rr_idx_cube_vec_arg_expr(args[0], values, params),
                 self.resolve_rr_idx_cube_vec_arg_expr(args[1], values, params),
                 self.resolve_rr_idx_cube_vec_arg_expr(args[2], values, params),
-                self.resolve_val(args[3], values, params, false),
+                self.resolve_preferred_plain_symbol_expr(args[3], values, params),
             ];
             return format!(
                 "rr_idx_cube_vec_i({}, {}, {}, {})",
@@ -389,7 +523,7 @@ impl RBackend {
             .or_else(|| {
                 self.try_render_singleton_assign_call_with_scalar_rhs(val_id, values, params)
             })
-            .unwrap_or_else(|| self.resolve_val(val_id, values, params, false))
+            .unwrap_or_else(|| self.resolve_preferred_plain_symbol_expr(val_id, values, params))
     }
 
     pub(super) fn try_resolve_singleton_replace_expr(
@@ -449,6 +583,13 @@ impl RBackend {
                     && args.len() >= 2
                     && self.value_is_known_one(args[1], values) =>
             {
+                if self.can_reuse_live_expr_alias(args[0], values) {
+                    let preferred = self.resolve_preferred_live_expr_alias(args[0], values, params);
+                    if Self::is_plain_symbol_expr(preferred.as_str()) && !preferred.starts_with('.')
+                    {
+                        return Some(preferred);
+                    }
+                }
                 Some(self.resolve_bound_temp_expr(
                     args[0],
                     values,
@@ -456,12 +597,31 @@ impl RBackend {
                     &mut FxHashSet::default(),
                 ))
             }
-            _ if self.value_is_scalar_shape(val_id, values) => Some(self.resolve_bound_temp_expr(
-                val_id,
-                values,
-                params,
-                &mut FxHashSet::default(),
-            )),
+            _ if self.value_is_scalar_shape(val_id, values) => {
+                if matches!(
+                    values.get(val_id).map(|value| &value.kind),
+                    Some(
+                        ValueKind::Binary { .. }
+                            | ValueKind::Unary { .. }
+                            | ValueKind::Call { .. }
+                            | ValueKind::FieldGet { .. }
+                            | ValueKind::Len { .. }
+                    )
+                ) && self.can_reuse_live_expr_alias(val_id, values)
+                {
+                    let preferred = self.resolve_preferred_live_expr_alias(val_id, values, params);
+                    if Self::is_plain_symbol_expr(preferred.as_str()) && !preferred.starts_with('.')
+                    {
+                        return Some(preferred);
+                    }
+                }
+                Some(self.resolve_bound_temp_expr(
+                    val_id,
+                    values,
+                    params,
+                    &mut FxHashSet::default(),
+                ))
+            }
             _ => None,
         }
     }
@@ -478,8 +638,8 @@ impl RBackend {
         if *callee != "rr_assign_slice" || args.len() < 4 {
             return None;
         }
-        let start_expr = self.resolve_val(args[1], values, params, false);
-        let end_expr = self.resolve_val(args[2], values, params, false);
+        let start_expr = self.resolve_preferred_plain_symbol_expr(args[1], values, params);
+        let end_expr = self.resolve_preferred_plain_symbol_expr(args[2], values, params);
         if start_expr != end_expr {
             return None;
         }
@@ -508,7 +668,7 @@ impl RBackend {
         if self.analysis.direct_builtin_vector_math && !has_matrix_arg {
             let resolved: Vec<String> = args
                 .iter()
-                .map(|arg| self.resolve_val(*arg, values, params, false))
+                .map(|arg| self.resolve_preferred_plain_symbol_expr(*arg, values, params))
                 .collect();
             return match op {
                 IntrinsicOp::VecAddF64 => format!("({} + {})", resolved[0], resolved[1]),
@@ -527,7 +687,7 @@ impl RBackend {
         if has_matrix_arg {
             let resolved: Vec<String> = args
                 .iter()
-                .map(|arg| self.resolve_val(*arg, values, params, false))
+                .map(|arg| self.resolve_preferred_plain_symbol_expr(*arg, values, params))
                 .collect();
             return match op {
                 IntrinsicOp::VecAddF64 => format!("({} + {})", resolved[0], resolved[1]),

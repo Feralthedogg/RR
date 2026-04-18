@@ -1,4 +1,50 @@
 use super::*;
+use crate::mir::analyze::effects::call_is_pure;
+
+impl RBackend {
+    pub(super) fn can_reuse_live_expr_alias(&self, val_id: usize, values: &[Value]) -> bool {
+        match values.get(val_id).map(|value| &value.kind) {
+            Some(ValueKind::Binary { .. })
+            | Some(ValueKind::Unary { .. })
+            | Some(ValueKind::RecordLit { .. })
+            | Some(ValueKind::FieldGet { .. })
+            | Some(ValueKind::Len { .. })
+            | Some(ValueKind::Indices { .. })
+            | Some(ValueKind::Range { .. }) => true,
+            Some(ValueKind::Call { callee, .. }) => {
+                call_is_pure(callee) || self.analysis.known_pure_user_calls.contains(callee)
+            }
+            _ => false,
+        }
+    }
+
+    fn resolve_preferred_live_operand(
+        &self,
+        val_id: usize,
+        values: &[Value],
+        params: &[String],
+    ) -> String {
+        if let Some(bound) = self.resolve_bound_value(val_id)
+            && Self::is_plain_symbol_expr(bound.as_str())
+            && !bound.starts_with('.')
+        {
+            return bound;
+        }
+        if let Some(origin_var) = self.resolve_live_const_origin_var(val_id, values) {
+            return origin_var;
+        }
+        if let Some(alias) = self.resolve_live_same_kind_scalar_alias(val_id, values) {
+            return alias;
+        }
+        if self.can_reuse_live_expr_alias(val_id, values) {
+            let preferred = self.resolve_preferred_live_expr_alias(val_id, values, params);
+            if Self::is_plain_symbol_expr(preferred.as_str()) {
+                return preferred;
+            }
+        }
+        self.resolve_val(val_id, values, params, false)
+    }
+}
 
 impl RBackend {
     pub(super) fn emit_instr(
@@ -18,7 +64,20 @@ impl RBackend {
                         self.resolve_named_mutable_base_var(*base, values, params)
                     && base_var == *dst
                 {
-                    let rhs = self.resolve_val(*value, values, params, false);
+                    let rhs = if self.can_reuse_live_expr_alias(*value, values) {
+                        let preferred = self
+                            .resolve_live_same_kind_scalar_alias(*value, values)
+                            .unwrap_or_else(|| {
+                                self.resolve_preferred_live_expr_alias(*value, values, params)
+                            });
+                        if Self::is_plain_symbol_expr(preferred.as_str()) {
+                            preferred
+                        } else {
+                            self.resolve_val(*value, values, params, false)
+                        }
+                    } else {
+                        self.resolve_val(*value, values, params, false)
+                    };
                     self.record_span(*span);
                     self.write_stmt(&format!(r#"{dst}[["{field}"]] <- {rhs}"#));
                     self.note_var_write(dst);
@@ -61,7 +120,42 @@ impl RBackend {
                             return Ok(());
                         }
                     }
-                    let base_expr = self.resolve_val(*base, values, params, false);
+                    let preferred_alias = self
+                        .resolve_live_same_kind_scalar_alias(*src, values)
+                        .unwrap_or_else(|| {
+                            self.resolve_preferred_live_expr_alias(*src, values, params)
+                        });
+                    if Self::is_plain_symbol_expr(preferred_alias.as_str())
+                        && preferred_alias != *dst
+                    {
+                        self.record_span(*span);
+                        self.write_stmt(&format!("{dst} <- {preferred_alias}"));
+                        self.note_var_write(dst);
+                        self.bind_value_to_var(*src, dst);
+                        self.bind_var_to_value(dst, *src);
+                        self.log_last_assigned_value_change(dst);
+                        self.value_tracker
+                            .last_assigned_value_ids
+                            .insert(dst.clone(), *src);
+                        self.invalidate_emitted_cse_temps();
+                        return Ok(());
+                    }
+                    let base_expr = if self.can_reuse_live_expr_alias(*base, values) {
+                        let preferred = self
+                            .resolve_live_same_kind_scalar_alias(*base, values)
+                            .unwrap_or_else(|| {
+                                self.resolve_preferred_live_expr_alias(*base, values, params)
+                            });
+                        if Self::is_plain_symbol_expr(preferred.as_str())
+                            && !preferred.starts_with('.')
+                        {
+                            preferred
+                        } else {
+                            self.resolve_val(*base, values, params, false)
+                        }
+                    } else {
+                        self.resolve_val(*base, values, params, false)
+                    };
                     let rendered = format!(r#"{base_expr}[["{field}"]]"#);
                     self.record_span(*span);
                     self.write_stmt(&format!("{dst} <- {rendered}"));
@@ -322,6 +416,23 @@ impl RBackend {
                     && let Some(bound) = bound_probe.clone()
                 {
                     bound
+                } else if self.can_reuse_live_expr_alias(*src, values) {
+                    let preferred = self
+                        .resolve_live_same_kind_scalar_alias(*src, values)
+                        .unwrap_or_else(|| {
+                            self.resolve_preferred_live_expr_alias(*src, values, params)
+                        });
+                    if Self::is_plain_symbol_expr(preferred.as_str()) && preferred != *dst {
+                        preferred
+                    } else {
+                        let preview = self.resolve_val(*src, values, params, true);
+                        if preview == *dst {
+                            preview
+                        } else {
+                            self.emit_common_subexpr_temps(*src, values, params);
+                            self.resolve_val(*src, values, params, true)
+                        }
+                    }
                 } else {
                     let preview = self.resolve_val(*src, values, params, true);
                     if preview == *dst {
@@ -368,7 +479,7 @@ impl RBackend {
             Instr::Eval { val, span } => {
                 self.emit_mark(*span, Some("eval"));
                 self.record_span(*span);
-                let v = self.resolve_val(*val, values, params, false);
+                let v = self.resolve_preferred_live_operand(*val, values, params);
                 self.write_stmt(&v);
             }
             Instr::StoreIndex1D {
@@ -383,8 +494,8 @@ impl RBackend {
                 self.emit_mark(*span, Some("store"));
                 self.record_span(*span);
                 let base_val = self.resolve_mutable_base(*base, values, params);
-                let idx_val = self.resolve_val(*idx, values, params, false);
-                let src_val = self.resolve_val(*val, values, params, false);
+                let idx_val = self.resolve_preferred_live_operand(*idx, values, params);
+                let src_val = self.resolve_preferred_live_operand(*val, values, params);
 
                 if *is_vector {
                     self.write_stmt(&format!("{} <- {}", base_val, src_val));
@@ -425,9 +536,9 @@ impl RBackend {
                 self.emit_mark(*span, Some("store2d"));
                 self.record_span(*span);
                 let base_val = self.resolve_mutable_base(*base, values, params);
-                let r_val = self.resolve_val(*r, values, params, false);
-                let c_val = self.resolve_val(*c, values, params, false);
-                let src_val = self.resolve_val(*val, values, params, false);
+                let r_val = self.resolve_preferred_live_operand(*r, values, params);
+                let c_val = self.resolve_preferred_live_operand(*c, values, params);
+                let src_val = self.resolve_preferred_live_operand(*val, values, params);
                 let r_idx = if self.can_elide_index_expr(*r, values, params) {
                     r_val
                 } else {
@@ -455,10 +566,10 @@ impl RBackend {
                 self.emit_mark(*span, Some("store3d"));
                 self.record_span(*span);
                 let base_val = self.resolve_mutable_base(*base, values, params);
-                let i_val = self.resolve_val(*i, values, params, false);
-                let j_val = self.resolve_val(*j, values, params, false);
-                let k_val = self.resolve_val(*k, values, params, false);
-                let src_val = self.resolve_val(*val, values, params, false);
+                let i_val = self.resolve_preferred_live_operand(*i, values, params);
+                let j_val = self.resolve_preferred_live_operand(*j, values, params);
+                let k_val = self.resolve_preferred_live_operand(*k, values, params);
+                let src_val = self.resolve_preferred_live_operand(*val, values, params);
                 let i_idx = if self.can_elide_index_expr(*i, values, params) {
                     i_val
                 } else {
@@ -504,7 +615,7 @@ impl RBackend {
                 self.write_stmt("}");
             }
             Terminator::Return(Some(v)) => {
-                let val = self.resolve_val(*v, values, params, false);
+                let val = self.resolve_preferred_live_operand(*v, values, params);
                 self.write_stmt(&format!("return({})", val));
             }
             Terminator::Return(None) => {

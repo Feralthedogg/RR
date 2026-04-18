@@ -12,7 +12,7 @@ pub(super) fn build_named_arg_list(
         if i > 0 {
             out.push_str(", ");
         }
-        let value = this.resolve_val(*a, values, params, false);
+        let value = this.resolve_preferred_scalar_call_arg_expr(*a, values, params);
         if let Some(Some(name)) = names.get(i) {
             out.push_str(name);
             out.push_str(" = ");
@@ -35,7 +35,7 @@ pub(super) fn build_plain_arg_list(
         if idx > 0 {
             out.push_str(", ");
         }
-        out.push_str(&this.resolve_val(*arg, values, params, false));
+        out.push_str(&this.resolve_preferred_scalar_call_arg_expr(*arg, values, params));
     }
     out
 }

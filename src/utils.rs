@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Span {
     pub start_byte: usize,
     pub end_byte: usize,

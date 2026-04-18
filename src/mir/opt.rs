@@ -1,4 +1,6 @@
-use crate::compiler::scheduler::{CompilerParallelConfig, CompilerScheduler};
+use crate::compiler::scheduler::{
+    CompilerParallelConfig, CompilerParallelStage, CompilerScheduler,
+};
 use crate::mir::*;
 use crate::syntax::ast::BinOp;
 use crate::typeck::{LenSym, PrimTy, TypeState, TypeTerm};
@@ -52,10 +54,21 @@ pub mod type_specialize;
 pub mod v_opt;
 
 use self::types::{FunctionBudgetProfile, FunctionPhasePlan, PhaseScheduleId, ProgramOptPlan};
-pub use self::types::{TachyonProgress, TachyonProgressTier, TachyonPulseStats};
+pub use self::types::{
+    TachyonPassTiming, TachyonPassTimings, TachyonProgress, TachyonProgressTier, TachyonPulseStats,
+};
+
+#[derive(Debug, Default, Clone)]
+pub struct TachyonRunProfile {
+    pub pulse_stats: TachyonPulseStats,
+    pub pass_timings: TachyonPassTimings,
+    pub active_pass_groups: Vec<String>,
+    pub plan_summary: Vec<String>,
+}
 
 pub struct TachyonEngine {
     phase_ordering_default_mode: types::PhaseOrderingMode,
+    compile_mode: crate::compiler::CompileMode,
 }
 
 // Backward compatibility alias for older call sites.
@@ -71,6 +84,7 @@ impl TachyonEngine {
     pub fn new() -> Self {
         Self {
             phase_ordering_default_mode: types::PhaseOrderingMode::Off,
+            compile_mode: crate::compiler::CompileMode::Standard,
         }
     }
 
@@ -79,7 +93,127 @@ impl TachyonEngine {
     ) -> Self {
         Self {
             phase_ordering_default_mode,
+            compile_mode: crate::compiler::CompileMode::Standard,
         }
+    }
+
+    pub(crate) fn with_phase_ordering_default_mode_and_compile_mode(
+        phase_ordering_default_mode: types::PhaseOrderingMode,
+        compile_mode: crate::compiler::CompileMode,
+    ) -> Self {
+        Self {
+            phase_ordering_default_mode,
+            compile_mode,
+        }
+    }
+
+    fn fast_dev_enabled(&self) -> bool {
+        matches!(self.compile_mode, crate::compiler::CompileMode::FastDev)
+    }
+
+    fn configured_max_opt_iterations(&self) -> usize {
+        if self.fast_dev_enabled() {
+            8
+        } else {
+            Self::max_opt_iterations()
+        }
+    }
+
+    fn configured_max_inline_rounds(&self) -> usize {
+        if self.fast_dev_enabled() {
+            1
+        } else {
+            Self::max_inline_rounds()
+        }
+    }
+
+    fn configured_heavy_pass_fn_ir(&self) -> usize {
+        if self.fast_dev_enabled() {
+            384
+        } else {
+            Self::heavy_pass_fn_ir()
+        }
+    }
+
+    fn configured_always_bce_fn_ir(&self) -> usize {
+        self.configured_heavy_pass_fn_ir().max(64)
+    }
+
+    fn configured_max_fn_opt_ms(&self) -> u128 {
+        if self.fast_dev_enabled() {
+            80
+        } else {
+            Self::max_fn_opt_ms()
+        }
+    }
+
+    fn configured_always_tier_max_iters(&self) -> usize {
+        if self.fast_dev_enabled() {
+            1
+        } else {
+            Self::always_tier_max_iters()
+        }
+    }
+
+    fn structural_optimizations_enabled(&self) -> bool {
+        !self.fast_dev_enabled()
+    }
+
+    fn inline_tier_enabled(&self) -> bool {
+        !self.fast_dev_enabled()
+    }
+
+    fn adjust_pass_groups_for_mode(&self, groups: &[types::PassGroup]) -> Vec<types::PassGroup> {
+        groups
+            .iter()
+            .copied()
+            .filter(|group| match group {
+                types::PassGroup::Required | types::PassGroup::DevCheap => true,
+                types::PassGroup::ReleaseExpensive | types::PassGroup::Experimental => {
+                    !self.fast_dev_enabled()
+                }
+            })
+            .collect()
+    }
+
+    fn active_pass_group_labels(&self) -> Vec<String> {
+        let base = [
+            types::PassGroup::Required,
+            types::PassGroup::DevCheap,
+            types::PassGroup::ReleaseExpensive,
+            types::PassGroup::Experimental,
+        ];
+        self.adjust_pass_groups_for_mode(&base)
+            .into_iter()
+            .map(|group| group.label().to_string())
+            .collect()
+    }
+
+    fn plan_summary_lines(
+        &self,
+        ordered_names: &[String],
+        plans: &FxHashMap<String, types::FunctionPhasePlan>,
+    ) -> Vec<String> {
+        let mut out = Vec::new();
+        for name in ordered_names {
+            let Some(plan) = plans.get(name) else {
+                continue;
+            };
+            let groups = plan
+                .pass_groups
+                .iter()
+                .map(|group| group.label())
+                .collect::<Vec<_>>()
+                .join(",");
+            out.push(format!(
+                "{} schedule={} profile={} groups={}",
+                name,
+                plan.schedule.label(),
+                plan.profile.label(),
+                groups
+            ));
+        }
+        out
     }
 
     fn verify_or_panic(fn_ir: &FnIR, stage: &str) {
@@ -807,12 +941,24 @@ impl TachyonEngine {
         proven_param_slots: Option<&FxHashSet<usize>>,
         floor_helpers: &FxHashSet<String>,
     ) -> TachyonPulseStats {
-        let mut stats = TachyonPulseStats::default();
+        self.run_always_tier_with_profile(fn_ir, proven_param_slots, floor_helpers)
+            .pulse_stats
+    }
+
+    fn run_always_tier_with_profile(
+        &self,
+        fn_ir: &mut FnIR,
+        proven_param_slots: Option<&FxHashSet<usize>>,
+        floor_helpers: &FxHashSet<String>,
+    ) -> TachyonRunProfile {
+        let mut profile = TachyonRunProfile::default();
+        let stats = &mut profile.pulse_stats;
+        let pass_timings = &mut profile.pass_timings;
         if fn_ir.requires_conservative_optimization() {
-            return stats;
+            return profile;
         }
         if !Self::verify_or_reject(fn_ir, "AlwaysTier/Start") {
-            return stats;
+            return profile;
         }
         let canonicalized_index_params =
             Self::canonicalize_floor_index_params(fn_ir, proven_param_slots, floor_helpers);
@@ -823,11 +969,11 @@ impl TachyonEngine {
         stats.always_tier_functions = 1;
         let mut changed = true;
         let mut iter = 0usize;
-        let max_iters = Self::always_tier_max_iters();
+        let max_iters = self.configured_always_tier_max_iters();
         let mut seen = FxHashSet::default();
         seen.insert(Self::fn_ir_fingerprint(fn_ir));
         let fn_ir_size = Self::fn_ir_size(fn_ir);
-        let run_light_sccp = fn_ir_size <= Self::heavy_pass_fn_ir().saturating_mul(2);
+        let run_light_sccp = fn_ir_size <= self.configured_heavy_pass_fn_ir().saturating_mul(2);
         let loop_opt = loop_opt::MirLoopOptimizer::new();
 
         while changed && iter < max_iters {
@@ -835,7 +981,8 @@ impl TachyonEngine {
             changed = false;
             let before_hash = Self::fn_ir_fingerprint(fn_ir);
 
-            let sc_changed = self.simplify_cfg(fn_ir);
+            let sc_changed =
+                Self::timed_bool_pass(pass_timings, "simplify_cfg", || self.simplify_cfg(fn_ir));
             if sc_changed {
                 stats.simplify_hits += 1;
                 changed = true;
@@ -843,14 +990,18 @@ impl TachyonEngine {
             Self::maybe_verify(fn_ir, "After AlwaysTier/SimplifyCFG");
 
             if run_light_sccp {
-                let sccp_changed = sccp::MirSCCP::new().optimize(fn_ir);
+                let sccp_changed = Self::timed_bool_pass(pass_timings, "sccp", || {
+                    sccp::MirSCCP::new().optimize(fn_ir)
+                });
                 if sccp_changed {
                     stats.sccp_hits += 1;
                     changed = true;
                 }
                 Self::maybe_verify(fn_ir, "After AlwaysTier/SCCP");
 
-                let intr_changed = intrinsics::optimize(fn_ir);
+                let intr_changed = Self::timed_bool_pass(pass_timings, "intrinsics", || {
+                    intrinsics::optimize(fn_ir)
+                });
                 if intr_changed {
                     stats.intrinsics_hits += 1;
                     changed = true;
@@ -858,27 +1009,31 @@ impl TachyonEngine {
                 Self::maybe_verify(fn_ir, "After AlwaysTier/Intrinsics");
             }
 
-            let type_spec_changed = type_specialize::optimize(fn_ir);
+            let type_spec_changed = Self::timed_bool_pass(pass_timings, "type_specialize", || {
+                type_specialize::optimize(fn_ir)
+            });
             if type_spec_changed {
                 changed = true;
             }
             Self::maybe_verify(fn_ir, "After AlwaysTier/TypeSpecialize");
 
-            let tco_changed = tco::optimize(fn_ir);
+            let tco_changed = Self::timed_bool_pass(pass_timings, "tco", || tco::optimize(fn_ir));
             if tco_changed {
                 stats.tco_hits += 1;
                 changed = true;
             }
             Self::maybe_verify(fn_ir, "After AlwaysTier/TCO");
 
-            let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
+            let loop_changed_count = Self::timed_count_pass(pass_timings, "loop_opt", || {
+                loop_opt.optimize_with_count(fn_ir)
+            });
             if loop_changed_count > 0 {
                 stats.simplified_loops += loop_changed_count;
                 changed = true;
             }
             Self::maybe_verify(fn_ir, "After AlwaysTier/LoopOpt");
 
-            let dce_changed = self.dce(fn_ir);
+            let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
             if dce_changed {
                 stats.dce_hits += 1;
                 changed = true;
@@ -896,8 +1051,8 @@ impl TachyonEngine {
 
         // Apply one bounded BCE sweep after convergence so skipped heavy-tier functions
         // can still get guard elimination opportunities without large compile-time spikes.
-        if fn_ir_size <= Self::always_bce_fn_ir() {
-            let bce_changed = bce::optimize(fn_ir);
+        if fn_ir_size <= self.configured_always_bce_fn_ir() {
+            let bce_changed = Self::timed_bool_pass(pass_timings, "bce", || bce::optimize(fn_ir));
             if bce_changed {
                 stats.bce_hits += 1;
             }
@@ -905,7 +1060,7 @@ impl TachyonEngine {
         }
 
         let _ = Self::verify_or_reject(fn_ir, "AlwaysTier/End");
-        stats
+        profile
     }
 
     pub fn run_program(&self, all_fns: &mut FxHashMap<String, FnIR>) {
@@ -953,7 +1108,8 @@ impl TachyonEngine {
         all_fns: &mut FxHashMap<String, FnIR>,
         scheduler: &CompilerScheduler,
     ) -> TachyonPulseStats {
-        self.run_program_with_stats_inner(all_fns, scheduler, None)
+        self.run_program_with_profile_and_scheduler(all_fns, scheduler)
+            .pulse_stats
     }
 
     pub(crate) fn run_program_with_progress_and_scheduler(
@@ -962,7 +1118,25 @@ impl TachyonEngine {
         scheduler: &CompilerScheduler,
         on_progress: &mut dyn FnMut(TachyonProgress),
     ) -> TachyonPulseStats {
-        self.run_program_with_stats_inner(all_fns, scheduler, Some(on_progress))
+        self.run_program_with_profile_and_progress_scheduler(all_fns, scheduler, on_progress)
+            .pulse_stats
+    }
+
+    pub(crate) fn run_program_with_profile_and_scheduler(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        scheduler: &CompilerScheduler,
+    ) -> TachyonRunProfile {
+        self.run_program_with_profile_inner(all_fns, scheduler, None)
+    }
+
+    pub(crate) fn run_program_with_profile_and_progress_scheduler(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        scheduler: &CompilerScheduler,
+        on_progress: &mut dyn FnMut(TachyonProgress),
+    ) -> TachyonRunProfile {
+        self.run_program_with_profile_inner(all_fns, scheduler, Some(on_progress))
     }
 
     fn emit_progress(
@@ -980,6 +1154,26 @@ impl TachyonEngine {
                 function: function.to_string(),
             });
         }
+    }
+
+    fn timed_bool_pass<F>(pass_timings: &mut TachyonPassTimings, pass: &'static str, f: F) -> bool
+    where
+        F: FnOnce() -> bool,
+    {
+        let started = Instant::now();
+        let changed = f();
+        pass_timings.record(pass, started.elapsed().as_nanos(), changed);
+        changed
+    }
+
+    fn timed_count_pass<F>(pass_timings: &mut TachyonPassTimings, pass: &'static str, f: F) -> usize
+    where
+        F: FnOnce() -> usize,
+    {
+        let started = Instant::now();
+        let changed_count = f();
+        pass_timings.record(pass, started.elapsed().as_nanos(), changed_count > 0);
+        changed_count
     }
 
     fn take_functions_in_order(
@@ -1010,17 +1204,20 @@ impl TachyonEngine {
         })
     }
 
-    fn run_program_with_stats_inner(
+    fn run_program_with_profile_inner(
         &self,
         all_fns: &mut FxHashMap<String, FnIR>,
         scheduler: &CompilerScheduler,
         mut progress: Option<&mut dyn FnMut(TachyonProgress)>,
-    ) -> TachyonPulseStats {
-        let mut stats = TachyonPulseStats::default();
+    ) -> TachyonRunProfile {
+        let mut profile = TachyonRunProfile::default();
+        let stats = &mut profile.pulse_stats;
+        let pass_timings = &mut profile.pass_timings;
+        profile.active_pass_groups = self.active_pass_group_labels();
         let plan = Self::build_opt_plan(all_fns);
         let selective_enabled = Self::selective_budget_enabled();
         let run_heavy_tier = !plan.selective_mode || selective_enabled;
-        let run_full_inline_tier = run_heavy_tier;
+        let run_full_inline_tier = run_heavy_tier && self.inline_tier_enabled();
         stats.total_program_ir = plan.total_ir;
         stats.max_function_ir = plan.max_fn_ir;
         stats.full_opt_ir_limit = plan.program_limit;
@@ -1094,17 +1291,23 @@ impl TachyonEngine {
             .map(Self::fn_ir_size)
             .sum();
         let tier_a_jobs = Self::take_functions_in_order(all_fns, &ordered_names);
-        let tier_a_results = scheduler.map(tier_a_jobs, tier_a_total_ir, |(name, mut fn_ir)| {
-            let s = self.run_always_tier_with_stats(
-                &mut fn_ir,
-                proven_floor_param_slots.get(&name),
-                &floor_helpers,
-            );
-            (name, fn_ir, s)
-        });
+        let tier_a_results = scheduler.map_stage(
+            CompilerParallelStage::TachyonAlways,
+            tier_a_jobs,
+            tier_a_total_ir,
+            |(name, mut fn_ir)| {
+                let local_profile = self.run_always_tier_with_profile(
+                    &mut fn_ir,
+                    proven_floor_param_slots.get(&name),
+                    &floor_helpers,
+                );
+                (name, fn_ir, local_profile)
+            },
+        );
         let mut restored_tier_a = Vec::with_capacity(tier_a_results.len());
-        for (idx, (name, fn_ir, s)) in tier_a_results.into_iter().enumerate() {
-            stats.accumulate(s);
+        for (idx, (name, fn_ir, local_profile)) in tier_a_results.into_iter().enumerate() {
+            stats.accumulate(local_profile.pulse_stats);
+            pass_timings.accumulate(local_profile.pass_timings);
             Self::emit_progress(
                 &mut progress,
                 TachyonProgressTier::Always,
@@ -1127,6 +1330,7 @@ impl TachyonEngine {
         } else {
             FxHashMap::default()
         };
+        profile.plan_summary = self.plan_summary_lines(&ordered_names, &heavy_phase_plans);
 
         let wrap_index_helpers = if run_heavy_tier {
             Self::collect_wrap_index_helpers(all_fns)
@@ -1193,46 +1397,57 @@ impl TachyonEngine {
             .map(Self::fn_ir_size)
             .sum();
         let tier_b_jobs = Self::take_functions_in_order(all_fns, &ordered_names);
-        let tier_b_results = scheduler.map(tier_b_jobs, tier_b_total_ir, |(name, mut fn_ir)| {
-            let mut local_stats = TachyonPulseStats::default();
-            if fn_ir.requires_conservative_optimization() {
-                local_stats.skipped_functions += 1;
-                let _ = Self::verify_or_reject(&mut fn_ir, "SkipOpt/ConservativeInterop");
-                return (name, fn_ir, local_stats);
-            }
-            if Self::fn_is_self_recursive(&fn_ir) {
-                local_stats.skipped_functions += 1;
-                let _ = Self::verify_or_reject(&mut fn_ir, "SkipOpt/SelfRecursive");
-                return (name, fn_ir, local_stats);
-            }
-            let selected = !plan.selective_mode || plan.selected_functions.contains(&name);
-            if !run_heavy_tier || !selected {
-                local_stats.skipped_functions += 1;
-                let reason = if !run_heavy_tier {
-                    "SkipOpt/HeavyTierDisabled"
-                } else {
-                    "SkipOpt/Budget"
-                };
-                let _ = Self::verify_or_reject(&mut fn_ir, reason);
-                return (name, fn_ir, local_stats);
-            }
-            local_stats.optimized_functions += 1;
-            let phase_plan = heavy_phase_plans
-                .get(&name)
-                .cloned()
-                .unwrap_or_else(|| self.build_legacy_function_phase_plan(&name));
-            let s = self.run_function_with_phase_plan_with_proven(
-                &mut fn_ir,
-                &callmap_user_whitelist,
-                proven_floor_param_slots.get(&name),
-                &phase_plan,
-            );
-            local_stats.accumulate(s);
-            (name, fn_ir, local_stats)
-        });
+        let tier_b_results = scheduler.map_stage(
+            CompilerParallelStage::TachyonHeavy,
+            tier_b_jobs,
+            tier_b_total_ir,
+            |(name, mut fn_ir)| {
+                let mut local_profile = TachyonRunProfile::default();
+                if fn_ir.requires_conservative_optimization() {
+                    local_profile.pulse_stats.skipped_functions += 1;
+                    let _ = Self::verify_or_reject(&mut fn_ir, "SkipOpt/ConservativeInterop");
+                    return (name, fn_ir, local_profile);
+                }
+                if Self::fn_is_self_recursive(&fn_ir) {
+                    local_profile.pulse_stats.skipped_functions += 1;
+                    let _ = Self::verify_or_reject(&mut fn_ir, "SkipOpt/SelfRecursive");
+                    return (name, fn_ir, local_profile);
+                }
+                let selected = !plan.selective_mode || plan.selected_functions.contains(&name);
+                if !run_heavy_tier || !selected {
+                    local_profile.pulse_stats.skipped_functions += 1;
+                    let reason = if !run_heavy_tier {
+                        "SkipOpt/HeavyTierDisabled"
+                    } else {
+                        "SkipOpt/Budget"
+                    };
+                    let _ = Self::verify_or_reject(&mut fn_ir, reason);
+                    return (name, fn_ir, local_profile);
+                }
+                local_profile.pulse_stats.optimized_functions += 1;
+                let phase_plan = heavy_phase_plans
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| self.build_legacy_function_phase_plan(&name));
+                let phase_profile = self.run_function_with_phase_plan_with_proven_profile(
+                    &mut fn_ir,
+                    &callmap_user_whitelist,
+                    proven_floor_param_slots.get(&name),
+                    &phase_plan,
+                );
+                local_profile
+                    .pulse_stats
+                    .accumulate(phase_profile.pulse_stats);
+                local_profile
+                    .pass_timings
+                    .accumulate(phase_profile.pass_timings);
+                (name, fn_ir, local_profile)
+            },
+        );
         let mut restored_tier_b = Vec::with_capacity(tier_b_results.len());
-        for (idx, (name, fn_ir, local_stats)) in tier_b_results.into_iter().enumerate() {
-            stats.accumulate(local_stats);
+        for (idx, (name, fn_ir, local_profile)) in tier_b_results.into_iter().enumerate() {
+            stats.accumulate(local_profile.pulse_stats);
+            pass_timings.accumulate(local_profile.pass_timings);
             Self::emit_progress(
                 &mut progress,
                 TachyonProgressTier::Heavy,
@@ -1258,7 +1473,9 @@ impl TachyonEngine {
                 changed = false;
                 iter += 1;
                 // Inlining needs access to the whole map
-                let local_changed = inliner.optimize_with_hot_filter(all_fns, hot_filter);
+                let local_changed = Self::timed_bool_pass(pass_timings, "inline", || {
+                    inliner.optimize_with_hot_filter(all_fns, hot_filter)
+                });
                 let ordered_names = Self::sorted_fn_names(all_fns);
                 for name in &ordered_names {
                     let Some(fn_ir) = all_fns.get(name) else {
@@ -1276,33 +1493,46 @@ impl TachyonEngine {
                         .map(Self::fn_ir_size)
                         .sum();
                     let cleanup_jobs = Self::take_functions_in_order(all_fns, &ordered_names);
-                    let cleanup_results =
-                        scheduler.map(cleanup_jobs, cleanup_total_ir, |(name, mut fn_ir)| {
-                            let mut local_stats = TachyonPulseStats::default();
+                    let cleanup_results = scheduler.map_stage(
+                        CompilerParallelStage::TachyonInlineCleanup,
+                        cleanup_jobs,
+                        cleanup_total_ir,
+                        |(name, mut fn_ir)| {
+                            let mut local_profile = TachyonRunProfile::default();
                             if fn_ir.requires_conservative_optimization() {
                                 Self::maybe_verify(
                                     &fn_ir,
                                     "After Inline Cleanup (Skipped: ConservativeInterop)",
                                 );
-                                return (name, fn_ir, local_stats);
+                                return (name, fn_ir, local_profile);
                             }
-                            let inline_sc_changed = self.simplify_cfg(&mut fn_ir);
-                            let inline_dce_changed = self.dce(&mut fn_ir);
+                            let inline_sc_changed = Self::timed_bool_pass(
+                                &mut local_profile.pass_timings,
+                                "simplify_cfg",
+                                || self.simplify_cfg(&mut fn_ir),
+                            );
+                            let inline_dce_changed = Self::timed_bool_pass(
+                                &mut local_profile.pass_timings,
+                                "dce",
+                                || self.dce(&mut fn_ir),
+                            );
                             if inline_sc_changed || inline_dce_changed {
-                                local_stats.inline_cleanup_hits += 1;
+                                local_profile.pulse_stats.inline_cleanup_hits += 1;
                             }
                             if inline_sc_changed {
-                                local_stats.simplify_hits += 1;
+                                local_profile.pulse_stats.simplify_hits += 1;
                             }
                             if inline_dce_changed {
-                                local_stats.dce_hits += 1;
+                                local_profile.pulse_stats.dce_hits += 1;
                             }
                             Self::maybe_verify(&fn_ir, "After Inline Cleanup");
-                            (name, fn_ir, local_stats)
-                        });
+                            (name, fn_ir, local_profile)
+                        },
+                    );
                     let mut restored_cleanup = Vec::with_capacity(cleanup_results.len());
-                    for (name, fn_ir, local_stats) in cleanup_results {
-                        stats.accumulate(local_stats);
+                    for (name, fn_ir, local_profile) in cleanup_results {
+                        stats.accumulate(local_profile.pulse_stats);
+                        pass_timings.accumulate(local_profile.pass_timings);
                         restored_cleanup.push((name, fn_ir));
                     }
                     Self::restore_functions(all_fns, restored_cleanup);
@@ -1319,18 +1549,27 @@ impl TachyonEngine {
             .map(Self::fn_ir_size)
             .sum();
         let fresh_alias_jobs = Self::take_functions_in_order(all_fns, &fresh_alias_names);
-        let fresh_alias_results = scheduler.map(
+        let fresh_alias_results = scheduler.map_stage(
+            CompilerParallelStage::TachyonFreshAlias,
             fresh_alias_jobs,
             fresh_alias_total_ir,
             |(name, mut fn_ir)| {
-                let _ = fresh_alias::optimize_function_with_fresh_user_calls(
-                    &mut fn_ir,
-                    &fresh_user_calls,
-                );
-                (name, fn_ir)
+                let mut local_timings = TachyonPassTimings::default();
+                let _changed = Self::timed_bool_pass(&mut local_timings, "fresh_alias", || {
+                    fresh_alias::optimize_function_with_fresh_user_calls(
+                        &mut fn_ir,
+                        &fresh_user_calls,
+                    )
+                });
+                (name, fn_ir, local_timings)
             },
         );
-        Self::restore_functions(all_fns, fresh_alias_results);
+        let mut restored_fresh_alias = Vec::with_capacity(fresh_alias_results.len());
+        for (name, fn_ir, local_timings) in fresh_alias_results {
+            pass_timings.accumulate(local_timings);
+            restored_fresh_alias.push((name, fn_ir));
+        }
+        Self::restore_functions(all_fns, restored_fresh_alias);
 
         // 3. De-SSA (Phi elimination via parallel copy) before codegen.
         let ordered_names = Self::sorted_fn_names(all_fns);
@@ -1341,36 +1580,54 @@ impl TachyonEngine {
             .map(Self::fn_ir_size)
             .sum();
         let de_ssa_jobs = Self::take_functions_in_order(all_fns, &ordered_names);
-        let de_ssa_results = scheduler.map(de_ssa_jobs, de_ssa_total_ir, |(name, mut fn_ir)| {
-            let mut local_stats = TachyonPulseStats::default();
-            let de_ssa_changed = de_ssa::run(&mut fn_ir);
-            if de_ssa_changed {
-                local_stats.de_ssa_hits += 1;
-            }
-            let copy_cleanup_changed = if fn_ir.requires_conservative_optimization() {
-                false
-            } else {
-                copy_cleanup::optimize(&mut fn_ir)
-            };
-            if copy_cleanup_changed {
-                local_stats.simplify_hits += 1;
-            }
-            if !fn_ir.requires_conservative_optimization() {
-                let sc_changed = self.simplify_cfg(&mut fn_ir);
-                let dce_changed = self.dce(&mut fn_ir);
-                if sc_changed {
-                    local_stats.simplify_hits += 1;
+        let de_ssa_results = scheduler.map_stage(
+            CompilerParallelStage::TachyonDeSsa,
+            de_ssa_jobs,
+            de_ssa_total_ir,
+            |(name, mut fn_ir)| {
+                let mut local_profile = TachyonRunProfile::default();
+                let de_ssa_changed =
+                    Self::timed_bool_pass(&mut local_profile.pass_timings, "de_ssa", || {
+                        de_ssa::run(&mut fn_ir)
+                    });
+                if de_ssa_changed {
+                    local_profile.pulse_stats.de_ssa_hits += 1;
                 }
-                if dce_changed {
-                    local_stats.dce_hits += 1;
+                let copy_cleanup_changed = if fn_ir.requires_conservative_optimization() {
+                    false
+                } else {
+                    Self::timed_bool_pass(&mut local_profile.pass_timings, "copy_cleanup", || {
+                        copy_cleanup::optimize(&mut fn_ir)
+                    })
+                };
+                if copy_cleanup_changed {
+                    local_profile.pulse_stats.simplify_hits += 1;
                 }
-            }
-            let _ = Self::verify_or_reject(&mut fn_ir, "After De-SSA");
-            (name, fn_ir, local_stats)
-        });
+                if !fn_ir.requires_conservative_optimization() {
+                    let sc_changed = Self::timed_bool_pass(
+                        &mut local_profile.pass_timings,
+                        "simplify_cfg",
+                        || self.simplify_cfg(&mut fn_ir),
+                    );
+                    let dce_changed =
+                        Self::timed_bool_pass(&mut local_profile.pass_timings, "dce", || {
+                            self.dce(&mut fn_ir)
+                        });
+                    if sc_changed {
+                        local_profile.pulse_stats.simplify_hits += 1;
+                    }
+                    if dce_changed {
+                        local_profile.pulse_stats.dce_hits += 1;
+                    }
+                }
+                let _ = Self::verify_or_reject(&mut fn_ir, "After De-SSA");
+                (name, fn_ir, local_profile)
+            },
+        );
         let mut restored_de_ssa = Vec::with_capacity(de_ssa_results.len());
-        for (idx, (name, fn_ir, local_stats)) in de_ssa_results.into_iter().enumerate() {
-            stats.accumulate(local_stats);
+        for (idx, (name, fn_ir, local_profile)) in de_ssa_results.into_iter().enumerate() {
+            stats.accumulate(local_profile.pulse_stats);
+            pass_timings.accumulate(local_profile.pass_timings);
             Self::emit_progress(
                 &mut progress,
                 TachyonProgressTier::DeSsa,
@@ -1381,7 +1638,7 @@ impl TachyonEngine {
             restored_de_ssa.push((name, fn_ir));
         }
         Self::restore_functions(all_fns, restored_de_ssa);
-        stats
+        profile
     }
 
     pub fn run_function(&self, fn_ir: &mut FnIR) {
@@ -1425,6 +1682,22 @@ impl TachyonEngine {
         proven_param_slots: Option<&FxHashSet<usize>>,
         phase_plan: &FunctionPhasePlan,
     ) -> TachyonPulseStats {
+        self.run_function_with_phase_plan_with_proven_profile(
+            fn_ir,
+            callmap_user_whitelist,
+            proven_param_slots,
+            phase_plan,
+        )
+        .pulse_stats
+    }
+
+    fn run_function_with_phase_plan_with_proven_profile(
+        &self,
+        fn_ir: &mut FnIR,
+        callmap_user_whitelist: &FxHashSet<String>,
+        proven_param_slots: Option<&FxHashSet<usize>>,
+        phase_plan: &FunctionPhasePlan,
+    ) -> TachyonRunProfile {
         let floor_helpers = FxHashSet::default();
         self.run_function_with_proven_index_slots_with_phase_plan(
             fn_ir,
@@ -1450,6 +1723,7 @@ impl TachyonEngine {
             floor_helpers,
             &phase_plan,
         )
+        .pulse_stats
     }
 
     fn run_function_with_proven_index_slots_with_phase_plan(
@@ -1459,8 +1733,10 @@ impl TachyonEngine {
         proven_param_slots: Option<&FxHashSet<usize>>,
         floor_helpers: &FxHashSet<String>,
         phase_plan: &FunctionPhasePlan,
-    ) -> TachyonPulseStats {
-        let mut stats = TachyonPulseStats::default();
+    ) -> TachyonRunProfile {
+        let mut profile = TachyonRunProfile::default();
+        let stats = &mut profile.pulse_stats;
+        let pass_timings = &mut profile.pass_timings;
         match phase_plan.profile {
             types::PhaseProfileKind::Balanced => stats.phase_profile_balanced_functions += 1,
             types::PhaseProfileKind::ComputeHeavy => {
@@ -1483,13 +1759,13 @@ impl TachyonEngine {
         } else if fn_ir_size > 900 {
             12
         } else {
-            Self::max_opt_iterations()
+            self.configured_max_opt_iterations()
         };
-        let heavy_pass_budgeted = fn_ir_size > Self::heavy_pass_fn_ir();
+        let heavy_pass_budgeted = fn_ir_size > self.configured_heavy_pass_fn_ir();
 
         // Initial Verify
         if !Self::verify_or_reject(fn_ir, "Start") {
-            return stats;
+            return profile;
         }
         Self::debug_stage_dump(fn_ir, "Start");
         let canonicalized_index_params =
@@ -1504,7 +1780,7 @@ impl TachyonEngine {
         let mut control_flow_structural_skipped = false;
 
         while changed && iterations < max_iters {
-            if start_time.elapsed().as_millis() > Self::max_fn_opt_ms() {
+            if start_time.elapsed().as_millis() > self.configured_max_fn_opt_ms() {
                 break;
             }
             changed = false;
@@ -1520,7 +1796,7 @@ impl TachyonEngine {
                     None
                 };
             let pre_iteration_stats = if pre_iteration_fn_ir.is_some() {
-                Some(stats)
+                Some(*stats)
             } else {
                 None
             };
@@ -1531,7 +1807,8 @@ impl TachyonEngine {
                 fn_ir,
                 callmap_user_whitelist,
                 &loop_opt,
-                &mut stats,
+                stats,
+                pass_timings,
                 run_budgeted_passes,
             );
             changed |= iteration_result.changed;
@@ -1548,7 +1825,7 @@ impl TachyonEngine {
                     *fn_ir = saved_fn_ir;
                 }
                 if let Some(saved_stats) = pre_iteration_stats {
-                    stats = saved_stats;
+                    *stats = saved_stats;
                 }
                 if phase_plan.trace_requested {
                     eprintln!(
@@ -1583,16 +1860,17 @@ impl TachyonEngine {
         let mut polish_guard = 0usize;
         let mut polish_seen: FxHashSet<u64> = FxHashSet::default();
         while polishing && polish_guard < 16 {
-            if start_time.elapsed().as_millis() > Self::max_fn_opt_ms() {
+            if start_time.elapsed().as_millis() > self.configured_max_fn_opt_ms() {
                 break;
             }
             polish_guard += 1;
             let before_polish = Self::fn_ir_fingerprint(fn_ir);
-            polishing = self.simplify_cfg(fn_ir);
+            polishing =
+                Self::timed_bool_pass(pass_timings, "simplify_cfg", || self.simplify_cfg(fn_ir));
             if polishing {
                 stats.simplify_hits += 1;
             }
-            let dce_changed = self.dce(fn_ir);
+            let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
             if dce_changed {
                 stats.dce_hits += 1;
             }
@@ -1604,7 +1882,7 @@ impl TachyonEngine {
         }
         let _ = Self::verify_or_reject(fn_ir, "End");
         Self::debug_stage_dump(fn_ir, "End");
-        stats
+        profile
     }
 
     // Backward-compat wrappers.

@@ -284,7 +284,7 @@ Sym_186 <- function(px, py, pf, u, v, dt, N) \n\
     assert!(out.contains("rep.int(size, length(ys))"));
     assert!(out.contains(
         "return(rr_idx_cube_vec_i(rep.int(f, length(ys)), rep.int((x - 1), length(ys)), ys, size))"
-    ));
+    ), "{out}");
     assert!(!out.contains(".arg_px"));
     assert!(!out.contains(".arg_py"));
     assert!(!out.contains(".arg_dt"));

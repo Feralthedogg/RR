@@ -2,7 +2,7 @@
 
 This page is the driver manual for RR.
 
-Current compiler line: `RR Tachyon v1.1.0`.
+Current compiler line: `RR Tachyon v1.2.0`.
 
 ## Audience
 
@@ -791,6 +791,7 @@ RR now distinguishes all three optimization tiers:
 - `--incremental[=auto|off|1|1,2|1,2,3|all]`
 - `--incremental-phases <auto|off|1|1,2|1,2,3|all>`
 - `--no-incremental`
+- `--cold`
 - `--strict-incremental-verify`
 - `--poll-ms <N>`
 - `--once`
@@ -910,9 +911,17 @@ Default CLI behavior is `--incremental=auto`.
 - phase 2 enabled
 - phase 3 enabled only when a live session exists, such as `watch`
 
+Default CLI behavior is also warm-cache friendly:
+
+- unchanged compileable inputs reuse the normal incremental / artifact caches
+- direct compile paths can reuse optimized MIR and emitted artifact caches
+- `--cold` forces one compile to run against an empty temporary cache root
+  without disturbing the normal warm cache
+
 Use:
 
 - `--no-incremental` when you want a fresh compile for inspection
+- `--cold` when you want one compile to bypass warm caches without clearing them
 - `--strict-incremental-verify` when you want cache reuse checked against a rebuild
 
 ## Compiler Parallelism

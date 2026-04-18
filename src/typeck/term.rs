@@ -1,8 +1,9 @@
 use crate::hir::def::{SymbolId, Ty};
 use crate::syntax::ast::Lit;
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TypeTerm {
     Any,
     Never,

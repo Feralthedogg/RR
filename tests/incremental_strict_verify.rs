@@ -157,6 +157,10 @@ fn strict_incremental_verify_checks_cached_outputs() {
         second.stats.phase1_artifact_hit,
         "strict verify should compare against the phase1 disk artifact when available"
     );
+    assert!(
+        second.stats.phase2_emit_hits > 0,
+        "strict verify should still reuse phase2 emit cache during verification"
+    );
     assert!(second.stats.strict_verification_checked);
     assert!(second.stats.strict_verification_passed);
     assert_eq!(first.r_code, second.r_code);
@@ -293,6 +297,10 @@ fn strict_incremental_verify_checks_cached_outputs_under_compiler_parallel() {
     .expect("strict verify second compiler-parallel compile failed");
     assert!(second.stats.phase3_memory_hit);
     assert!(second.stats.phase1_artifact_hit);
+    assert!(
+        second.stats.phase2_emit_hits > 0,
+        "compiler-parallel strict verify should still reuse phase2 emits"
+    );
     assert!(second.stats.strict_verification_checked);
     assert!(second.stats.strict_verification_passed);
     assert_eq!(first.r_code, second.r_code);

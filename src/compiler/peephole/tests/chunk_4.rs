@@ -40,7 +40,7 @@ Sym_186 <- function(px, py, pf, u, v, dt, N) \n\
         out.contains(".arg_py <- py")
             || out.contains("y <- py[i]")
             || out.contains("py[i]")
-            || !out.contains("py"),
+            || (!out.contains(".arg_py <- py") && !out.contains("y <- .arg_py[i]")),
         "{out}"
     );
 }

@@ -12,23 +12,7 @@ pub(super) fn literal_field_get_re() -> Option<&'static Regex> {
 }
 
 pub(super) fn rewrite_literal_field_get_calls(lines: Vec<String>) -> Vec<String> {
-    let Some(re) = literal_field_get_re() else {
-        return lines;
-    };
-    lines
-        .into_iter()
-        .map(|line| {
-            if line.contains("<- function") {
-                return line;
-            }
-            re.replace_all(&line, |caps: &Captures<'_>| {
-                let base = caps.name("base").map(|m| m.as_str()).unwrap_or("").trim();
-                let name = caps.name("name").map(|m| m.as_str()).unwrap_or("").trim();
-                format!(r#"{base}[["{name}"]]"#)
-            })
-            .to_string()
-        })
-        .collect()
+    rewrite_literal_field_get_calls_ir(lines)
 }
 
 pub(super) fn literal_record_field_name(arg: &str) -> Option<String> {
@@ -47,65 +31,7 @@ pub(super) fn literal_record_field_name(arg: &str) -> Option<String> {
 }
 
 pub(super) fn rewrite_literal_named_list_calls(lines: Vec<String>) -> Vec<String> {
-    lines
-        .into_iter()
-        .map(|line| {
-            if line.contains("rr_named_list <- function") {
-                return line;
-            }
-            let mut rewritten = line;
-            loop {
-                let Some(start) = rewritten.find("rr_named_list(") else {
-                    break;
-                };
-                let call_start = start + "rr_named_list".len();
-                let mut depth = 0i32;
-                let mut end = None;
-                for (off, ch) in rewritten[call_start..].char_indices() {
-                    match ch {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end = Some(call_start + off);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                let Some(call_end) = end else {
-                    break;
-                };
-                let args_inner = &rewritten[call_start + 1..call_end];
-                let Some(args) = split_top_level_args(args_inner) else {
-                    break;
-                };
-                if args.len() % 2 != 0 {
-                    break;
-                }
-                let mut fields = Vec::new();
-                let mut ok = true;
-                for pair in args.chunks(2) {
-                    let Some(name) = literal_record_field_name(pair[0].trim()) else {
-                        ok = false;
-                        break;
-                    };
-                    fields.push(format!("{name} = {}", pair[1].trim()));
-                }
-                if !ok {
-                    break;
-                }
-                let replacement = if fields.is_empty() {
-                    "list()".to_string()
-                } else {
-                    format!("list({})", fields.join(", "))
-                };
-                rewritten.replace_range(start..=call_end, &replacement);
-            }
-            rewritten
-        })
-        .collect()
+    rewrite_literal_named_list_calls_ir(lines)
 }
 
 pub(super) fn expr_is_safe_scalar_index_source(expr: &str) -> bool {
@@ -126,7 +52,175 @@ pub(super) fn expr_is_floor_clamped_scalar_index_source(expr: &str) -> bool {
         || compact.starts_with("pmin(pmax(1.0+floor(")
 }
 
+fn rewrite_index_access_calls_in_line(
+    mut rewritten: String,
+    safe_index_vars: &FxHashSet<String>,
+    scalar_positive: &FxHashSet<String>,
+    vector_lens: &FxHashMap<String, String>,
+    prev_lines: &[String],
+    current_idx: usize,
+) -> String {
+    loop {
+        let read_pos = rewritten.find("rr_index1_read(");
+        let write_pos = rewritten.find("rr_index1_write(");
+        let (callee, start) = match (read_pos, write_pos) {
+            (Some(r), Some(w)) if r <= w => ("rr_index1_read", r),
+            (Some(r), Some(_)) => ("rr_index1_read", r),
+            (Some(r), None) => ("rr_index1_read", r),
+            (None, Some(w)) => ("rr_index1_write", w),
+            (None, None) => break,
+        };
+        let call_start = start + callee.len();
+        let mut depth = 0i32;
+        let mut end = None;
+        for (off, ch) in rewritten[call_start..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(call_start + off);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(call_end) = end else {
+            break;
+        };
+        let args_inner = &rewritten[call_start + 1..call_end];
+        let Some(args) = split_top_level_args(args_inner) else {
+            break;
+        };
+        let replacement = match callee {
+            "rr_index1_read" if args.len() >= 2 => {
+                let base = args[0].trim();
+                let idx = args[1].trim();
+                let ctx_ok = args.len() == 2 || is_literal_index_ctx(&args[2]);
+                if !plain_ident_re().is_some_and(|re| re.is_match(base)) || !ctx_ok {
+                    None
+                } else if idx.starts_with("rr_wrap_index_vec_i(") {
+                    Some(format!("{base}[{idx}]"))
+                } else if safe_index_vars.contains(idx) || expr_is_safe_scalar_index_source(idx) {
+                    Some(format!("{base}[{idx}]"))
+                } else if plain_ident_re().is_some_and(|re| re.is_match(idx))
+                    && scalar_positive.contains(idx)
+                    && vector_lens.get(base).map(String::as_str) == Some(idx)
+                {
+                    Some(format!("{base}[{idx}]"))
+                } else if let Some((outer, bound, inner)) = parse_flat_positive_loop_index_expr(idx)
+                {
+                    (var_has_known_positive_progression_before(prev_lines, current_idx, &outer)
+                        && var_has_known_positive_progression_before(
+                            prev_lines,
+                            current_idx,
+                            &inner,
+                        )
+                        && positive_guard_for_var_before(prev_lines, current_idx, &inner, &bound))
+                    .then(|| format!("{base}[{idx}]"))
+                } else {
+                    None
+                }
+            }
+            "rr_index1_write" if !args.is_empty() => {
+                let idx = args[0].trim();
+                let ctx_ok = args.len() == 1 || is_literal_index_ctx(&args[1]);
+                (ctx_ok && idx.starts_with("rr_wrap_index_vec_i(")).then(|| idx.to_string())
+            }
+            _ => None,
+        };
+        let Some(replacement) = replacement else {
+            break;
+        };
+        rewritten.replace_range(start..=call_end, &replacement);
+    }
+    rewritten
+}
+
+pub(super) fn rewrite_index_access_patterns(lines: Vec<String>) -> Vec<String> {
+    if !lines.iter().any(|line| {
+        line.contains("rr_index1_read(")
+            || (line.contains("rr_index1_write(") && line.contains("rr_wrap_index_vec_i("))
+    }) {
+        return lines;
+    }
+    let mut out = Vec::with_capacity(lines.len());
+    let mut safe_index_vars = FxHashSet::<String>::default();
+    let mut scalar_positive = FxHashSet::<String>::default();
+    let mut vector_lens = FxHashMap::<String, String>::default();
+
+    for line in lines {
+        if line.contains("<- function") {
+            safe_index_vars.clear();
+            scalar_positive.clear();
+            vector_lens.clear();
+            out.push(line);
+            continue;
+        }
+
+        let trimmed = line.trim().to_string();
+        if let Some(caps) = assign_re().and_then(|re| re.captures(&trimmed)) {
+            let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
+            let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
+            if plain_ident_re().is_some_and(|re| re.is_match(lhs)) {
+                safe_index_vars.remove(lhs);
+                if expr_is_safe_scalar_index_source(rhs) {
+                    safe_index_vars.insert(lhs.to_string());
+                }
+            }
+        }
+
+        let rewritten = rewrite_index_access_calls_in_line(
+            line,
+            &safe_index_vars,
+            &scalar_positive,
+            &vector_lens,
+            &out,
+            out.len(),
+        );
+
+        if is_control_flow_boundary(&trimmed) {
+            if trimmed == "repeat {"
+                || trimmed == "}"
+                || trimmed.starts_with("} else")
+                || trimmed.starts_with("else")
+            {
+                safe_index_vars.clear();
+            }
+            if trimmed.starts_with("} else") || trimmed.starts_with("else") {
+                scalar_positive.clear();
+                vector_lens.clear();
+            }
+            out.push(rewritten);
+            continue;
+        }
+
+        if let Some(caps) = assign_re().and_then(|re| re.captures(&trimmed)) {
+            let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
+            let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
+            if plain_ident_re().is_some_and(|re| re.is_match(lhs)) {
+                let inferred_len = infer_same_len_expr(rhs, &vector_lens);
+                scalar_positive.remove(lhs);
+                vector_lens.remove(lhs);
+                if literal_integer_value(rhs).is_some_and(|value| value >= 1) {
+                    scalar_positive.insert(lhs.to_string());
+                }
+                if let Some(len) = inferred_len {
+                    vector_lens.insert(lhs.to_string(), len);
+                }
+            }
+        }
+
+        out.push(rewritten);
+    }
+    out
+}
+
 pub(super) fn rewrite_safe_named_index_read_calls(lines: Vec<String>) -> Vec<String> {
+    if !lines.iter().any(|line| line.contains("rr_index1_read(")) {
+        return lines;
+    }
     let mut out = Vec::with_capacity(lines.len());
     let mut safe_index_vars = FxHashSet::<String>::default();
     for line in lines {
@@ -224,6 +318,9 @@ pub(super) fn parse_flat_positive_loop_index_expr(expr: &str) -> Option<(String,
 }
 
 pub(super) fn rewrite_safe_flat_loop_index_read_calls(lines: Vec<String>) -> Vec<String> {
+    if !lines.iter().any(|line| line.contains("rr_index1_read(")) {
+        return lines;
+    }
     let mut out = lines;
     for idx in 0..out.len() {
         if out[idx].contains("<- function") {
@@ -375,6 +472,9 @@ pub(super) fn infer_same_len_expr(
 }
 
 pub(super) fn rewrite_same_len_scalar_tail_reads(lines: Vec<String>) -> Vec<String> {
+    if !lines.iter().any(|line| line.contains("rr_index1_read(")) {
+        return lines;
+    }
     let mut out = Vec::with_capacity(lines.len());
     let mut scalar_positive = FxHashSet::<String>::default();
     let mut vector_lens = FxHashMap::<String, String>::default();
@@ -468,6 +568,12 @@ pub(super) fn is_literal_index_ctx(arg: &str) -> bool {
 }
 
 pub(super) fn rewrite_wrap_index_scalar_access_helpers(lines: Vec<String>) -> Vec<String> {
+    if !lines.iter().any(|line| {
+        line.contains("rr_wrap_index_vec_i(")
+            && (line.contains("rr_index1_read(") || line.contains("rr_index1_write("))
+    }) {
+        return lines;
+    }
     lines
         .into_iter()
         .map(|line| {

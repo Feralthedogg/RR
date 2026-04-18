@@ -9,4 +9,3 @@ mod metric;
 
 pub(super) use self::cleanup::*;
 pub(super) use self::helper_calls::*;
-pub(super) use self::metric::*;

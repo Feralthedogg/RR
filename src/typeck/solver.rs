@@ -1,4 +1,6 @@
-use crate::compiler::scheduler::{CompilerParallelConfig, CompilerScheduler};
+use crate::compiler::scheduler::{
+    CompilerParallelConfig, CompilerParallelStage, CompilerScheduler,
+};
 use crate::diagnostic::{DiagnosticBuilder, finish_diagnostics};
 use crate::error::{InternalCompilerError, RR, RRCode, RRException, Stage};
 use crate::hir::def::Ty;
@@ -279,15 +281,20 @@ pub fn analyze_program_with_compiler_parallel(
             wave_jobs.push(TypeSccJob { names, fns });
         }
 
-        let solved_jobs = scheduler.map_try(wave_jobs, wave_total_ir, |job| {
-            solve_type_scc_job(
-                job,
-                &fn_ret,
-                &fn_ret_term,
-                &scalar_ret_demands,
-                &vector_ret_demands,
-            )
-        })?;
+        let solved_jobs = scheduler.map_try_stage(
+            CompilerParallelStage::TypeAnalysis,
+            wave_jobs,
+            wave_total_ir,
+            |job| {
+                solve_type_scc_job(
+                    job,
+                    &fn_ret,
+                    &fn_ret_term,
+                    &scalar_ret_demands,
+                    &vector_ret_demands,
+                )
+            },
+        )?;
 
         for solved in solved_jobs {
             for (name, ret_ty, ret_term) in &solved.summaries {

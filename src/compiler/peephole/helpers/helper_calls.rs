@@ -1,15 +1,59 @@
 use super::super::{
-    assign_re, expr_idents, expr_is_fresh_allocation_like, find_matching_block_end, ident_re,
-    nested_index_vec_floor_re, normalize_expr_with_aliases, plain_ident_re,
-    previous_non_empty_line, scalar_lit_re, split_top_level_args, unquoted_sym_refs,
+    PeepholeAnalysisCache, assign_re, build_function_text_index,
+    collapse_trivial_passthrough_return_wrappers_ir, expr_idents, expr_is_fresh_allocation_like,
+    helper_call_candidate_lines, plain_ident_re, rewrite_simple_expr_helper_calls_ir,
+    scalar_lit_re, simplify_nested_index_vec_floor_calls_ir, split_top_level_args,
+    strip_arg_aliases_in_trivial_return_wrappers_ir, strip_unused_helper_params_ir,
 };
-use regex::Captures;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+fn has_sym_call_candidates(lines: &[String]) -> bool {
+    lines
+        .iter()
+        .any(|line| !line.contains("<- function") && line.contains("Sym_") && line.contains('('))
+}
+
+fn function_defs_signature(lines: &[String]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for func in build_function_text_index(lines, parse_function_header) {
+        for line in lines.iter().take(func.end + 1).skip(func.start) {
+            line.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+fn full_text_signature(lines: &[String]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for line in lines {
+        line.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+#[derive(Debug, Clone, Default)]
+pub(in super::super) struct HelperAnalysisCache {
+    passthrough_signature: Option<u64>,
+    passthrough_helpers: FxHashMap<String, String>,
+    simple_signature: Option<u64>,
+    simple_helpers: FxHashMap<String, SimpleExprHelper>,
+    trim_signature: Option<u64>,
+    trims: FxHashMap<String, HelperTrim>,
+}
 
 #[derive(Debug, Clone)]
 pub(in super::super) struct SimpleExprHelper {
     pub(super) params: Vec<String>,
     pub(super) expr: String,
+}
+
+#[derive(Debug, Clone)]
+pub(in super::super) struct HelperTrim {
+    pub(super) original_len: usize,
+    pub(super) kept_indices: Vec<usize>,
+    pub(super) kept_params: Vec<String>,
 }
 
 fn expr_is_trivial_passthrough_setup_rhs(rhs: &str, fresh_user_calls: &FxHashSet<String>) -> bool {
@@ -25,36 +69,21 @@ fn expr_is_trivial_passthrough_setup_rhs(rhs: &str, fresh_user_calls: &FxHashSet
 
 fn collect_passthrough_helpers(lines: &[String]) -> FxHashMap<String, String> {
     let mut out = FxHashMap::default();
-    let mut fn_start = 0usize;
-    while fn_start < lines.len() {
-        while fn_start < lines.len() && !lines[fn_start].contains("<- function") {
-            fn_start += 1;
-        }
-        if fn_start >= lines.len() {
-            break;
-        }
-        let Some(fn_end) = find_matching_block_end(lines, fn_start) else {
-            break;
-        };
-        let header = lines[fn_start].trim();
-        let Some((fn_name, _)) = header.split_once("<- function") else {
-            fn_start = fn_end + 1;
+    for func in build_function_text_index(lines, parse_function_header) {
+        let Some(fn_name) = func.name.as_ref() else {
             continue;
         };
-        let fn_name = fn_name.trim();
-        let Some(return_idx) = previous_non_empty_line(lines, fn_end) else {
-            fn_start = fn_end + 1;
+        let Some(return_idx) = func.return_idx else {
             continue;
         };
         let body_lines: Vec<&str> = lines
             .iter()
-            .take(fn_end)
-            .skip(fn_start + 1)
+            .take(func.end)
+            .skip(func.body_start)
             .map(|s| s.trim())
             .filter(|s| !s.is_empty() && *s != "{" && *s != "}")
             .collect();
         if !body_lines.is_empty() {
-            fn_start = fn_end + 1;
             continue;
         }
         let return_line = lines[return_idx].trim();
@@ -63,24 +92,57 @@ fn collect_passthrough_helpers(lines: &[String]) -> FxHashMap<String, String> {
             .and_then(|s| s.strip_suffix(')'))
             .map(str::trim)
         else {
-            fn_start = fn_end + 1;
             continue;
         };
         if plain_ident_re().is_some_and(|re| re.is_match(inner)) {
-            out.insert(fn_name.to_string(), inner.to_string());
+            out.insert(fn_name.clone(), inner.to_string());
         }
-        fn_start = fn_end + 1;
     }
     out
 }
 
+fn cached_passthrough_helpers(
+    cache: &mut HelperAnalysisCache,
+    lines: &[String],
+) -> FxHashMap<String, String> {
+    let signature = function_defs_signature(lines);
+    if cache.passthrough_signature != Some(signature) {
+        cache.passthrough_helpers = collect_passthrough_helpers(lines);
+        cache.passthrough_signature = Some(signature);
+    }
+    cache.passthrough_helpers.clone()
+}
+
 pub(in super::super) fn rewrite_passthrough_helper_calls(lines: Vec<String>) -> Vec<String> {
+    let mut cache = HelperAnalysisCache::default();
+    let mut analysis_cache = PeepholeAnalysisCache::default();
+    rewrite_passthrough_helper_calls_with_caches(lines, &mut cache, &mut analysis_cache)
+}
+
+pub(in super::super) fn rewrite_passthrough_helper_calls_with_cache(
+    lines: Vec<String>,
+    cache: &mut HelperAnalysisCache,
+) -> Vec<String> {
+    let mut analysis_cache = PeepholeAnalysisCache::default();
+    rewrite_passthrough_helper_calls_with_caches(lines, cache, &mut analysis_cache)
+}
+
+pub(in super::super) fn rewrite_passthrough_helper_calls_with_caches(
+    lines: Vec<String>,
+    cache: &mut HelperAnalysisCache,
+    analysis_cache: &mut PeepholeAnalysisCache,
+) -> Vec<String> {
+    if !has_sym_call_candidates(&lines) {
+        return lines;
+    }
     let mut out = lines;
-    let passthrough = collect_passthrough_helpers(&out);
+    let passthrough = cached_passthrough_helpers(cache, &out);
     if passthrough.is_empty() {
         return out;
     }
-    for line in &mut out {
+    let candidate_lines = helper_call_candidate_lines(analysis_cache, &out);
+    for line_idx in candidate_lines {
+        let line = out[line_idx].clone();
         let trimmed = line.trim().to_string();
         let Some(caps) = assign_re().and_then(|re| re.captures(&trimmed)) else {
             continue;
@@ -107,7 +169,7 @@ pub(in super::super) fn rewrite_passthrough_helper_calls(lines: Vec<String>) -> 
         }
         let indent_len = line.len() - line.trim_start().len();
         let indent = &line[..indent_len];
-        *line = format!("{indent}{lhs} <- {}", args[0].trim());
+        out[line_idx] = format!("{indent}{lhs} <- {}", args[0].trim());
     }
     out
 }
@@ -117,101 +179,25 @@ pub(in super::super) fn rewrite_simple_expr_helper_calls_filtered(
     pure_user_calls: &FxHashSet<String>,
     allowed_helpers: Option<&FxHashSet<String>>,
 ) -> Vec<String> {
-    let helpers = collect_simple_expr_helpers(&lines, pure_user_calls);
-    if helpers.is_empty() {
-        return lines;
-    }
-    let mut out = lines;
-    for line in &mut out {
-        if line.contains("<- function") {
-            continue;
-        }
-        let mut rewritten = line.clone();
-        loop {
-            let mut changed = false;
-            let mut next = String::with_capacity(rewritten.len());
-            let mut idx = 0usize;
-            while idx < rewritten.len() {
-                let slice = &rewritten[idx..];
-                let Some(caps) = ident_re().and_then(|re| re.captures(slice)) else {
-                    next.push_str(slice);
-                    break;
-                };
-                let Some(mat) = caps.get(0) else {
-                    next.push_str(slice);
-                    break;
-                };
-                let ident_start = idx + mat.start();
-                let ident_end = idx + mat.end();
-                next.push_str(&rewritten[idx..ident_start]);
-                let ident = mat.as_str();
-                let Some(helper) = helpers.get(ident) else {
-                    next.push_str(ident);
-                    idx = ident_end;
-                    continue;
-                };
-                if allowed_helpers.is_some_and(|allowed| !allowed.contains(ident)) {
-                    next.push_str(ident);
-                    idx = ident_end;
-                    continue;
-                }
-                if !rewritten[ident_end..].starts_with('(') {
-                    next.push_str(ident);
-                    idx = ident_end;
-                    continue;
-                }
-                let mut depth = 0i32;
-                let mut end = None;
-                for (off, ch) in rewritten[ident_end..].char_indices() {
-                    match ch {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end = Some(ident_end + off);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                let Some(call_end) = end else {
-                    next.push_str(ident);
-                    idx = ident_end;
-                    continue;
-                };
-                let args_inner = &rewritten[ident_end + 1..call_end];
-                let Some(args) = split_top_level_args(args_inner) else {
-                    next.push_str(&rewritten[ident_start..=call_end]);
-                    idx = call_end + 1;
-                    continue;
-                };
-                if args.len() != helper.params.len() {
-                    next.push_str(&rewritten[ident_start..=call_end]);
-                    idx = call_end + 1;
-                    continue;
-                }
-                let subst = helper
-                    .params
-                    .iter()
-                    .zip(args.iter())
-                    .map(|(param, arg)| (param.clone(), arg.trim().to_string()))
-                    .collect::<FxHashMap<_, _>>();
-                let expanded = substitute_helper_expr(&helper.expr, &subst);
-                next.push('(');
-                next.push_str(&expanded);
-                next.push(')');
-                idx = call_end + 1;
-                changed = true;
-            }
-            if !changed || next == rewritten {
-                break;
-            }
-            rewritten = next;
-        }
-        *line = rewritten;
-    }
-    out
+    let mut cache = HelperAnalysisCache::default();
+    let mut analysis_cache = PeepholeAnalysisCache::default();
+    rewrite_simple_expr_helper_calls_filtered_with_cache(
+        lines,
+        pure_user_calls,
+        allowed_helpers,
+        &mut cache,
+        &mut analysis_cache,
+    )
+}
+
+pub(in super::super) fn rewrite_simple_expr_helper_calls_filtered_with_cache(
+    lines: Vec<String>,
+    pure_user_calls: &FxHashSet<String>,
+    allowed_helpers: Option<&FxHashSet<String>>,
+    _cache: &mut HelperAnalysisCache,
+    _analysis_cache: &mut PeepholeAnalysisCache,
+) -> Vec<String> {
+    rewrite_simple_expr_helper_calls_ir(lines, pure_user_calls, allowed_helpers)
 }
 
 pub(in super::super) fn rewrite_simple_expr_helper_calls(
@@ -221,30 +207,38 @@ pub(in super::super) fn rewrite_simple_expr_helper_calls(
     rewrite_simple_expr_helper_calls_filtered(lines, pure_user_calls, None)
 }
 
+pub(in super::super) fn rewrite_simple_expr_helper_calls_with_cache(
+    lines: Vec<String>,
+    pure_user_calls: &FxHashSet<String>,
+    cache: &mut HelperAnalysisCache,
+) -> Vec<String> {
+    let mut analysis_cache = PeepholeAnalysisCache::default();
+    rewrite_simple_expr_helper_calls_filtered_with_cache(
+        lines,
+        pure_user_calls,
+        None,
+        cache,
+        &mut analysis_cache,
+    )
+}
+
+pub(in super::super) fn rewrite_simple_expr_helper_calls_with_caches(
+    lines: Vec<String>,
+    pure_user_calls: &FxHashSet<String>,
+    cache: &mut HelperAnalysisCache,
+    analysis_cache: &mut PeepholeAnalysisCache,
+) -> Vec<String> {
+    rewrite_simple_expr_helper_calls_filtered_with_cache(
+        lines,
+        pure_user_calls,
+        None,
+        cache,
+        analysis_cache,
+    )
+}
+
 pub(in super::super) fn simplify_nested_index_vec_floor_calls(lines: Vec<String>) -> Vec<String> {
-    let Some(re) = nested_index_vec_floor_re() else {
-        return lines;
-    };
-    lines
-        .into_iter()
-        .map(|line| {
-            let mut rewritten = line;
-            loop {
-                let next = re
-                    .replace_all(&rewritten, |caps: &Captures<'_>| {
-                        format!(
-                            "rr_index_vec_floor({})",
-                            caps.name("inner").map(|m| m.as_str()).unwrap_or("")
-                        )
-                    })
-                    .to_string();
-                if next == rewritten {
-                    break rewritten;
-                }
-                rewritten = next;
-            }
-        })
-        .collect()
+    simplify_nested_index_vec_floor_calls_ir(lines)
 }
 
 pub(in super::super) fn rewrite_selected_simple_expr_helper_calls_in_text(
@@ -280,320 +274,32 @@ pub(in super::super) fn simplify_nested_index_vec_floor_calls_in_text(code: &str
 pub(in super::super) fn strip_arg_aliases_in_trivial_return_wrappers(
     lines: Vec<String>,
 ) -> Vec<String> {
-    let mut out = lines;
-    let mut fn_start = 0usize;
-    while fn_start < out.len() {
-        while fn_start < out.len() && !out[fn_start].contains("<- function") {
-            fn_start += 1;
-        }
-        if fn_start >= out.len() {
-            break;
-        }
-        let Some(fn_end) = find_matching_block_end(&out, fn_start) else {
-            break;
-        };
-        let body_start = fn_start + 1;
-        let Some(return_idx) = previous_non_empty_line(&out, fn_end) else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-        let return_line = out[return_idx].trim().to_string();
-        let Some(inner) = return_line
-            .strip_prefix("return(")
-            .and_then(|s| s.strip_suffix(')'))
-        else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-
-        let mut aliases = FxHashMap::default();
-        let mut trivial = true;
-        for line in out.iter().take(return_idx).skip(body_start) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed == "{" || trimmed == "}" {
-                continue;
-            }
-            let Some(caps) = assign_re().and_then(|re| re.captures(trimmed)) else {
-                trivial = false;
-                break;
-            };
-            let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
-            let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
-            if lhs.starts_with(".arg_") && plain_ident_re().is_some_and(|re| re.is_match(rhs)) {
-                aliases.insert(lhs.to_string(), rhs.to_string());
-            } else {
-                trivial = false;
-                break;
-            }
-        }
-        if !trivial || aliases.is_empty() {
-            fn_start = fn_end + 1;
-            continue;
-        }
-
-        let rewritten = normalize_expr_with_aliases(inner, &aliases);
-        if rewritten != inner {
-            let indent_len = out[return_idx].len() - out[return_idx].trim_start().len();
-            let indent = &out[return_idx][..indent_len];
-            out[return_idx] = format!("{indent}return({rewritten})");
-            for line in out.iter_mut().take(return_idx).skip(body_start) {
-                if line.trim_start().starts_with(".arg_") {
-                    line.clear();
-                }
-            }
-        }
-
-        fn_start = fn_end + 1;
-    }
-    out
+    strip_arg_aliases_in_trivial_return_wrappers_ir(lines)
 }
 
 pub(in super::super) fn collapse_trivial_passthrough_return_wrappers(
     lines: Vec<String>,
 ) -> Vec<String> {
-    let mut out = lines;
-    let no_fresh_user_calls = FxHashSet::default();
-    let mut fn_start = 0usize;
-    while fn_start < out.len() {
-        while fn_start < out.len() && !out[fn_start].contains("<- function") {
-            fn_start += 1;
-        }
-        if fn_start >= out.len() {
-            break;
-        }
-        let Some(fn_end) = find_matching_block_end(&out, fn_start) else {
-            break;
-        };
-        let body_start = fn_start + 1;
-        let Some(return_idx) = previous_non_empty_line(&out, fn_end) else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-        let return_line = out[return_idx].trim().to_string();
-        let Some(inner) = return_line
-            .strip_prefix("return(")
-            .and_then(|s| s.strip_suffix(')'))
-            .map(str::trim)
-        else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-
-        let mut last_assign_to_return: Option<(usize, String)> = None;
-        let mut trivial = true;
-        for (idx, line) in out.iter().enumerate().take(return_idx).skip(body_start) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed == "{" || trimmed == "}" {
-                continue;
-            }
-            let Some(caps) = assign_re().and_then(|re| re.captures(trimmed)) else {
-                trivial = false;
-                break;
-            };
-            let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
-            let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
-            if lhs == inner && plain_ident_re().is_some_and(|re| re.is_match(rhs)) {
-                last_assign_to_return = Some((idx, rhs.to_string()));
-            } else if !expr_is_trivial_passthrough_setup_rhs(rhs, &no_fresh_user_calls) {
-                trivial = false;
-                break;
-            }
-        }
-        let Some((assign_idx, passthrough_ident)) = last_assign_to_return else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-        if !trivial {
-            fn_start = fn_end + 1;
-            continue;
-        }
-
-        let indent_len = out[return_idx].len() - out[return_idx].trim_start().len();
-        let indent = &out[return_idx][..indent_len];
-        out[return_idx] = format!("{indent}return({passthrough_ident})");
-        for line in out.iter_mut().take(return_idx).skip(body_start) {
-            let trimmed = line.trim();
-            if trimmed == "{" || trimmed == "}" {
-                continue;
-            }
-            line.clear();
-        }
-        out[assign_idx].clear();
-        fn_start = fn_end + 1;
-    }
-    out
+    collapse_trivial_passthrough_return_wrappers_ir(lines)
 }
 
 pub(in super::super) fn strip_unused_helper_params(lines: Vec<String>) -> Vec<String> {
-    #[derive(Clone)]
-    struct HelperTrim {
-        original_len: usize,
-        kept_indices: Vec<usize>,
-        kept_params: Vec<String>,
-    }
+    strip_unused_helper_params_ir(lines)
+}
 
-    let mut trims = FxHashMap::<String, HelperTrim>::default();
-    let mut fn_start = 0usize;
-    while fn_start < lines.len() {
-        while fn_start < lines.len() && !lines[fn_start].contains("<- function") {
-            fn_start += 1;
-        }
-        if fn_start >= lines.len() {
-            break;
-        }
-        let Some(fn_end) = find_matching_block_end(&lines, fn_start) else {
-            break;
-        };
-        let Some((fn_name, params)) = parse_function_header(&lines[fn_start]) else {
-            fn_start = fn_end + 1;
-            continue;
-        };
-        if !fn_name.starts_with("Sym_")
-            || params.is_empty()
-            || params.iter().any(|param| param.contains('='))
-        {
-            fn_start = fn_end + 1;
-            continue;
-        }
-        let escaped = lines
-            .iter()
-            .enumerate()
-            .filter(|(idx, _)| *idx < fn_start || *idx > fn_end)
-            .any(|(_, line)| {
-                unquoted_sym_refs(line).iter().any(|name| name == &fn_name)
-                    && !line.contains(&format!("{fn_name}("))
-            });
-        if escaped {
-            fn_start = fn_end + 1;
-            continue;
-        }
-        let mut used_params = FxHashSet::default();
-        for line in lines.iter().take(fn_end).skip(fn_start + 1) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed == "{" || trimmed == "}" {
-                continue;
-            }
-            for ident in expr_idents(trimmed) {
-                used_params.insert(ident);
-            }
-        }
-        let kept_indices: Vec<usize> = params
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, param)| used_params.contains(param).then_some(idx))
-            .collect();
-        if kept_indices.len() < params.len() {
-            trims.insert(
-                fn_name,
-                HelperTrim {
-                    original_len: params.len(),
-                    kept_indices: kept_indices.clone(),
-                    kept_params: kept_indices
-                        .iter()
-                        .map(|idx| params[*idx].clone())
-                        .collect(),
-                },
-            );
-        }
-        fn_start = fn_end + 1;
-    }
+pub(in super::super) fn strip_unused_helper_params_with_cache(
+    lines: Vec<String>,
+    _cache: &mut HelperAnalysisCache,
+) -> Vec<String> {
+    strip_unused_helper_params_ir(lines)
+}
 
-    if trims.is_empty() {
-        return lines;
-    }
-
-    let mut out = lines;
-    for line in &mut out {
-        if line.contains("<- function") {
-            if let Some((fn_name, _)) = parse_function_header(line)
-                && let Some(trim) = trims.get(&fn_name)
-            {
-                *line = format!("{} <- function({})", fn_name, trim.kept_params.join(", "));
-            }
-            continue;
-        }
-        let mut rewritten = line.clone();
-        loop {
-            let mut changed = false;
-            let mut next = String::with_capacity(rewritten.len());
-            let mut idx = 0usize;
-            while idx < rewritten.len() {
-                let slice = &rewritten[idx..];
-                let Some(caps) = ident_re().and_then(|re| re.captures(slice)) else {
-                    next.push_str(slice);
-                    break;
-                };
-                let Some(mat) = caps.get(0) else {
-                    next.push_str(slice);
-                    break;
-                };
-                let ident_start = idx + mat.start();
-                let ident_end = idx + mat.end();
-                next.push_str(&rewritten[idx..ident_start]);
-                let ident = mat.as_str();
-                let Some(trim) = trims.get(ident) else {
-                    next.push_str(ident);
-                    idx = ident_end;
-                    continue;
-                };
-                if !rewritten[ident_end..].starts_with('(') {
-                    next.push_str(ident);
-                    idx = ident_end;
-                    continue;
-                }
-                let mut depth = 0i32;
-                let mut end = None;
-                for (off, ch) in rewritten[ident_end..].char_indices() {
-                    match ch {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end = Some(ident_end + off);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                let Some(call_end) = end else {
-                    next.push_str(ident);
-                    idx = ident_end;
-                    continue;
-                };
-                let args_inner = &rewritten[ident_end + 1..call_end];
-                let Some(args) = split_top_level_args(args_inner) else {
-                    next.push_str(&rewritten[ident_start..=call_end]);
-                    idx = call_end + 1;
-                    continue;
-                };
-                if args.len() != trim.original_len {
-                    next.push_str(&rewritten[ident_start..=call_end]);
-                    idx = call_end + 1;
-                    continue;
-                }
-                next.push_str(ident);
-                next.push('(');
-                next.push_str(
-                    &trim
-                        .kept_indices
-                        .iter()
-                        .map(|idx| args[*idx].trim())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
-                next.push(')');
-                idx = call_end + 1;
-                changed = true;
-            }
-            if !changed || next == rewritten {
-                break;
-            }
-            rewritten = next;
-        }
-        *line = rewritten;
-    }
-    out
+pub(in super::super) fn strip_unused_helper_params_with_caches(
+    lines: Vec<String>,
+    _cache: &mut HelperAnalysisCache,
+    _analysis_cache: &mut PeepholeAnalysisCache,
+) -> Vec<String> {
+    strip_unused_helper_params_ir(lines)
 }
 
 pub(in super::super) fn parse_function_header(line: &str) -> Option<(String, Vec<String>)> {
@@ -706,23 +412,12 @@ pub(in super::super) fn collect_simple_expr_helpers(
     _pure_user_calls: &FxHashSet<String>,
 ) -> FxHashMap<String, SimpleExprHelper> {
     let mut out = FxHashMap::default();
-    let mut fn_start = 0usize;
-    while fn_start < lines.len() {
-        while fn_start < lines.len() && !lines[fn_start].contains("<- function") {
-            fn_start += 1;
-        }
-        if fn_start >= lines.len() {
-            break;
-        }
-        let Some(fn_end) = find_matching_block_end(lines, fn_start) else {
-            break;
-        };
-        let Some((fn_name, params)) = parse_function_header(&lines[fn_start]) else {
-            fn_start = fn_end + 1;
+    for func in build_function_text_index(lines, parse_function_header) {
+        let Some(fn_name) = func.name.as_ref() else {
             continue;
         };
-        let Some(return_idx) = previous_non_empty_line(lines, fn_end) else {
-            fn_start = fn_end + 1;
+        let params = &func.params;
+        let Some(return_idx) = func.return_idx else {
             continue;
         };
         let return_line = lines[return_idx].trim();
@@ -731,14 +426,13 @@ pub(in super::super) fn collect_simple_expr_helpers(
             .and_then(|s| s.strip_suffix(')'))
             .map(str::trim)
         else {
-            fn_start = fn_end + 1;
             continue;
         };
 
         let mut bindings: FxHashMap<String, String> = FxHashMap::default();
         let mut locals: FxHashSet<String> = FxHashSet::default();
         let mut simple = true;
-        for line in lines.iter().take(return_idx).skip(fn_start + 1) {
+        for line in lines.iter().take(return_idx).skip(func.body_start) {
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed == "{" || trimmed == "}" {
                 continue;
@@ -758,30 +452,26 @@ pub(in super::super) fn collect_simple_expr_helpers(
             locals.insert(lhs.to_string());
         }
         if !simple {
-            fn_start = fn_end + 1;
             continue;
         }
 
         let expanded_return = substitute_helper_expr(return_expr, &bindings);
         if expanded_return.contains(&format!("{fn_name}(")) {
-            fn_start = fn_end + 1;
             continue;
         }
         if expr_idents(&expanded_return)
             .iter()
             .any(|ident| locals.contains(ident) && !params.iter().any(|param| param == ident))
         {
-            fn_start = fn_end + 1;
             continue;
         }
         out.insert(
-            fn_name,
+            fn_name.clone(),
             SimpleExprHelper {
-                params,
+                params: params.clone(),
                 expr: expanded_return,
             },
         );
-        fn_start = fn_end + 1;
     }
     out
 }

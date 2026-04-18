@@ -139,6 +139,7 @@ impl LoopAnalysisContext {
 #[derive(Debug)]
 pub(crate) struct EmitAnalysisContext {
     pub(crate) known_fresh_result_calls: Arc<FxHashSet<String>>,
+    pub(crate) known_pure_user_calls: Arc<FxHashSet<String>>,
     pub(crate) seq_len_param_end_slots_by_fn: Arc<FxHashMap<String, FxHashMap<usize, usize>>>,
     pub(crate) current_seq_len_param_end_slots: FxHashMap<usize, usize>,
     pub(crate) direct_builtin_vector_math: bool,
@@ -148,11 +149,13 @@ impl EmitAnalysisContext {
     /// Build the shared analysis context that can be reused across emitted functions.
     pub(crate) fn new(
         known_fresh_result_calls: Arc<FxHashSet<String>>,
+        known_pure_user_calls: Arc<FxHashSet<String>>,
         seq_len_param_end_slots_by_fn: Arc<FxHashMap<String, FxHashMap<usize, usize>>>,
         direct_builtin_vector_math: bool,
     ) -> Self {
         Self {
             known_fresh_result_calls,
+            known_pure_user_calls,
             seq_len_param_end_slots_by_fn,
             current_seq_len_param_end_slots: FxHashMap::default(),
             direct_builtin_vector_math,

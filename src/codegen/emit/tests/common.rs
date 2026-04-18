@@ -1,6 +1,6 @@
 pub(super) use crate::codegen::mir_emit::{ActiveScalarLoopIndex, RBackend, ScalarLoopCmp};
 pub(super) use crate::mir::def::{
-    BinOp, EscapeStatus, FnIR, Instr, Lit, Terminator, UnaryOp, Value, ValueKind,
+    BinOp, EscapeStatus, FnIR, Instr, IntrinsicOp, Lit, Terminator, UnaryOp, Value, ValueKind,
 };
 pub(super) use crate::mir::flow::Facts;
 pub(super) use crate::mir::structurizer::StructuredBlock;

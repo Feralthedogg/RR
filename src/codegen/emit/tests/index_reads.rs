@@ -474,6 +474,126 @@ fn cube_index_scalar_read_elides_index_wrapper() {
 }
 
 #[test]
+fn cube_index_scalar_read_reuses_bound_plain_symbol_for_index_expr() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "u".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("u".to_string()),
+            phi_block: None,
+            value_ty: TypeState::vector(PrimTy::Double, false),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Const(Lit::Int(1)),
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::scalar(PrimTy::Int, true),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Const(Lit::Int(2)),
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::scalar(PrimTy::Int, true),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 5,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 3,
+                rhs: 4,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 6,
+            kind: ValueKind::Call {
+                callee: "rr_idx_cube_vec_i".to_string(),
+                args: vec![1, 2, 1, 5],
+                names: vec![None, None, None, None],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::scalar(PrimTy::Int, true),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 7,
+            kind: ValueKind::Index1D {
+                base: 0,
+                idx: 6,
+                is_safe: false,
+                is_na_safe: false,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::scalar(PrimTy::Double, false),
+            value_term: TypeTerm::Double,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(5, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 5);
+
+    let rendered = backend.resolve_val(7, &values, &[], false);
+    assert_eq!(rendered, "u[rr_idx_cube_vec_i(1L, 2L, 1L, sum_ab)]");
+}
+
 fn wrap_index_scalar_read_elides_index_wrapper() {
     let backend = RBackend::new();
     let values = vec![
@@ -709,6 +829,94 @@ fn index1d_expr_elides_when_index_var_is_bound_to_safe_value() {
 
     let rendered = backend.resolve_val(3, &values, &[], false);
     assert_eq!(rendered, "clean[n]");
+}
+
+#[test]
+fn index1d_expr_reuses_live_plain_symbol_alias_for_index_expr() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "clean".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("clean".to_string()),
+            phi_block: None,
+            value_ty: TypeState::vector(PrimTy::Double, false),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "n".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("n".to_string()),
+            phi_block: None,
+            value_ty: TypeState::scalar(PrimTy::Int, true),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Const(Lit::Int(1)),
+            span: Span::dummy(),
+            facts: Facts::new(
+                Facts::INT_SCALAR | Facts::NON_NA,
+                crate::mir::flow::Interval::point(1),
+            ),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::scalar(PrimTy::Int, true),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 1,
+                rhs: 2,
+            },
+            span: Span::dummy(),
+            facts: Facts::new(
+                Facts::INT_SCALAR | Facts::NON_NA,
+                crate::mir::flow::Interval::TOP,
+            ),
+            origin_var: Some("idx_alias".to_string()),
+            phi_block: None,
+            value_ty: TypeState::scalar(PrimTy::Int, true),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Index1D {
+                base: 0,
+                idx: 3,
+                is_safe: true,
+                is_na_safe: true,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::scalar(PrimTy::Double, false),
+            value_term: TypeTerm::Double,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("idx_alias");
+    backend.bind_value_to_var(3, "idx_alias");
+    backend.bind_var_to_value("idx_alias", 3);
+
+    let rendered = backend.resolve_val(4, &values, &[], false);
+    assert_eq!(rendered, "clean[idx_alias]");
 }
 
 #[test]

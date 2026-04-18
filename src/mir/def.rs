@@ -3,6 +3,7 @@ pub use crate::syntax::ast::{BinOp, Lit, UnaryOp};
 use crate::typeck::{TypeState, TypeTerm};
 use crate::utils::Span;
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 
 impl Span {
     pub fn dummy() -> Self {
@@ -10,7 +11,7 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EscapeStatus {
     Local,   // Safe, does not escape
     Escaped, // Escapes function (args, return, globals)
@@ -21,7 +22,7 @@ pub type BlockId = usize;
 pub type ValueId = usize;
 pub type VarId = String;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InteropTier {
     Hybrid,
     Opaque,
@@ -36,7 +37,7 @@ impl InteropTier {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InteropReasonKind {
     DynamicBuiltin,
     PackageCall,
@@ -53,7 +54,7 @@ impl InteropReasonKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InteropReason {
     pub tier: InteropTier,
     pub kind: InteropReasonKind,
@@ -113,7 +114,7 @@ impl InteropReason {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FnIR {
     pub name: String,
     pub user_name: Option<String>,
@@ -146,14 +147,14 @@ pub struct FnIR {
     pub memory_layout_hints: FxHashMap<ValueId, MemoryLayoutHint>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub id: BlockId,
     pub instrs: Vec<Instr>,
     pub term: Terminator,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Terminator {
     Goto(BlockId),
     If {
@@ -165,7 +166,7 @@ pub enum Terminator {
     Unreachable,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Instr {
     // Standard Assignment: x <- val
     Assign {
@@ -208,7 +209,7 @@ pub enum Instr {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value {
     pub id: ValueId,
     pub kind: ValueKind,
@@ -221,7 +222,7 @@ pub struct Value {
     pub escape: EscapeStatus,       // Optimization: Escape Analysis result
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum IntrinsicOp {
     VecAddF64,
     VecSubF64,
@@ -236,7 +237,7 @@ pub enum IntrinsicOp {
     VecMeanF64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BuiltinKind {
     Length,
     SeqAlong,
@@ -448,7 +449,7 @@ pub fn builtin_kind_for_name(name: &str) -> Option<BuiltinKind> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CallSemantics {
     Builtin(BuiltinKind),
     RuntimeHelper,
@@ -456,14 +457,14 @@ pub enum CallSemantics {
     UserDefined,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MemoryLayoutHint {
     Dense1D,
     ColumnMajor2D,
     ColumnMajorND,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ValueKind {
     // Constants
     Const(Lit),

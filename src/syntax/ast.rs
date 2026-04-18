@@ -1,4 +1,5 @@
 use crate::utils::Span;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeExpr {
@@ -229,7 +230,7 @@ pub enum PatternKind {
     }, // {a: x, b: 1}
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Lit {
     Int(i64),
     Float(f64),
@@ -253,14 +254,14 @@ impl std::hash::Hash for Lit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnaryOp {
     Neg,
     Not,
     Formula,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BinOp {
     Add,
     Sub,

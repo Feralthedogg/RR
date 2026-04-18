@@ -125,10 +125,14 @@ Useful flags:
 - `--once`
 - `--poll-ms <N>`
 - `--no-incremental`
+- `--cold`
 - `--incremental=auto|off|1|1,2|1,2,3|all`
 
 RR defaults to incremental `auto`, so normal compiles already reuse phase 1 and
 phase 2 caches when possible.
+
+If you want one compile to bypass the warm caches without clearing them, use
+`--cold`.
 
 `RR watch` also fingerprints the full imported module tree now, so unchanged
 poll ticks do not rebuild repeatedly, and edits in imported `*.rr` modules

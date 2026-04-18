@@ -1,20 +1,21 @@
 use crate::utils::Span;
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 
 // ----- IDs -----
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleId(pub u32);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FnId(pub u32);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LocalId(pub u32);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SymbolId(pub u32);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlockId(pub u32);
 
 // ----- Types (Gradual) -----
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Ty {
     Any,
     Never,
@@ -34,19 +35,19 @@ pub enum Ty {
 }
 
 // ----- Program Structure -----
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirProgram {
     pub modules: Vec<HirModule>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirModule {
     pub id: ModuleId,
     pub path: Vec<SymbolId>,
     pub items: Vec<HirItem>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirItem {
     Import(HirImport),
     Fn(HirFn),
@@ -55,21 +56,21 @@ pub enum HirItem {
     Stmt(HirStmt),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirImport {
     pub module: String, // path
     pub spec: HirImportSpec,
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirImportSpec {
     Glob,
     Names(Vec<SymbolId>),
 }
 
 // ----- Functions -----
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirFn {
     pub id: FnId,
     pub name: SymbolId,
@@ -83,20 +84,20 @@ pub struct HirFn {
     pub public: bool, // export modifier
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirFnAttrs {
     pub inline_hint: InlineHint, // default/always/never
     pub tidy_safe: bool,         // NSE-friendly (default false)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum InlineHint {
     Default,
     Always,
     Never,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirParam {
     pub name: SymbolId,
     pub ty: Option<Ty>,
@@ -105,13 +106,13 @@ pub struct HirParam {
 }
 
 // ----- Blocks / Statements -----
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirBlock {
     pub stmts: Vec<HirStmt>,
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirStmt {
     Let {
         local: LocalId,
@@ -157,7 +158,7 @@ pub enum HirStmt {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirForIter {
     Range {
         var: LocalId,
@@ -176,7 +177,7 @@ pub enum HirForIter {
 }
 
 // LValues
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirLValue {
     Local(LocalId),
     Index { base: HirExpr, index: Vec<HirExpr> }, // y[i], m[i,j]
@@ -184,7 +185,7 @@ pub enum HirLValue {
 }
 
 // ----- Expressions -----
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirExpr {
     Local(LocalId),
     Global(SymbolId, Span),
@@ -248,21 +249,21 @@ pub enum HirExpr {
     Column(String),        // @name
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirCall {
     pub callee: Box<HirExpr>,
     pub args: Vec<HirArg>, // named args retained for resolution
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirArg {
     Pos(HirExpr),
     Named { name: SymbolId, value: HirExpr },
 }
 
 // Match
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirMatchArm {
     pub pat: HirPat,
     pub guard: Option<HirExpr>,
@@ -270,7 +271,7 @@ pub struct HirMatchArm {
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirPat {
     Wild,
     Lit(HirLit),
@@ -290,7 +291,7 @@ pub enum HirPat {
 }
 
 // Tidy
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HirTidyCall {
     pub input: Box<HirExpr>, // df (or result of previous tidy op)
     pub verb: TidyVerb,      // filter/mutate/...
@@ -298,7 +299,7 @@ pub struct HirTidyCall {
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TidyVerb {
     Filter,
     Mutate,
@@ -309,13 +310,13 @@ pub enum TidyVerb {
     Rename,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TidyArg {
     Expr(TidyExpr),            // filter(@age > 20)
     Named(SymbolId, TidyExpr), // mutate(height_m = @h / 100)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TidyExpr {
     Lit(HirLit),
     Ident(SymbolId), // helper functions like starts_with
@@ -336,7 +337,7 @@ pub enum TidyExpr {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirLit {
     Int(i64),
     Double(f64),
@@ -346,13 +347,13 @@ pub enum HirLit {
     Null,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirUnOp {
     Not,
     Neg,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HirBinOp {
     Add,
     Sub,

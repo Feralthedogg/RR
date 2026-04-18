@@ -193,6 +193,26 @@ fn match_balanced_call_span(expr: &str, start: usize, callee: &str) -> Option<(u
     None
 }
 
+fn text_might_mention_ident(text: &str, ident: &str) -> bool {
+    if ident.is_empty() || !text.contains(ident) {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let ident_bytes = ident.as_bytes();
+    let mut start = 0usize;
+    while let Some(off) = text[start..].find(ident) {
+        let pos = start + off;
+        let before_ok = pos == 0 || !helper_ident_char(bytes[pos - 1] as char);
+        let after = pos + ident_bytes.len();
+        let after_ok = after >= bytes.len() || !helper_ident_char(bytes[after] as char);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = pos + ident_bytes.len();
+    }
+    false
+}
+
 fn collect_repeated_vector_helper_calls(expr: &str) -> Vec<String> {
     let mut counts = FxHashMap::<String, usize>::default();
     for idx in expr.char_indices().map(|(idx, _)| idx) {
@@ -200,9 +220,6 @@ fn collect_repeated_vector_helper_calls(expr: &str) -> Vec<String> {
             let Some((start, end)) = match_balanced_call_span(expr, idx, callee) else {
                 continue;
             };
-            if start != idx {
-                continue;
-            }
             let call = expr[start..end].trim().to_string();
             *counts.entry(call).or_default() += 1;
         }
@@ -255,6 +272,16 @@ pub(crate) fn hoist_repeated_vector_helper_calls_within_lines(lines: Vec<String>
             .trim()
             .to_string();
         if lhs.starts_with(".__rr_cse_") || rhs.is_empty() || !lhs.starts_with(".tachyon_exprmap") {
+            out.push(line);
+            continue;
+        }
+        if !helper_call_prefixes()
+            .iter()
+            .any(|prefix| rhs.contains(prefix))
+            && !reusable_vector_helper_names()
+                .iter()
+                .any(|callee| rhs.contains(&format!("{callee}(")))
+        {
             out.push(line);
             continue;
         }
@@ -466,14 +493,18 @@ pub(crate) fn rewrite_forward_temp_aliases(lines: Vec<String>) -> Vec<String> {
                     .unwrap_or("")
                     .trim()
                     .to_string();
-                if expr_idents(&next_rhs).iter().any(|ident| ident == &lhs) {
+                if text_might_mention_ident(&next_rhs, &lhs)
+                    && expr_idents(&next_rhs).iter().any(|ident| ident == &lhs)
+                {
                     out[line_no] = out[line_no].replacen(&lhs, &rhs, usize::MAX);
                 }
                 line_no += 1;
                 continue;
             }
 
-            if expr_idents(&line_trimmed).iter().any(|ident| ident == &lhs) {
+            if text_might_mention_ident(&line_trimmed, &lhs)
+                && expr_idents(&line_trimmed).iter().any(|ident| ident == &lhs)
+            {
                 out[line_no] = out[line_no].replacen(&lhs, &rhs, usize::MAX);
             }
             if line_trimmed == "return(NULL)"

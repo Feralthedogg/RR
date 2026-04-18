@@ -483,6 +483,7 @@ Compiler verification settings:
 | `RR_VERIFY_EACH_PASS=1` | run the MIR verifier after each optimization pass; use this when `-O1` or `-O2` behavior looks suspicious |
 | `--strict-incremental-verify` | rebuild and compare against any reused incremental artifact instead of trusting the cache blindly |
 | `--no-incremental` | force a fresh compile when you want to inspect the current optimizer output rather than a cached result |
+| `--cold` | bypass warm compile caches for one run without clearing the normal cache root |
 
 Recommended workflow:
 
@@ -491,8 +492,9 @@ Recommended workflow:
 3. Add `RR_VERIFY_EACH_PASS=1` when investigating optimizer regressions.
 4. Use `--strict-incremental-verify` when you are validating incremental reuse.
 5. Use `--no-incremental` when you care about the exact emitted R from the current source tree.
-6. Measure with `RR_RUNTIME_MODE=release` only after correctness is stable.
-7. When benchmarking helper-heavy vector loops, pin the runtime profitability knobs so you know which path you are measuring.
+6. Use `--cold` when you want a one-off cold-path measurement without blowing away the warm cache.
+7. Measure with `RR_RUNTIME_MODE=release` only after correctness is stable.
+8. When benchmarking helper-heavy vector loops, pin the runtime profitability knobs so you know which path you are measuring.
 
 > Recommended default during development:
 > `RR_RUNTIME_MODE=debug`
@@ -527,6 +529,12 @@ The last two commands serve different purposes:
 
 - `--no-incremental` is for "show me what the optimizer emits right now"
 - `--strict-incremental-verify` is for "prove the incremental cache matches a fresh rebuild"
+
+`--cold` is different from both:
+
+- it keeps the normal cache on disk
+- it runs one compile against an empty temporary cache root
+- it is the right flag when you want a cold-path timing or behavior check
 
 Helper-heavy vector call kernels have an extra runtime decision point:
 

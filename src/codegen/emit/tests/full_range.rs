@@ -483,13 +483,488 @@ fn singleton_size_boundary_assign_collapses_rep_int_wrapper_to_scalar_rhs() {
 }
 
 #[test]
+fn singleton_size_boundary_assign_rep_int_scalar_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Param { index: 0 },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("size".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Call {
+                callee: "rep.int".to_string(),
+                args: vec![2, 3],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("nf".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 5,
+            kind: ValueKind::Const(Lit::Int(1)),
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 6,
+            kind: ValueKind::Call {
+                callee: "rep.int".to_string(),
+                args: vec![2, 5],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 7,
+            kind: ValueKind::Call {
+                callee: "rr_assign_slice".to_string(),
+                args: vec![4, 3, 3, 6],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("nf".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "nf".to_string(),
+                src: 4,
+                span: Span::dummy(),
+            },
+            &values,
+            &["size".to_string()],
+        )
+        .expect("base alloc should emit");
+
+    let rendered = backend.resolve_rr_idx_cube_vec_arg_expr(7, &values, &["size".to_string()]);
+    assert_eq!(rendered, "replace(nf, size, sum_ab)");
+}
+
+#[test]
+fn singleton_size_boundary_assign_direct_scalar_len_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Len { base: 2 },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("n".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Int,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Param { index: 0 },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("size".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 5,
+            kind: ValueKind::Call {
+                callee: "rep.int".to_string(),
+                args: vec![3, 4],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("nf".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Int)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 6,
+            kind: ValueKind::Call {
+                callee: "rr_assign_slice".to_string(),
+                args: vec![5, 4, 4, 3],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("nf".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Int)),
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+    backend.note_var_write("n");
+    backend.bind_value_to_var(3, "n");
+    backend.bind_var_to_value("n", 3);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "n".to_string(),
+                src: 3,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("len assign should emit");
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "nf".to_string(),
+                src: 5,
+                span: Span::dummy(),
+            },
+            &values,
+            &["size".to_string()],
+        )
+        .expect("base alloc should emit");
+
+    let rendered = backend.resolve_rr_idx_cube_vec_arg_expr(6, &values, &["size".to_string()]);
+    assert_eq!(rendered, "replace(nf, size, n)");
+}
+
+#[test]
+fn singleton_size_boundary_assign_direct_scalar_binary_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Double,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Param { index: 0 },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("size".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Call {
+                callee: "rep.int".to_string(),
+                args: vec![2, 3],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("nf".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 5,
+            kind: ValueKind::Call {
+                callee: "rr_assign_slice".to_string(),
+                args: vec![4, 3, 3, 2],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("nf".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "nf".to_string(),
+                src: 4,
+                span: Span::dummy(),
+            },
+            &values,
+            &["size".to_string()],
+        )
+        .expect("base alloc should emit");
+
+    let rendered = backend.resolve_rr_idx_cube_vec_arg_expr(5, &values, &["size".to_string()]);
+    assert_eq!(rendered, "rr_assign_slice(nf, size, size, sum_ab)");
+}
+
+#[test]
+fn singleton_size_boundary_assign_direct_scalar_pure_call_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Call {
+                callee: "abs".to_string(),
+                args: vec![0],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("abs_a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Double,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Param { index: 0 },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("size".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Call {
+                callee: "rep.int".to_string(),
+                args: vec![1, 2],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("nf".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Call {
+                callee: "rr_assign_slice".to_string(),
+                args: vec![3, 2, 2, 1],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("nf".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("abs_a");
+    backend.bind_value_to_var(1, "abs_a");
+    backend.bind_var_to_value("abs_a", 1);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "nf".to_string(),
+                src: 3,
+                span: Span::dummy(),
+            },
+            &values,
+            &["size".to_string()],
+        )
+        .expect("base alloc should emit");
+
+    let rendered = backend.resolve_rr_idx_cube_vec_arg_expr(4, &values, &["size".to_string()]);
+    assert_eq!(rendered, "rr_assign_slice(nf, size, size, abs_a)");
+}
+
 fn callsite_seq_len_summary_allows_replace_at_size_boundary() {
     let mut summaries = FxHashMap::default();
     summaries.insert(
         "Sym_72".to_string(),
         FxHashMap::from_iter([(2usize, 3usize)]),
     );
-    let mut backend = RBackend::with_analysis_options(FxHashSet::default(), summaries, false);
+    let mut backend = RBackend::with_analysis_options(
+        FxHashSet::default(),
+        FxHashSet::default(),
+        summaries,
+        false,
+    );
     backend.current_fn_name = "Sym_72".to_string();
     backend.analysis.current_seq_len_param_end_slots = FxHashMap::from_iter([(2usize, 3usize)]);
 

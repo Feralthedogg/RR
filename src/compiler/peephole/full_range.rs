@@ -1,5 +1,236 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct SecondaryFullRangePlan {
+    pub(super) needs_inline_slice_ops: bool,
+    pub(super) needs_contextual_gather_replays: bool,
+}
+
+impl SecondaryFullRangePlan {
+    pub(super) fn needs_any(self) -> bool {
+        self.needs_inline_slice_ops || self.needs_contextual_gather_replays
+    }
+}
+
+pub(super) fn analyze_secondary_full_range_plan(lines: &[String]) -> SecondaryFullRangePlan {
+    let mut plan = SecondaryFullRangePlan::default();
+    for line in lines {
+        if !plan.needs_inline_slice_ops
+            && (line.contains("rr_assign_slice(") || line.contains("rr_call_map_slice_auto("))
+        {
+            plan.needs_inline_slice_ops = true;
+        }
+        if !plan.needs_contextual_gather_replays
+            && line.contains("rr_gather(")
+            && line.contains("rr_index1_read_vec")
+            && line.contains("rr_assign_slice(")
+        {
+            plan.needs_contextual_gather_replays = true;
+        }
+        if plan.needs_inline_slice_ops && plan.needs_contextual_gather_replays {
+            break;
+        }
+    }
+    plan
+}
+
+pub(super) fn run_secondary_full_range_bundle(
+    lines: Vec<String>,
+    direct_builtin_call_map: bool,
+) -> Vec<String> {
+    let plan = analyze_secondary_full_range_plan(&lines);
+    if !plan.needs_any() {
+        return lines;
+    }
+
+    let contextual_re = if plan.needs_contextual_gather_replays {
+        compile_regex(format!(
+            r"^(?P<lhs>{id}) <- rr_assign_slice\((?P<dest>{id}),\s*(?P<start>[^,]+),\s*(?P<end>[^,]+),\s*rr_gather\((?P<base>{id}),\s*rr_index_vec_floor\(rr_index1_read_vec(?:_floor)?\((?P<inner_base>{id}),\s*rr_index_vec_floor\((?P<inner_start>[^:]+):(?P<inner_end>[^\)]+)\)\)\)\)\)$",
+            id = IDENT_PATTERN
+        ))
+    } else {
+        None
+    };
+
+    let mut out = lines;
+    let mut whole_range_index_aliases: FxHashMap<String, String> = FxHashMap::default();
+    for idx in 0..out.len() {
+        let original = out[idx].trim().to_string();
+        let Some(caps) = assign_re().and_then(|re| re.captures(&original)) else {
+            if is_control_flow_boundary(&original) || out[idx].contains("<- function") {
+                whole_range_index_aliases.clear();
+            }
+            continue;
+        };
+        let indent = caps.name("indent").map(|m| m.as_str()).unwrap_or("");
+        let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
+        let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
+        let mut rewritten_rhs = rhs.to_string();
+
+        if plan.needs_inline_slice_ops {
+            if let Some(slice_caps) = assign_slice_re().and_then(|re| re.captures(&rewritten_rhs)) {
+                let dest = slice_caps
+                    .name("dest")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let start = slice_caps
+                    .name("start")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let end = slice_caps
+                    .name("end")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let rest = slice_caps
+                    .name("rest")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if lhs == dest
+                    && start_expr_is_one_in_context(&out, idx, start)
+                    && end_expr_can_cover_full_range(&out, idx, end)
+                {
+                    let rewritten_rest = rewrite_inline_full_range_reads_with_aliases(
+                        rest,
+                        start,
+                        end,
+                        &whole_range_index_aliases,
+                    )
+                    .replace("rr_ifelse_strict(", "ifelse(");
+                    rewritten_rhs = rewritten_rest;
+                }
+            }
+
+            if let Some(call_caps) = call_map_slice_re().and_then(|re| re.captures(&rewritten_rhs))
+            {
+                let dest = call_caps
+                    .name("dest")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let start = call_caps
+                    .name("start")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let end = call_caps
+                    .name("end")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let rest = call_caps
+                    .name("rest")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if lhs == dest
+                    && start_expr_is_one_in_context(&out, idx, start)
+                    && end_expr_can_cover_full_range(&out, idx, end)
+                {
+                    let Some(parts) = split_top_level_args(rest) else {
+                        whole_range_index_aliases.remove(lhs);
+                        continue;
+                    };
+                    if parts.len() < 4 {
+                        whole_range_index_aliases.remove(lhs);
+                        continue;
+                    }
+                    let callee = parts[0].trim().trim_matches('"');
+                    let slots = parts[2].trim();
+                    let args: Vec<String> = parts[3..]
+                        .iter()
+                        .map(|arg| {
+                            rewrite_inline_full_range_reads_with_aliases(
+                                arg,
+                                start,
+                                end,
+                                &whole_range_index_aliases,
+                            )
+                        })
+                        .collect();
+                    let mut call_map_rewritten = None;
+                    if direct_builtin_call_map && (slots == "c(1L)" || slots == "c(1)") {
+                        match (callee, args.as_slice()) {
+                            ("pmax", [a, b]) | ("pmin", [a, b]) => {
+                                call_map_rewritten = Some(format!("{callee}({a}, {b})"));
+                            }
+                            ("abs", [a]) | ("sqrt", [a]) | ("log", [a]) => {
+                                call_map_rewritten = Some(format!("{callee}({a})"));
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(new_rhs) = call_map_rewritten {
+                        rewritten_rhs = new_rhs;
+                    } else {
+                        let joined = parts
+                            .iter()
+                            .take(3)
+                            .cloned()
+                            .chain(args.into_iter())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        rewritten_rhs = format!("rr_call_map_whole_auto({dest}, {joined})");
+                    }
+                }
+            }
+        }
+
+        if plan.needs_contextual_gather_replays {
+            let candidate_line = format!("{lhs} <- {rewritten_rhs}");
+            if let Some(caps) = contextual_re
+                .as_ref()
+                .and_then(|re| re.captures(&candidate_line))
+            {
+                let dest = caps.name("dest").map(|m| m.as_str()).unwrap_or("").trim();
+                let start = caps.name("start").map(|m| m.as_str()).unwrap_or("").trim();
+                let end = caps.name("end").map(|m| m.as_str()).unwrap_or("").trim();
+                let base = caps.name("base").map(|m| m.as_str()).unwrap_or("").trim();
+                let inner_base = caps
+                    .name("inner_base")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let inner_start = caps
+                    .name("inner_start")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let inner_end = caps
+                    .name("inner_end")
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if lhs == dest
+                    && base == inner_base
+                    && compact_expr(start) == compact_expr(inner_start)
+                    && compact_expr(end) == compact_expr(inner_end)
+                    && start_expr_is_one_in_context(&out, idx, start)
+                    && end_expr_can_cover_full_range(&out, idx, end)
+                {
+                    rewritten_rhs = format!("rr_gather({base}, rr_index_vec_floor({base}))");
+                }
+            }
+        }
+
+        if lhs.starts_with('.')
+            && (rewritten_rhs.contains(':') || rewritten_rhs.starts_with("rr_index_vec_floor("))
+        {
+            whole_range_index_aliases.insert(lhs.to_string(), rewritten_rhs.clone());
+        } else {
+            whole_range_index_aliases.remove(lhs);
+        }
+
+        if rewritten_rhs != rhs {
+            out[idx] = format!("{indent}{lhs} <- {rewritten_rhs}");
+        }
+    }
+    out
+}
+
 fn rewrite_loop_index_reads_to_whole_expr(expr: &str, idx_var: &str) -> String {
     let pattern = format!(r"(?P<base>{})\[(?P<idx>[^\]]+)\]", IDENT_PATTERN);
     let Some(index_re) = compile_regex(pattern) else {
@@ -25,6 +256,43 @@ pub(super) fn parse_break_guard(line: &str) -> Option<(String, String)> {
         .and_then(|s| s.strip_suffix(")) break"))?;
     let (lhs, rhs) = inner.split_once("<=")?;
     Some((lhs.trim().to_string(), rhs.trim().to_string()))
+}
+
+pub(super) fn has_one_based_full_range_index_alias_read_candidates(lines: &[String]) -> bool {
+    let read_vec_re = compile_regex(format!(
+        r"rr_index1_read_vec(?:_floor)?\((?P<base>{}),\s*(?P<idx>{}|rr_index_vec_floor\([^\)]*\)|[^,\)]*:[^\)]*)\)",
+        IDENT_PATTERN, IDENT_PATTERN
+    ));
+    let mut has_read = false;
+    let mut has_range_alias = false;
+    for line in lines {
+        let trimmed = line.trim();
+        if line.contains("<- function") {
+            has_read = false;
+            has_range_alias = false;
+            continue;
+        }
+        if !has_read && trimmed.contains("rr_index1_read_vec") {
+            has_read = true;
+            if let Some(caps) = read_vec_re.as_ref().and_then(|re| re.captures(trimmed)) {
+                let idx_expr = caps.name("idx").map(|m| m.as_str()).unwrap_or("").trim();
+                if expr_is_one_based_full_range_alias(idx_expr) {
+                    return true;
+                }
+            }
+        }
+        if !has_range_alias && let Some(caps) = assign_re().and_then(|re| re.captures(trimmed)) {
+            let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
+            let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
+            if lhs.starts_with('.') && expr_is_one_based_full_range_alias(rhs) {
+                has_range_alias = true;
+            }
+        }
+        if has_read && has_range_alias {
+            return true;
+        }
+    }
+    false
 }
 
 fn parse_indexed_store_assign(line: &str) -> Option<(String, String, String)> {
@@ -398,10 +666,71 @@ fn end_expr_can_cover_full_range(lines: &[String], idx: usize, end: &str) -> boo
     false
 }
 
+fn has_inline_full_range_slice_op_candidates(lines: &[String]) -> bool {
+    for idx in 0..lines.len() {
+        let trimmed = lines[idx].trim();
+        let Some(caps) = assign_re().and_then(|re| re.captures(trimmed)) else {
+            continue;
+        };
+        let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
+        let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
+        if let Some(slice_caps) = assign_slice_re().and_then(|re| re.captures(rhs)) {
+            let dest = slice_caps
+                .name("dest")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .trim();
+            let start = slice_caps
+                .name("start")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .trim();
+            let end = slice_caps
+                .name("end")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .trim();
+            if lhs == dest
+                && start_expr_is_one_in_context(lines, idx, start)
+                && end_expr_can_cover_full_range(lines, idx, end)
+            {
+                return true;
+            }
+        }
+        if let Some(call_caps) = call_map_slice_re().and_then(|re| re.captures(rhs)) {
+            let dest = call_caps
+                .name("dest")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .trim();
+            let start = call_caps
+                .name("start")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .trim();
+            let end = call_caps
+                .name("end")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .trim();
+            if lhs == dest
+                && start_expr_is_one_in_context(lines, idx, start)
+                && end_expr_can_cover_full_range(lines, idx, end)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub(super) fn rewrite_inline_full_range_slice_ops(
     lines: Vec<String>,
     direct_builtin_call_map: bool,
 ) -> Vec<String> {
+    if !has_inline_full_range_slice_op_candidates(&lines) {
+        return lines;
+    }
     let mut out = lines;
     let mut whole_range_index_aliases: FxHashMap<String, String> = FxHashMap::default();
     for idx in 0..out.len() {
@@ -547,6 +876,13 @@ pub(super) fn rewrite_inline_full_range_slice_ops(
 }
 
 pub(super) fn collapse_contextual_full_range_gather_replays(lines: Vec<String>) -> Vec<String> {
+    if !lines.iter().any(|line| {
+        line.contains("rr_gather(")
+            && line.contains("rr_index1_read_vec")
+            && line.contains("rr_assign_slice(")
+    }) {
+        return lines;
+    }
     let mut out = lines;
     let Some(re) = compile_regex(format!(
         r"^(?P<indent>\s*)(?P<lhs>{id}) <- rr_assign_slice\((?P<dest>{id}),\s*(?P<start>[^,]+),\s*(?P<end>[^,]+),\s*rr_gather\((?P<base>{id}),\s*rr_index_vec_floor\(rr_index1_read_vec(?:_floor)?\((?P<inner_base>{id}),\s*rr_index_vec_floor\((?P<inner_start>[^:]+):(?P<inner_end>[^\)]+)\)\)\)\)\)$",
@@ -595,8 +931,15 @@ pub(super) fn collapse_contextual_full_range_gather_replays(lines: Vec<String>) 
 }
 
 pub(super) fn rewrite_one_based_full_range_index_alias_reads(lines: Vec<String>) -> Vec<String> {
+    if !has_one_based_full_range_index_alias_read_candidates(&lines) {
+        return lines;
+    }
     let mut out = Vec::with_capacity(lines.len());
     let mut whole_range_index_aliases: FxHashMap<String, String> = FxHashMap::default();
+    let read_vec_re = compile_regex(format!(
+        r"rr_index1_read_vec(?:_floor)?\((?P<base>{}),\s*(?P<idx>{}|rr_index_vec_floor\([^\)]*\)|[^,\)]*:[^\)]*)\)",
+        IDENT_PATTERN, IDENT_PATTERN
+    ));
     for line in lines {
         let trimmed = line.trim().to_string();
         let Some(caps) = assign_re().and_then(|re| re.captures(&trimmed)) else {
@@ -610,10 +953,9 @@ pub(super) fn rewrite_one_based_full_range_index_alias_reads(lines: Vec<String>)
         let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
         let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
         let mut rewritten_rhs = rhs.to_string();
-        if let Some(re) = compile_regex(format!(
-            r"rr_index1_read_vec(?:_floor)?\((?P<base>{}),\s*(?P<idx>{}|rr_index_vec_floor\([^\)]*\)|[^,\)]*:[^\)]*)\)",
-            IDENT_PATTERN, IDENT_PATTERN
-        )) {
+        if rewritten_rhs.contains("rr_index1_read_vec")
+            && let Some(re) = read_vec_re.as_ref()
+        {
             rewritten_rhs = re
                 .replace_all(&rewritten_rhs, |caps: &Captures<'_>| {
                     let idx_expr = caps.name("idx").map(|m| m.as_str()).unwrap_or("").trim();

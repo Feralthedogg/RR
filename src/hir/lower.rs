@@ -76,6 +76,37 @@ impl Lowerer {
         self.symbols
     }
 
+    pub fn symbols_snapshot(&self) -> Vec<(SymbolId, String)> {
+        let mut symbols: Vec<(SymbolId, String)> = self
+            .symbols
+            .iter()
+            .map(|(id, name)| (*id, name.clone()))
+            .collect();
+        symbols.sort_by_key(|(id, _)| id.0);
+        symbols
+    }
+
+    pub fn try_preload_symbols(&mut self, symbols: &[(SymbolId, String)]) -> bool {
+        for (id, name) in symbols {
+            if let Some(existing) = self.symbols.get(id)
+                && existing != name
+            {
+                return false;
+            }
+            if let Some(existing_id) = self.symbols_rev.get(name)
+                && existing_id != id
+            {
+                return false;
+            }
+        }
+        for (id, name) in symbols {
+            self.symbols.insert(*id, name.clone());
+            self.symbols_rev.insert(name.clone(), *id);
+            self.next_sym_id = self.next_sym_id.max(id.0.saturating_add(1));
+        }
+        true
+    }
+
     fn enter_scope(&mut self) {
         self.scopes.push(FxHashMap::default());
     }

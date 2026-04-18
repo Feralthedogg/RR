@@ -1,4 +1,204 @@
 use super::*;
+use std::time::Instant;
+
+fn compare_exact_block_ir(
+    stage: &str,
+    input: &[String],
+    legacy: &[String],
+    pure_user_calls: &FxHashSet<String>,
+) {
+    let Some(mode) = std::env::var_os("RR_COMPARE_EXACT_BLOCK_IR") else {
+        return;
+    };
+    let mut ir = input.to_vec();
+    match stage {
+        "exact_pre" => {
+            ir = rewrite_forward_exact_expr_reuse_ir(ir);
+            ir = strip_redundant_identical_pure_rebinds_ir(ir, pure_user_calls);
+        }
+        "exact_reuse" => {
+            ir = strip_dead_simple_eval_lines(ir);
+            ir = strip_noop_self_assignments(ir);
+            ir = strip_redundant_nested_temp_reassigns(ir);
+            ir = rewrite_forward_exact_pure_call_reuse_ir(ir, pure_user_calls);
+            ir = rewrite_forward_exact_expr_reuse_ir(ir);
+            ir = hoist_repeated_vector_helper_calls_within_lines(ir);
+            ir = rewrite_forward_exact_vector_helper_reuse(ir);
+            ir = rewrite_forward_temp_aliases(ir);
+            ir = strip_redundant_identical_pure_rebinds_ir(ir, pure_user_calls);
+        }
+        _ => return,
+    }
+    if ir == legacy {
+        return;
+    }
+    let mismatch_idx = legacy
+        .iter()
+        .zip(ir.iter())
+        .position(|(lhs, rhs)| lhs != rhs)
+        .unwrap_or_else(|| legacy.len().min(ir.len()));
+    let legacy_line = legacy
+        .get(mismatch_idx)
+        .map(|line| line.trim())
+        .unwrap_or("<eof>");
+    let ir_line = ir
+        .get(mismatch_idx)
+        .map(|line| line.trim())
+        .unwrap_or("<eof>");
+    eprintln!(
+        "RR_COMPARE_EXACT_BLOCK_IR diff stage={stage} legacy_lines={} ir_lines={} first_mismatch={} legacy=`{}` ir=`{}`",
+        legacy.len(),
+        ir.len(),
+        mismatch_idx + 1,
+        legacy_line,
+        ir_line
+    );
+    if mode == "verbose" {
+        let start = mismatch_idx.saturating_sub(2);
+        let end = (mismatch_idx + 3)
+            .max(start)
+            .min(legacy.len().max(ir.len()));
+        for idx in start..end {
+            let legacy_line = legacy.get(idx).map(|line| line.trim()).unwrap_or("<eof>");
+            let ir_line = ir.get(idx).map(|line| line.trim()).unwrap_or("<eof>");
+            eprintln!(
+                "RR_COMPARE_EXACT_BLOCK_IR ctx line={} legacy=`{}` ir=`{}`",
+                idx + 1,
+                legacy_line,
+                ir_line
+            );
+        }
+    }
+}
+
+fn compare_exact_reuse_substep(step: &str, input: &[String], legacy: &[String], ir: &[String]) {
+    let Some(mode) = std::env::var_os("RR_COMPARE_EXACT_REUSE_STEPS") else {
+        return;
+    };
+    if legacy == ir {
+        return;
+    }
+    let mismatch_idx = legacy
+        .iter()
+        .zip(ir.iter())
+        .position(|(lhs, rhs)| lhs != rhs)
+        .unwrap_or_else(|| legacy.len().min(ir.len()));
+    let legacy_line = legacy
+        .get(mismatch_idx)
+        .map(|line| line.trim())
+        .unwrap_or("<eof>");
+    let ir_line = ir
+        .get(mismatch_idx)
+        .map(|line| line.trim())
+        .unwrap_or("<eof>");
+    eprintln!(
+        "RR_COMPARE_EXACT_REUSE_STEPS diff step={step} legacy_lines={} ir_lines={} first_mismatch={} legacy=`{}` ir=`{}`",
+        legacy.len(),
+        ir.len(),
+        mismatch_idx + 1,
+        legacy_line,
+        ir_line
+    );
+    if mode == "verbose" {
+        let start = mismatch_idx.saturating_sub(2);
+        let end = (mismatch_idx + 3)
+            .max(start)
+            .min(legacy.len().max(ir.len()));
+        for idx in start..end {
+            let input_line = input.get(idx).map(|line| line.as_str()).unwrap_or("<eof>");
+            let legacy_line = legacy.get(idx).map(|line| line.as_str()).unwrap_or("<eof>");
+            let ir_line = ir.get(idx).map(|line| line.as_str()).unwrap_or("<eof>");
+            eprintln!(
+                "RR_COMPARE_EXACT_REUSE_STEPS ctx line={} input={:?} legacy={:?} ir={:?}",
+                idx + 1,
+                input_line,
+                legacy_line,
+                ir_line
+            );
+        }
+    }
+}
+
+fn compare_exact_reuse_steps_enabled() -> bool {
+    std::env::var_os("RR_COMPARE_EXACT_REUSE_STEPS").is_some()
+}
+
+fn compare_exact_block_enabled() -> bool {
+    std::env::var_os("RR_COMPARE_EXACT_BLOCK_IR").is_some()
+}
+
+#[derive(Default)]
+struct ExactFixpointProfile {
+    prepare_elapsed_ns: u128,
+    forward_elapsed_ns: u128,
+    pure_call_elapsed_ns: u128,
+    expr_elapsed_ns: u128,
+    rebind_elapsed_ns: u128,
+    rounds: usize,
+}
+
+fn run_exact_cleanup_fixpoint_rounds_with_profile(
+    mut lines: Vec<String>,
+    pure_user_calls: &FxHashSet<String>,
+    max_rounds: usize,
+) -> (Vec<String>, ExactFixpointProfile) {
+    let mut profile = ExactFixpointProfile::default();
+    for _ in 0..max_rounds {
+        profile.rounds += 1;
+        let before = lines.clone();
+        let started = Instant::now();
+        lines = strip_noop_self_assignments(lines);
+        lines = strip_redundant_nested_temp_reassigns(lines);
+        profile.prepare_elapsed_ns += started.elapsed().as_nanos();
+        if lines == before {
+            break;
+        }
+        if compare_exact_reuse_steps_enabled() {
+            let after_prepare = lines.clone();
+            let started = Instant::now();
+            lines = rewrite_forward_exact_pure_call_reuse(lines, pure_user_calls);
+            let pure_call_elapsed_ns = started.elapsed().as_nanos();
+            profile.pure_call_elapsed_ns += pure_call_elapsed_ns;
+            if lines == after_prepare {
+                let might_need_more = lines.iter().any(|line| {
+                    line.contains(".__rr_cse_")
+                        || line.contains("rr_parallel_typed_vec_call(")
+                        || line.contains("Sym_")
+                });
+                if !might_need_more {
+                    break;
+                }
+            }
+            let after_pure_call = lines.clone();
+            let started = Instant::now();
+            lines = rewrite_forward_exact_expr_reuse(lines);
+            let expr_elapsed_ns = started.elapsed().as_nanos();
+            profile.expr_elapsed_ns += expr_elapsed_ns;
+            profile.forward_elapsed_ns += pure_call_elapsed_ns + expr_elapsed_ns;
+            let after_expr = lines.clone();
+            let started = Instant::now();
+            lines = strip_redundant_identical_pure_rebinds(lines, pure_user_calls);
+            profile.rebind_elapsed_ns += started.elapsed().as_nanos();
+            if lines == before || (lines == after_expr && after_expr == after_pure_call) {
+                break;
+            }
+        } else {
+            let after_prepare = lines.clone();
+            let (next_lines, exact_reuse_profile) =
+                run_exact_reuse_ir_bundle(lines, pure_user_calls);
+            profile.pure_call_elapsed_ns += exact_reuse_profile.pure_call_elapsed_ns;
+            profile.expr_elapsed_ns += exact_reuse_profile.expr_elapsed_ns;
+            profile.rebind_elapsed_ns += exact_reuse_profile.rebind_elapsed_ns;
+            profile.forward_elapsed_ns +=
+                exact_reuse_profile.pure_call_elapsed_ns + exact_reuse_profile.expr_elapsed_ns;
+            lines = next_lines;
+            if lines == before || lines == after_prepare {
+                break;
+            }
+        }
+    }
+    (lines, profile)
+}
 
 pub(super) fn optimize_emitted_r_pipeline_impl(
     code: &str,
@@ -7,6 +207,27 @@ pub(super) fn optimize_emitted_r_pipeline_impl(
     fresh_user_calls: &FxHashSet<String>,
     preserve_all_defs: bool,
 ) -> (String, Vec<u32>) {
+    optimize_emitted_r_pipeline_impl_with_profile(
+        code,
+        direct_builtin_call_map,
+        pure_user_calls,
+        fresh_user_calls,
+        preserve_all_defs,
+        false,
+    )
+    .0
+}
+
+pub(super) fn optimize_emitted_r_pipeline_impl_with_profile(
+    code: &str,
+    direct_builtin_call_map: bool,
+    pure_user_calls: &FxHashSet<String>,
+    fresh_user_calls: &FxHashSet<String>,
+    preserve_all_defs: bool,
+    fast_dev: bool,
+) -> ((String, Vec<u32>), PeepholeProfile) {
+    let mut analysis_cache = PeepholeAnalysisCache::default();
+    let mut repeat_loop_cache = RepeatLoopAnalysisCache::default();
     let reusable_pure_user_calls: FxHashSet<String> = pure_user_calls
         .iter()
         .filter(|name| !fresh_user_calls.contains(*name))
@@ -24,6 +245,7 @@ pub(super) fn optimize_emitted_r_pipeline_impl(
     let mut out_lines = Vec::new();
     let mut conditional_depth = 0usize;
     let mutated_arg_aliases = collect_mutated_arg_aliases(code);
+    let linear_started = Instant::now();
 
     for line in code.lines() {
         let trimmed_line = line.trim();
@@ -342,6 +564,9 @@ pub(super) fn optimize_emitted_r_pipeline_impl(
         }
     }
 
+    let linear_scan_elapsed_ns = linear_started.elapsed().as_nanos();
+    let primary_started = Instant::now();
+    let primary_flow_started = Instant::now();
     let out_lines = collapse_common_if_else_tail_assignments(out_lines);
     let out_lines = rewrite_full_range_conditional_scalar_loops(out_lines);
     let out_lines = if preserve_all_defs {
@@ -362,173 +587,561 @@ pub(super) fn optimize_emitted_r_pipeline_impl(
     let out_lines = rewrite_loop_index_alias_ii(out_lines);
     let out_lines = rewrite_safe_loop_index_write_calls(out_lines);
     let out_lines = rewrite_safe_loop_neighbor_read_calls(out_lines);
-    let out_lines = rewrite_temp_uses_after_named_copy(out_lines);
+    let primary_flow_elapsed_ns = primary_flow_started.elapsed().as_nanos();
+
+    let primary_inline_started = Instant::now();
+    let mut primary_inline_cache = PeepholeAnalysisCache::default();
     let out_lines =
-        hoist_branch_local_named_scalar_assigns_used_after_branch(out_lines, pure_user_calls);
-    let out_lines = inline_immediate_single_use_scalar_temps(out_lines);
-    let out_lines = inline_single_use_named_scalar_index_reads_within_straight_line_region(
+        rewrite_temp_uses_after_named_copy_with_cache(out_lines, &mut primary_inline_cache);
+    let out_lines = hoist_branch_local_named_scalar_assigns_used_after_branch_with_cache(
         out_lines,
         pure_user_calls,
+        &mut primary_inline_cache,
     );
-    let out_lines = inline_two_use_named_scalar_index_reads_within_straight_line_region(
+    let (out_lines, _primary_immediate_profile) = run_immediate_single_use_inline_bundle_with_cache(
         out_lines,
         pure_user_calls,
+        &mut primary_inline_cache,
     );
-    let out_lines = inline_immediate_single_use_named_scalar_exprs(out_lines, pure_user_calls);
-    let out_lines = inline_single_use_scalar_temps_within_straight_line_region(out_lines);
-    let out_lines = inline_two_use_scalar_temps_within_straight_line_region(out_lines);
-    let out_lines = inline_immediate_single_use_index_temps(out_lines);
+    let out_lines =
+        inline_one_or_two_use_named_scalar_index_reads_within_straight_line_region_with_cache(
+            out_lines,
+            pure_user_calls,
+            &mut primary_inline_cache,
+        );
+    let out_lines = inline_one_or_two_use_scalar_temps_within_straight_line_region_with_cache(
+        out_lines,
+        &mut primary_inline_cache,
+    );
+    let primary_inline_elapsed_ns = primary_inline_started.elapsed().as_nanos();
+
+    let primary_reuse_started = Instant::now();
     let out_lines = hoist_repeated_vector_helper_calls_within_lines(out_lines);
     let out_lines = rewrite_forward_exact_vector_helper_reuse(out_lines);
     let out_lines = rewrite_forward_temp_aliases(out_lines);
     let out_lines = rewrite_forward_exact_pure_call_reuse(out_lines, pure_user_calls);
-    let out_lines = rewrite_adjacent_duplicate_pure_call_assignments(out_lines, pure_user_calls);
-    let out_lines = rewrite_adjacent_duplicate_symbol_assignments(out_lines);
+    let out_lines = rewrite_adjacent_duplicate_assignments(out_lines, pure_user_calls);
     let out_lines = collapse_trivial_dot_product_wrappers(out_lines);
-    let out_lines = rewrite_simple_expr_helper_calls(out_lines, pure_user_calls);
-    let out_lines = rewrite_dead_zero_loop_seeds_before_for(out_lines);
-    let out_lines = restore_missing_scalar_loop_increments(out_lines);
-    let out_lines = restore_constant_one_guard_repeat_loop_counters(out_lines);
-    let out_lines = restore_missing_scalar_loop_next_increments(out_lines);
-    let out_lines =
-        hoist_loop_invariant_pure_assignments_from_counted_repeat_loops(out_lines, pure_user_calls);
-    let out_lines = rewrite_canonical_counted_repeat_loops_to_for(out_lines);
-    let out_lines = strip_terminal_repeat_nexts(out_lines);
-    let out_lines = simplify_same_var_is_na_or_not_finite_guards(out_lines);
-    let out_lines = simplify_not_finite_or_zero_guard_parens(out_lines);
-    let out_lines = simplify_wrapped_not_finite_parens(out_lines);
-    let out_lines = rewrite_forward_exact_expr_reuse(out_lines);
-    let out_lines = strip_redundant_identical_pure_rebinds(out_lines, pure_user_calls);
-    let out_lines = restore_empty_match_single_bind_arms(out_lines);
-    let out_lines = strip_empty_else_blocks(out_lines);
-    let out_lines = strip_arg_aliases_in_trivial_return_wrappers(out_lines);
-    let out_lines = collapse_trivial_passthrough_return_wrappers(out_lines);
-    let out_lines = rewrite_passthrough_helper_calls(out_lines);
-    let out_lines = collapse_trivial_dot_product_wrappers(out_lines);
-    let out_lines = rewrite_simple_expr_helper_calls(out_lines, pure_user_calls);
-    let out_lines = simplify_nested_index_vec_floor_calls(out_lines);
-    let out_lines = rewrite_metric_helper_statement_calls(out_lines);
-    let out_lines = rewrite_metric_helper_return_calls(out_lines);
-    let out_lines = collapse_inlined_copy_vec_sequences(out_lines);
-    let out_lines = rewrite_readonly_param_aliases(out_lines);
-    let out_lines = strip_unused_arg_aliases(out_lines);
-    let out_lines = rewrite_remaining_readonly_param_shadow_uses(out_lines);
-    let out_lines = rewrite_index_only_mutated_param_shadow_aliases(out_lines);
-    let out_lines = rewrite_literal_field_get_calls(out_lines);
-    let out_lines = rewrite_literal_named_list_calls(out_lines);
-    let out_lines = rewrite_safe_named_index_read_calls(out_lines);
-    let out_lines = rewrite_safe_flat_loop_index_read_calls(out_lines);
-    let out_lines = rewrite_same_len_scalar_tail_reads(out_lines);
-    let out_lines = rewrite_wrap_index_scalar_access_helpers(out_lines);
-    let out_lines = collapse_singleton_assign_slice_scalar_edits(out_lines);
-    let out_lines = strip_unused_helper_params(out_lines);
-    let out_lines = collapse_trivial_scalar_clamp_wrappers(out_lines);
-    let out_lines = rewrite_simple_expr_helper_calls(out_lines, pure_user_calls);
-    let out_lines = rewrite_safe_named_index_read_calls(out_lines);
-    let out_lines = rewrite_safe_flat_loop_index_read_calls(out_lines);
-    let out_lines = rewrite_same_len_scalar_tail_reads(out_lines);
-    let out_lines = collapse_identical_if_else_tail_assignments_late(out_lines);
-    let out_lines = if preserve_all_defs {
-        out_lines
+    let primary_reuse_elapsed_ns = primary_reuse_started.elapsed().as_nanos();
+
+    let primary_loop_cleanup_started = Instant::now();
+    let (
+        out_lines,
+        line_map,
+        primary_loop_dead_zero_elapsed_ns,
+        primary_loop_normalize_elapsed_ns,
+        primary_loop_hoist_elapsed_ns,
+        primary_loop_repeat_to_for_elapsed_ns,
+        primary_loop_tail_cleanup_elapsed_ns,
+        primary_loop_guard_cleanup_elapsed_ns,
+        primary_loop_helper_cleanup_elapsed_ns,
+        primary_loop_exact_cleanup_elapsed_ns,
+        primary_loop_exact_pre_elapsed_ns,
+        primary_loop_exact_reuse_elapsed_ns,
+        primary_loop_exact_reuse_prepare_elapsed_ns,
+        primary_loop_exact_reuse_forward_elapsed_ns,
+        primary_loop_exact_reuse_pure_call_elapsed_ns,
+        primary_loop_exact_reuse_expr_elapsed_ns,
+        primary_loop_exact_reuse_vector_alias_elapsed_ns,
+        primary_loop_exact_reuse_rebind_elapsed_ns,
+        primary_loop_exact_fixpoint_elapsed_ns,
+        primary_loop_exact_fixpoint_prepare_elapsed_ns,
+        primary_loop_exact_fixpoint_forward_elapsed_ns,
+        primary_loop_exact_fixpoint_pure_call_elapsed_ns,
+        primary_loop_exact_fixpoint_expr_elapsed_ns,
+        primary_loop_exact_fixpoint_rebind_elapsed_ns,
+        primary_loop_exact_fixpoint_rounds,
+        primary_loop_exact_finalize_elapsed_ns,
+        primary_loop_dead_temp_cleanup_elapsed_ns,
+    ) = if fast_dev {
+        let step_started = Instant::now();
+        let out_lines = rewrite_dead_zero_loop_seeds_before_for(out_lines);
+        let primary_loop_dead_zero_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines =
+            normalize_repeat_loop_counters_with_cache(out_lines, &mut repeat_loop_cache);
+        let primary_loop_normalize_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines = hoist_loop_invariant_pure_assignments_from_counted_repeat_loops_with_cache(
+            out_lines,
+            pure_user_calls,
+            &mut repeat_loop_cache,
+        );
+        let primary_loop_hoist_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines = rewrite_canonical_counted_repeat_loops_to_for_with_cache(
+            out_lines,
+            &mut repeat_loop_cache,
+        );
+        let primary_loop_repeat_to_for_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines = strip_terminal_repeat_nexts(out_lines);
+        let out_lines = simplify_same_var_is_na_or_not_finite_guards(out_lines);
+        let out_lines = simplify_not_finite_or_zero_guard_parens(out_lines);
+        let out_lines = simplify_wrapped_not_finite_parens(out_lines);
+        let out_lines = run_empty_else_match_cleanup_bundle_ir(out_lines);
+        let primary_loop_guard_cleanup_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines = strip_noop_self_assignments(out_lines);
+        let out_lines = strip_redundant_tail_assign_slice_return(out_lines);
+        let primary_loop_exact_cleanup_elapsed_ns = step_started.elapsed().as_nanos();
+        let primary_loop_helper_cleanup_elapsed_ns = 0;
+        let step_started = Instant::now();
+        let (out_lines, line_map) =
+            strip_dead_temps_with_cache(out_lines, pure_user_calls, &mut analysis_cache);
+        let primary_loop_dead_temp_cleanup_elapsed_ns = step_started.elapsed().as_nanos();
+        let primary_loop_tail_cleanup_elapsed_ns = primary_loop_guard_cleanup_elapsed_ns
+            + primary_loop_exact_cleanup_elapsed_ns
+            + primary_loop_dead_temp_cleanup_elapsed_ns;
+        (
+            out_lines,
+            line_map,
+            primary_loop_dead_zero_elapsed_ns,
+            primary_loop_normalize_elapsed_ns,
+            primary_loop_hoist_elapsed_ns,
+            primary_loop_repeat_to_for_elapsed_ns,
+            primary_loop_tail_cleanup_elapsed_ns,
+            primary_loop_guard_cleanup_elapsed_ns,
+            primary_loop_helper_cleanup_elapsed_ns,
+            primary_loop_exact_cleanup_elapsed_ns,
+            primary_loop_exact_cleanup_elapsed_ns,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            primary_loop_dead_temp_cleanup_elapsed_ns,
+        )
     } else {
-        rewrite_one_based_full_range_index_alias_reads(out_lines)
+        let step_started = Instant::now();
+        let out_lines = rewrite_dead_zero_loop_seeds_before_for(out_lines);
+        let primary_loop_dead_zero_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines =
+            normalize_repeat_loop_counters_with_cache(out_lines, &mut repeat_loop_cache);
+        let primary_loop_normalize_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines = hoist_loop_invariant_pure_assignments_from_counted_repeat_loops_with_cache(
+            out_lines,
+            pure_user_calls,
+            &mut repeat_loop_cache,
+        );
+        let primary_loop_hoist_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines = rewrite_canonical_counted_repeat_loops_to_for_with_cache(
+            out_lines,
+            &mut repeat_loop_cache,
+        );
+        let primary_loop_repeat_to_for_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let out_lines = strip_terminal_repeat_nexts(out_lines);
+        let out_lines = simplify_same_var_is_na_or_not_finite_guards(out_lines);
+        let out_lines = simplify_not_finite_or_zero_guard_parens(out_lines);
+        let out_lines = simplify_wrapped_not_finite_parens(out_lines);
+        let out_lines = run_empty_else_match_cleanup_bundle_ir(out_lines);
+        let primary_loop_guard_cleanup_elapsed_ns = step_started.elapsed().as_nanos();
+        let step_started = Instant::now();
+        let (out_lines, _primary_metric_bundle_profile) =
+            run_post_passthrough_metric_bundle_ir(out_lines);
+        let out_lines = collapse_inlined_copy_vec_sequences(out_lines);
+        let out_lines =
+            run_simple_expr_cleanup_bundle_ir(out_lines, pure_user_calls, None, !preserve_all_defs);
+        let primary_loop_helper_cleanup_elapsed_ns = step_started.elapsed().as_nanos();
+        let compare_exact_block = compare_exact_block_enabled();
+        let exact_pre_input = compare_exact_block.then(|| out_lines.clone());
+        let (
+            out_lines,
+            primary_loop_exact_pre_elapsed_ns,
+            primary_loop_exact_reuse_prepare_elapsed_ns,
+        ) = if compare_exact_block {
+            let step_started = Instant::now();
+            let out_lines = run_exact_pre_ir_bundle(out_lines, pure_user_calls);
+            if let Some(exact_pre_input) = exact_pre_input.as_ref() {
+                compare_exact_block_ir("exact_pre", exact_pre_input, &out_lines, pure_user_calls);
+            }
+            let exact_pre_elapsed_ns = step_started.elapsed().as_nanos();
+            let step_started = Instant::now();
+            let out_lines = run_exact_pre_cleanup_bundle_ir(out_lines);
+            let exact_prepare_elapsed_ns = step_started.elapsed().as_nanos();
+            (out_lines, exact_pre_elapsed_ns, exact_prepare_elapsed_ns)
+        } else {
+            let (out_lines, exact_pre_profile) =
+                run_exact_pre_full_ir_bundle(out_lines, pure_user_calls);
+            (
+                out_lines,
+                exact_pre_profile.pre_elapsed_ns,
+                exact_pre_profile.cleanup_elapsed_ns,
+            )
+        };
+        let exact_reuse_input = compare_exact_block.then(|| out_lines.clone());
+        let (
+            out_lines,
+            primary_loop_exact_reuse_pure_call_elapsed_ns,
+            primary_loop_exact_reuse_expr_elapsed_ns,
+            primary_loop_exact_reuse_rebind_elapsed_ns,
+        ) = if compare_exact_reuse_steps_enabled() {
+            let exact_reuse_input = exact_reuse_input
+                .as_ref()
+                .expect("exact_reuse_input must exist when compare_exact_block is enabled");
+            let step_started = Instant::now();
+            let out_lines = rewrite_forward_exact_pure_call_reuse_with_cache(
+                out_lines,
+                pure_user_calls,
+                &mut analysis_cache,
+            );
+            let exact_reuse_ir_pure_call = rewrite_forward_exact_pure_call_reuse_ir(
+                exact_reuse_input.clone(),
+                pure_user_calls,
+            );
+            compare_exact_reuse_substep(
+                "pure_call",
+                exact_reuse_input,
+                &out_lines,
+                &exact_reuse_ir_pure_call,
+            );
+            let pure_call_elapsed_ns = step_started.elapsed().as_nanos();
+
+            let step_started = Instant::now();
+            let exact_reuse_expr_input = out_lines.clone();
+            let out_lines = rewrite_forward_exact_expr_reuse(out_lines);
+            let exact_reuse_ir_expr =
+                rewrite_forward_exact_expr_reuse_ir(exact_reuse_expr_input.clone());
+            compare_exact_reuse_substep(
+                "exact_expr",
+                &exact_reuse_expr_input,
+                &out_lines,
+                &exact_reuse_ir_expr,
+            );
+            let expr_elapsed_ns = step_started.elapsed().as_nanos();
+
+            let step_started = Instant::now();
+            let out_lines = strip_redundant_identical_pure_rebinds_with_cache(
+                out_lines,
+                pure_user_calls,
+                &mut analysis_cache,
+            );
+            let rebind_elapsed_ns = step_started.elapsed().as_nanos();
+            (
+                out_lines,
+                pure_call_elapsed_ns,
+                expr_elapsed_ns,
+                rebind_elapsed_ns,
+            )
+        } else {
+            let (out_lines, exact_reuse_profile) =
+                run_exact_reuse_ir_bundle(out_lines, pure_user_calls);
+            (
+                out_lines,
+                exact_reuse_profile.pure_call_elapsed_ns,
+                exact_reuse_profile.expr_elapsed_ns,
+                exact_reuse_profile.rebind_elapsed_ns,
+            )
+        };
+        let primary_loop_exact_reuse_forward_elapsed_ns =
+            primary_loop_exact_reuse_pure_call_elapsed_ns
+                + primary_loop_exact_reuse_expr_elapsed_ns;
+        let step_started = Instant::now();
+        let out_lines = hoist_repeated_vector_helper_calls_within_lines(out_lines);
+        let out_lines = rewrite_forward_exact_vector_helper_reuse(out_lines);
+        let out_lines = rewrite_forward_temp_aliases(out_lines);
+        let primary_loop_exact_reuse_vector_alias_elapsed_ns = step_started.elapsed().as_nanos();
+        if let Some(exact_reuse_input) = exact_reuse_input.as_ref() {
+            compare_exact_block_ir(
+                "exact_reuse",
+                exact_reuse_input,
+                &out_lines,
+                pure_user_calls,
+            );
+        }
+        let primary_loop_exact_reuse_elapsed_ns = primary_loop_exact_reuse_prepare_elapsed_ns
+            + primary_loop_exact_reuse_forward_elapsed_ns
+            + primary_loop_exact_reuse_vector_alias_elapsed_ns
+            + primary_loop_exact_reuse_rebind_elapsed_ns;
+        let step_started = Instant::now();
+        let (out_lines, exact_fixpoint_profile) =
+            run_exact_cleanup_fixpoint_rounds_with_profile(out_lines, pure_user_calls, 2);
+        let out_lines = rewrite_shifted_square_scalar_reuse(out_lines);
+        let primary_loop_exact_fixpoint_elapsed_ns = step_started.elapsed().as_nanos();
+        let primary_loop_exact_fixpoint_prepare_elapsed_ns =
+            exact_fixpoint_profile.prepare_elapsed_ns;
+        let primary_loop_exact_fixpoint_forward_elapsed_ns =
+            exact_fixpoint_profile.forward_elapsed_ns;
+        let primary_loop_exact_fixpoint_pure_call_elapsed_ns =
+            exact_fixpoint_profile.pure_call_elapsed_ns;
+        let primary_loop_exact_fixpoint_expr_elapsed_ns = exact_fixpoint_profile.expr_elapsed_ns;
+        let primary_loop_exact_fixpoint_rebind_elapsed_ns =
+            exact_fixpoint_profile.rebind_elapsed_ns;
+        let primary_loop_exact_fixpoint_rounds = exact_fixpoint_profile.rounds;
+        let step_started = Instant::now();
+        let out_lines = run_exact_finalize_cleanup_bundle_ir(out_lines);
+        let primary_loop_exact_finalize_elapsed_ns = step_started.elapsed().as_nanos();
+        let primary_loop_exact_cleanup_elapsed_ns = primary_loop_exact_pre_elapsed_ns
+            + primary_loop_exact_reuse_elapsed_ns
+            + primary_loop_exact_fixpoint_elapsed_ns
+            + primary_loop_exact_finalize_elapsed_ns;
+        let step_started = Instant::now();
+        let (out_lines, line_map) =
+            strip_dead_temps_with_cache(out_lines, pure_user_calls, &mut analysis_cache);
+        let primary_loop_dead_temp_cleanup_elapsed_ns = step_started.elapsed().as_nanos();
+        let primary_loop_tail_cleanup_elapsed_ns = primary_loop_guard_cleanup_elapsed_ns
+            + primary_loop_helper_cleanup_elapsed_ns
+            + primary_loop_exact_cleanup_elapsed_ns
+            + primary_loop_dead_temp_cleanup_elapsed_ns;
+        (
+            out_lines,
+            line_map,
+            primary_loop_dead_zero_elapsed_ns,
+            primary_loop_normalize_elapsed_ns,
+            primary_loop_hoist_elapsed_ns,
+            primary_loop_repeat_to_for_elapsed_ns,
+            primary_loop_tail_cleanup_elapsed_ns,
+            primary_loop_guard_cleanup_elapsed_ns,
+            primary_loop_helper_cleanup_elapsed_ns,
+            primary_loop_exact_cleanup_elapsed_ns,
+            primary_loop_exact_pre_elapsed_ns,
+            primary_loop_exact_reuse_elapsed_ns,
+            primary_loop_exact_reuse_prepare_elapsed_ns,
+            primary_loop_exact_reuse_forward_elapsed_ns,
+            primary_loop_exact_reuse_pure_call_elapsed_ns,
+            primary_loop_exact_reuse_expr_elapsed_ns,
+            primary_loop_exact_reuse_vector_alias_elapsed_ns,
+            primary_loop_exact_reuse_rebind_elapsed_ns,
+            primary_loop_exact_fixpoint_elapsed_ns,
+            primary_loop_exact_fixpoint_prepare_elapsed_ns,
+            primary_loop_exact_fixpoint_forward_elapsed_ns,
+            primary_loop_exact_fixpoint_pure_call_elapsed_ns,
+            primary_loop_exact_fixpoint_expr_elapsed_ns,
+            primary_loop_exact_fixpoint_rebind_elapsed_ns,
+            primary_loop_exact_fixpoint_rounds,
+            primary_loop_exact_finalize_elapsed_ns,
+            primary_loop_dead_temp_cleanup_elapsed_ns,
+        )
     };
-    let out_lines = strip_dead_simple_eval_lines(out_lines);
-    let out_lines = strip_noop_self_assignments(out_lines);
-    let out_lines = strip_redundant_nested_temp_reassigns(out_lines);
-    let out_lines = rewrite_forward_exact_pure_call_reuse(out_lines, pure_user_calls);
-    let out_lines = rewrite_forward_exact_expr_reuse(out_lines);
-    let out_lines = hoist_repeated_vector_helper_calls_within_lines(out_lines);
-    let out_lines = rewrite_forward_exact_vector_helper_reuse(out_lines);
-    let out_lines = rewrite_forward_temp_aliases(out_lines);
-    let out_lines = strip_redundant_identical_pure_rebinds(out_lines, pure_user_calls);
-    let out_lines = strip_noop_self_assignments(out_lines);
-    let out_lines = strip_redundant_nested_temp_reassigns(out_lines);
-    let out_lines = rewrite_forward_exact_pure_call_reuse(out_lines, pure_user_calls);
-    let out_lines = rewrite_forward_exact_expr_reuse(out_lines);
-    let out_lines = strip_redundant_identical_pure_rebinds(out_lines, pure_user_calls);
-    let out_lines = rewrite_shifted_square_scalar_reuse(out_lines);
-    let out_lines = strip_dead_simple_eval_lines(out_lines);
-    let out_lines = strip_noop_self_assignments(out_lines);
-    let out_lines = strip_redundant_nested_temp_reassigns(out_lines);
-    let out_lines = strip_redundant_tail_assign_slice_return(out_lines);
-    let (out_lines, line_map) = strip_dead_temps(out_lines, pure_user_calls);
-    let out_lines =
-        hoist_branch_local_named_scalar_assigns_used_after_branch(out_lines, pure_user_calls);
-    let out_lines = inline_immediate_single_use_scalar_temps(out_lines);
-    let out_lines = inline_single_use_named_scalar_index_reads_within_straight_line_region(
+    let primary_loop_cleanup_elapsed_ns = primary_loop_cleanup_started.elapsed().as_nanos();
+    let primary_rewrite_elapsed_ns = primary_started.elapsed().as_nanos();
+    if fast_dev {
+        let finalize_started = Instant::now();
+        let mut out = out_lines.join("\n");
+        if code.ends_with('\n') {
+            out.push('\n');
+        }
+        let finalize_elapsed_ns = finalize_started.elapsed().as_nanos();
+        return (
+            (out, line_map),
+            PeepholeProfile {
+                linear_scan_elapsed_ns,
+                primary_rewrite_elapsed_ns,
+                primary_flow_elapsed_ns,
+                primary_inline_elapsed_ns,
+                primary_reuse_elapsed_ns,
+                primary_loop_cleanup_elapsed_ns,
+                primary_loop_dead_zero_elapsed_ns,
+                primary_loop_normalize_elapsed_ns,
+                primary_loop_hoist_elapsed_ns,
+                primary_loop_repeat_to_for_elapsed_ns,
+                primary_loop_tail_cleanup_elapsed_ns,
+                primary_loop_guard_cleanup_elapsed_ns,
+                primary_loop_helper_cleanup_elapsed_ns,
+                primary_loop_exact_cleanup_elapsed_ns,
+                primary_loop_exact_pre_elapsed_ns,
+                primary_loop_exact_reuse_elapsed_ns,
+                primary_loop_exact_reuse_prepare_elapsed_ns,
+                primary_loop_exact_reuse_forward_elapsed_ns,
+                primary_loop_exact_reuse_pure_call_elapsed_ns,
+                primary_loop_exact_reuse_expr_elapsed_ns,
+                primary_loop_exact_reuse_vector_alias_elapsed_ns,
+                primary_loop_exact_reuse_rebind_elapsed_ns,
+                primary_loop_exact_fixpoint_elapsed_ns,
+                primary_loop_exact_fixpoint_prepare_elapsed_ns,
+                primary_loop_exact_fixpoint_forward_elapsed_ns,
+                primary_loop_exact_fixpoint_pure_call_elapsed_ns,
+                primary_loop_exact_fixpoint_expr_elapsed_ns,
+                primary_loop_exact_fixpoint_rebind_elapsed_ns,
+                primary_loop_exact_fixpoint_rounds,
+                primary_loop_exact_finalize_elapsed_ns,
+                primary_loop_dead_temp_cleanup_elapsed_ns,
+                secondary_rewrite_elapsed_ns: 0,
+                secondary_inline_elapsed_ns: 0,
+                secondary_inline_branch_hoist_elapsed_ns: 0,
+                secondary_inline_immediate_scalar_elapsed_ns: 0,
+                secondary_inline_named_index_elapsed_ns: 0,
+                secondary_inline_named_expr_elapsed_ns: 0,
+                secondary_inline_scalar_region_elapsed_ns: 0,
+                secondary_inline_immediate_index_elapsed_ns: 0,
+                secondary_inline_adjacent_dedup_elapsed_ns: 0,
+                secondary_exact_elapsed_ns: 0,
+                secondary_helper_cleanup_elapsed_ns: 0,
+                secondary_helper_wrapper_elapsed_ns: 0,
+                secondary_helper_metric_elapsed_ns: 0,
+                secondary_helper_alias_elapsed_ns: 0,
+                secondary_helper_simple_expr_elapsed_ns: 0,
+                secondary_helper_full_range_elapsed_ns: 0,
+                secondary_helper_named_copy_elapsed_ns: 0,
+                secondary_finalize_cleanup_elapsed_ns: 0,
+                secondary_finalize_bundle_elapsed_ns: 0,
+                secondary_finalize_dead_temp_elapsed_ns: 0,
+                secondary_finalize_dead_temp_facts_elapsed_ns: 0,
+                secondary_finalize_dead_temp_mark_elapsed_ns: 0,
+                secondary_finalize_dead_temp_reverse_elapsed_ns: 0,
+                secondary_finalize_dead_temp_compact_elapsed_ns: 0,
+                finalize_elapsed_ns,
+            },
+        );
+    }
+    let secondary_started = Instant::now();
+    let mut secondary_inline_cache = PeepholeAnalysisCache::default();
+    let step_started = Instant::now();
+    let out_lines = hoist_branch_local_named_scalar_assigns_used_after_branch_with_cache(
         out_lines,
         pure_user_calls,
+        &mut secondary_inline_cache,
     );
-    let out_lines = inline_two_use_named_scalar_index_reads_within_straight_line_region(
+    let secondary_inline_branch_hoist_elapsed_ns = step_started.elapsed().as_nanos();
+    let step_started = Instant::now();
+    let (out_lines, immediate_inline_profile) = run_immediate_single_use_inline_bundle_with_cache(
         out_lines,
         pure_user_calls,
+        &mut secondary_inline_cache,
     );
-    let out_lines = inline_immediate_single_use_named_scalar_exprs(out_lines, pure_user_calls);
-    let out_lines = inline_single_use_scalar_temps_within_straight_line_region(out_lines);
-    let out_lines = inline_two_use_scalar_temps_within_straight_line_region(out_lines);
-    let out_lines = inline_immediate_single_use_index_temps(out_lines);
-    let out_lines = rewrite_adjacent_duplicate_pure_call_assignments(out_lines, pure_user_calls);
-    let out_lines = rewrite_adjacent_duplicate_symbol_assignments(out_lines);
-    let out_lines = rewrite_dead_zero_loop_seeds_before_for(out_lines);
-    let out_lines = strip_terminal_repeat_nexts(out_lines);
-    let out_lines = simplify_same_var_is_na_or_not_finite_guards(out_lines);
-    let out_lines = simplify_not_finite_or_zero_guard_parens(out_lines);
-    let out_lines = simplify_wrapped_not_finite_parens(out_lines);
-    let out_lines = run_exact_expr_cleanup_rounds(out_lines, 4);
+    let secondary_inline_immediate_bundle_elapsed_ns = step_started.elapsed().as_nanos();
+    let secondary_inline_immediate_scalar_elapsed_ns =
+        immediate_inline_profile.immediate_scalar_elapsed_ns;
+    let (out_lines, secondary_straight_line_profile) =
+        run_named_index_scalar_region_inline_bundle_with_cache(
+            out_lines,
+            pure_user_calls,
+            &mut secondary_inline_cache,
+        );
+    let secondary_inline_named_index_elapsed_ns =
+        secondary_straight_line_profile.named_index_elapsed_ns;
+    let secondary_inline_named_expr_elapsed_ns = immediate_inline_profile.named_expr_elapsed_ns;
+    let secondary_inline_scalar_region_elapsed_ns =
+        secondary_straight_line_profile.scalar_region_elapsed_ns;
+    let secondary_inline_immediate_index_elapsed_ns =
+        immediate_inline_profile.immediate_index_elapsed_ns;
+    let step_started = Instant::now();
+    let out_lines = rewrite_adjacent_duplicate_assignments(out_lines, pure_user_calls);
+    let secondary_inline_adjacent_dedup_elapsed_ns = step_started.elapsed().as_nanos();
+    let secondary_inline_elapsed_ns = secondary_inline_branch_hoist_elapsed_ns
+        + secondary_inline_immediate_bundle_elapsed_ns
+        + secondary_inline_named_index_elapsed_ns
+        + secondary_inline_scalar_region_elapsed_ns
+        + secondary_inline_adjacent_dedup_elapsed_ns;
+    let step_started = Instant::now();
+    let out_lines = run_secondary_exact_bundle_ir(out_lines);
+    let secondary_exact_elapsed_ns = step_started.elapsed().as_nanos();
+    let (out_lines, secondary_helper_ir_profile) =
+        run_secondary_helper_ir_bundle(out_lines, pure_user_calls);
+    let secondary_helper_wrapper_elapsed_ns = secondary_helper_ir_profile.post_wrapper_elapsed_ns;
+    let secondary_helper_metric_elapsed_ns = secondary_helper_ir_profile.metric_elapsed_ns;
+    let secondary_helper_alias_elapsed_ns = secondary_helper_ir_profile.alias_elapsed_ns;
+    let secondary_helper_simple_expr_elapsed_ns = secondary_helper_ir_profile
+        .simple_expr_elapsed_ns
+        + secondary_helper_ir_profile.tail_elapsed_ns;
+    let step_started = Instant::now();
     let out_lines = if preserve_all_defs {
         out_lines
     } else {
-        rewrite_one_based_full_range_index_alias_reads(out_lines)
+        run_secondary_full_range_bundle(out_lines, direct_builtin_call_map)
     };
-    let out_lines = rewrite_shifted_square_scalar_reuse(out_lines);
-    let out_lines = strip_arg_aliases_in_trivial_return_wrappers(out_lines);
-    let out_lines = collapse_trivial_passthrough_return_wrappers(out_lines);
-    let out_lines = rewrite_passthrough_helper_calls(out_lines);
-    let out_lines = collapse_trivial_dot_product_wrappers(out_lines);
-    let out_lines = rewrite_simple_expr_helper_calls(out_lines, pure_user_calls);
-    let out_lines = simplify_nested_index_vec_floor_calls(out_lines);
-    let out_lines = rewrite_metric_helper_statement_calls(out_lines);
-    let out_lines = rewrite_metric_helper_return_calls(out_lines);
-    let out_lines = collapse_inlined_copy_vec_sequences(out_lines);
-    let out_lines = rewrite_readonly_param_aliases(out_lines);
-    let out_lines = strip_unused_arg_aliases(out_lines);
-    let out_lines = rewrite_remaining_readonly_param_shadow_uses(out_lines);
-    let out_lines = collapse_singleton_assign_slice_scalar_edits(out_lines);
-    let out_lines = collapse_trivial_scalar_clamp_wrappers(out_lines);
-    let out_lines = rewrite_simple_expr_helper_calls(out_lines, pure_user_calls);
-    let out_lines = collapse_identical_if_else_tail_assignments_late(out_lines);
-    let out_lines = if preserve_all_defs {
-        out_lines
-    } else {
-        rewrite_inline_full_range_slice_ops(out_lines, direct_builtin_call_map)
-    };
-    let out_lines = if preserve_all_defs {
-        out_lines
-    } else {
-        collapse_contextual_full_range_gather_replays(out_lines)
-    };
-    let out_lines = rewrite_temp_uses_after_named_copy(out_lines);
-    let out_lines = if preserve_all_defs {
-        out_lines
-    } else {
-        rewrite_one_based_full_range_index_alias_reads(out_lines)
-    };
-    let out_lines = restore_empty_match_single_bind_arms(out_lines);
-    let out_lines = strip_empty_else_blocks(out_lines);
-    let out_lines = strip_noop_self_assignments(out_lines);
-    let out_lines = if preserve_all_defs {
-        out_lines
-    } else {
-        strip_unreachable_sym_helpers(out_lines)
-    };
-    let out_lines = strip_redundant_tail_assign_slice_return(out_lines);
-    let (out_lines, final_compact_map) = strip_dead_temps(out_lines, pure_user_calls);
-    let out_lines = strip_unused_helper_params(out_lines);
+    let secondary_helper_full_range_elapsed_ns = step_started.elapsed().as_nanos();
+    let secondary_helper_named_copy_elapsed_ns = 0;
+    let secondary_helper_cleanup_elapsed_ns = secondary_helper_wrapper_elapsed_ns
+        + secondary_helper_metric_elapsed_ns
+        + secondary_helper_alias_elapsed_ns
+        + secondary_helper_simple_expr_elapsed_ns
+        + secondary_helper_full_range_elapsed_ns
+        + secondary_helper_named_copy_elapsed_ns;
+    let step_started = Instant::now();
+    let out_lines = run_secondary_empty_else_finalize_bundle_ir(out_lines, preserve_all_defs);
+    let secondary_finalize_bundle_elapsed_ns = step_started.elapsed().as_nanos();
+    let step_started = Instant::now();
+    let ((out_lines, final_compact_map), secondary_dead_temp_profile) =
+        strip_dead_temps_with_cache_and_profile(out_lines, pure_user_calls, &mut analysis_cache);
+    let secondary_finalize_dead_temp_elapsed_ns = step_started.elapsed().as_nanos();
+    let secondary_finalize_cleanup_elapsed_ns =
+        secondary_finalize_bundle_elapsed_ns + secondary_finalize_dead_temp_elapsed_ns;
+    let secondary_rewrite_elapsed_ns = secondary_started.elapsed().as_nanos();
+    let finalize_started = Instant::now();
     let line_map = compose_line_maps(&line_map, &final_compact_map);
     let mut out = out_lines.join("\n");
     if code.ends_with('\n') {
         out.push('\n');
     }
-    (out, line_map)
+    let finalize_elapsed_ns = finalize_started.elapsed().as_nanos();
+    (
+        (out, line_map),
+        PeepholeProfile {
+            linear_scan_elapsed_ns,
+            primary_rewrite_elapsed_ns,
+            primary_flow_elapsed_ns,
+            primary_inline_elapsed_ns,
+            primary_reuse_elapsed_ns,
+            primary_loop_cleanup_elapsed_ns,
+            primary_loop_dead_zero_elapsed_ns,
+            primary_loop_normalize_elapsed_ns,
+            primary_loop_hoist_elapsed_ns,
+            primary_loop_repeat_to_for_elapsed_ns,
+            primary_loop_tail_cleanup_elapsed_ns,
+            primary_loop_guard_cleanup_elapsed_ns,
+            primary_loop_helper_cleanup_elapsed_ns,
+            primary_loop_exact_cleanup_elapsed_ns,
+            primary_loop_exact_pre_elapsed_ns,
+            primary_loop_exact_reuse_elapsed_ns,
+            primary_loop_exact_reuse_prepare_elapsed_ns,
+            primary_loop_exact_reuse_forward_elapsed_ns,
+            primary_loop_exact_reuse_pure_call_elapsed_ns,
+            primary_loop_exact_reuse_expr_elapsed_ns,
+            primary_loop_exact_reuse_vector_alias_elapsed_ns,
+            primary_loop_exact_reuse_rebind_elapsed_ns,
+            primary_loop_exact_fixpoint_elapsed_ns,
+            primary_loop_exact_fixpoint_prepare_elapsed_ns,
+            primary_loop_exact_fixpoint_forward_elapsed_ns,
+            primary_loop_exact_fixpoint_pure_call_elapsed_ns,
+            primary_loop_exact_fixpoint_expr_elapsed_ns,
+            primary_loop_exact_fixpoint_rebind_elapsed_ns,
+            primary_loop_exact_fixpoint_rounds,
+            primary_loop_exact_finalize_elapsed_ns,
+            primary_loop_dead_temp_cleanup_elapsed_ns,
+            secondary_rewrite_elapsed_ns,
+            secondary_inline_elapsed_ns,
+            secondary_inline_branch_hoist_elapsed_ns,
+            secondary_inline_immediate_scalar_elapsed_ns,
+            secondary_inline_named_index_elapsed_ns,
+            secondary_inline_named_expr_elapsed_ns,
+            secondary_inline_scalar_region_elapsed_ns,
+            secondary_inline_immediate_index_elapsed_ns,
+            secondary_inline_adjacent_dedup_elapsed_ns,
+            secondary_exact_elapsed_ns,
+            secondary_helper_cleanup_elapsed_ns,
+            secondary_helper_wrapper_elapsed_ns,
+            secondary_helper_metric_elapsed_ns,
+            secondary_helper_alias_elapsed_ns,
+            secondary_helper_simple_expr_elapsed_ns,
+            secondary_helper_full_range_elapsed_ns,
+            secondary_helper_named_copy_elapsed_ns,
+            secondary_finalize_cleanup_elapsed_ns,
+            secondary_finalize_bundle_elapsed_ns,
+            secondary_finalize_dead_temp_elapsed_ns,
+            secondary_finalize_dead_temp_facts_elapsed_ns: secondary_dead_temp_profile
+                .facts_elapsed_ns,
+            secondary_finalize_dead_temp_mark_elapsed_ns: secondary_dead_temp_profile
+                .mark_elapsed_ns,
+            secondary_finalize_dead_temp_reverse_elapsed_ns: secondary_dead_temp_profile
+                .reverse_elapsed_ns,
+            secondary_finalize_dead_temp_compact_elapsed_ns: secondary_dead_temp_profile
+                .compact_elapsed_ns,
+            finalize_elapsed_ns,
+        },
+    )
 }

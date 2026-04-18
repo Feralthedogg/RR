@@ -174,6 +174,33 @@ pub fn compile_with_configs_with_options_and_compiler_parallel(
     compiler_parallel_cfg: CompilerParallelConfig,
     output_opts: CompileOutputOptions,
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    compile_with_configs_with_options_and_compiler_parallel_and_profile(
+        entry_path,
+        entry_input,
+        opt_level,
+        type_cfg,
+        parallel_cfg,
+        compiler_parallel_cfg,
+        output_opts,
+        None,
+    )
+}
+
+pub fn compile_with_configs_with_options_and_compiler_parallel_and_profile(
+    entry_path: &str,
+    entry_input: &str,
+    opt_level: OptLevel,
+    type_cfg: TypeConfig,
+    parallel_cfg: ParallelConfig,
+    compiler_parallel_cfg: CompilerParallelConfig,
+    output_opts: CompileOutputOptions,
+    profile: Option<&mut CompileProfile>,
+) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
+    let cache_root = crate::compiler::incremental::cache_root_for_entry(entry_path);
+    let fn_cache = crate::compiler::incremental::DiskFnEmitCache::new(
+        cache_root.join("function-emits"),
+    );
+    let optimized_mir_cache_root = cache_root.join("optimized-mir");
     let (code, map, _, _) = compile_with_pipeline_request(CompilePipelineRequest {
         entry_path,
         entry_input,
@@ -181,8 +208,10 @@ pub fn compile_with_configs_with_options_and_compiler_parallel(
         type_cfg,
         parallel_cfg,
         compiler_parallel_cfg,
-        cache: None,
+        cache: Some(&fn_cache),
+        optimized_mir_cache_root: Some(optimized_mir_cache_root),
         output_opts,
+        profile,
     })?;
     Ok((code, map))
 }
@@ -196,6 +225,8 @@ pub(crate) fn compile_with_configs_using_emit_cache(
     cache: Option<&dyn EmitFunctionCache>,
     output_opts: CompileOutputOptions,
 ) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
+    let optimized_mir_cache_root =
+        crate::compiler::incremental::cache_root_for_entry(entry_path).join("optimized-mir");
     compile_with_pipeline_request(CompilePipelineRequest {
         entry_path,
         entry_input,
@@ -204,7 +235,9 @@ pub(crate) fn compile_with_configs_using_emit_cache(
         parallel_cfg,
         compiler_parallel_cfg: CompilerParallelConfig::default(),
         cache,
+        optimized_mir_cache_root: Some(optimized_mir_cache_root),
         output_opts,
+        profile: None,
     })
 }
 
@@ -216,7 +249,9 @@ pub(crate) struct CompilePipelineRequest<'a> {
     pub(crate) parallel_cfg: ParallelConfig,
     pub(crate) compiler_parallel_cfg: CompilerParallelConfig,
     pub(crate) cache: Option<&'a dyn EmitFunctionCache>,
+    pub(crate) optimized_mir_cache_root: Option<PathBuf>,
     pub(crate) output_opts: CompileOutputOptions,
+    pub(crate) profile: Option<&'a mut CompileProfile>,
 }
 
 pub(crate) fn compile_with_configs_using_emit_cache_and_compiler_parallel(
@@ -226,7 +261,7 @@ pub(crate) fn compile_with_configs_using_emit_cache_and_compiler_parallel(
 }
 
 fn compile_with_pipeline_request(
-    request: CompilePipelineRequest<'_>,
+    mut request: CompilePipelineRequest<'_>,
 ) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
     crate::pkg::with_project_root_hint(request.entry_path, || {
         let ui = CliLog::new();
@@ -240,10 +275,13 @@ fn compile_with_pipeline_request(
             .unwrap_or(request.entry_path);
         ui.banner(input_label, request.opt_level);
 
-        let SourceAnalysisOutput {
-            desugared_hir,
-            global_symbols,
-        } = run_source_analysis_and_canonicalization(
+        let (
+            SourceAnalysisOutput {
+                desugared_hir,
+                global_symbols,
+            },
+            source_metrics,
+        ) = run_source_analysis_and_canonicalization(
             &ui,
             request.entry_path,
             request.entry_input,
@@ -251,7 +289,7 @@ fn compile_with_pipeline_request(
             request.output_opts,
         )?;
 
-        let mut program = run_mir_synthesis(
+        let (mut program, mir_metrics) = run_mir_synthesis(
             &ui,
             TOTAL_STEPS,
             desugared_hir,
@@ -261,13 +299,15 @@ fn compile_with_pipeline_request(
         )?;
 
         let mut all_fns = program.take_all_fns_map()?;
-        run_tachyon_phase(
+        let tachyon_metrics = run_tachyon_phase(
             &ui,
             TOTAL_STEPS,
             optimize,
             request.opt_level,
+            request.output_opts.compile_mode,
             &mut all_fns,
             &scheduler,
+            request.optimized_mir_cache_root.as_deref(),
         )?;
         verify_emittable_program(&all_fns)?;
         program.restore_all_fns_map(all_fns)?;
@@ -278,7 +318,7 @@ fn compile_with_pipeline_request(
             reachable_emit_order_slots(&program)
         };
 
-        let (final_output, final_source_map, emit_cache_hits, emit_cache_misses) =
+        let (final_output, final_source_map, emit_cache_hits, emit_cache_misses, emit_metrics) =
             emit_r_functions_cached(
                 &ui,
                 TOTAL_STEPS,
@@ -293,6 +333,7 @@ fn compile_with_pipeline_request(
                 request.cache,
             )?;
 
+        let runtime_started = Instant::now();
         let final_code = if request.output_opts.inject_runtime {
             let step_runtime = ui.step_start(
                 6,
@@ -363,7 +404,34 @@ fn compile_with_pipeline_request(
         };
         let final_source_map =
             shifted_source_map_for_final_output_prefix(final_source_map, &final_code);
-        ui.pulse_success(compile_started.elapsed());
+        let total_elapsed = compile_started.elapsed();
+        ui.pulse_success(total_elapsed);
+
+        if let Some(profile) = request.profile.as_deref_mut() {
+            profile.compile_mode = request.output_opts.compile_mode.as_str().to_string();
+            profile.compiler_parallel = scheduler.profile_snapshot();
+            profile.source_analysis.elapsed_ns = source_metrics.source_analysis_elapsed_ns;
+            profile.source_analysis.parsed_modules = source_metrics.parsed_modules;
+            profile.source_analysis.cached_modules = source_metrics.cached_modules;
+            profile.canonicalization.elapsed_ns = source_metrics.canonicalization_elapsed_ns;
+            profile.mir_synthesis.elapsed_ns = mir_metrics.elapsed_ns;
+            profile.mir_synthesis.lowered_functions = mir_metrics.lowered_functions;
+            profile.tachyon.elapsed_ns = tachyon_metrics.elapsed_ns;
+            profile.tachyon.optimized_mir_cache_hit = tachyon_metrics.optimized_mir_cache_hit;
+            profile.tachyon.pulse_stats = tachyon_metrics.pulse_stats;
+            profile.tachyon.pass_timings = tachyon_metrics.pass_timings;
+            profile.tachyon.disabled_pass_groups = tachyon_metrics.disabled_pass_groups;
+            profile.tachyon.active_pass_groups = tachyon_metrics.active_pass_groups;
+            profile.tachyon.plan_summary = tachyon_metrics.plan_summary;
+            profile.emit.elapsed_ns = emit_metrics.elapsed_ns;
+            profile.emit.emitted_functions = emit_metrics.emitted_functions;
+            profile.emit.cache_hits = emit_cache_hits;
+            profile.emit.cache_misses = emit_cache_misses;
+            profile.emit.breakdown = emit_metrics.breakdown;
+            profile.runtime_injection.elapsed_ns = runtime_started.elapsed().as_nanos();
+            profile.runtime_injection.inject_runtime = request.output_opts.inject_runtime;
+            profile.total_elapsed_ns = total_elapsed.as_nanos();
+        }
 
         Ok((
             final_code,

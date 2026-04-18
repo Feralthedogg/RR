@@ -1,9 +1,11 @@
 use RR::compiler::{
-    CliLog, CompileOutputOptions, CompilerParallelConfig, CompilerParallelMode, IncrementalOptions,
-    IncrementalSession, OptLevel, ParallelBackend, ParallelConfig, ParallelMode,
-    compile_with_configs_incremental_with_output_options_and_compiler_parallel,
-    compile_with_configs_with_options_and_compiler_parallel, default_compiler_parallel_config,
-    default_parallel_config, default_type_config, module_tree_fingerprint, module_tree_snapshot,
+    CliLog, CompileMode, CompileOutputOptions, CompileProfile, CompilerParallelConfig,
+    CompilerParallelMode, IncrementalCompileOutput, IncrementalOptions, IncrementalSession,
+    IncrementalStats, OptLevel, ParallelBackend, ParallelConfig, ParallelMode,
+    compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile,
+    compile_with_configs_with_options_and_compiler_parallel_and_profile,
+    default_compiler_parallel_config, default_parallel_config, default_type_config, json_escape,
+    module_tree_fingerprint, module_tree_snapshot,
 };
 use RR::error::{RRCode, RRException, Stage};
 use RR::runtime::runner::Runner;
@@ -17,6 +19,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -208,9 +211,15 @@ fn print_usage() {
     eprintln!("  --incremental[=auto|off|1|1,2|1,2,3|all] Enable incremental compile phases");
     eprintln!("  --incremental-phases <...>                Same as above (separate arg form)");
     eprintln!("  --no-incremental                          Disable automatic incremental compile");
+    eprintln!("  --cold                                   Bypass warm compile caches for this compile");
     eprintln!(
         "  --strict-incremental-verify               Extra validation gate for incremental mode"
     );
+    eprintln!(
+        "  --profile-compile                         Emit compile profile JSON for this compile"
+    );
+    eprintln!("  --profile-compile-out <file>              Write compile profile JSON to a file");
+    eprintln!("  --compile-mode <standard|fast-dev>        Compiler pass profile selection");
     eprintln!("  --poll-ms <N>                             Watch polling interval in milliseconds");
     eprintln!("  --once                                    Run a single watch tick and exit");
     eprintln!("  --keep-r                      Keep generated .gen.R when running");
@@ -559,6 +568,11 @@ struct CommonOpts {
     strict_let: bool,
     warn_implicit_decl: bool,
     incremental: IncrementalOptions,
+    cold_compile: bool,
+    profile_compile: bool,
+    profile_compile_out: Option<String>,
+    compile_mode: CompileMode,
+    compile_mode_explicit: bool,
     watch_poll_ms: u64,
     watch_once: bool,
 }
@@ -578,6 +592,14 @@ impl CommonOpts {
             strict_let: true,
             warn_implicit_decl: false,
             incremental: IncrementalOptions::auto(),
+            cold_compile: false,
+            profile_compile: false,
+            profile_compile_out: None,
+            compile_mode: match mode {
+                CommandMode::Legacy => CompileMode::Standard,
+                CommandMode::Run | CommandMode::Build | CommandMode::Watch => CompileMode::FastDev,
+            },
+            compile_mode_explicit: false,
             watch_poll_ms: 500,
             watch_once: false,
         }
@@ -664,6 +686,8 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
                         opts.preserve_all_defs = true;
                     } else if arg == "--no-incremental" {
                         opts.incremental = IncrementalOptions::disabled();
+                    } else if arg == "--cold" || arg == "--cold-compile" {
+                        opts.cold_compile = true;
                     } else if arg == "--incremental" {
                         opts.incremental = IncrementalOptions::auto();
                     } else if let Some(raw) = arg.strip_prefix("--incremental=") {
@@ -703,6 +727,31 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
                             opts.incremental.phase1 = true;
                         }
                         opts.incremental.strict_verify = true;
+                    } else if arg == "--profile-compile" {
+                        opts.profile_compile = true;
+                    } else if arg == "--profile-compile-out" {
+                        if i + 1 >= args.len() {
+                            ui.error("Missing value after --profile-compile-out");
+                            return Err(1);
+                        }
+                        i += 1;
+                        opts.profile_compile = true;
+                        opts.profile_compile_out = Some(args[i].clone());
+                    } else if arg == "--compile-mode" {
+                        if i + 1 >= args.len() {
+                            ui.error("Missing value after --compile-mode");
+                            return Err(1);
+                        }
+                        i += 1;
+                        opts.compile_mode = match args[i].trim().to_ascii_lowercase().as_str() {
+                            "standard" | "release" => CompileMode::Standard,
+                            "fast-dev" | "fast" | "dev" => CompileMode::FastDev,
+                            _ => {
+                                ui.error("Invalid --compile-mode. Use standard or fast-dev.");
+                                return Err(1);
+                            }
+                        };
+                        opts.compile_mode_explicit = true;
                     } else if matches!(mode, CommandMode::Watch) && arg == "--once" {
                         opts.watch_once = true;
                     } else if matches!(mode, CommandMode::Watch) && arg == "--poll-ms" {
@@ -737,7 +786,82 @@ fn parse_command_opts(args: &[String], mode: CommandMode, ui: &CliLog) -> Result
         i += 1;
     }
 
+    if matches!(mode, CommandMode::Build)
+        && !opts.compile_mode_explicit
+        && matches!(opts.opt_level, OptLevel::O2)
+    {
+        opts.compile_mode = CompileMode::Standard;
+    }
+
     Ok(opts)
+}
+
+fn write_compile_profile_artifact(
+    ui: &CliLog,
+    profile: &CompileProfile,
+    out_path: Option<&str>,
+) -> Result<(), i32> {
+    let json = profile.to_json_string();
+    if let Some(out_path) = out_path {
+        let path = PathBuf::from(out_path);
+        if let Some(parent) = path.parent()
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            report_dir_create_failure(ui, parent, &e, "compile profile output directory");
+            return Err(1);
+        }
+        if let Err(e) = fs::write(&path, json) {
+            report_file_write_failure(ui, &path, &e, "compile profile output path");
+            return Err(1);
+        }
+        ui.success(&format!("Compile profile -> {}", path.display()));
+    } else {
+        eprintln!("{json}");
+    }
+    Ok(())
+}
+
+fn compile_profile_collection_to_json(entries: &[(String, CompileProfile)]) -> String {
+    let mut out = String::from(
+        "{\n  \"schema\": \"rr-compile-profile-collection\",\n  \"version\": 1,\n  \"profiles\": [\n",
+    );
+    for (idx, (input, profile)) in entries.iter().enumerate() {
+        if idx > 0 {
+            out.push_str(",\n");
+        }
+        out.push_str("    {\"input\": \"");
+        out.push_str(&json_escape(input));
+        out.push_str("\", \"profile\": ");
+        out.push_str(&profile.to_json_string());
+        out.push('}');
+    }
+    out.push_str("\n  ]\n}");
+    out
+}
+
+fn write_compile_profile_collection(
+    ui: &CliLog,
+    entries: &[(String, CompileProfile)],
+    out_path: Option<&str>,
+) -> Result<(), i32> {
+    let json = compile_profile_collection_to_json(entries);
+    if let Some(out_path) = out_path {
+        let path = PathBuf::from(out_path);
+        if let Some(parent) = path.parent()
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            report_dir_create_failure(ui, parent, &e, "compile profile collection directory");
+            return Err(1);
+        }
+        if let Err(e) = fs::write(&path, json) {
+            report_file_write_failure(ui, &path, &e, "compile profile collection path");
+            return Err(1);
+        }
+        ui.success(&format!("Compile profile -> {}", path.display()));
+    } else {
+        eprintln!("{json}");
+    }
+    Ok(())
 }
 
 fn cmd_legacy(args: &[String]) -> i32 {
@@ -772,33 +896,48 @@ fn cmd_legacy(args: &[String]) -> i32 {
         preserve_all_defs: opts.preserve_all_defs,
         strict_let: opts.strict_let,
         warn_implicit_decl: opts.warn_implicit_decl,
+        compile_mode: opts.compile_mode,
     };
-    let result = if opts.incremental.enabled {
-        compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-            &input_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-            opts.compiler_parallel_cfg,
-            opts.incremental,
-            output_opts,
-            None,
-        )
-        .map(|v| (v.r_code, v.source_map))
-    } else {
-        compile_with_configs_with_options_and_compiler_parallel(
-            &input_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-            opts.compiler_parallel_cfg,
-            output_opts,
-        )
-    };
+    let mut compile_profile = opts.profile_compile.then(CompileProfile::default);
+    let result = with_compile_cache_override(opts.cold_compile, || {
+        if opts.incremental.enabled {
+            compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile(
+                &input_path_str,
+                &input,
+                opts.opt_level,
+                opts.type_cfg,
+                opts.parallel_cfg,
+                opts.compiler_parallel_cfg,
+                opts.incremental,
+                output_opts,
+                None,
+                compile_profile.as_mut(),
+            )
+            .map(|v| (v.r_code, v.source_map))
+        } else {
+            compile_with_configs_with_options_and_compiler_parallel_and_profile(
+                &input_path_str,
+                &input,
+                opts.opt_level,
+                opts.type_cfg,
+                opts.parallel_cfg,
+                opts.compiler_parallel_cfg,
+                output_opts,
+                compile_profile.as_mut(),
+            )
+        }
+    });
     match result {
         Ok((r_code, source_map)) => {
+            if let Some(profile) = compile_profile.as_ref()
+                && let Err(code) = write_compile_profile_artifact(
+                    &ui,
+                    profile,
+                    opts.profile_compile_out.as_deref(),
+                )
+            {
+                return code;
+            }
             if let Some(out_path) = opts.output_path {
                 if let Err(e) = fs::write(&out_path, &r_code) {
                     report_file_write_failure(&ui, Path::new(&out_path), &e, "legacy output path");
@@ -825,4 +964,51 @@ fn cmd_legacy(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+struct ScopedCompileCacheOverride {
+    previous: Option<std::ffi::OsString>,
+    temp_root: PathBuf,
+}
+
+impl Drop for ScopedCompileCacheOverride {
+    fn drop(&mut self) {
+        // SAFETY: The CLI runs this override synchronously around a single
+        // compile invocation. We restore the previous process environment
+        // immediately afterward.
+        unsafe {
+            if let Some(previous) = self.previous.as_ref() {
+                env::set_var("RR_INCREMENTAL_CACHE_DIR", previous);
+            } else {
+                env::remove_var("RR_INCREMENTAL_CACHE_DIR");
+            }
+        }
+        let _ = fs::remove_dir_all(&self.temp_root);
+    }
+}
+
+fn with_compile_cache_override<T>(cold_compile: bool, f: impl FnOnce() -> T) -> T {
+    if !cold_compile {
+        return f();
+    }
+    static COLD_CACHE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let seq = COLD_CACHE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp_root = env::temp_dir().join(format!(
+        "rr-cold-compile-{}-{}",
+        std::process::id(),
+        seq
+    ));
+    let _ = fs::remove_dir_all(&temp_root);
+    fs::create_dir_all(&temp_root).expect("failed to create cold compile cache dir");
+    let previous = env::var_os("RR_INCREMENTAL_CACHE_DIR");
+    // SAFETY: The CLI applies this override only for the duration of one
+    // compile call and restores the previous value immediately after.
+    unsafe {
+        env::set_var("RR_INCREMENTAL_CACHE_DIR", &temp_root);
+    }
+    let _guard = ScopedCompileCacheOverride {
+        previous,
+        temp_root,
+    };
+    f()
 }

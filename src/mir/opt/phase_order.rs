@@ -1,5 +1,6 @@
 use super::types::{
     FunctionPhaseFeatures, FunctionPhasePlan, PhaseOrderingMode, PhaseProfileKind, PhaseScheduleId,
+    default_pass_groups_for_schedule,
 };
 use super::*;
 use crate::mir::analyze::effects;
@@ -248,6 +249,7 @@ impl TachyonEngine {
     }
 
     fn build_function_phase_plan_from_features(
+        &self,
         function: &str,
         mode: PhaseOrderingMode,
         trace_requested: bool,
@@ -264,6 +266,8 @@ impl TachyonEngine {
             mode,
             profile,
             schedule,
+            pass_groups: self
+                .adjust_pass_groups_for_mode(&default_pass_groups_for_schedule(schedule)),
             features: Some(features),
             trace_requested,
         }
@@ -277,7 +281,7 @@ impl TachyonEngine {
         let mode = self.resolved_phase_ordering_mode();
         let trace_requested = Self::phase_ordering_trace_enabled();
         let features = Self::extract_function_phase_features(fn_ir);
-        Self::build_function_phase_plan_from_features(function, mode, trace_requested, features)
+        self.build_function_phase_plan_from_features(function, mode, trace_requested, features)
     }
 
     pub(super) fn collect_function_phase_plans(
@@ -313,6 +317,7 @@ impl TachyonEngine {
         callmap_user_whitelist: &FxHashSet<String>,
         loop_opt: &loop_opt::MirLoopOptimizer,
         stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> HeavyPhaseIterationResult {
         match schedule {
@@ -321,6 +326,7 @@ impl TachyonEngine {
                 callmap_user_whitelist,
                 loop_opt,
                 stats,
+                pass_timings,
                 run_budgeted_passes,
             ),
             PhaseScheduleId::ComputeHeavy => self.run_compute_heavy_phase_iteration(
@@ -328,6 +334,7 @@ impl TachyonEngine {
                 callmap_user_whitelist,
                 loop_opt,
                 stats,
+                pass_timings,
                 run_budgeted_passes,
             ),
             PhaseScheduleId::ControlFlowHeavy => self.run_control_flow_heavy_phase_iteration(
@@ -335,6 +342,7 @@ impl TachyonEngine {
                 callmap_user_whitelist,
                 loop_opt,
                 stats,
+                pass_timings,
                 run_budgeted_passes,
             ),
         }
@@ -346,11 +354,13 @@ impl TachyonEngine {
         callmap_user_whitelist: &FxHashSet<String>,
         loop_opt: &loop_opt::MirLoopOptimizer,
         stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> HeavyPhaseIterationResult {
         let mut result = HeavyPhaseIterationResult::default();
 
-        let sc_changed = self.simplify_cfg(fn_ir);
+        let sc_changed =
+            Self::timed_bool_pass(pass_timings, "simplify_cfg", || self.simplify_cfg(fn_ir));
         if sc_changed {
             stats.simplify_hits += 1;
         }
@@ -361,7 +371,9 @@ impl TachyonEngine {
             result.non_structural_changes += 1;
         }
 
-        let sccp_changed = sccp::MirSCCP::new().optimize(fn_ir);
+        let sccp_changed = Self::timed_bool_pass(pass_timings, "sccp", || {
+            sccp::MirSCCP::new().optimize(fn_ir)
+        });
         if sccp_changed {
             stats.sccp_hits += 1;
         }
@@ -372,7 +384,8 @@ impl TachyonEngine {
             result.non_structural_changes += 1;
         }
 
-        let intr_changed = intrinsics::optimize(fn_ir);
+        let intr_changed =
+            Self::timed_bool_pass(pass_timings, "intrinsics", || intrinsics::optimize(fn_ir));
         if intr_changed {
             stats.intrinsics_hits += 1;
         }
@@ -384,7 +397,7 @@ impl TachyonEngine {
         }
 
         let gvn_changed = if Self::gvn_enabled() {
-            let changed = gvn::optimize(fn_ir);
+            let changed = Self::timed_bool_pass(pass_timings, "gvn", || gvn::optimize(fn_ir));
             if changed {
                 stats.gvn_hits += 1;
             }
@@ -399,7 +412,8 @@ impl TachyonEngine {
             result.non_structural_changes += 1;
         }
 
-        let simplify_changed = simplify::optimize(fn_ir);
+        let simplify_changed =
+            Self::timed_bool_pass(pass_timings, "simplify", || simplify::optimize(fn_ir));
         if simplify_changed {
             stats.simplify_hits += 1;
         }
@@ -410,7 +424,7 @@ impl TachyonEngine {
             result.non_structural_changes += 1;
         }
 
-        let dce_changed = self.dce(fn_ir);
+        let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
         if dce_changed {
             stats.dce_hits += 1;
         }
@@ -422,7 +436,9 @@ impl TachyonEngine {
         }
 
         if run_budgeted_passes {
-            let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
+            let loop_changed_count = Self::timed_count_pass(pass_timings, "loop_opt", || {
+                loop_opt.optimize_with_count(fn_ir)
+            });
             stats.simplified_loops += loop_changed_count;
             let loop_changed = loop_changed_count > 0;
             Self::maybe_verify(fn_ir, "After LoopOpt");
@@ -433,7 +449,9 @@ impl TachyonEngine {
             }
 
             let licm_changed = if Self::licm_enabled() && Self::licm_allowed_for_fn(fn_ir) {
-                let changed = licm::MirLicm::new().optimize(fn_ir);
+                let changed = Self::timed_bool_pass(pass_timings, "licm", || {
+                    licm::MirLicm::new().optimize(fn_ir)
+                });
                 if changed {
                     stats.licm_hits += 1;
                 }
@@ -448,13 +466,21 @@ impl TachyonEngine {
                 result.non_structural_changes += 1;
             }
 
-            let pass_changed =
-                self.run_balanced_structural_cluster(fn_ir, callmap_user_whitelist, stats);
+            let pass_changed = if self.structural_optimizations_enabled() {
+                self.run_balanced_structural_cluster(
+                    fn_ir,
+                    callmap_user_whitelist,
+                    stats,
+                    pass_timings,
+                )
+            } else {
+                false
+            };
             if pass_changed {
                 result.changed = true;
                 result.structural_progress = true;
                 result.ran_structural = true;
-                if self.run_balanced_structural_cleanup(fn_ir, stats) {
+                if self.run_balanced_structural_cleanup(fn_ir, stats, pass_timings) {
                     result.changed = true;
                     result.structural_progress = true;
                 }
@@ -462,7 +488,8 @@ impl TachyonEngine {
                 result.ran_structural = true;
             }
 
-            let fresh_changed = fresh_alloc::optimize(fn_ir);
+            let fresh_changed =
+                Self::timed_bool_pass(pass_timings, "fresh_alloc", || fresh_alloc::optimize(fn_ir));
             if fresh_changed {
                 stats.fresh_alloc_hits += 1;
             }
@@ -473,7 +500,7 @@ impl TachyonEngine {
                 result.non_structural_changes += 1;
             }
 
-            let bce_changed = bce::optimize(fn_ir);
+            let bce_changed = Self::timed_bool_pass(pass_timings, "bce", || bce::optimize(fn_ir));
             if bce_changed {
                 stats.bce_hits += 1;
             }
@@ -494,11 +521,21 @@ impl TachyonEngine {
         callmap_user_whitelist: &FxHashSet<String>,
         loop_opt: &loop_opt::MirLoopOptimizer,
         stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> HeavyPhaseIterationResult {
         let mut result = HeavyPhaseIterationResult::default();
         let pass_changed = if run_budgeted_passes {
-            self.run_balanced_structural_cluster(fn_ir, callmap_user_whitelist, stats)
+            if self.structural_optimizations_enabled() {
+                self.run_balanced_structural_cluster(
+                    fn_ir,
+                    callmap_user_whitelist,
+                    stats,
+                    pass_timings,
+                )
+            } else {
+                false
+            }
         } else {
             false
         };
@@ -507,7 +544,7 @@ impl TachyonEngine {
             result.changed = true;
             result.structural_progress = true;
             result.ran_structural = true;
-            if self.run_balanced_structural_cleanup(fn_ir, stats) {
+            if self.run_balanced_structural_cleanup(fn_ir, stats, pass_timings) {
                 result.changed = true;
                 result.structural_progress = true;
             }
@@ -517,8 +554,13 @@ impl TachyonEngine {
             result.ran_structural = true;
         }
 
-        let standard_changed =
-            self.run_balanced_standard_cluster(fn_ir, loop_opt, stats, run_budgeted_passes);
+        let standard_changed = self.run_balanced_standard_cluster(
+            fn_ir,
+            loop_opt,
+            stats,
+            pass_timings,
+            run_budgeted_passes,
+        );
         if standard_changed {
             result.changed = true;
             result.non_structural_changes += 1;
@@ -532,11 +574,13 @@ impl TachyonEngine {
         callmap_user_whitelist: &FxHashSet<String>,
         loop_opt: &loop_opt::MirLoopOptimizer,
         stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> HeavyPhaseIterationResult {
         let mut result = HeavyPhaseIterationResult::default();
 
-        let sc_changed = self.simplify_cfg(fn_ir);
+        let sc_changed =
+            Self::timed_bool_pass(pass_timings, "simplify_cfg", || self.simplify_cfg(fn_ir));
         if sc_changed {
             stats.simplify_hits += 1;
             result.changed = true;
@@ -545,7 +589,9 @@ impl TachyonEngine {
         Self::maybe_verify(fn_ir, "After SimplifyCFG");
         Self::debug_stage_dump(fn_ir, "After SimplifyCFG");
 
-        let sccp_changed = sccp::MirSCCP::new().optimize(fn_ir);
+        let sccp_changed = Self::timed_bool_pass(pass_timings, "sccp", || {
+            sccp::MirSCCP::new().optimize(fn_ir)
+        });
         if sccp_changed {
             stats.sccp_hits += 1;
             result.changed = true;
@@ -554,7 +600,8 @@ impl TachyonEngine {
         Self::maybe_verify(fn_ir, "After SCCP");
         Self::debug_stage_dump(fn_ir, "After SCCP");
 
-        let intr_changed = intrinsics::optimize(fn_ir);
+        let intr_changed =
+            Self::timed_bool_pass(pass_timings, "intrinsics", || intrinsics::optimize(fn_ir));
         if intr_changed {
             stats.intrinsics_hits += 1;
             result.changed = true;
@@ -563,7 +610,9 @@ impl TachyonEngine {
         Self::maybe_verify(fn_ir, "After Intrinsics");
         Self::debug_stage_dump(fn_ir, "After Intrinsics");
 
-        let type_spec_changed = type_specialize::optimize(fn_ir);
+        let type_spec_changed = Self::timed_bool_pass(pass_timings, "type_specialize", || {
+            type_specialize::optimize(fn_ir)
+        });
         if type_spec_changed {
             result.changed = true;
             result.non_structural_changes += 1;
@@ -571,7 +620,8 @@ impl TachyonEngine {
         Self::maybe_verify(fn_ir, "After TypeSpecialize");
         Self::debug_stage_dump(fn_ir, "After TypeSpecialize");
 
-        let simplify_changed = simplify::optimize(fn_ir);
+        let simplify_changed =
+            Self::timed_bool_pass(pass_timings, "simplify", || simplify::optimize(fn_ir));
         if simplify_changed {
             stats.simplify_hits += 1;
             result.changed = true;
@@ -580,7 +630,7 @@ impl TachyonEngine {
         Self::maybe_verify(fn_ir, "After Simplify");
         Self::debug_stage_dump(fn_ir, "After Simplify");
 
-        let dce_changed = self.dce(fn_ir);
+        let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
         if dce_changed {
             stats.dce_hits += 1;
             result.changed = true;
@@ -599,7 +649,7 @@ impl TachyonEngine {
         Self::debug_stage_dump(fn_ir, "After TCO");
 
         let gvn_changed = if Self::gvn_enabled() {
-            let changed = gvn::optimize(fn_ir);
+            let changed = Self::timed_bool_pass(pass_timings, "gvn", || gvn::optimize(fn_ir));
             if changed {
                 stats.gvn_hits += 1;
                 result.changed = true;
@@ -614,7 +664,9 @@ impl TachyonEngine {
         let _ = gvn_changed;
 
         if run_budgeted_passes {
-            let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
+            let loop_changed_count = Self::timed_count_pass(pass_timings, "loop_opt", || {
+                loop_opt.optimize_with_count(fn_ir)
+            });
             if loop_changed_count > 0 {
                 stats.simplified_loops += loop_changed_count;
                 result.changed = true;
@@ -628,7 +680,9 @@ impl TachyonEngine {
                 && Self::licm_enabled()
                 && Self::licm_allowed_for_fn(fn_ir)
             {
-                let changed = licm::MirLicm::new().optimize(fn_ir);
+                let changed = Self::timed_bool_pass(pass_timings, "licm", || {
+                    licm::MirLicm::new().optimize(fn_ir)
+                });
                 if changed {
                     stats.licm_hits += 1;
                     result.changed = true;
@@ -643,14 +697,20 @@ impl TachyonEngine {
             let _ = licm_changed;
 
             let structural_features = Self::extract_function_phase_features(fn_ir);
-            if Self::control_flow_structural_gate(&structural_features) {
+            if self.structural_optimizations_enabled()
+                && Self::control_flow_structural_gate(&structural_features)
+            {
                 result.ran_structural = true;
-                let poly_changed =
-                    self.run_control_flow_structural_cluster(fn_ir, callmap_user_whitelist, stats);
+                let poly_changed = self.run_control_flow_structural_cluster(
+                    fn_ir,
+                    callmap_user_whitelist,
+                    stats,
+                    pass_timings,
+                );
                 if poly_changed {
                     result.changed = true;
                     result.structural_progress = true;
-                    if self.run_balanced_structural_cleanup(fn_ir, stats) {
+                    if self.run_balanced_structural_cleanup(fn_ir, stats, pass_timings) {
                         result.changed = true;
                         result.structural_progress = true;
                     }
@@ -659,7 +719,8 @@ impl TachyonEngine {
                 result.skipped_structural = true;
             }
 
-            let fresh_changed = fresh_alloc::optimize(fn_ir);
+            let fresh_changed =
+                Self::timed_bool_pass(pass_timings, "fresh_alloc", || fresh_alloc::optimize(fn_ir));
             if fresh_changed {
                 stats.fresh_alloc_hits += 1;
                 result.changed = true;
@@ -668,7 +729,7 @@ impl TachyonEngine {
             Self::maybe_verify(fn_ir, "After FreshAlloc");
             Self::debug_stage_dump(fn_ir, "After FreshAlloc");
 
-            let bce_changed = bce::optimize(fn_ir);
+            let bce_changed = Self::timed_bool_pass(pass_timings, "bce", || bce::optimize(fn_ir));
             if bce_changed {
                 stats.bce_hits += 1;
                 result.changed = true;
@@ -686,31 +747,50 @@ impl TachyonEngine {
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
         stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
     ) -> bool {
         let mut changed = false;
 
-        let type_spec_changed = type_specialize::optimize(fn_ir);
+        let type_spec_changed = Self::timed_bool_pass(pass_timings, "type_specialize", || {
+            type_specialize::optimize(fn_ir)
+        });
         Self::maybe_verify(fn_ir, "After TypeSpecialize");
         Self::debug_stage_dump(fn_ir, "After TypeSpecialize");
         changed |= type_spec_changed;
 
-        let p_stats = poly::optimize_with_stats(fn_ir);
+        let p_stats = {
+            let started = Instant::now();
+            let p_stats = poly::optimize_with_stats(fn_ir);
+            pass_timings.record(
+                "poly",
+                started.elapsed().as_nanos(),
+                p_stats.schedule_applied > 0,
+            );
+            p_stats
+        };
         Self::accumulate_poly_stats(stats, p_stats);
         changed |= p_stats.schedule_applied > 0;
 
-        let v_stats = v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
+        let v_stats = {
+            let started = Instant::now();
+            let v_stats = v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
+            pass_timings.record("vectorize", started.elapsed().as_nanos(), v_stats.changed());
+            v_stats
+        };
         let v_changed = v_stats.changed();
         Self::accumulate_vector_stats(stats, v_stats);
         Self::maybe_verify(fn_ir, "After Vectorization");
         Self::debug_stage_dump(fn_ir, "After Vectorization");
         changed |= v_changed;
 
-        let type_spec_post_vec = type_specialize::optimize(fn_ir);
+        let type_spec_post_vec = Self::timed_bool_pass(pass_timings, "type_specialize", || {
+            type_specialize::optimize(fn_ir)
+        });
         Self::maybe_verify(fn_ir, "After TypeSpecialize(PostVec)");
         Self::debug_stage_dump(fn_ir, "After TypeSpecialize(PostVec)");
         changed |= type_spec_post_vec;
 
-        let tco_changed = tco::optimize(fn_ir);
+        let tco_changed = Self::timed_bool_pass(pass_timings, "tco", || tco::optimize(fn_ir));
         if tco_changed {
             stats.tco_hits += 1;
         }
@@ -726,21 +806,38 @@ impl TachyonEngine {
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
         stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
     ) -> bool {
         let mut changed = false;
 
-        let p_stats = poly::optimize_with_stats(fn_ir);
+        let p_stats = {
+            let started = Instant::now();
+            let p_stats = poly::optimize_with_stats(fn_ir);
+            pass_timings.record(
+                "poly",
+                started.elapsed().as_nanos(),
+                p_stats.schedule_applied > 0,
+            );
+            p_stats
+        };
         Self::accumulate_poly_stats(stats, p_stats);
         changed |= p_stats.schedule_applied > 0;
 
-        let v_stats = v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
+        let v_stats = {
+            let started = Instant::now();
+            let v_stats = v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
+            pass_timings.record("vectorize", started.elapsed().as_nanos(), v_stats.changed());
+            v_stats
+        };
         let v_changed = v_stats.changed();
         Self::accumulate_vector_stats(stats, v_stats);
         Self::maybe_verify(fn_ir, "After Vectorization");
         Self::debug_stage_dump(fn_ir, "After Vectorization");
         changed |= v_changed;
 
-        let type_spec_post_vec = type_specialize::optimize(fn_ir);
+        let type_spec_post_vec = Self::timed_bool_pass(pass_timings, "type_specialize", || {
+            type_specialize::optimize(fn_ir)
+        });
         Self::maybe_verify(fn_ir, "After TypeSpecialize(PostVec)");
         Self::debug_stage_dump(fn_ir, "After TypeSpecialize(PostVec)");
         changed |= type_spec_post_vec;
@@ -752,10 +849,12 @@ impl TachyonEngine {
         &self,
         fn_ir: &mut FnIR,
         stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
     ) -> bool {
         let mut changed = false;
 
-        let sc_changed = self.simplify_cfg(fn_ir);
+        let sc_changed =
+            Self::timed_bool_pass(pass_timings, "simplify_cfg", || self.simplify_cfg(fn_ir));
         if sc_changed {
             stats.simplify_hits += 1;
         }
@@ -763,7 +862,7 @@ impl TachyonEngine {
         Self::debug_stage_dump(fn_ir, "After Structural SimplifyCFG");
         changed |= sc_changed;
 
-        let dce_changed = self.dce(fn_ir);
+        let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
         if dce_changed {
             stats.dce_hits += 1;
         }
@@ -779,11 +878,13 @@ impl TachyonEngine {
         fn_ir: &mut FnIR,
         loop_opt: &loop_opt::MirLoopOptimizer,
         stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> bool {
         let mut changed = false;
 
-        let sc_changed = self.simplify_cfg(fn_ir);
+        let sc_changed =
+            Self::timed_bool_pass(pass_timings, "simplify_cfg", || self.simplify_cfg(fn_ir));
         if sc_changed {
             stats.simplify_hits += 1;
         }
@@ -791,7 +892,9 @@ impl TachyonEngine {
         Self::debug_stage_dump(fn_ir, "After SimplifyCFG");
         changed |= sc_changed;
 
-        let sccp_changed = sccp::MirSCCP::new().optimize(fn_ir);
+        let sccp_changed = Self::timed_bool_pass(pass_timings, "sccp", || {
+            sccp::MirSCCP::new().optimize(fn_ir)
+        });
         if sccp_changed {
             stats.sccp_hits += 1;
         }
@@ -799,7 +902,8 @@ impl TachyonEngine {
         Self::debug_stage_dump(fn_ir, "After SCCP");
         changed |= sccp_changed;
 
-        let intr_changed = intrinsics::optimize(fn_ir);
+        let intr_changed =
+            Self::timed_bool_pass(pass_timings, "intrinsics", || intrinsics::optimize(fn_ir));
         if intr_changed {
             stats.intrinsics_hits += 1;
         }
@@ -808,7 +912,7 @@ impl TachyonEngine {
         changed |= intr_changed;
 
         let gvn_changed = if Self::gvn_enabled() {
-            let changed = gvn::optimize(fn_ir);
+            let changed = Self::timed_bool_pass(pass_timings, "gvn", || gvn::optimize(fn_ir));
             if changed {
                 stats.gvn_hits += 1;
             }
@@ -820,7 +924,8 @@ impl TachyonEngine {
         Self::debug_stage_dump(fn_ir, "After GVN");
         changed |= gvn_changed;
 
-        let simplify_changed = simplify::optimize(fn_ir);
+        let simplify_changed =
+            Self::timed_bool_pass(pass_timings, "simplify", || simplify::optimize(fn_ir));
         if simplify_changed {
             stats.simplify_hits += 1;
         }
@@ -828,7 +933,7 @@ impl TachyonEngine {
         Self::debug_stage_dump(fn_ir, "After Simplify");
         changed |= simplify_changed;
 
-        let dce_changed = self.dce(fn_ir);
+        let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
         if dce_changed {
             stats.dce_hits += 1;
         }
@@ -837,7 +942,9 @@ impl TachyonEngine {
         changed |= dce_changed;
 
         if run_budgeted_passes {
-            let loop_changed_count = loop_opt.optimize_with_count(fn_ir);
+            let loop_changed_count = Self::timed_count_pass(pass_timings, "loop_opt", || {
+                loop_opt.optimize_with_count(fn_ir)
+            });
             stats.simplified_loops += loop_changed_count;
             let loop_changed = loop_changed_count > 0;
             Self::maybe_verify(fn_ir, "After LoopOpt");
@@ -845,7 +952,9 @@ impl TachyonEngine {
             changed |= loop_changed;
 
             let licm_changed = if Self::licm_enabled() && Self::licm_allowed_for_fn(fn_ir) {
-                let changed = licm::MirLicm::new().optimize(fn_ir);
+                let changed = Self::timed_bool_pass(pass_timings, "licm", || {
+                    licm::MirLicm::new().optimize(fn_ir)
+                });
                 if changed {
                     stats.licm_hits += 1;
                 }
@@ -857,7 +966,8 @@ impl TachyonEngine {
             Self::debug_stage_dump(fn_ir, "After LICM");
             changed |= licm_changed;
 
-            let fresh_changed = fresh_alloc::optimize(fn_ir);
+            let fresh_changed =
+                Self::timed_bool_pass(pass_timings, "fresh_alloc", || fresh_alloc::optimize(fn_ir));
             if fresh_changed {
                 stats.fresh_alloc_hits += 1;
             }
@@ -865,7 +975,7 @@ impl TachyonEngine {
             Self::debug_stage_dump(fn_ir, "After FreshAlloc");
             changed |= fresh_changed;
 
-            let bce_changed = bce::optimize(fn_ir);
+            let bce_changed = Self::timed_bool_pass(pass_timings, "bce", || bce::optimize(fn_ir));
             if bce_changed {
                 stats.bce_hits += 1;
             }
@@ -1217,6 +1327,7 @@ mod tests {
 
     #[test]
     fn build_phase_plan_in_auto_mode_exposes_classified_schedule() {
+        let engine = TachyonEngine::new();
         let features = FunctionPhaseFeatures {
             ir_size: 220,
             block_count: 9,
@@ -1231,7 +1342,7 @@ mod tests {
             index_values: 4,
             store_instrs: 2,
         };
-        let plan = TachyonEngine::build_function_phase_plan_from_features(
+        let plan = engine.build_function_phase_plan_from_features(
             "auto_fn",
             PhaseOrderingMode::Auto,
             true,
@@ -1244,6 +1355,7 @@ mod tests {
 
     #[test]
     fn build_phase_plan_in_non_auto_modes_stays_balanced() {
+        let engine = TachyonEngine::new();
         let features = FunctionPhaseFeatures {
             ir_size: 120,
             block_count: 4,
@@ -1259,9 +1371,8 @@ mod tests {
             store_instrs: 1,
         };
         for mode in [PhaseOrderingMode::Off, PhaseOrderingMode::Balanced] {
-            let plan = TachyonEngine::build_function_phase_plan_from_features(
-                "non_auto", mode, false, features,
-            );
+            let plan =
+                engine.build_function_phase_plan_from_features("non_auto", mode, false, features);
             assert_eq!(plan.profile, PhaseProfileKind::Balanced);
             assert_eq!(plan.schedule, PhaseScheduleId::Balanced);
         }

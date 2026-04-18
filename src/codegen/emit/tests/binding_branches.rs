@@ -82,6 +82,243 @@ fn redundant_self_replay_assignment_is_skipped() {
 }
 
 #[test]
+fn identical_live_binary_expr_reuses_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("x".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("y".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("x");
+    backend.bind_value_to_var(2, "x");
+    backend.bind_var_to_value("x", 2);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "y".to_string(),
+                src: 3,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("assign emission should succeed");
+
+    assert!(backend.output.contains("y <- x"), "{}", backend.output);
+    assert!(
+        !backend.output.contains("y <- (a + b)"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn identical_live_pure_builtin_call_reuses_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "x".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("x".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Call {
+                callee: "sqrt".to_string(),
+                args: vec![0],
+                names: vec![None],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sx".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Call {
+                callee: "sqrt".to_string(),
+                args: vec![0],
+                names: vec![None],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sy".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sx");
+    backend.bind_value_to_var(1, "sx");
+    backend.bind_var_to_value("sx", 1);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "sy".to_string(),
+                src: 2,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("assign emission should succeed");
+
+    assert!(backend.output.contains("sy <- sx"), "{}", backend.output);
+    assert!(
+        !backend.output.contains("sy <- sqrt(x)"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn identical_live_pure_user_call_reuses_plain_symbol_alias() {
+    let mut backend = RBackend::with_analysis_options(
+        FxHashSet::default(),
+        FxHashSet::from_iter(["Sym_pure".to_string()]),
+        FxHashMap::default(),
+        true,
+    );
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "x".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("x".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Call {
+                callee: "Sym_pure".to_string(),
+                args: vec![0],
+                names: vec![None],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sx".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Call {
+                callee: "Sym_pure".to_string(),
+                args: vec![0],
+                names: vec![None],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sy".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sx");
+    backend.bind_value_to_var(1, "sx");
+    backend.bind_var_to_value("sx", 1);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "sy".to_string(),
+                src: 2,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("assign emission should succeed");
+
+    assert!(backend.output.contains("sy <- sx"), "{}", backend.output);
+    assert!(
+        !backend.output.contains("sy <- Sym_pure(x)"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
 fn divergent_branch_assignments_invalidate_pre_branch_binding() {
     let mut backend = RBackend::new();
     backend
@@ -596,6 +833,1402 @@ fn equivalent_field_get_rebind_is_skipped_when_live_binding_matches_via_alias_ex
         .expect("equivalent replay should be handled");
 
     assert_eq!(backend.output, before, "{}", backend.output);
+}
+
+#[test]
+fn equivalent_field_get_reuses_live_plain_symbol_alias_via_alias_expansion() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Call {
+                callee: "tools::Rd2txt_options".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("rd_opts".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Int)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "rd_opts".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("rd_opts".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Int)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::FieldGet {
+                base: 1,
+                field: "width".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("rd_width".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Int,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Call {
+                callee: "tools::Rd2txt_options".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Int)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::FieldGet {
+                base: 3,
+                field: "width".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("width_copy".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Int,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "rd_opts".to_string(),
+                src: 0,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("rd_opts assign should emit");
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "rd_width".to_string(),
+                src: 2,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("initial rd_width assign should emit");
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "width_copy".to_string(),
+                src: 4,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("equivalent alias should emit");
+
+    assert!(
+        backend.output.contains("width_copy <- rd_width"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend
+            .output
+            .contains("width_copy <- tools:::Rd2txt_options()[[\"width\"]]"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn field_get_reuses_live_plain_symbol_alias_for_equivalent_record_lit_base() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::RecordLit {
+                fields: vec![("width".to_string(), 0)],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("cfg".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Any)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::RecordLit {
+                fields: vec![("width".to_string(), 0)],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Any)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::FieldGet {
+                base: 2,
+                field: "width".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("width_copy".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "cfg".to_string(),
+                src: 1,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("cfg assign should emit");
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "width_copy".to_string(),
+                src: 3,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("field get should emit");
+
+    assert!(
+        backend.output.contains("width_copy <- cfg[[\"width\"]]"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend
+            .output
+            .contains("width_copy <- list(width = a)[[\"width\"]]"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn nested_binary_expr_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Load {
+                var: "c".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("c".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 2,
+                rhs: 3,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("total".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "total".to_string(),
+                src: 4,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("nested binary assign should emit");
+
+    assert!(
+        backend.output.contains("total <- (sum_ab + c)"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend.output.contains("total <- ((a + b) + c)"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn len_expr_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Len { base: 2 },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("n".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Int,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "n".to_string(),
+                src: 3,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("len assign should emit");
+
+    assert!(
+        backend.output.contains("n <- length(sum_ab)"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend.output.contains("n <- length((a + b))"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn return_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    backend
+        .emit_term(&Terminator::Return(Some(2)), &values, &[])
+        .expect("return should emit");
+
+    assert!(
+        backend.output.contains("return(sum_ab)"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend.output.contains("return((a + b))"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn return_equivalent_binary_expr_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    backend
+        .emit_term(&Terminator::Return(Some(3)), &values, &[])
+        .expect("return should emit");
+
+    assert!(
+        backend.output.contains("return(sum_ab)"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend.output.contains("return((a + b))"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn unary_not_is_finite_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Call {
+                callee: "is.finite".to_string(),
+                args: vec![2],
+                names: vec![None],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Logical,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    let rendered = backend.resolve_unary_expr(UnaryOp::Not, 3, &values, &[]);
+    assert_eq!(rendered, "!(is.finite(sum_ab))");
+}
+
+#[test]
+fn matrix_intrinsic_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::matrix(PrimTy::Double, false),
+            value_term: TypeTerm::Matrix(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::matrix(PrimTy::Double, false),
+            value_term: TypeTerm::Matrix(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_m".to_string()),
+            phi_block: None,
+            value_ty: TypeState::matrix(PrimTy::Double, false),
+            value_term: TypeTerm::Matrix(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Load {
+                var: "c".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("c".to_string()),
+            phi_block: None,
+            value_ty: TypeState::matrix(PrimTy::Double, false),
+            value_term: TypeTerm::Matrix(Box::new(TypeTerm::Double)),
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_m");
+    backend.bind_value_to_var(2, "sum_m");
+    backend.bind_var_to_value("sum_m", 2);
+
+    let rendered = backend.resolve_intrinsic_expr(IntrinsicOp::VecAddF64, &[2, 3], &values, &[]);
+    assert_eq!(rendered, "(sum_m + c)");
+}
+
+#[test]
+fn record_lit_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::RecordLit {
+                fields: vec![("width".to_string(), 2)],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("cfg".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Any)]),
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    let rendered = backend.resolve_val(3, &values, &[], false);
+    assert_eq!(rendered, "list(width = sum_ab)");
+}
+
+#[test]
+fn record_lit_reuses_live_plain_symbol_alias_for_equivalent_scalar_expr() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::RecordLit {
+                fields: vec![("width".to_string(), 3)],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("cfg".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Any)]),
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    let rendered = backend.resolve_val(4, &values, &[], false);
+    assert_eq!(rendered, "list(width = sum_ab)");
+}
+
+#[test]
+fn field_set_reuses_live_plain_symbol_alias_for_rhs() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Load {
+                var: "cfg".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("cfg".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Any)]),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 5,
+            kind: ValueKind::FieldSet {
+                base: 4,
+                field: "width".to_string(),
+                value: 3,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("cfg".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::NamedList(vec![("width".to_string(), TypeTerm::Any)]),
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "cfg".to_string(),
+                src: 5,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("field set emission should succeed");
+
+    assert!(
+        backend.output.contains("cfg[[\"width\"]] <- sum_ab"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend.output.contains("cfg[[\"width\"]] <- (a + b)"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn call_args_reuse_live_plain_symbol_alias_for_identical_scalar_exprs() {
+    let mut backend = RBackend::new();
+    let int_scalar_ty = TypeState::scalar(PrimTy::Int, false);
+    let int_scalar_facts = Facts::new(Facts::INT_SCALAR, crate::mir::flow::Interval::BOTTOM);
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: int_scalar_ty,
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: int_scalar_ty,
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: int_scalar_facts,
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: int_scalar_ty,
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: int_scalar_facts,
+            origin_var: None,
+            phi_block: None,
+            value_ty: int_scalar_ty,
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Call {
+                callee: "sqrt".to_string(),
+                args: vec![3],
+                names: vec![None],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    let rendered = backend.resolve_val(4, &values, &[], false);
+    assert_eq!(rendered, "sqrt(sum_ab)");
+}
+
+#[test]
+fn named_call_args_reuse_live_plain_symbol_alias_for_identical_scalar_exprs() {
+    let mut backend = RBackend::new();
+    let int_scalar_ty = TypeState::scalar(PrimTy::Int, false);
+    let int_scalar_facts = Facts::new(Facts::INT_SCALAR, crate::mir::flow::Interval::BOTTOM);
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: int_scalar_ty,
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: int_scalar_ty,
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: int_scalar_facts,
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: int_scalar_ty,
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: int_scalar_facts,
+            origin_var: None,
+            phi_block: None,
+            value_ty: int_scalar_ty,
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Call {
+                callee: "round".to_string(),
+                args: vec![3],
+                names: vec![Some("x".to_string())],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    let rendered = backend.resolve_val(4, &values, &[], false);
+    assert_eq!(rendered, "round(x = sum_ab)");
+}
+
+#[test]
+fn store_index_uses_live_plain_symbol_aliases() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Len { base: 2 },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("n".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Int,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 4,
+            kind: ValueKind::Load {
+                var: "x".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("x".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+    backend.note_var_write("n");
+    backend.bind_value_to_var(3, "n");
+    backend.bind_var_to_value("n", 3);
+
+    backend
+        .emit_instr(
+            &Instr::StoreIndex1D {
+                base: 4,
+                idx: 2,
+                val: 3,
+                is_vector: false,
+                is_safe: false,
+                is_na_safe: false,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("store should emit");
+
+    assert!(
+        backend
+            .output
+            .contains("x[rr_index1_write(sum_ab, \"index\")] <- n"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend
+            .output
+            .contains("x[rr_index1_write((a + b), \"index\")] <- length(sum_ab)"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn generic_call_arg_reuses_live_plain_symbol_alias() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Load {
+                var: "a".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("a".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "b".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("b".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("sum_ab".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Call {
+                callee: "Sym_use".to_string(),
+                args: vec![2],
+                names: vec![None],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("out".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("sum_ab");
+    backend.bind_value_to_var(2, "sum_ab");
+    backend.bind_var_to_value("sum_ab", 2);
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "out".to_string(),
+                src: 3,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("call assign should emit");
+
+    assert!(
+        backend.output.contains("out <- Sym_use(sum_ab)"),
+        "{}",
+        backend.output
+    );
+    assert!(
+        !backend.output.contains("out <- Sym_use((a + b))"),
+        "{}",
+        backend.output
+    );
+}
+
+#[test]
+fn strip_unreachable_sym_helpers_drops_unreferenced_helper_function() {
+    let mut output = [
+        "main <- Sym_top_0",
+        "Sym_top_0 <- function() ",
+        "{",
+        "  return(Sym_live_1())",
+        "}",
+        "Sym_live_1 <- function() ",
+        "{",
+        "  return(1L)",
+        "}",
+        "Sym_dead_2 <- function() ",
+        "{",
+        "  return(2L)",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    RBackend::strip_unreachable_sym_helpers(&mut output);
+
+    assert!(output.contains("Sym_top_0 <- function()"), "{}", output);
+    assert!(output.contains("Sym_live_1 <- function()"), "{}", output);
+    assert!(!output.contains("Sym_dead_2 <- function()"), "{}", output);
+}
+
+#[test]
+fn strip_redundant_tail_assign_slice_return_drops_tail_assign() {
+    let mut output = [
+        "Sym_1 <- function() ",
+        "{",
+        "  i <- 1",
+        "  .tachyon_exprmap0_1 <- rr_map_int(x, f)",
+        "  repeat {",
+        "if (!(i <= n)) break",
+        "x <- rr_assign_slice(x, i, n, .tachyon_exprmap0_1)",
+        "next",
+        "  }",
+        "  x <- rr_assign_slice(x, 1, n, .tachyon_exprmap0_1)",
+        "  return(x)",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    RBackend::strip_redundant_tail_assign_slice_return(&mut output);
+
+    assert!(
+        !output.contains("\n  x <- rr_assign_slice(x, 1, n, .tachyon_exprmap0_1)\n"),
+        "{}",
+        output
+    );
+    assert!(output.contains("  return(x)"), "{}", output);
 }
 
 #[test]

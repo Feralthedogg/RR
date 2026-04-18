@@ -98,13 +98,21 @@ RR_TIER0_FAST_TESTS=(
   lowering_pipe_try_match
   compiler_hardcode_guard
   compiler_parallel_defaults
+  compiler_parallel_determinism
   compiler_parallel_equivalence
+  compiler_parallel_thresholds
+  tachyon_pass_plan
   parallel_cli_flags
   cli_option_errors
   cli_quiet_log
+  compile_profile_smoke
+  compile_profile_no_semantic_change
+  dev_fast_profile_smoke
+  module_export_cache_roundtrip
   cli_watch_once
   cli_incremental_default
   incremental_auto
+  incremental_miss_reason
   condition_truthy_elision
   runtime_static_errors
   runtime_dataflow_safety
@@ -263,5 +271,9 @@ RR_TIER2_MAIN_TESTS=(
   triage_reduce_smoke
   typed_parallel_wrapper
   unicode_peephole_regression
+  module_export_cache_invalidation
+  module_export_cache_equivalence
+  r_emit_regressions
+  watch_incremental_session
   verification_summary_smoke
 )

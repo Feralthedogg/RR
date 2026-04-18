@@ -377,50 +377,64 @@ pub(crate) fn cmd_run(args: &[String]) -> i32 {
         raw_input
     };
 
-    let result = if opts.incremental.enabled {
-        compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-            &input_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-            opts.compiler_parallel_cfg,
-            opts.incremental,
-            CompileOutputOptions {
-                inject_runtime: true,
-                preserve_all_defs: opts.preserve_all_defs,
-                strict_let: opts.strict_let,
-                warn_implicit_decl: opts.warn_implicit_decl,
-            },
-            None,
-        )
-        .map(|v| (v.r_code, v.source_map))
-    } else {
-        compile_with_configs_with_options_and_compiler_parallel(
-            &input_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-            opts.compiler_parallel_cfg,
-            CompileOutputOptions {
-                inject_runtime: true,
-                preserve_all_defs: opts.preserve_all_defs,
-                strict_let: opts.strict_let,
-                warn_implicit_decl: opts.warn_implicit_decl,
-            },
-        )
+    let output_opts = CompileOutputOptions {
+        inject_runtime: true,
+        preserve_all_defs: opts.preserve_all_defs,
+        strict_let: opts.strict_let,
+        warn_implicit_decl: opts.warn_implicit_decl,
+        compile_mode: opts.compile_mode,
     };
+    let mut compile_profile = opts.profile_compile.then(CompileProfile::default);
+    let mut session = IncrementalSession::default();
+    let result = super::with_compile_cache_override(opts.cold_compile, || {
+        if opts.incremental.enabled {
+            compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile(
+                &input_path_str,
+                &input,
+                opts.opt_level,
+                opts.type_cfg,
+                opts.parallel_cfg,
+                opts.compiler_parallel_cfg,
+                opts.incremental,
+                output_opts,
+                Some(&mut session),
+                compile_profile.as_mut(),
+            )
+            .map(|v| (v.r_code, v.source_map))
+        } else {
+            compile_with_configs_with_options_and_compiler_parallel_and_profile(
+                &input_path_str,
+                &input,
+                opts.opt_level,
+                opts.type_cfg,
+                opts.parallel_cfg,
+                opts.compiler_parallel_cfg,
+                output_opts,
+                compile_profile.as_mut(),
+            )
+        }
+    });
 
     match result {
-        Ok((r_code, source_map)) => Runner::run(
-            &input_path_str,
-            &input,
-            &r_code,
-            &source_map,
-            None,
-            opts.keep_r,
-        ),
+        Ok((r_code, source_map)) => {
+            if let Some(profile) = compile_profile.as_ref()
+                && let Err(code) = write_compile_profile_artifact(
+                    &ui,
+                    profile,
+                    opts.profile_compile_out.as_deref(),
+                )
+            {
+                return code;
+            }
+            Runner::run(
+                &input_path_str,
+                &input,
+                &r_code,
+                &source_map,
+                None,
+                opts.keep_r,
+            )
+        }
         Err(e) => {
             e.display(Some(&input), Some(&input_path_str));
             1
@@ -528,6 +542,7 @@ pub(crate) fn cmd_build(args: &[String]) -> i32 {
     };
 
     let mut built = 0usize;
+    let mut compile_profiles: Vec<(String, CompileProfile)> = Vec::new();
     for rr in rr_files {
         let rr_abs = fs::canonicalize(&rr).unwrap_or(rr.clone());
         let rr_path_str = rr_abs.to_string_lossy().to_string();
@@ -550,40 +565,42 @@ pub(crate) fn cmd_build(args: &[String]) -> i32 {
             raw_input
         };
 
-        let build_out = if opts.incremental.enabled {
-            compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-                &rr_path_str,
-                &input,
-                opts.opt_level,
-                opts.type_cfg,
-                opts.parallel_cfg,
-                opts.compiler_parallel_cfg,
-                opts.incremental,
-                CompileOutputOptions {
-                    inject_runtime: true,
-                    preserve_all_defs: opts.preserve_all_defs,
-                    strict_let: opts.strict_let,
-                    warn_implicit_decl: opts.warn_implicit_decl,
-                },
-                None,
-            )
-            .map(|v| (v.r_code, v.source_map))
-        } else {
-            compile_with_configs_with_options_and_compiler_parallel(
-                &rr_path_str,
-                &input,
-                opts.opt_level,
-                opts.type_cfg,
-                opts.parallel_cfg,
-                opts.compiler_parallel_cfg,
-                CompileOutputOptions {
-                    inject_runtime: true,
-                    preserve_all_defs: opts.preserve_all_defs,
-                    strict_let: opts.strict_let,
-                    warn_implicit_decl: opts.warn_implicit_decl,
-                },
-            )
+        let output_opts = CompileOutputOptions {
+            inject_runtime: true,
+            preserve_all_defs: opts.preserve_all_defs,
+            strict_let: opts.strict_let,
+            warn_implicit_decl: opts.warn_implicit_decl,
+            compile_mode: opts.compile_mode,
         };
+        let mut compile_profile = opts.profile_compile.then(CompileProfile::default);
+        let build_out = super::with_compile_cache_override(opts.cold_compile, || {
+            if opts.incremental.enabled {
+                compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile(
+                    &rr_path_str,
+                    &input,
+                    opts.opt_level,
+                    opts.type_cfg,
+                    opts.parallel_cfg,
+                    opts.compiler_parallel_cfg,
+                    opts.incremental,
+                    output_opts,
+                    None,
+                    compile_profile.as_mut(),
+                )
+                .map(|v| (v.r_code, v.source_map))
+            } else {
+                compile_with_configs_with_options_and_compiler_parallel_and_profile(
+                    &rr_path_str,
+                    &input,
+                    opts.opt_level,
+                    opts.type_cfg,
+                    opts.parallel_cfg,
+                    opts.compiler_parallel_cfg,
+                    output_opts,
+                    compile_profile.as_mut(),
+                )
+            }
+        });
 
         let (r_code, _source_map) = match build_out {
             Ok(v) => v,
@@ -629,6 +646,9 @@ pub(crate) fn cmd_build(args: &[String]) -> i32 {
 
         ui.success(&format!("Built {} -> {}", rr.display(), out_file.display()));
         built += 1;
+        if let Some(profile) = compile_profile.take() {
+            compile_profiles.push((rr_path_str, profile));
+        }
     }
 
     ui.success(&format!(
@@ -636,6 +656,23 @@ pub(crate) fn cmd_build(args: &[String]) -> i32 {
         built,
         out_root.display()
     ));
+    if !compile_profiles.is_empty()
+        && let Err(code) = if compile_profiles.len() == 1 {
+            write_compile_profile_artifact(
+                &ui,
+                &compile_profiles[0].1,
+                opts.profile_compile_out.as_deref(),
+            )
+        } else {
+            write_compile_profile_collection(
+                &ui,
+                &compile_profiles,
+                opts.profile_compile_out.as_deref(),
+            )
+        }
+    {
+        return code;
+    }
     0
 }
 
@@ -758,22 +795,48 @@ pub(crate) fn cmd_watch(args: &[String]) -> i32 {
             ui.success("watch output missing or changed; restoring");
         }
 
-        match compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-            &input_path_str,
-            &input,
-            opts.opt_level,
-            opts.type_cfg,
-            opts.parallel_cfg,
-            opts.compiler_parallel_cfg,
-            opts.incremental,
-            CompileOutputOptions {
-                inject_runtime: true,
-                preserve_all_defs: opts.preserve_all_defs,
-                strict_let: opts.strict_let,
-                warn_implicit_decl: opts.warn_implicit_decl,
-            },
-            Some(&mut session),
-        ) {
+        let output_opts = CompileOutputOptions {
+            inject_runtime: true,
+            preserve_all_defs: opts.preserve_all_defs,
+            strict_let: opts.strict_let,
+            warn_implicit_decl: opts.warn_implicit_decl,
+            compile_mode: opts.compile_mode,
+        };
+        let mut compile_profile = opts.profile_compile.then(CompileProfile::default);
+        let watch_result = super::with_compile_cache_override(opts.cold_compile, || {
+            if opts.incremental.enabled {
+                compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile(
+                    &input_path_str,
+                    &input,
+                    opts.opt_level,
+                    opts.type_cfg,
+                    opts.parallel_cfg,
+                    opts.compiler_parallel_cfg,
+                    opts.incremental,
+                    output_opts,
+                    Some(&mut session),
+                    compile_profile.as_mut(),
+                )
+            } else {
+                compile_with_configs_with_options_and_compiler_parallel_and_profile(
+                    &input_path_str,
+                    &input,
+                    opts.opt_level,
+                    opts.type_cfg,
+                    opts.parallel_cfg,
+                    opts.compiler_parallel_cfg,
+                    output_opts,
+                    compile_profile.as_mut(),
+                )
+                .map(|(r_code, source_map)| IncrementalCompileOutput {
+                    r_code,
+                    source_map,
+                    stats: IncrementalStats::default(),
+                })
+            }
+        });
+
+        match watch_result {
             Ok(out) => {
                 let output_hash = watch_output_hash(&out.r_code);
                 if let Err(e) = fs::write(&out_file, out.r_code.as_bytes()) {
@@ -792,11 +855,25 @@ pub(crate) fn cmd_watch(args: &[String]) -> i32 {
                     ));
                 } else {
                     ui.success(&format!(
-                        "rebuilt (phase2 hits={}, misses={}) -> {}",
+                        "rebuilt (phase2 hits={}, misses={}{}) -> {}",
                         out.stats.phase2_emit_hits,
                         out.stats.phase2_emit_misses,
+                        if out.stats.miss_reasons.is_empty() {
+                            String::new()
+                        } else {
+                            format!(", reasons={}", out.stats.miss_reasons.join(","))
+                        },
                         out_file.display()
                     ));
+                }
+                if let Some(profile) = compile_profile.as_ref()
+                    && let Err(code) = write_compile_profile_artifact(
+                        &ui,
+                        profile,
+                        opts.profile_compile_out.as_deref(),
+                    )
+                {
+                    return code;
                 }
             }
             Err(e) => {

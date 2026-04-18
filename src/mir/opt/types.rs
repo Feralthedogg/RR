@@ -1,4 +1,7 @@
 use super::*;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fmt::Write;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ClampBound {
@@ -97,6 +100,7 @@ pub(super) struct FunctionPhasePlan {
     pub(super) mode: PhaseOrderingMode,
     pub(super) profile: PhaseProfileKind,
     pub(super) schedule: PhaseScheduleId,
+    pub(super) pass_groups: Vec<PassGroup>,
     pub(super) features: Option<FunctionPhaseFeatures>,
     pub(super) trace_requested: bool,
 }
@@ -108,9 +112,45 @@ impl FunctionPhasePlan {
             mode,
             profile: PhaseProfileKind::Balanced,
             schedule: mode.initial_schedule(),
+            pass_groups: default_pass_groups_for_schedule(mode.initial_schedule()),
             features: None,
             trace_requested,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum PassGroup {
+    Required,
+    DevCheap,
+    ReleaseExpensive,
+    Experimental,
+}
+
+impl PassGroup {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::DevCheap => "dev-cheap",
+            Self::ReleaseExpensive => "release-expensive",
+            Self::Experimental => "experimental",
+        }
+    }
+}
+
+pub(crate) fn default_pass_groups_for_schedule(schedule: PhaseScheduleId) -> Vec<PassGroup> {
+    match schedule {
+        PhaseScheduleId::Balanced | PhaseScheduleId::ControlFlowHeavy => vec![
+            PassGroup::Required,
+            PassGroup::DevCheap,
+            PassGroup::ReleaseExpensive,
+        ],
+        PhaseScheduleId::ComputeHeavy => vec![
+            PassGroup::Required,
+            PassGroup::DevCheap,
+            PassGroup::ReleaseExpensive,
+            PassGroup::Experimental,
+        ],
     }
 }
 
@@ -139,7 +179,58 @@ pub struct TachyonProgress {
     pub function: String,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TachyonPassTiming {
+    pub invocations: usize,
+    pub changed_invocations: usize,
+    pub elapsed_ns: u128,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TachyonPassTimings {
+    passes: BTreeMap<String, TachyonPassTiming>,
+}
+
+impl TachyonPassTimings {
+    pub fn record(&mut self, pass: &str, elapsed_ns: u128, changed: bool) {
+        let entry = self.passes.entry(pass.to_string()).or_default();
+        entry.invocations += 1;
+        entry.elapsed_ns += elapsed_ns;
+        if changed {
+            entry.changed_invocations += 1;
+        }
+    }
+
+    pub fn accumulate(&mut self, other: Self) {
+        for (name, timing) in other.passes {
+            let entry = self.passes.entry(name).or_default();
+            entry.invocations += timing.invocations;
+            entry.changed_invocations += timing.changed_invocations;
+            entry.elapsed_ns += timing.elapsed_ns;
+        }
+    }
+
+    pub fn to_json_string(&self) -> String {
+        let mut out = String::new();
+        out.push('{');
+        let mut first = true;
+        for (name, timing) in &self.passes {
+            if !first {
+                out.push_str(", ");
+            }
+            first = false;
+            let _ = write!(
+                out,
+                "\"{}\": {{\"invocations\": {}, \"changed_invocations\": {}, \"elapsed_ns\": {}}}",
+                name, timing.invocations, timing.changed_invocations, timing.elapsed_ns
+            );
+        }
+        out.push('}');
+        out
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 pub struct TachyonPulseStats {
     pub vectorized: usize,
     pub reduced: usize,

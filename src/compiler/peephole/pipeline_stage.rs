@@ -379,9 +379,8 @@ pub(super) fn run_exact_expr_cleanup_rounds(
 ) -> Vec<String> {
     for _ in 0..max_rounds {
         let before = lines.clone();
-        lines = rewrite_forward_exact_expr_reuse(lines);
+        lines = run_secondary_exact_expr_bundle_ir(lines);
         lines = rewrite_temp_minus_one_scaled_to_named_scalar(lines);
-        lines = strip_noop_self_assignments(lines);
         if lines == before {
             break;
         }
