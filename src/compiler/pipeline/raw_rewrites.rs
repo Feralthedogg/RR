@@ -54,6 +54,62 @@ pub(crate) fn rewrite_trivial_clamp_helper_calls_in_raw_emitted_r(output: &str) 
     out
 }
 
+fn extract_ifelse_range_expr(line: &str) -> Option<String> {
+    let start = line.find("rr_ifelse_strict((")? + "rr_ifelse_strict((".len();
+    let rest = &line[start..];
+    let mut depth = 0i32;
+    let mut idx = 0usize;
+    while idx < rest.len() {
+        let ch = rest.as_bytes()[idx] as char;
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '<' | '>' | '=' | '!' if depth == 0 => {
+                for op in ["<=", ">=", "==", "!=", "<", ">"] {
+                    if rest[idx..].starts_with(op) {
+                        let lhs = rest[..idx].trim();
+                        if lhs.contains(':') && !lhs.contains(".__rr_cse_") {
+                            return Some(lhs.to_string());
+                        }
+                        return None;
+                    }
+                }
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    None
+}
+
+pub(crate) fn repair_missing_cse_range_aliases_in_raw_emitted_r(output: &str) -> String {
+    let Some(floor_temp_re) = crate::compiler::peephole::patterns::compile_regex(
+        r"rr_index_vec_floor\(\.__rr_cse_\d+\)".to_string(),
+    ) else {
+        return output.to_string();
+    };
+    let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
+    if lines.is_empty() {
+        return output.to_string();
+    }
+    for line in &mut lines {
+        if !line.contains("rr_ifelse_strict(") || !line.contains("rr_index_vec_floor(.__rr_cse_") {
+            continue;
+        }
+        let Some(range) = extract_ifelse_range_expr(line.as_str()) else {
+            continue;
+        };
+        *line = floor_temp_re
+            .replace_all(line.as_str(), format!("rr_index_vec_floor({range})"))
+            .to_string();
+    }
+    let mut out = lines.join("\n");
+    if output.ends_with('\n') || !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
 pub(crate) fn collect_trivial_clamp_helpers_in_emitted_r(
     lines: &[String],
 ) -> FxHashMap<String, TrivialClampHelperSummary> {

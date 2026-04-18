@@ -8,6 +8,7 @@ fn compile_rr(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) {
         .arg("-o")
         .arg(out)
         .arg(level)
+        .arg("--cold")
         .status()
         .expect("failed to run RR compiler");
     assert!(

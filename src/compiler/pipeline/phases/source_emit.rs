@@ -860,6 +860,7 @@ fn apply_raw_rewrites_to_fragment(
     output = collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_emitted_r(&output);
     output = strip_dead_weno_topology_seed_i_before_direct_adj_gather_in_raw_emitted_r(&output);
     output = restore_cg_loop_carried_updates_in_raw_emitted_r(&output);
+    output = repair_missing_cse_range_aliases_in_raw_emitted_r(&output);
     output = strip_dead_zero_loop_seeds_before_for_in_raw_emitted_r(&output);
     output
 }
@@ -933,6 +934,7 @@ fn apply_full_raw_rewrites(
         output = prune_unreachable_raw_helper_definitions(&output);
     }
     output = restore_cg_loop_carried_updates_in_raw_emitted_r(&output);
+    output = repair_missing_cse_range_aliases_in_raw_emitted_r(&output);
     if !output_opts.preserve_all_defs {
         output = prune_unreachable_raw_helper_definitions(&output);
     }

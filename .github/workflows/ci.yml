@@ -582,6 +582,9 @@ jobs:
         shell: msys2 {0}
         run: |
           mkdir -p "${{ matrix.artifact_dir }}"
+          cp Cargo.toml Cargo.toml.distbak
+          trap 'mv Cargo.toml.distbak Cargo.toml' EXIT
+          perl -0pi -e 's/members = \["\.", "fuzz"\]/members = ["."]/g' Cargo.toml
           dist_bin="$(cygpath -u "$CARGO_HOME")/bin/dist.exe"
           "$dist_bin" build \
             -t "${{ matrix.dist_target }}" \

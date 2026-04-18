@@ -164,6 +164,7 @@ impl RBackend {
         Self::rewrite_seq_len_full_overwrite_inits(&mut self.output);
         Self::restore_missing_repeat_loop_counter_updates(&mut self.output);
         Self::rewrite_hoisted_loop_counter_aliases(&mut self.output);
+        Self::repair_missing_cse_range_aliases(&mut self.output);
         Self::restore_constant_one_guard_repeat_loop_counters(&mut self.output);
         Self::rewrite_literal_named_list_calls(&mut self.output);
         Self::rewrite_literal_field_get_calls(&mut self.output);
@@ -176,6 +177,7 @@ impl RBackend {
             );
         }
         Self::restore_missing_generated_poly_loop_steps(&mut self.output);
+        Self::repair_missing_cse_range_aliases(&mut self.output);
         if std::env::var_os("RR_DEBUG_EMIT_POST_STEP_RESTORE").is_some() {
             eprintln!(
                 "=== RR_DEBUG_EMIT_POST_STEP_RESTORE {} ===\n{}",
@@ -1123,6 +1125,10 @@ impl RBackend {
 
     fn rewrite_hoisted_loop_counter_aliases(output: &mut String) {
         rewrite_emit::rewrite_hoisted_loop_counter_aliases(output)
+    }
+
+    fn repair_missing_cse_range_aliases(output: &mut String) {
+        rewrite_emit::repair_missing_cse_range_aliases(output)
     }
 
     fn restore_constant_one_guard_repeat_loop_counters(output: &mut String) {

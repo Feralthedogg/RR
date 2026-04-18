@@ -1078,6 +1078,7 @@ pub(super) fn optimize_emitted_r_pipeline_impl_with_profile(
     if code.ends_with('\n') {
         out.push('\n');
     }
+    out = crate::compiler::pipeline::repair_missing_cse_range_aliases_in_raw_emitted_r(&out);
     let finalize_elapsed_ns = finalize_started.elapsed().as_nanos();
     (
         (out, line_map),

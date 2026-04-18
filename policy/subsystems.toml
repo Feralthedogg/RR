@@ -157,9 +157,11 @@ owners = [
 ]
 paths = [
   "src/mir/opt/",
+  "src/compiler/peephole/",
   "tests/sccp_overflow_regression.rs",
   "tests/opt_level_equivalence.rs",
   "tests/numeric_property_differential.rs",
+  "tests/vectorization_extended.rs",
 ]
 checks = [
   "optimizer_matrix",
@@ -210,10 +212,13 @@ owners = [
 ]
 paths = [
   "src/codegen/",
+  "src/compiler/pipeline/phases/source_emit.rs",
+  "src/compiler/pipeline/raw_rewrites.rs",
   "src/compiler/pipeline.rs",
   "example/benchmarks/",
   "tests/benchmark_examples_smoke.rs",
   "tests/codegen_binding_regression.rs",
+  "tests/common/",
   "tests/commercial_determinism.rs",
   "tests/compiler_parallel_equivalence.rs",
   "tests/example_perf_smoke.rs",

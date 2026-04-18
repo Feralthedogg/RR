@@ -121,7 +121,11 @@ pub fn compile_rr_env_with_args(
     env_kv: &[(&str, &str)],
 ) {
     let mut cmd = Command::new(rr_bin);
-    cmd.arg(rr_src).arg("-o").arg(out_path).arg(level);
+    cmd.arg(rr_src)
+        .arg("-o")
+        .arg(out_path)
+        .arg(level)
+        .arg("--cold");
     for arg in extra_args {
         cmd.arg(arg);
     }
