@@ -2,7 +2,7 @@ mod common;
 
 use common::{
     compile_rr, compile_rr_env, compile_rr_env_with_args, normalize, rscript_available,
-    rscript_path, run_rscript,
+    rscript_path, run_rscript, unique_dir,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -41,6 +41,19 @@ fn assert_series_close(label: &str, a: &[f64], b: &[f64]) {
 
 fn contains_line(haystack: &str, needle: &str) -> bool {
     haystack.lines().any(|line| line.trim() == needle)
+}
+
+fn tesseract_test_dir(name: &str) -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("tesseract_runtime_smoke");
+    fs::create_dir_all(&sandbox_root)
+        .expect("failed to create tesseract runtime smoke sandbox root");
+    let dir = unique_dir(&sandbox_root, name);
+    fs::create_dir_all(&dir).expect("failed to create tesseract runtime smoke sandbox dir");
+    dir
 }
 
 fn extract_r_function(code: &str, name: &str) -> Option<String> {
@@ -83,8 +96,7 @@ fn tesseract_compiles_across_opt_levels() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let rr_src = root.join("example").join("tesseract.rr");
-    let out_dir = root.join("target").join("examples_tesseract");
-    fs::create_dir_all(&out_dir).expect("failed to create tesseract output dir");
+    let out_dir = tesseract_test_dir("examples_tesseract");
 
     for (flag, tag) in [("-O0", "o0"), ("-O1", "o1"), ("-O2", "o2")] {
         let out = out_dir.join(format!("tesseract_{tag}.R"));
@@ -785,8 +797,7 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let rr_src = root.join("example").join("tesseract.rr");
-    let out_dir = root.join("target").join("examples_tesseract_raw");
-    fs::create_dir_all(&out_dir).expect("failed to create raw tesseract output dir");
+    let out_dir = tesseract_test_dir("examples_tesseract_raw");
 
     let out = out_dir.join("tesseract_o2.R");
     let raw = out_dir.join("tesseract_o2_raw.R");
@@ -1166,8 +1177,7 @@ fn tesseract_runs_at_o2() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let rr_src = root.join("example").join("tesseract.rr");
-    let out_dir = root.join("target").join("examples_tesseract_runtime");
-    fs::create_dir_all(&out_dir).expect("failed to create tesseract runtime dir");
+    let out_dir = tesseract_test_dir("examples_tesseract_runtime");
 
     let out = out_dir.join("tesseract_o2.R");
     compile_rr(&rr_bin, &rr_src, &out, "-O2");
@@ -1213,8 +1223,7 @@ fn tesseract_runtime_markers_match_between_o1_and_o2() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let rr_src = root.join("example").join("tesseract.rr");
-    let out_dir = root.join("target").join("examples_tesseract_parity");
-    fs::create_dir_all(&out_dir).expect("failed to create tesseract parity dir");
+    let out_dir = tesseract_test_dir("examples_tesseract_parity");
 
     let o1_path = out_dir.join("tesseract_o1.R");
     let o2_path = out_dir.join("tesseract_o2.R");
@@ -1268,8 +1277,7 @@ fn tesseract_preserve_all_defs_keeps_helper_definitions_sound() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let rr_src = root.join("example").join("tesseract.rr");
-    let out_dir = root.join("target").join("examples_tesseract_preserve_defs");
-    fs::create_dir_all(&out_dir).expect("failed to create tesseract preserve output dir");
+    let out_dir = tesseract_test_dir("examples_tesseract_preserve_defs");
 
     let out = out_dir.join("tesseract_o2_preserve_defs.R");
     let status = Command::new(&rr_bin)
@@ -1366,8 +1374,7 @@ fn tesseract_o2_preserves_cg_recurrence_and_rk_buffer_swap() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let rr_src = root.join("example").join("tesseract.rr");
-    let out_dir = root.join("target").join("examples_tesseract_semantics");
-    fs::create_dir_all(&out_dir).expect("failed to create tesseract semantics dir");
+    let out_dir = tesseract_test_dir("examples_tesseract_semantics");
 
     let out = out_dir.join("tesseract_o2_no_runtime.R");
     let status = Command::new(&rr_bin)
@@ -1425,8 +1432,7 @@ fn tesseract_o1_proof_does_not_rebroadcast_vector_values() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let rr_src = root.join("example").join("tesseract.rr");
-    let out_dir = root.join("target").join("examples_tesseract_proof_o1");
-    fs::create_dir_all(&out_dir).expect("failed to create tesseract proof output dir");
+    let out_dir = tesseract_test_dir("examples_tesseract_proof_o1");
 
     let out = out_dir.join("tesseract_o1_proof_no_runtime.R");
     compile_rr_env_with_args(
