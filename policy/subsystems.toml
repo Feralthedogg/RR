@@ -83,6 +83,7 @@ paths = [
   "dist-workspace.toml",
   "CONTRIBUTING.md",
   ".github/",
+  "docs/cli.md",
   "docs/compiler/",
   "fuzz/",
   "policy/",
@@ -157,6 +158,7 @@ owners = [
 ]
 paths = [
   "src/mir/opt/",
+  "src/compiler/pipeline/phases/tachyon_runtime.rs",
   "src/compiler/peephole/",
   "tests/cases/optimizer/",
   "tests/sccp_overflow_regression.rs",
