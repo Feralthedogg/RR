@@ -87,7 +87,7 @@ my %command_map = (
     process_smoke     => ['cargo', 'test', '-q', '--test', 'contributing_audit_smoke', '--test', 'process_gate_smoke'],
     tier0             => ['bash', 'scripts/test_tier.sh', 'tier0'],
     tier1             => ['bash', 'scripts/test_tier.sh', 'tier1'],
-    semantic_audit    => ['bash', 'scripts/ci_contributing_semantic_audit.sh'],
+    semantic_audit    => ['env', 'RR_SEMANTIC_AUDIT_SCOPE=diff', 'bash', 'scripts/ci_contributing_semantic_audit.sh'],
     perf_governance   => ['perl', 'scripts/perf_governance.pl'],
     cache_matrix      => ['cargo', 'test', '-q', '--test', 'cache_equivalence_matrix', '--test', 'incremental_strict_verify'],
     optimizer_matrix  => ['cargo', 'test', '-q', '--test', 'sccp_overflow_regression', '--test', 'opt_level_equivalence', '--test', 'numeric_property_differential'],

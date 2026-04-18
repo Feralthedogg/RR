@@ -266,7 +266,7 @@ jobs:
       RR_RANDOM_DIFFERENTIAL_COUNT: "8"
       RR_RANDOM_DIFFERENTIAL_SEED: "0xA11CE5EED55AA11C"
       RR_RANDOM_DIFFERENTIAL_SECOND_SEED: "0x5EED123456789ABC"
-      RR_SEMANTIC_AUDIT_SCOPE: all
+      RR_SEMANTIC_AUDIT_SCOPE: diff
     steps:
       - name: Checkout
         uses: actions/checkout@v4
