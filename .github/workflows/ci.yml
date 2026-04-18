@@ -455,14 +455,17 @@ jobs:
         include:
           - os: ubuntu-latest
             label: linux-x64
+            dist_target: x86_64-unknown-linux-gnu
             binary_path: target/release/RR
             artifact_dir: .artifacts/platform-build/linux-x64
           - os: windows-latest
             label: windows-x64
+            dist_target: x86_64-pc-windows-gnu
             binary_path: target/x86_64-pc-windows-gnu/release/RR.exe
             artifact_dir: .artifacts/platform-build/windows-x64
           - os: macos-latest
             label: macos-arm64
+            dist_target: aarch64-apple-darwin
             binary_path: target/release/RR
             artifact_dir: .artifacts/platform-build/macos-arm64
     steps:
@@ -481,6 +484,16 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install dist (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-installer.sh | sh
+
+      - name: Install dist (Windows)
+        if: runner.os == 'Windows'
+        run: cargo install dist --locked --version 0.31.0
 
       - name: Install Static ISL Dependencies (Linux)
         if: runner.os == 'Linux'
@@ -545,6 +558,71 @@ jobs:
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: ${{ matrix.binary_path }} --version
+
+      - name: Build dist install artifacts (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p "${{ matrix.artifact_dir }}"
+          "$HOME/.cargo/bin/dist" build \
+            -t "${{ matrix.dist_target }}" \
+            --artifacts=local \
+            --allow-dirty \
+            --output-format=json > "${{ matrix.artifact_dir }}/dist-local.json"
+          "$HOME/.cargo/bin/dist" build \
+            -t "${{ matrix.dist_target }}" \
+            -i shell \
+            --artifacts=global \
+            --allow-dirty \
+            --output-format=json > "${{ matrix.artifact_dir }}/dist-global.json"
+
+      - name: Build dist install artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          mkdir -p "${{ matrix.artifact_dir }}"
+          dist_bin="$(cygpath -u "$CARGO_HOME")/bin/dist.exe"
+          "$dist_bin" build \
+            -t "${{ matrix.dist_target }}" \
+            -i msi \
+            --artifacts=local \
+            --allow-dirty \
+            --output-format=json > "${{ matrix.artifact_dir }}/dist-local.json"
+
+      - name: Installer Smoke (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          install_root="$PWD/${{ matrix.artifact_dir }}/install-root"
+          rm -rf "$install_root"
+          RR_DOWNLOAD_URL="file://$PWD/target/distrib" \
+          RR_UNMANAGED_INSTALL="$install_root" \
+          RR_NO_MODIFY_PATH=1 \
+          sh target/distrib/RR-installer.sh -q
+          test -x "$install_root/RR"
+          "$install_root/RR" --version | tee "${{ matrix.artifact_dir }}/installer-version.txt"
+
+      - name: Installer Smoke (Windows MSI)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $pwd '${{ matrix.artifact_dir }}'
+          $installRoot = Join-Path $artifactDir 'install-root'
+          $msiPath = Join-Path $pwd 'target/distrib/RR-x86_64-pc-windows-gnu.msi'
+          $logPath = Join-Path $artifactDir 'msi-install.log'
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          Remove-Item -Recurse -Force $installRoot -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+          $args = @('/i', $msiPath, '/qn', '/norestart', '/l*v', $logPath, "INSTALLDIR=$installRoot")
+          $proc = Start-Process msiexec.exe -Wait -PassThru -NoNewWindow -ArgumentList $args
+          if ($proc.ExitCode -ne 0) {
+            if (Test-Path $logPath) { Get-Content $logPath }
+            exit $proc.ExitCode
+          }
+          $installedExe = Join-Path $installRoot 'bin/RR.exe'
+          if (!(Test-Path $installedExe)) {
+            if (Test-Path $logPath) { Get-Content $logPath }
+            throw "installed RR.exe missing at $installedExe"
+          }
+          & $installedExe --version | Tee-Object (Join-Path $artifactDir 'installer-version.txt')
 
       - name: Verify No Dynamic ISL/GMP Dependency (Linux)
         if: runner.os == 'Linux'

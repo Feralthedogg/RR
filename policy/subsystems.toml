@@ -80,6 +80,7 @@ owners = [
 ]
 paths = [
   ".gitignore",
+  "dist-workspace.toml",
   "CONTRIBUTING.md",
   ".github/",
   "docs/compiler/",
