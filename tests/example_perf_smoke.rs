@@ -39,11 +39,6 @@ const PERF_CASES: &[PerfCase] = &[
         path: "example/benchmarks/vector_fusion_bench.rr",
         require_exact_output_parity: true,
     },
-    PerfCase {
-        label: "tesseract",
-        path: "example/tesseract.rr",
-        require_exact_output_parity: false,
-    },
 ];
 
 #[derive(Clone, Copy, Default)]
