@@ -1094,8 +1094,7 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         "expected raw tesseract output to keep direct base-R slice writes for the topology neighbor rows"
     );
     assert!(
-        raw_code.contains("r <- b")
-            && (raw_code.contains("p <- r") || raw_code.contains("p <- b")),
+        raw_code.contains("r <- b") && (raw_code.contains("p <- r") || raw_code.contains("p <- b")),
         "expected raw tesseract CG helper to keep the current b-seeded p initialization"
     );
     let raw_sym_83 = extract_r_function(&raw_code, "Sym_83")
@@ -1192,8 +1191,7 @@ fn tesseract_runs_at_o2() {
         "expected five particle position samples in tesseract output:\nstdout={stdout}"
     );
     assert!(
-        particle_x.iter().all(|value| value.is_finite())
-            && particle_x.first() != particle_x.last(),
+        particle_x.iter().all(|value| value.is_finite()) && particle_x.first() != particle_x.last(),
         "expected particle x position to evolve across steps: {particle_x:?}\nstdout={stdout}"
     );
     assert!(

@@ -225,6 +225,7 @@ paths = [
   "tests/commercial_determinism.rs",
   "tests/compiler_parallel_equivalence.rs",
   "tests/example_perf_smoke.rs",
+  "tests/tesseract_runtime_smoke.rs",
 ]
 checks = [
   "determinism_matrix",
