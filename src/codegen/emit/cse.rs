@@ -388,9 +388,9 @@ impl RBackend {
             {
                 continue;
             }
-            if current_loop_idx_var.is_some_and(|idx_var| {
-                expr_idents.iter().any(|ident| ident == idx_var)
-            }) {
+            if current_loop_idx_var
+                .is_some_and(|idx_var| expr_idents.iter().any(|ident| ident == idx_var))
+            {
                 continue;
             }
             let temp_name = format!("licm_{val_id}");

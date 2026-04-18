@@ -3518,10 +3518,8 @@ pub(super) fn restore_missing_repeat_loop_counter_updates(output: &mut String) {
 pub(super) fn rewrite_hoisted_loop_counter_aliases(output: &mut String) {
     fn extract_loop_counter_step(rhs: &str) -> Option<String> {
         let rhs = strip_outer_parens_local(rhs).trim();
-        let caps = compile_regex(
-            r"^([A-Za-z_][A-Za-z0-9_\.]*)\s*\+\s*(1L?|1\.0)$".to_string(),
-        )?
-        .captures(rhs)?;
+        let caps = compile_regex(r"^([A-Za-z_][A-Za-z0-9_\.]*)\s*\+\s*(1L?|1\.0)$".to_string())?
+            .captures(rhs)?;
         let var = caps.get(1)?.as_str();
         let step = caps.get(2)?.as_str();
         Some(format!("({var} + {step})"))

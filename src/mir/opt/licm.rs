@@ -301,18 +301,16 @@ impl MirLicm {
                     }
                     Instr::StoreIndex1D { base, .. }
                     | Instr::StoreIndex2D { base, .. }
-                    | Instr::StoreIndex3D { base, .. } => {
-                        match &fn_ir.values[*base].kind {
-                            ValueKind::Load { var } => {
-                                vars.insert(var.clone());
-                            }
-                            _ => {
-                                if let Some(origin_var) = &fn_ir.values[*base].origin_var {
-                                    vars.insert(origin_var.clone());
-                                }
+                    | Instr::StoreIndex3D { base, .. } => match &fn_ir.values[*base].kind {
+                        ValueKind::Load { var } => {
+                            vars.insert(var.clone());
+                        }
+                        _ => {
+                            if let Some(origin_var) = &fn_ir.values[*base].origin_var {
+                                vars.insert(origin_var.clone());
                             }
                         }
-                    }
+                    },
                     Instr::Eval { .. } => {}
                 }
             }
@@ -408,9 +406,9 @@ impl MirLicm {
             | ValueKind::Indices { base: rhs } => {
                 self.value_depends_on_loop_phi(fn_ir, *rhs, loop_info, seen)
             }
-            ValueKind::RecordLit { fields } => fields.iter().any(|(_, value)| {
-                self.value_depends_on_loop_phi(fn_ir, *value, loop_info, seen)
-            }),
+            ValueKind::RecordLit { fields } => fields
+                .iter()
+                .any(|(_, value)| self.value_depends_on_loop_phi(fn_ir, *value, loop_info, seen)),
             ValueKind::FieldGet { base, .. } => {
                 self.value_depends_on_loop_phi(fn_ir, *base, loop_info, seen)
             }
@@ -440,9 +438,9 @@ impl MirLicm {
             ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args
                 .iter()
                 .any(|arg| self.value_depends_on_loop_phi(fn_ir, *arg, loop_info, seen)),
-            ValueKind::Phi { args } => args.iter().any(|(arg, _)| {
-                self.value_depends_on_loop_phi(fn_ir, *arg, loop_info, seen)
-            }),
+            ValueKind::Phi { args } => args
+                .iter()
+                .any(|(arg, _)| self.value_depends_on_loop_phi(fn_ir, *arg, loop_info, seen)),
             ValueKind::Const(_)
             | ValueKind::Param { .. }
             | ValueKind::Load { .. }

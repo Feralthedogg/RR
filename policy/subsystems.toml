@@ -211,6 +211,7 @@ owners = [
 paths = [
   "src/codegen/",
   "src/compiler/pipeline.rs",
+  "tests/codegen_binding_regression.rs",
   "tests/commercial_determinism.rs",
   "tests/compiler_parallel_equivalence.rs",
 ]
