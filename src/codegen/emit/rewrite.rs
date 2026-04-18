@@ -2134,6 +2134,48 @@ fn raw_enclosing_repeat_guard_mentions_symbol_local(
     false
 }
 
+fn raw_enclosing_repeat_body_reads_symbol_before_local(
+    lines: &[String],
+    idx: usize,
+    symbol: &str,
+) -> bool {
+    for start_idx in (0..idx).rev() {
+        if lines[start_idx].trim() != "repeat {" {
+            continue;
+        }
+        let Some(end_idx) = find_block_end_local(lines, start_idx) else {
+            continue;
+        };
+        if idx >= end_idx {
+            continue;
+        }
+        let Some(guard_idx) = ((start_idx + 1)..end_idx)
+            .find(|line_idx| parse_repeat_guard_cmp_line_local(lines[*line_idx].trim()).is_some())
+        else {
+            continue;
+        };
+        for line in lines.iter().take(idx).skip(guard_idx + 1) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some((lhs, rhs)) = parse_local_assign_line(trimmed)
+                && lhs == symbol
+            {
+                if count_symbol_occurrences_local(rhs, symbol) > 0 {
+                    return true;
+                }
+                continue;
+            }
+            if count_symbol_occurrences_local(trimmed, symbol) > 0 {
+                return true;
+            }
+        }
+        break;
+    }
+    false
+}
+
 pub(super) fn rewrite_guard_scalar_literals(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
@@ -2949,6 +2991,7 @@ pub(super) fn strip_dead_simple_scalar_assigns(output: &mut String) {
                 || (!rhs_is_simple_scalar_alias_or_literal_local(rhs)
                     && !rhs_is_simple_dead_expr_local(rhs))
                 || raw_enclosing_repeat_guard_mentions_symbol_local(&lines, idx, lhs)
+                || raw_enclosing_repeat_body_reads_symbol_before_local(&lines, idx, lhs)
             {
                 idx += 1;
                 continue;
@@ -3008,6 +3051,7 @@ pub(super) fn strip_shadowed_simple_scalar_seed_assigns(output: &mut String) {
                 || (!rhs_is_simple_scalar_alias_or_literal_local(rhs)
                     && !rhs_is_simple_dead_expr_local(rhs))
                 || raw_enclosing_repeat_guard_mentions_symbol_local(&lines, idx, lhs)
+                || raw_enclosing_repeat_body_reads_symbol_before_local(&lines, idx, lhs)
             {
                 idx += 1;
                 continue;
