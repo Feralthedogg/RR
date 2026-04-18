@@ -32,6 +32,7 @@ impl MirLicm {
         loop_info: &crate::mir::opt::loop_analysis::LoopInfo,
     ) -> bool {
         let mut changed = false;
+        let loop_written_vars = self.collect_loop_written_vars(fn_ir, loop_info);
 
         // Build Value -> Block map
         let mut val_to_bb = std::collections::HashMap::new();
@@ -121,6 +122,7 @@ impl MirLicm {
                             loop_info,
                             &val_to_bb,
                             &loop_ctx,
+                            &loop_written_vars,
                         ) {
                             // Deduplicate
                             if !hoist_candidates.contains(src) {
@@ -247,6 +249,7 @@ impl MirLicm {
         loop_info: &crate::mir::opt::loop_analysis::LoopInfo,
         val_to_bb: &std::collections::HashMap<ValueId, BlockId>,
         loop_ctx: &LoopEffectCtx,
+        loop_written_vars: &std::collections::HashSet<String>,
     ) -> bool {
         // Can only hoist pure things defined INSIDE the loop.
         // If it's defined outside, it's already "hoisted" (invariant).
@@ -262,10 +265,189 @@ impl MirLicm {
         if !invariants.contains(&val_id) {
             return false;
         }
+        if self.value_mentions_written_var(
+            fn_ir,
+            val_id,
+            loop_written_vars,
+            &mut std::collections::HashSet::new(),
+        ) {
+            return false;
+        }
+        if self.value_depends_on_loop_phi(
+            fn_ir,
+            val_id,
+            loop_info,
+            &mut std::collections::HashSet::new(),
+        ) {
+            return false;
+        }
 
         // Must be speculatable to hoist
         self.is_value_invariant(fn_ir, val_id, invariants, loop_ctx)
             && !matches!(fn_ir.values[val_id].kind, ValueKind::Phi { .. })
+    }
+
+    fn collect_loop_written_vars(
+        &self,
+        fn_ir: &FnIR,
+        loop_info: &crate::mir::opt::loop_analysis::LoopInfo,
+    ) -> std::collections::HashSet<String> {
+        let mut vars = std::collections::HashSet::new();
+        for &bb in &loop_info.body {
+            for instr in &fn_ir.blocks[bb].instrs {
+                match instr {
+                    Instr::Assign { dst, .. } => {
+                        vars.insert(dst.clone());
+                    }
+                    Instr::StoreIndex1D { base, .. }
+                    | Instr::StoreIndex2D { base, .. }
+                    | Instr::StoreIndex3D { base, .. } => {
+                        match &fn_ir.values[*base].kind {
+                            ValueKind::Load { var } => {
+                                vars.insert(var.clone());
+                            }
+                            _ => {
+                                if let Some(origin_var) = &fn_ir.values[*base].origin_var {
+                                    vars.insert(origin_var.clone());
+                                }
+                            }
+                        }
+                    }
+                    Instr::Eval { .. } => {}
+                }
+            }
+        }
+        vars
+    }
+
+    fn value_mentions_written_var(
+        &self,
+        fn_ir: &FnIR,
+        val_id: ValueId,
+        loop_written_vars: &std::collections::HashSet<String>,
+        seen: &mut std::collections::HashSet<ValueId>,
+    ) -> bool {
+        if !seen.insert(val_id) {
+            return false;
+        }
+        match &fn_ir.values[val_id].kind {
+            ValueKind::Load { var } => loop_written_vars.contains(var),
+            ValueKind::Binary { lhs, rhs, .. } => {
+                self.value_mentions_written_var(fn_ir, *lhs, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *rhs, loop_written_vars, seen)
+            }
+            ValueKind::Unary { rhs, .. }
+            | ValueKind::Len { base: rhs }
+            | ValueKind::Indices { base: rhs } => {
+                self.value_mentions_written_var(fn_ir, *rhs, loop_written_vars, seen)
+            }
+            ValueKind::RecordLit { fields } => fields.iter().any(|(_, value)| {
+                self.value_mentions_written_var(fn_ir, *value, loop_written_vars, seen)
+            }),
+            ValueKind::FieldGet { base, .. } => {
+                self.value_mentions_written_var(fn_ir, *base, loop_written_vars, seen)
+            }
+            ValueKind::FieldSet { base, value, .. } => {
+                self.value_mentions_written_var(fn_ir, *base, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *value, loop_written_vars, seen)
+            }
+            ValueKind::Range { start, end } => {
+                self.value_mentions_written_var(fn_ir, *start, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *end, loop_written_vars, seen)
+            }
+            ValueKind::Index1D { base, idx, .. } => {
+                self.value_mentions_written_var(fn_ir, *base, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *idx, loop_written_vars, seen)
+            }
+            ValueKind::Index2D { base, r, c } => {
+                self.value_mentions_written_var(fn_ir, *base, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *r, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *c, loop_written_vars, seen)
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                self.value_mentions_written_var(fn_ir, *base, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *i, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *j, loop_written_vars, seen)
+                    || self.value_mentions_written_var(fn_ir, *k, loop_written_vars, seen)
+            }
+            ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args
+                .iter()
+                .any(|arg| self.value_mentions_written_var(fn_ir, *arg, loop_written_vars, seen)),
+            ValueKind::Phi { args } => args.iter().any(|(arg, _)| {
+                self.value_mentions_written_var(fn_ir, *arg, loop_written_vars, seen)
+            }),
+            ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::RSymbol { .. } => false,
+        }
+    }
+
+    fn value_depends_on_loop_phi(
+        &self,
+        fn_ir: &FnIR,
+        val_id: ValueId,
+        loop_info: &crate::mir::opt::loop_analysis::LoopInfo,
+        seen: &mut std::collections::HashSet<ValueId>,
+    ) -> bool {
+        if !seen.insert(val_id) {
+            return false;
+        }
+        let value = &fn_ir.values[val_id];
+        if matches!(value.kind, ValueKind::Phi { .. })
+            && value
+                .phi_block
+                .is_some_and(|phi_bb| loop_info.body.contains(&phi_bb))
+        {
+            return true;
+        }
+        match &value.kind {
+            ValueKind::Binary { lhs, rhs, .. } => {
+                self.value_depends_on_loop_phi(fn_ir, *lhs, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *rhs, loop_info, seen)
+            }
+            ValueKind::Unary { rhs, .. }
+            | ValueKind::Len { base: rhs }
+            | ValueKind::Indices { base: rhs } => {
+                self.value_depends_on_loop_phi(fn_ir, *rhs, loop_info, seen)
+            }
+            ValueKind::RecordLit { fields } => fields.iter().any(|(_, value)| {
+                self.value_depends_on_loop_phi(fn_ir, *value, loop_info, seen)
+            }),
+            ValueKind::FieldGet { base, .. } => {
+                self.value_depends_on_loop_phi(fn_ir, *base, loop_info, seen)
+            }
+            ValueKind::FieldSet { base, value, .. } => {
+                self.value_depends_on_loop_phi(fn_ir, *base, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *value, loop_info, seen)
+            }
+            ValueKind::Range { start, end } => {
+                self.value_depends_on_loop_phi(fn_ir, *start, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *end, loop_info, seen)
+            }
+            ValueKind::Index1D { base, idx, .. } => {
+                self.value_depends_on_loop_phi(fn_ir, *base, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *idx, loop_info, seen)
+            }
+            ValueKind::Index2D { base, r, c } => {
+                self.value_depends_on_loop_phi(fn_ir, *base, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *r, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *c, loop_info, seen)
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                self.value_depends_on_loop_phi(fn_ir, *base, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *i, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *j, loop_info, seen)
+                    || self.value_depends_on_loop_phi(fn_ir, *k, loop_info, seen)
+            }
+            ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args
+                .iter()
+                .any(|arg| self.value_depends_on_loop_phi(fn_ir, *arg, loop_info, seen)),
+            ValueKind::Phi { args } => args.iter().any(|(arg, _)| {
+                self.value_depends_on_loop_phi(fn_ir, *arg, loop_info, seen)
+            }),
+            ValueKind::Const(_)
+            | ValueKind::Param { .. }
+            | ValueKind::Load { .. }
+            | ValueKind::RSymbol { .. } => false,
+        }
     }
 
     fn is_value_invariant(

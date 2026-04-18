@@ -230,30 +230,10 @@ impl RBackend {
                     );
                 }
             }
-            StructuredBlock::Loop {
-                header, cond, body, ..
-            } => {
-                self.collect_loop_invariant_scalar_candidates_from_instrs(
-                    &fn_ir.blocks[*header].instrs,
-                    &fn_ir.values,
-                    loop_mutated_vars,
-                    visited,
-                    out,
-                );
-                self.collect_loop_invariant_scalar_candidates_from_value(
-                    *cond,
-                    &fn_ir.values,
-                    loop_mutated_vars,
-                    visited,
-                    out,
-                );
-                self.collect_loop_invariant_scalar_candidates_from_block(
-                    body,
-                    fn_ir,
-                    loop_mutated_vars,
-                    visited,
-                    out,
-                );
+            StructuredBlock::Loop { .. } => {
+                // Nested loops get their own LICM pass when emitted. Reaching into them from an
+                // outer loop can hoist inner induction updates like `j + 1L` past the loop that
+                // defines `j`, which is wrong-code.
             }
             StructuredBlock::Break | StructuredBlock::Next | StructuredBlock::Return(_) => {}
         }
@@ -370,6 +350,7 @@ impl RBackend {
         body: &StructuredBlock,
         fn_ir: &FnIR,
         loop_mutated_vars: &FxHashSet<String>,
+        current_loop_idx_var: Option<&str>,
     ) {
         let mut candidates = Vec::new();
         let mut visited = FxHashSet::default();
@@ -399,8 +380,20 @@ impl RBackend {
             if self.resolve_bound_value(val_id).is_some() {
                 continue;
             }
-            let temp_name = format!("licm_{val_id}");
             let expr = self.resolve_val(val_id, &fn_ir.values, &fn_ir.params, false);
+            let expr_idents = crate::compiler::pipeline::raw_expr_idents(expr.as_str());
+            if expr_idents
+                .iter()
+                .any(|ident| loop_mutated_vars.contains(ident))
+            {
+                continue;
+            }
+            if current_loop_idx_var.is_some_and(|idx_var| {
+                expr_idents.iter().any(|ident| ident == idx_var)
+            }) {
+                continue;
+            }
+            let temp_name = format!("licm_{val_id}");
             self.write_stmt(&format!("{temp_name} <- {expr}"));
             self.note_var_write(&temp_name);
             self.bind_value_to_var(val_id, &temp_name);

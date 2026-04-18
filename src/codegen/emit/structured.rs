@@ -1,6 +1,27 @@
 use super::*;
 
 impl RBackend {
+    fn structured_contains_loop(node: &StructuredBlock) -> bool {
+        match node {
+            StructuredBlock::Sequence(items) => items.iter().any(Self::structured_contains_loop),
+            StructuredBlock::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                Self::structured_contains_loop(then_body)
+                    || else_body
+                        .as_deref()
+                        .is_some_and(Self::structured_contains_loop)
+            }
+            StructuredBlock::Loop { .. } => true,
+            StructuredBlock::BasicBlock(_)
+            | StructuredBlock::Break
+            | StructuredBlock::Next
+            | StructuredBlock::Return(_) => false,
+        }
+    }
+
     pub(super) fn emit_structured(
         &mut self,
         node: &StructuredBlock,
@@ -172,18 +193,32 @@ impl RBackend {
                 self.loop_analysis
                     .active_loop_mutated_vars
                     .push(loop_mutated_vars.clone());
-                self.emit_loop_invariant_scalar_hoists(
-                    *header,
-                    *cond,
-                    body.as_ref(),
-                    fn_ir,
-                    &loop_mutated_vars,
-                );
                 let scalar_loop_ctx = self
                     .extract_scalar_loop_index_context_from_init_bb(*header, *cond, fn_ir)
                     .or_else(|| {
                         self.extract_scalar_loop_index_context_from_live_binding(*cond, fn_ir)
                     });
+                let current_loop_idx_var = match fn_ir.values.get(*cond).map(|v| &v.kind) {
+                    Some(ValueKind::Binary {
+                        op: BinOp::Le, lhs, ..
+                    }) => self.extract_loop_index_var(*lhs, &fn_ir.values),
+                    Some(ValueKind::Binary {
+                        op: BinOp::Ge, rhs, ..
+                    }) => self.extract_loop_index_var(*rhs, &fn_ir.values),
+                    _ => None,
+                }
+                .or_else(|| scalar_loop_ctx.as_ref().map(|ctx| ctx.var.clone()))
+                .or_else(|| self.generated_loop_index_var_from_header(*header, fn_ir));
+                if !Self::structured_contains_loop(body) {
+                    self.emit_loop_invariant_scalar_hoists(
+                        *header,
+                        *cond,
+                        body.as_ref(),
+                        fn_ir,
+                        &loop_mutated_vars,
+                        current_loop_idx_var.as_deref(),
+                    );
+                }
                 if let Some(ctx) = scalar_loop_ctx.clone() {
                     self.loop_analysis.active_scalar_loop_indices.push(ctx);
                 }

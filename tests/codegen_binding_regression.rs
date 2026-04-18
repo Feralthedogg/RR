@@ -597,6 +597,79 @@ main(4L)
 }
 
 #[test]
+fn nested_loop_index_update_is_not_hoisted_outside_inner_loop() {
+    let out_dir = test_out_dir();
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let rr_path = out_dir.join("nested_loop_index_update.rr");
+    let r_path = out_dir.join("nested_loop_index_update.R");
+
+    let src = r#"
+fn score(i, j, a, b) {
+  let v = (i * a) - (j * b)
+  if (v > 0L) {
+    return v
+  } else {
+    return 0L - v
+  }
+}
+
+fn main() {
+  let outer = 4L
+  let inner = 5L
+  let acc = 0L
+  let diag = 0L
+  let i = 1L
+  while (i <= outer) {
+    let j = 1L
+    while (j <= inner) {
+      let s = score(i, j, 4L, 5L)
+      acc = acc + s
+      if (i == j) {
+        diag = diag + s
+      }
+      j = j + 1L
+    }
+    i = i + 1L
+  }
+  acc + diag
+}
+
+print(main())
+"#;
+    fs::write(&rr_path, src).expect("failed to write source");
+
+    let status = Command::new(&rr_bin)
+        .arg(&rr_path)
+        .arg("-o")
+        .arg(&r_path)
+        .arg("--no-runtime")
+        .arg("--preserve-all-defs")
+        .arg("-O1")
+        .status()
+        .expect("failed to run RR compiler");
+    assert!(
+        status.success(),
+        "RR compile failed for {}",
+        rr_path.display()
+    );
+
+    let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
+    assert!(
+        generated.contains("j <- (j + 1L)")
+            || generated.contains("j <- licm_")
+            || generated.contains("for (j in seq_len((5L)))")
+            || generated.contains("for (j in seq_len(5L))"),
+        "expected generated loop to advance j"
+    );
+    assert!(
+        !generated
+            .lines()
+            .any(|line| line.contains("licm_") && line.contains("(j + 1L)")),
+        "found stale bug pattern: inner-loop j update hoisted outside its defining loop"
+    );
+}
+
+#[test]
 fn fresh_helper_aliases_before_loop_are_materialized_as_distinct_inits() {
     let out_dir = test_out_dir();
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));

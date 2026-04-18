@@ -58,7 +58,11 @@ pub struct MirEmitter {
 }
 
 fn is_recognized_loop_index_name(name: &str) -> bool {
-    name == "i" || name.starts_with("i_") || is_generated_poly_loop_var_name(name)
+    matches!(name, "i" | "j" | "k")
+        || name.starts_with("i_")
+        || name.starts_with("j_")
+        || name.starts_with("k_")
+        || is_generated_poly_loop_var_name(name)
 }
 
 impl RBackend {
@@ -159,6 +163,7 @@ impl RBackend {
         Self::rewrite_sym210_loop_seed(&mut self.output);
         Self::rewrite_seq_len_full_overwrite_inits(&mut self.output);
         Self::restore_missing_repeat_loop_counter_updates(&mut self.output);
+        Self::rewrite_hoisted_loop_counter_aliases(&mut self.output);
         Self::restore_constant_one_guard_repeat_loop_counters(&mut self.output);
         Self::rewrite_literal_named_list_calls(&mut self.output);
         Self::rewrite_literal_field_get_calls(&mut self.output);
@@ -389,6 +394,9 @@ impl RBackend {
         val_id: usize,
         values: &[Value],
     ) -> Option<String> {
+        if !self.value_is_scalar_shape(val_id, values) {
+            return None;
+        }
         if !self.can_reuse_live_expr_alias(val_id, values) {
             return None;
         }
@@ -1108,6 +1116,10 @@ impl RBackend {
 
     fn restore_missing_repeat_loop_counter_updates(output: &mut String) {
         rewrite_emit::restore_missing_repeat_loop_counter_updates(output)
+    }
+
+    fn rewrite_hoisted_loop_counter_aliases(output: &mut String) {
+        rewrite_emit::rewrite_hoisted_loop_counter_aliases(output)
     }
 
     fn restore_constant_one_guard_repeat_loop_counters(output: &mut String) {

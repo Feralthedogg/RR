@@ -82,6 +82,97 @@ fn resolve_val_prefers_current_var_after_indexed_store_mutates_origin() {
 }
 
 #[test]
+fn fresh_vector_clone_call_arg_does_not_reuse_live_same_kind_alias_after_mutation() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Call {
+                callee: "seq_len".to_string(),
+                args: vec![1],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("xs".to_string()),
+            phi_block: None,
+            value_ty: TypeState {
+                prim: PrimTy::Int,
+                shape: ShapeTy::Vector,
+                na: NaTy::Never,
+                len_sym: None,
+            },
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Int)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Const(Lit::Int(10)),
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 2,
+            kind: ValueKind::Call {
+                callee: "seq_len".to_string(),
+                args: vec![1],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState {
+                prim: PrimTy::Int,
+                shape: ShapeTy::Vector,
+                na: NaTy::Never,
+                len_sym: None,
+            },
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Int)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 3,
+            kind: ValueKind::Call {
+                callee: "sum".to_string(),
+                args: vec![2],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: None,
+            phi_block: None,
+            value_ty: TypeState {
+                prim: PrimTy::Int,
+                shape: ShapeTy::Scalar,
+                na: NaTy::Never,
+                len_sym: None,
+            },
+            value_term: TypeTerm::Int,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("xs");
+    backend.bind_value_to_var(0, "xs");
+    backend.bind_var_to_value("xs", 0);
+
+    backend.note_var_write("ys");
+    backend.bind_value_to_var(2, "ys");
+    backend.bind_var_to_value("ys", 2);
+
+    backend.note_var_write("ys");
+
+    assert_eq!(backend.resolve_val(2, &values, &[], false), "ys");
+    assert_eq!(backend.resolve_val(3, &values, &[], false), "sum(ys)");
+}
+
+#[test]
 fn stale_fresh_alloc_is_rendered_as_current_var_in_call_args() {
     let mut backend = RBackend::new();
     let values = vec![
