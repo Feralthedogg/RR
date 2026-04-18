@@ -394,7 +394,10 @@ impl RBackend {
         val_id: usize,
         values: &[Value],
     ) -> Option<String> {
-        if !self.value_is_scalar_shape(val_id, values) {
+        if values
+            .get(val_id)
+            .is_some_and(|value| self.is_fresh_mutable_aggregate_value(value))
+        {
             return None;
         }
         if !self.can_reuse_live_expr_alias(val_id, values) {
