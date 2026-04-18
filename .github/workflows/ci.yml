@@ -493,7 +493,9 @@ jobs:
 
       - name: Install dist (Windows)
         if: runner.os == 'Windows'
-        run: cargo install dist --locked --version 0.31.0
+        shell: pwsh
+        run: |
+          irm https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-installer.ps1 | iex
 
       - name: Install Static ISL Dependencies (Linux)
         if: runner.os == 'Linux'
