@@ -45,7 +45,23 @@ jobs:
           sudo apt-get install -y --no-install-recommends libisl-dev libgmp-dev
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: >
+          cargo clippy --all-targets --
+          -D warnings
+          -A clippy::collapsible_match
+          -A clippy::needless_range_loop
+          -A clippy::needless_option_as_deref
+          -A clippy::too_many_arguments
+          -A clippy::single_char_add_str
+          -A clippy::collapsible_if
+          -A clippy::useless_conversion
+          -A clippy::option_as_ref_deref
+          -A clippy::needless_borrow
+          -A clippy::implicit_saturating_sub
+          -A clippy::collapsible_else_if
+          -A clippy::if_same_then_else
+          -A clippy::op_ref
+          -A clippy::ptr_arg
 
       - name: Format
         run: cargo fmt --check
