@@ -837,7 +837,6 @@ fn apply_raw_rewrites_to_fragment(
     output = collapse_sym287_melt_rate_branch_in_raw_emitted_r(&output);
     output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
     output = collapse_gray_scott_clamp_pair_in_raw_emitted_r(&output);
-    output = strip_unused_helper_params_in_raw_emitted_r(&output);
     output = collapse_trivial_dot_product_wrappers_in_raw_emitted_r(&output);
     output = collapse_sym287_melt_rate_branch_in_raw_emitted_r(&output);
     output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);

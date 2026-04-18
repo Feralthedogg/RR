@@ -11,7 +11,7 @@ fn main() {
         i += 1.0
     }
     let resample = 1.0
-    let acc = 0.0
+    let resample_means = rep.int(0.0, resamples)
     let inner = 1.0
     let s = 0.0
     let idx = 1.0
@@ -23,9 +23,10 @@ fn main() {
             s += samples[idx]
             inner += 1.0
         }
-        acc += s / n
+        resample_means[resample] = s / n
         resample += 1.0
     }
+    let acc = sum(resample_means)
     print_metric("bootstrap_bench_mean", acc / resamples)
     print_metric("bootstrap_bench_acc", acc)
 }

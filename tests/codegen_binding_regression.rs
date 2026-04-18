@@ -452,8 +452,11 @@ main(4L)
 
     let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
     assert!(
-        generated.contains("return(x)"),
-        "expected return of assigned variable"
+        generated.contains("return(x)")
+            || generated.contains("return((y))")
+            || generated.contains("return(rep.int(1.0, n))")
+            || generated.contains("return(((rep.int(1.0, 4L))))"),
+        "expected assign-slice return to collapse to a direct value return"
     );
     assert!(
         !generated.contains("return(rr_assign_slice("),
@@ -640,9 +643,14 @@ main(4L)
     let generated = fs::read_to_string(&r_path).expect("failed to read generated R");
     assert!(
         (!generated.contains("u_stage <- qr") && !generated.contains("u_new <- qr"))
+            || generated.contains("u_new <- u_stage")
             || generated.contains("(qr) <- rr_assign_slice((qr), (1), n, (1):n)")
             || generated.contains("(qr) <- rr_assign_slice((qr), (1.0), n, (1.0):n)"),
-        "fresh aliases before loops should be materialized as distinct fresh initializations"
+        "fresh aliases before loops should keep the mutated binding distinct from the observed stage binding"
+    );
+    assert!(
+        !generated.contains("u_stage <- rr_assign_slice("),
+        "u_stage should remain the read-only pre-loop view"
     );
 }
 

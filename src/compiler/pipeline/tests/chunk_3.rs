@@ -309,6 +309,32 @@ fn raw_emitted_unused_middle_helper_params_trim_and_update_callsites() {
 }
 
 #[test]
+fn raw_emitted_helper_params_are_kept_when_helper_escapes_as_value() {
+    let input = [
+        "Sym_1 <- function(obj) ",
+        "{",
+        "  return(methods::standardGeneric(\"rr_tmp_generic\"))",
+        "}",
+        "Sym_top_0 <- function() ",
+        "{",
+        "  generic_name <- methods::setGeneric(\"rr_tmp_generic\", Sym_1)",
+        "  return(generic_name)",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = strip_unused_helper_params_in_raw_emitted_r(&input);
+
+    assert!(out.contains("Sym_1 <- function(obj)"), "{out}");
+    assert!(!out.contains("Sym_1 <- function()"), "{out}");
+    assert!(
+        out.contains("methods::setGeneric(\"rr_tmp_generic\", Sym_1)"),
+        "{out}"
+    );
+}
+
+#[test]
 fn raw_emitted_terminal_repeat_nexts_prune_without_touching_inner_if_nexts() {
     let input = [
         "Sym_83 <- function() ",

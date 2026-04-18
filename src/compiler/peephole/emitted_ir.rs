@@ -2200,7 +2200,7 @@ fn has_unused_helper_param_candidates_ir(lines: &[String]) -> bool {
 fn apply_strip_unused_helper_params_ir(program: &mut EmittedProgram) {
     let mut trims = FxHashMap::<String, HelperTrimIr>::default();
 
-    for item in &program.items {
+    for (item_idx, item) in program.items.iter().enumerate() {
         let EmittedItem::Function(function) = item else {
             continue;
         };
@@ -2211,6 +2211,29 @@ fn apply_strip_unused_helper_params_ir(program: &mut EmittedProgram) {
             || params.is_empty()
             || params.iter().any(|param| param.contains('='))
         {
+            continue;
+        }
+
+        let escaped = program
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(other_idx, _)| *other_idx != item_idx)
+            .any(|(_, other_item)| match other_item {
+                EmittedItem::Raw(line) => {
+                    let trimmed = line.trim();
+                    crate::compiler::pipeline::line_contains_symbol(trimmed, &fn_name)
+                        && !trimmed.contains(&format!("{fn_name}("))
+                        && !trimmed.contains(&format!("{fn_name} <- function("))
+                }
+                EmittedItem::Function(other_function) => other_function.body.iter().any(|stmt| {
+                    let trimmed = stmt.text.trim();
+                    crate::compiler::pipeline::line_contains_symbol(trimmed, &fn_name)
+                        && !trimmed.contains(&format!("{fn_name}("))
+                        && !trimmed.contains(&format!("{fn_name} <- function("))
+                }),
+            });
+        if escaped {
             continue;
         }
 
