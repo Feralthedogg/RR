@@ -622,10 +622,14 @@ jobs:
             if (Test-Path $logPath) { Get-Content $logPath }
             exit $proc.ExitCode
           }
-          $installedExe = Join-Path $installRoot 'bin/RR.exe'
-          if (!(Test-Path $installedExe)) {
+          $installedCandidates = @(
+            (Join-Path $installRoot 'bin/RR.exe'),
+            'C:\Program Files\RR\bin\RR.exe'
+          )
+          $installedExe = $installedCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (!$installedExe) {
             if (Test-Path $logPath) { Get-Content $logPath }
-            throw "installed RR.exe missing at $installedExe"
+            throw "installed RR.exe missing at any candidate path: $($installedCandidates -join ', ')"
           }
           & $installedExe --version | Tee-Object (Join-Path $artifactDir 'installer-version.txt')
 

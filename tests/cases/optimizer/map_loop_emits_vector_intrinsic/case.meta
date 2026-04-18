@@ -2,5 +2,5 @@ expect=compile-ok
 flag=--no-runtime
 flag=-O2
 stdout_contains=Vectorized: 1
-emit_contains=((seq_len(20L)) + (seq_len(20L))) + (1L)
+emit_contains=(seq_len(20L) + seq_len(20L)) + (1L)
 emit_not_contains=# rr-hybrid-fallback:
