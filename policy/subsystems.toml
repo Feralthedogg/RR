@@ -158,6 +158,7 @@ owners = [
 paths = [
   "src/mir/opt/",
   "src/compiler/peephole/",
+  "tests/cases/optimizer/",
   "tests/sccp_overflow_regression.rs",
   "tests/opt_level_equivalence.rs",
   "tests/numeric_property_differential.rs",
