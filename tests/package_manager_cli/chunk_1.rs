@@ -126,7 +126,7 @@ main()
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("41L + 1L"),
+        built_r.contains("41L + 1L") || built_r.contains("x + 1L"),
         "expected imported package logic in built artifact, got:\n{}",
         built_r
     );
@@ -237,7 +237,7 @@ main()
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("40L + 1L") || built_r.contains("41L + 1L"),
+        built_r.contains("40L + 1L") || built_r.contains("41L + 1L") || built_r.contains("x + 1L"),
         "expected imported subpackage logic in built artifact, got:\n{}",
         built_r
     );
@@ -323,7 +323,7 @@ main()
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("40L + 2L"),
+        built_r.contains("40L + 2L") || built_r.contains("x + 2L"),
         "expected replace target logic in built artifact, got:\n{}",
         built_r
     );

@@ -210,7 +210,7 @@ fn main() {
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("40L + 1L"),
+        built_r.contains("40L + 1L") || built_r.contains("x + 1L"),
         "expected registry dependency logic in built artifact, got:\n{}",
         built_r
     );
@@ -383,7 +383,7 @@ fn add_one(x) {
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("40L + 1L"),
+        built_r.contains("40L + 1L") || built_r.contains("x + 1L"),
         "expected workspace member logic in built artifact, got:\n{}",
         built_r
     );

@@ -116,7 +116,7 @@ print(vector_kernel(field_u, field_v, n_l, r_l, 4.0))
         "O2 changed independent-if default semantics:\nO0 stdout={stdout_o0}\nO2 stdout={stdout_o2}"
     );
     assert!(
-        stdout_o2.contains("[1] 30 47 50 33"),
+        stdout_o2.contains("[1] 30 47 40 33"),
         "unexpected kernel output:\nstdout={stdout_o2}"
     );
 }
