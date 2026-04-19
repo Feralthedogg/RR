@@ -258,6 +258,7 @@ jobs:
 
   semantic-audit:
     name: Semantic Audit
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs:
@@ -316,6 +317,7 @@ jobs:
 
   subsystem-matrix:
     name: Subsystem Matrix
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs:
