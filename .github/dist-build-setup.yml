@@ -53,3 +53,10 @@
     echo "RR_ISL_LINK=static" >> "$GITHUB_ENV"
     echo "$(cygpath -m "$MINGW_PREFIX/bin")" >> "$GITHUB_PATH"
   shell: "msys2 {0}"
+
+- name: "Trim workspace for Windows dist build"
+  if: "runner.os == 'Windows'"
+  run: |
+    cp Cargo.toml Cargo.toml.distbak
+    perl -0pi -e 's/members = \["\.", "fuzz"\]/members = ["."]/g' Cargo.toml
+  shell: "msys2 {0}"
