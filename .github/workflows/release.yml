@@ -332,17 +332,7 @@ jobs:
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          release_flags=()
-          if [ -n "$PRERELEASE_FLAG" ]; then
-            release_flags+=("$PRERELEASE_FLAG")
-          fi
-
-          if gh release view "${{ needs.plan.outputs.tag }}" >/dev/null 2>&1; then
-            gh release edit "${{ needs.plan.outputs.tag }}" "${release_flags[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt"
-            gh release upload "${{ needs.plan.outputs.tag }}" --clobber artifacts/*
-          else
-            gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" "${release_flags[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
-          fi
+          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   announce:
     needs:
