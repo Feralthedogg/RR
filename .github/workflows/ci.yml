@@ -258,7 +258,6 @@ jobs:
 
   semantic-audit:
     name: Semantic Audit
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs:
@@ -268,7 +267,7 @@ jobs:
       RR_RANDOM_DIFFERENTIAL_SEED: "0xA11CE5EED55AA11C"
       RR_RANDOM_DIFFERENTIAL_SECOND_SEED: "0x5EED123456789ABC"
       RR_SEMANTIC_AUDIT_SCOPE: diff
-      RR_SEMANTIC_AUDIT_PROFILE: light
+      RR_SEMANTIC_AUDIT_PROFILE: ${{ github.event_name == 'push' && 'scan-only' || 'light' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -317,11 +316,12 @@ jobs:
 
   subsystem-matrix:
     name: Subsystem Matrix
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs:
       - tier0
+    env:
+      RR_SUBSYSTEM_MATRIX_SKIP_CHECKS: ${{ github.event_name == 'push' && 'semantic_audit' || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

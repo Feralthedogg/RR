@@ -25,6 +25,7 @@ GetOptions(
 
 my $root = abs_path(File::Spec->catdir($Bin, '..'));
 my $policy = load_subsystems_policy(File::Spec->catfile($root, 'policy', 'subsystems.toml'));
+my %skip_checks = map { $_ => 1 } grep { length } split /\s*,\s*/, ($ENV{RR_SUBSYSTEM_MATRIX_SKIP_CHECKS} // q{});
 
 sub read_event {
     return {} if ($ENV{GITHUB_EVENT_NAME} // q{}) eq q{};
@@ -101,6 +102,7 @@ my @checks;
 my %seen;
 for my $entry (@{$match->{touched}}) {
     for my $check (@{$entry->{checks}}) {
+        next if $skip_checks{$check};
         next if $seen{$check}++;
         push @checks, $check;
     }
