@@ -86,6 +86,7 @@ paths = [
   "dist-workspace.toml",
   "CONTRIBUTING.md",
   ".github/",
+  "src/main",
   "docs/README.md",
   "docs/cli.md",
   "docs/compiler/",
@@ -107,6 +108,7 @@ paths = [
   "scripts/check_pr_evidence.py",
   "scripts/lib/test_manifests.sh",
   "tests/process_gate_smoke.rs",
+  "tests/compiler_hardcode_guard.rs",
   "scripts/verify_cleanroom.sh",
   "tests/contributing_audit_smoke.rs",
   "policy/required_ci_checks.txt",
@@ -227,6 +229,7 @@ owners = [
 paths = [
   "src/codegen/",
   "src/compiler/pipeline/phases/source_emit.rs",
+  "src/compiler/pipeline/late_raw_rewrites",
   "src/compiler/pipeline/raw_rewrites.rs",
   "src/compiler/pipeline.rs",
   "example/benchmarks/",

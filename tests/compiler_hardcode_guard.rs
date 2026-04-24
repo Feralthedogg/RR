@@ -68,6 +68,31 @@ fn compiler_core_does_not_reintroduce_benchmark_named_rewrites() {
             .join("compiler")
             .join("pipeline")
             .join("late_raw_rewrites.rs"),
+        root.join("src")
+            .join("compiler")
+            .join("pipeline")
+            .join("late_raw_rewrites")
+            .join("buffer_swap.rs"),
+        root.join("src")
+            .join("compiler")
+            .join("pipeline")
+            .join("late_raw_rewrites")
+            .join("cg.rs"),
+        root.join("src")
+            .join("compiler")
+            .join("pipeline")
+            .join("late_raw_rewrites")
+            .join("clamp.rs"),
+        root.join("src")
+            .join("compiler")
+            .join("pipeline")
+            .join("late_raw_rewrites")
+            .join("melt_rate.rs"),
+        root.join("src")
+            .join("compiler")
+            .join("pipeline")
+            .join("late_raw_rewrites")
+            .join("prune.rs"),
         root.join("src").join("compiler").join("r_peephole.rs"),
         root.join("src")
             .join("compiler")
