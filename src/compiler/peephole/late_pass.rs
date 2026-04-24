@@ -507,6 +507,7 @@ pub(super) fn expr_has_only_pure_calls(expr: &str, pure_user_calls: &FxHashSet<S
         "rr_parallel_typed_vec_call",
         "rr_field_get",
         "rr_field_exists",
+        "rr_list_pattern_matchable",
         "rr_named_list",
         "replace",
     ];

@@ -241,7 +241,7 @@ Type precision notes:
 
 - RR now keeps the `int` / `float` boundary more precisely than older releases:
   - `/` widens numeric expressions to floating-point
-  - `%%` stays integer when both operands are inferred integer
+  - RR source `%` emits R `%%`, and stays integer when both operands are inferred integer
   - `sum(int-vector)` stays integer; `mean(...)`, `log10(...)`, `atan2(...)`, and similar math builtins widen to floating-point
 - vector-valued math/logical builtins such as `abs`, `pmax`, `pmin`, `log10`, `is.na`, and `is.finite` preserve vector shape, and keep a symbolic length when RR can prove it from the arguments
 - constructor builtins such as `numeric`, `double`, `integer`, `logical`, and `character` stay on RR's direct builtin surface instead of degrading to opaque interop
@@ -476,6 +476,12 @@ Supported patterns:
 - list pattern: `[a, b, ..rest]`
 - record pattern: `{a: x, b: y}`
 
+Pattern ordering:
+
+- Record values lower to named R lists, but RR list patterns only match unnamed
+  vector/list values. A list arm placed before a record arm will not consume a
+  record just because the generated R representation is list-like.
+
 Current limits:
 
 - list spread `..` must be last
@@ -533,6 +539,8 @@ From `src/hir/lower.rs`:
 - More complex record shapes can still pass through helper-based internal
   lowering, so the most predictable path remains local literal construction and
   literal field names
+- Pattern matching keeps the source distinction: record patterns test field
+  names, while list patterns reject named list/vector values.
 
 ## Pipe/Try/Column/Unquote Lowering Notes
 

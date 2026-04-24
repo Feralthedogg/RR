@@ -141,6 +141,7 @@ pub fn call_is_pure(callee: &str) -> bool {
         | "rr_field_get"
         | "rr_field_exists"
         | "rr_list_rest"
+        | "rr_list_pattern_matchable"
         | "rr_named_list"
         | "rr_row_sum_range"
         | "rr_reduce_range"

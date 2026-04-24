@@ -351,6 +351,8 @@ impl TachyonEngine {
                     "min",
                     "max",
                     "rr_field_get",
+                    "rr_field_exists",
+                    "rr_list_pattern_matchable",
                     "rr_named_list",
                 ];
                 if !pure.contains(&callee.as_str()) {

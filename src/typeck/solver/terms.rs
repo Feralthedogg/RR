@@ -810,7 +810,7 @@ pub(super) fn infer_value_term(
                     .value_term
                     .field_value_named(field_name);
             }
-            if callee == "rr_field_exists" {
+            if callee == "rr_field_exists" || callee == "rr_list_pattern_matchable" {
                 return TypeTerm::Logical;
             }
             if callee == "rr_field_set" && !args.is_empty() {

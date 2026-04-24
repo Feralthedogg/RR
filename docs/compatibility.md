@@ -104,7 +104,7 @@ collapse to `any` too early:
 - nested generic hints such as `list<box<float>>` survive strict call checking and index-element inference
 - the `int` / `float` boundary is kept more precisely for arithmetic and common builtins
   - `/` widens to floating-point
-  - `%%` stays integer when both inputs are integer
+  - RR source `%` emits R `%%`, and stays integer when both inputs are integer
   - `sum(int-vector)` stays integer
   - `abs` / `pmax` / `pmin` keep integer element type when the inputs are proven integer
 - vector builtins keep symbolic length facts when RR can prove the result length matches the input length

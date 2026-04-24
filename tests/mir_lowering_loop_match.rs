@@ -53,6 +53,14 @@ fn match_record(v) {
     }
 }
 
+fn match_record_after_list(v) {
+    return match(v) {
+        [a, b, ..rest] => a * 100 + b + length(rest),
+        {a: x, b: y} => x + y,
+        _ => 0
+    }
+}
+
 print(loop_ops(10))
 print(match_list([10, 20, 30, 40]))
 print(match_list([7]))
@@ -60,6 +68,8 @@ print(match_list(NULL))
 print(match_record({a: 3, b: 4}))
 print(match_record({a: 9}))
 print(match_record({c: 1}))
+print(match_record_after_list({a: 3, b: 4}))
+print(match_record_after_list([3, 4, 5]))
 "#;
 
     let rr_path = out_dir.join("mir_lowering_loop_match.rr");
@@ -100,7 +110,7 @@ print(match_record({c: 1}))
         "stderr mismatch O0 vs O2"
     );
 
-    let expected = "[1] 12\n[1] 32\n[1] 7\n[1] 0\n[1] 7\n[1] 9\n[1] 0\n";
+    let expected = "[1] 12\n[1] 32\n[1] 7\n[1] 0\n[1] 7\n[1] 9\n[1] 0\n[1] 7\n[1] 305\n";
     assert_eq!(
         normalize(&base.stdout),
         expected,

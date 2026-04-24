@@ -262,7 +262,7 @@ RR now preserves the integer / floating-point boundary more aggressively, so it 
 worth writing the operation you actually mean instead of relying on later cleanup.
 
 - use `/` when you want floating semantics
-- use `%%` when you want integer modulo semantics
+- use `%` when you want integer modulo semantics; generated R emits this as `%%`
 - expect `sum(int-vector)` to stay integer when RR can prove the input is integer
 - expect `mean`, `log`, `log10`, `log2`, `sqrt`, `atan2`, and similar math builtins to widen to floating-point
 - `abs`, `pmax`, and `pmin` keep integer element type when all proven numeric inputs are integer

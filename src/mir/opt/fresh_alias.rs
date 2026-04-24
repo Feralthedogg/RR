@@ -339,6 +339,7 @@ fn collect_fresh_returning_user_functions(all_fns: &FxHashMap<String, FnIR>) -> 
                 | "rr_named_list"
                 | "rr_field_get"
                 | "rr_field_exists"
+                | "rr_list_pattern_matchable"
         )
     }
 

@@ -45,6 +45,24 @@ match_record <- function(v) {
   0L
 }
 
+match_record_after_list <- function(v) {
+  nms <- names(v)
+  list_matchable <- is.null(nms) || all(is.na(nms) | nms == "")
+  if (list_matchable && length(v) >= 2L) {
+    a <- v[1L]
+    b <- v[2L]
+    rest_len <- length(v) - 2L
+    return(a * 100L + b + rest_len)
+  }
+  if (!is.list(v)) return(0L)
+  nms <- names(v)
+  if (is.null(nms)) return(0L)
+  has_a <- isTRUE("a" %in% nms)
+  has_b <- isTRUE("b" %in% nms)
+  if (has_a && has_b) return(v[["a"]] + v[["b"]])
+  0L
+}
+
 main <- function() {
   print(loop_ops(10L))
   print(fact(6L))
@@ -54,6 +72,8 @@ main <- function() {
   print(match_record(list(a = 3L, b = 4L)))
   print(match_record(list(a = 9L)))
   print(match_record(list(c = 1L)))
+  print(match_record_after_list(list(a = 3L, b = 4L)))
+  print(match_record_after_list(c(3L, 4L, 5L)))
   0L
 }
 

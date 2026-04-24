@@ -2837,6 +2837,11 @@ rr_named_list <- function(...) {
   out
 }
 
+rr_list_pattern_matchable <- function(base) {
+  nms <- names(base)
+  is.null(nms) || all(is.na(nms) | nms == "")
+}
+
 rr_closure_make <- function(fn_obj, ...) {
   if (!is.function(fn_obj)) {
     rr_type_error("closure target must be a function", "E1002", "closure")

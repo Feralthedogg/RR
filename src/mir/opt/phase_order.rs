@@ -52,6 +52,7 @@ impl TachyonEngine {
                 | "rr_named_list"
                 | "rr_field_get"
                 | "rr_field_exists"
+                | "rr_list_pattern_matchable"
         )
     }
 
