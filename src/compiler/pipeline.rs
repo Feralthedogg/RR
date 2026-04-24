@@ -116,7 +116,7 @@ impl CompileMode {
     pub fn disabled_pass_groups(self) -> &'static [&'static str] {
         match self {
             Self::Standard => &[],
-            Self::FastDev => &["poly", "vectorize", "inline"],
+            Self::FastDev => &["poly"],
         }
     }
 }

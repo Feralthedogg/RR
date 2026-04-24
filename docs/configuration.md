@@ -76,6 +76,14 @@ Relevant driver flags:
 Compiler-side scheduling is also explicit driver policy rather than ambient
 environment selection.
 
+Driver defaults:
+
+- `--compiler-parallel-mode auto`
+- `--compiler-parallel-threads 0`
+- `--compiler-parallel-min-functions 2`
+- `--compiler-parallel-min-fn-ir 128`
+- `--compiler-parallel-max-jobs 0`
+
 Relevant driver flags:
 
 - `--compiler-parallel-mode off|auto|on`
@@ -83,6 +91,12 @@ Relevant driver flags:
 - `--compiler-parallel-min-functions <N>`
 - `--compiler-parallel-min-fn-ir <N>`
 - `--compiler-parallel-max-jobs <N>`
+
+Compile-mode defaults:
+
+- direct single-file compile starts in `standard`
+- `RR build`, `RR run`, and `RR watch` start in `fast-dev`
+- `-O2` on managed build/run/watch flows promotes back to `standard` unless explicitly overridden
 
 ## Runtime Behavior
 

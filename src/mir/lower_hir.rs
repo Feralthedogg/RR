@@ -702,6 +702,14 @@ impl<'a> MirLowerer<'a> {
 
     // Call update: terminate must track preds
 
+    // Proof correspondence:
+    // `proof/lean/RRProofs/LoweringSubset.lean`,
+    // `proof/lean/RRProofs/LoweringIfPhiSubset.lean`,
+    // `proof/lean/RRProofs/PipelineBlockEnvSubset.lean`,
+    // `proof/lean/RRProofs/PipelineFnEnvSubset.lean`,
+    // `proof/lean/RRProofs/PipelineFnCfgSubset.lean`,
+    // and the Coq `Lowering*` / `Pipeline*Subset` companions model reduced
+    // slices of this source-to-MIR lowering entry point.
     pub fn lower_fn(mut self, f: hir::HirFn) -> RR<FnIR> {
         self.fn_ir.span = f.span;
         self.fn_ir.user_name = self.symbols.get(&f.name).cloned();

@@ -566,7 +566,15 @@ fn certify_simple_cond_map(
             if !then_store.is_vector
                 && !else_store.is_vector
                 && is_iv_equivalent(fn_ir, then_store.idx, iv_phi)
-                && is_iv_equivalent(fn_ir, else_store.idx, iv_phi) =>
+                && is_iv_equivalent(fn_ir, else_store.idx, iv_phi)
+                && fn_ir.blocks[then_bb]
+                    .instrs
+                    .iter()
+                    .all(|instr| matches!(instr, Instr::StoreIndex1D { .. }))
+                && fn_ir.blocks[else_bb]
+                    .instrs
+                    .iter()
+                    .all(|instr| matches!(instr, Instr::StoreIndex1D { .. })) =>
         {
             (then_store, else_store)
         }
@@ -1062,6 +1070,25 @@ mod tests {
         })
     }
 
+    fn simple_expr_map_with_eval_side_effect_fn() -> FnIR {
+        let mut fn_ir = simple_expr_map_fn();
+        let impure = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "impure_helper".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let body = 2usize;
+        fn_ir.blocks[body]
+            .instrs
+            .insert(0, Instr::Eval { val: impure, span: Span::default() });
+        fn_ir
+    }
+
     fn simple_call_map_fn() -> FnIR {
         base_single_store_loop_fn("proof_call_map", |fn_ir, load_x, load_i, _one| {
             let read_x = fn_ir.add_value(
@@ -1088,6 +1115,137 @@ mod tests {
         })
     }
 
+    fn simple_scatter_fn() -> FnIR {
+        let mut fn_ir = FnIR::new("proof_scatter".to_string(), vec!["x".to_string()]);
+        let entry = fn_ir.add_block();
+        let header = fn_ir.add_block();
+        let body = fn_ir.add_block();
+        let exit = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let param_x = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let one = fn_ir.add_value(
+            ValueKind::Const(crate::mir::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let load_x = fn_ir.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let load_i = fn_ir.add_value(
+            ValueKind::Load {
+                var: "i".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("i".to_string()),
+        );
+        let len_x = fn_ir.add_value(
+            ValueKind::Len { base: load_x },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let cond = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Le,
+                lhs: load_i,
+                rhs: len_x,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let idx = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: load_i,
+                rhs: one,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let next_i = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: load_i,
+                rhs: one,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: param_x,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: "i".to_string(),
+            src: one,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].term = Terminator::Goto(header);
+
+        fn_ir.blocks[header].term = Terminator::If {
+            cond,
+            then_bb: body,
+            else_bb: exit,
+        };
+
+        fn_ir.blocks[body].instrs.push(Instr::StoreIndex1D {
+            base: load_x,
+            idx,
+            val: load_i,
+            is_safe: true,
+            is_na_safe: true,
+            is_vector: false,
+            span: Span::default(),
+        });
+        fn_ir.blocks[body].instrs.push(Instr::Assign {
+            dst: "i".to_string(),
+            src: next_i,
+            span: Span::default(),
+        });
+        fn_ir.blocks[body].term = Terminator::Goto(header);
+        fn_ir.blocks[exit].term = Terminator::Return(Some(load_x));
+
+        fn_ir
+    }
+
+    fn simple_scatter_with_eval_side_effect_fn() -> FnIR {
+        let mut fn_ir = simple_scatter_fn();
+        let impure = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "impure_helper".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let body = 2usize;
+        fn_ir.blocks[body]
+            .instrs
+            .insert(0, Instr::Eval { val: impure, span: Span::default() });
+        fn_ir
+    }
+
     fn simple_shifted_map_fn() -> FnIR {
         let mut fn_ir = FnIR::new("proof_shifted_map".to_string(), vec!["x".to_string()]);
         let entry = fn_ir.add_block();
@@ -1095,7 +1253,7 @@ mod tests {
         let body = fn_ir.add_block();
         let exit = fn_ir.add_block();
         fn_ir.entry = entry;
-        fn_ir.body_head = header;
+        fn_ir.body_head = entry;
 
         let param_x = fn_ir.add_value(
             ValueKind::Param { index: 0 },
@@ -1229,7 +1387,7 @@ mod tests {
         let body = fn_ir.add_block();
         let exit = fn_ir.add_block();
         fn_ir.entry = entry;
-        fn_ir.body_head = header;
+        fn_ir.body_head = entry;
 
         let param_x = fn_ir.add_value(
             ValueKind::Param { index: 0 },
@@ -1402,7 +1560,7 @@ mod tests {
         let body = fn_ir.add_block();
         let exit = fn_ir.add_block();
         fn_ir.entry = entry;
-        fn_ir.body_head = header;
+        fn_ir.body_head = entry;
 
         let param_x = fn_ir.add_value(
             ValueKind::Param { index: 0 },
@@ -1570,7 +1728,7 @@ mod tests {
         let latch = fn_ir.add_block();
         let exit = fn_ir.add_block();
         fn_ir.entry = entry;
-        fn_ir.body_head = header;
+        fn_ir.body_head = entry;
 
         let param_x = fn_ir.add_value(
             ValueKind::Param { index: 0 },
@@ -1726,6 +1884,45 @@ mod tests {
         fn_ir
     }
 
+    fn simple_cond_map_with_eval_side_effect_fn() -> FnIR {
+        let mut fn_ir = simple_cond_map_fn();
+        let impure = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "impure_helper".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let then_bb = 3usize;
+        fn_ir.blocks[then_bb]
+            .instrs
+            .insert(0, Instr::Eval { val: impure, span: Span::default() });
+        fn_ir
+    }
+
+    fn simple_cond_map_with_assign_side_effect_fn() -> FnIR {
+        let mut fn_ir = simple_cond_map_fn();
+        let zero = fn_ir.add_value(
+            ValueKind::Const(crate::mir::Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let then_bb = 3usize;
+        fn_ir.blocks[then_bb].instrs.insert(
+            0,
+            Instr::Assign {
+                dst: "tmp".to_string(),
+                src: zero,
+                span: Span::default(),
+            },
+        );
+        fn_ir
+    }
+
     fn simple_cond_reduction_fn() -> FnIR {
         let mut fn_ir = FnIR::new("proof_cond_reduce".to_string(), vec!["x".to_string()]);
         let entry = fn_ir.add_block();
@@ -1736,7 +1933,7 @@ mod tests {
         let latch = fn_ir.add_block();
         let exit = fn_ir.add_block();
         fn_ir.entry = entry;
-        fn_ir.body_head = header;
+        fn_ir.body_head = entry;
 
         let param_x = fn_ir.add_value(
             ValueKind::Param { index: 0 },
@@ -1927,6 +2124,45 @@ mod tests {
         fn_ir
     }
 
+    fn simple_cond_reduction_with_eval_side_effect_fn() -> FnIR {
+        let mut fn_ir = simple_cond_reduction_fn();
+        let impure = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "impure_helper".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let then_bb = 3usize;
+        fn_ir.blocks[then_bb]
+            .instrs
+            .insert(0, Instr::Eval { val: impure, span: Span::default() });
+        fn_ir
+    }
+
+    fn simple_cond_reduction_with_assign_side_effect_fn() -> FnIR {
+        let mut fn_ir = simple_cond_reduction_fn();
+        let zero = fn_ir.add_value(
+            ValueKind::Const(crate::mir::Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let then_bb = 3usize;
+        fn_ir.blocks[then_bb].instrs.insert(
+            0,
+            Instr::Assign {
+                dst: "tmp".to_string(),
+                src: zero,
+                span: Span::default(),
+            },
+        );
+        fn_ir
+    }
+
     fn simple_branch_only_cond_reduction_fn() -> FnIR {
         let mut fn_ir = FnIR::new(
             "proof_branch_only_cond_reduce".to_string(),
@@ -1940,7 +2176,7 @@ mod tests {
         let latch = fn_ir.add_block();
         let exit = fn_ir.add_block();
         fn_ir.entry = entry;
-        fn_ir.body_head = header;
+        fn_ir.body_head = entry;
 
         let param_x = fn_ir.add_value(
             ValueKind::Param { index: 0 },
@@ -2105,7 +2341,7 @@ mod tests {
         let body = fn_ir.add_block();
         let exit = fn_ir.add_block();
         fn_ir.entry = entry;
-        fn_ir.body_head = header;
+        fn_ir.body_head = entry;
 
         let param_x = fn_ir.add_value(
             ValueKind::Param { index: 0 },
@@ -2241,7 +2477,7 @@ mod tests {
         let body = fn_ir.add_block();
         let exit = fn_ir.add_block();
         fn_ir.entry = entry;
-        fn_ir.body_head = header;
+        fn_ir.body_head = entry;
 
         let param_x = fn_ir.add_value(
             ValueKind::Param { index: 0 },
@@ -2396,6 +2632,19 @@ mod tests {
     }
 
     #[test]
+    fn expr_map_matcher_rejects_loop_with_eval_side_effect() {
+        let fn_ir = simple_expr_map_with_eval_side_effect_fn();
+        let loops = LoopAnalyzer::new(&fn_ir).find_loops();
+        assert_eq!(loops.len(), 1);
+
+        let plan = super::super::planning::match_expr_map(&fn_ir, &loops[0], &FxHashSet::default());
+        assert!(
+            plan.is_none(),
+            "expr-map matcher must reject loops that contain Eval side effects"
+        );
+    }
+
+    #[test]
     fn enabled_config_certifies_simple_call_map_and_plan_applies_transactionally() {
         let fn_ir = simple_call_map_fn();
         let loops = LoopAnalyzer::new(&fn_ir).find_loops();
@@ -2422,6 +2671,20 @@ mod tests {
             certified.plan.clone(),
         );
         assert!(applied, "expected certified call-map plan to apply cleanly");
+    }
+
+    #[test]
+    fn scatter_matcher_rejects_loop_with_eval_side_effect() {
+        let fn_ir = simple_scatter_with_eval_side_effect_fn();
+        let loops = LoopAnalyzer::new(&fn_ir).find_loops();
+        assert_eq!(loops.len(), 1);
+
+        let plan =
+            super::super::planning::match_scatter_expr_map(&fn_ir, &loops[0], &FxHashSet::default());
+        assert!(
+            plan.is_none(),
+            "scatter matcher must reject loops that contain Eval side effects"
+        );
     }
 
     #[test]
@@ -2588,6 +2851,28 @@ mod tests {
     }
 
     #[test]
+    fn cond_map_certification_rejects_branch_eval_side_effect() {
+        let fn_ir = simple_cond_map_with_eval_side_effect_fn();
+        let loops = LoopAnalyzer::new(&fn_ir).find_loops();
+        assert_eq!(loops.len(), 1);
+
+        let err = certify_simple_cond_map(&fn_ir, &loops[0], &FxHashSet::default())
+            .expect_err("branch Eval side effect must reject cond-map certification");
+        assert_eq!(err, ProofFallbackReason::BranchStoreShape);
+    }
+
+    #[test]
+    fn cond_map_certification_rejects_branch_assign_side_effect() {
+        let fn_ir = simple_cond_map_with_assign_side_effect_fn();
+        let loops = LoopAnalyzer::new(&fn_ir).find_loops();
+        assert_eq!(loops.len(), 1);
+
+        let err = certify_simple_cond_map(&fn_ir, &loops[0], &FxHashSet::default())
+            .expect_err("branch Assign side effect must reject cond-map certification");
+        assert_eq!(err, ProofFallbackReason::BranchStoreShape);
+    }
+
+    #[test]
     fn enabled_config_certifies_simple_cond_reduction_and_plan_applies_transactionally() {
         let fn_ir = simple_cond_reduction_fn();
         let loops = LoopAnalyzer::new(&fn_ir).find_loops();
@@ -2617,6 +2902,28 @@ mod tests {
             applied,
             "expected certified conditional reduction plan to apply cleanly"
         );
+    }
+
+    #[test]
+    fn cond_reduction_certification_rejects_branch_eval_side_effect() {
+        let fn_ir = simple_cond_reduction_with_eval_side_effect_fn();
+        let loops = LoopAnalyzer::new(&fn_ir).find_loops();
+        assert_eq!(loops.len(), 1);
+
+        let err = certify_simple_cond_reduction(&fn_ir, &loops[0], &FxHashSet::default())
+            .expect_err("branch Eval side effect must reject cond-reduction certification");
+        assert_eq!(err, ProofFallbackReason::BranchStoreShape);
+    }
+
+    #[test]
+    fn cond_reduction_certification_rejects_branch_assign_side_effect() {
+        let fn_ir = simple_cond_reduction_with_assign_side_effect_fn();
+        let loops = LoopAnalyzer::new(&fn_ir).find_loops();
+        assert_eq!(loops.len(), 1);
+
+        let err = certify_simple_cond_reduction(&fn_ir, &loops[0], &FxHashSet::default())
+            .expect_err("branch Assign side effect must reject cond-reduction certification");
+        assert_eq!(err, ProofFallbackReason::BranchStoreShape);
     }
 
     #[test]

@@ -2,7 +2,7 @@ pub use crate::mir::flow::Facts;
 pub use crate::syntax::ast::{BinOp, Lit, UnaryOp};
 use crate::typeck::{TypeState, TypeTerm};
 use crate::utils::Span;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 impl Span {
@@ -115,6 +115,20 @@ impl InteropReason {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Proof correspondence:
+// `VerifyIrFnRecordSubset` packages reduced full `Value` rows into a small
+// `FnIR` shell over `name`, `params`, `values`, `blocks`, `entry`, and
+// `body_head`.
+// `VerifyIrFnMetaSubset` refines that shell with reduced `user_name`,
+// return-hint, inferred-return, and fallback/interop metadata while still
+// projecting the current verifier-facing walks onto the smaller shell.
+// `VerifyIrFnParamMetaSubset` refines the same shell again with reduced
+// `param_default_r_exprs`, `param_spans`, `param_ty_hints`,
+// `param_term_hints`, and `param_hint_spans`, again without changing the
+// current verifier-facing walks.
+// `VerifyIrFnHintMapSubset` refines the same shell once more with reduced
+// `call_semantics` and `memory_layout_hints` maps, again without changing the
+// current verifier-facing walks.
 pub struct FnIR {
     pub name: String,
     pub user_name: Option<String>,
@@ -148,6 +162,11 @@ pub struct FnIR {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Proof correspondence:
+// `VerifyIrBlockRecordSubset` refines the reduced function shell again with
+// reduced `instrs` and `term` payloads closer to the concrete `Block` /
+// `Terminator` layout, while current verifier-facing value/table walks still
+// project onto the smaller function shell.
 pub struct Block {
     pub id: BlockId,
     pub instrs: Vec<Instr>,
@@ -209,6 +228,10 @@ pub enum Instr {
     },
 }
 
+// Proof correspondence:
+// `VerifyIrValueRecordSubset` lifts reduced table rows to a small record over
+// the key fields carried here: `id`, `kind`, `origin_var`, `phi_block`, and
+// `escape`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value {
     pub id: ValueId,
@@ -556,6 +579,113 @@ pub enum ValueKind {
     RSymbol {
         name: String,
     },
+}
+
+pub fn value_dependencies(kind: &ValueKind) -> Vec<ValueId> {
+    // Proof correspondence:
+    // `VerifyIrValueDepsWalkSubset` fixes the reduced full child-edge
+    // extraction shape here, including `Phi` arg lists; the verifier then
+    // consumes that reduced shape in a seen/fuel stack walk approximation of
+    // `depends_on_phi_in_block_except`, while
+    // `VerifyIrValueTableWalkSubset` rephrases the same story over an explicit
+    // value-table lookup closer to `FnIR.values`, and
+    // `VerifyIrValueKindTableSubset` lifts those reduced rows to actual
+    // `ValueKind`-named table payloads.
+    match kind {
+        ValueKind::Const(_)
+        | ValueKind::Param { .. }
+        | ValueKind::Load { .. }
+        | ValueKind::RSymbol { .. } => Vec::new(),
+        ValueKind::Len { base }
+        | ValueKind::Indices { base }
+        | ValueKind::Unary { rhs: base, .. }
+        | ValueKind::FieldGet { base, .. } => vec![*base],
+        ValueKind::Range { start, end } => vec![*start, *end],
+        ValueKind::Binary { lhs, rhs, .. } => vec![*lhs, *rhs],
+        ValueKind::Phi { args } => args.iter().map(|(arg, _)| *arg).collect(),
+        ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args.clone(),
+        ValueKind::RecordLit { fields } => fields.iter().map(|(_, value)| *value).collect(),
+        ValueKind::FieldSet { base, value, .. } => vec![*base, *value],
+        ValueKind::Index1D { base, idx, .. } => vec![*base, *idx],
+        ValueKind::Index2D { base, r, c } => vec![*base, *r, *c],
+        ValueKind::Index3D { base, i, j, k } => vec![*base, *i, *j, *k],
+    }
+}
+
+pub fn collect_record_field_values(
+    values: &[Value],
+    base: ValueId,
+    field: &str,
+) -> Option<Vec<ValueId>> {
+    fn rec(
+        values: &[Value],
+        base: ValueId,
+        field: &str,
+        seen: &mut FxHashSet<(ValueId, String)>,
+    ) -> Option<Vec<ValueId>> {
+        if !seen.insert((base, field.to_string())) {
+            return None;
+        }
+        let result = match &values.get(base)?.kind {
+            ValueKind::RecordLit { fields } => fields
+                .iter()
+                .find(|(name, _)| name == field)
+                .map(|(_, value)| vec![*value]),
+            ValueKind::FieldSet {
+                base: inner,
+                field: updated,
+                value,
+            } => {
+                if updated == field {
+                    Some(vec![*value])
+                } else {
+                    rec(values, *inner, field, seen)
+                }
+            }
+            ValueKind::FieldGet {
+                base: inner,
+                field: outer,
+            } => {
+                let nested = rec(values, *inner, outer, seen)?;
+                let mut out = Vec::new();
+                for nested_value in nested {
+                    out.extend(rec(values, nested_value, field, seen)?);
+                }
+                Some(out)
+            }
+            ValueKind::Phi { args } => {
+                let mut out = Vec::new();
+                for (src, _) in args {
+                    out.extend(rec(values, *src, field, seen)?);
+                }
+                Some(out)
+            }
+            _ => None,
+        };
+        seen.remove(&(base, field.to_string()));
+        result
+    }
+
+    rec(values, base, field, &mut FxHashSet::default())
+}
+
+pub fn resolve_record_field_value(values: &[Value], base: ValueId, field: &str) -> Option<ValueId> {
+    fn same_resolved_field_value(values: &[Value], left: ValueId, right: ValueId) -> bool {
+        left == right || values.get(left).map(|v| &v.kind) == values.get(right).map(|v| &v.kind)
+    }
+
+    let resolved = collect_record_field_values(values, base, field)?;
+    let first = *resolved.first()?;
+    if resolved
+        .iter()
+        .copied()
+        .skip(1)
+        .all(|next| same_resolved_field_value(values, first, next))
+    {
+        Some(first)
+    } else {
+        None
+    }
 }
 
 impl FnIR {

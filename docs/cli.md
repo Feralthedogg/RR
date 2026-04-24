@@ -770,6 +770,12 @@ RR now distinguishes all three optimization tiers:
 - `-O2`
   - optimizing pipeline with adaptive phase ordering enabled by default
 
+Compile-mode defaults:
+
+- direct legacy compile starts in `standard`
+- `RR build`, `RR run`, and `RR watch` start in `fast-dev`
+- `-O2` on `build` promotes back to `standard` unless you explicitly override `--compile-mode`
+
 ### Type and Backend Policy
 
 - `--type-mode strict|gradual`
@@ -935,6 +941,8 @@ Default CLI behavior is automatic:
 
 - compiler parallel mode defaults to `auto`
 - compiler worker count defaults to host parallelism (`available_parallelism()`)
+- auto scheduling defaults to `--compiler-parallel-min-functions 2`
+- auto scheduling defaults to `--compiler-parallel-min-fn-ir 128`
 - compiler max jobs defaults to the active worker count unless you override it
 
 Use:

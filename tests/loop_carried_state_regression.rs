@@ -111,6 +111,13 @@ main()
         "expected loop-invariant g * dt to be hoisted before the repeat loop:\n{}",
         compiled
     );
+    assert!(
+        !compiled
+            .lines()
+            .any(|line| line.contains("licm_") && line.contains("(time + dt)")),
+        "loop-carried time update must not be hoisted out of the loop:\n{}",
+        compiled
+    );
 
     let rr_run = run_rscript(&rscript, &out_path);
     let ref_run = run_rscript(&rscript, &ref_path);

@@ -529,10 +529,11 @@ impl MirLicm {
                 let _ = args;
                 false
             }
-            ValueKind::Phi { args } => {
-                // In SSA, a Phi in a loop is invariant if all its non-self arguments are invariant
-                args.iter()
-                    .all(|(a, _)| *a == val_id || invariants.contains(a))
+            ValueKind::Phi { .. } => {
+                // Be conservative for loop-local Phi values. Treating self/seed
+                // recurrences as invariant can incorrectly hoist loop-carried
+                // updates such as `time = time + dt` out of the loop.
+                false
             }
             // Be conservative
             ValueKind::Load { .. }

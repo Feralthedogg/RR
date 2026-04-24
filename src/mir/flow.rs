@@ -29,6 +29,10 @@ impl Interval {
         Self { min: val, max: val }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.min > self.max
+    }
+
     pub fn join(&self, other: &Interval) -> Interval {
         if *self == Self::BOTTOM {
             return *other;
@@ -412,28 +416,86 @@ fn collect_dependency_subset(fn_ir: &FnIR, targets: &[ValueId]) -> Vec<ValueId> 
         let Some(value) = fn_ir.values.get(vid) else {
             continue;
         };
-        match &value.kind {
-            ValueKind::Binary { lhs, rhs, .. } => {
-                stack.push(*lhs);
-                stack.push(*rhs);
-            }
-            ValueKind::Unary { rhs, .. } => {
-                stack.push(*rhs);
-            }
-            ValueKind::Phi { args } => {
-                for (arg, _) in args {
-                    stack.push(*arg);
-                }
-            }
-            ValueKind::Range { start, end } => {
-                stack.push(*start);
-                stack.push(*end);
-            }
-            _ => {}
+        for dep in value_dependencies(&value.kind) {
+            stack.push(dep);
         }
     }
 
     let mut ordered: Vec<ValueId> = seen.into_iter().collect();
     ordered.sort_unstable();
     ordered
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DataflowSolver;
+    use crate::mir::{Facts, FnIR, IntrinsicOp, Lit, ValueKind};
+    use crate::utils::Span;
+
+    #[test]
+    fn analyze_values_includes_nested_record_dependencies() {
+        let mut f = FnIR::new("flow_record_subset".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let one = f.add_value(ValueKind::Const(Lit::Int(1)), Span::dummy(), Facts::empty(), None);
+        let two = f.add_value(ValueKind::Const(Lit::Int(2)), Span::dummy(), Facts::empty(), None);
+        let sum = f.add_value(
+            ValueKind::Binary {
+                op: crate::syntax::ast::BinOp::Add,
+                lhs: one,
+                rhs: two,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), sum)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let facts = DataflowSolver::analyze_values(&f, &[record]);
+        assert!(facts.contains_key(&record));
+        assert!(facts.contains_key(&sum));
+        assert!(facts.contains_key(&one));
+        assert!(facts.contains_key(&two));
+    }
+
+    #[test]
+    fn analyze_values_includes_nested_intrinsic_range_dependencies() {
+        let mut f = FnIR::new("flow_intrinsic_subset".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let start = f.add_value(ValueKind::Const(Lit::Int(1)), Span::dummy(), Facts::empty(), None);
+        let end = f.add_value(ValueKind::Const(Lit::Int(4)), Span::dummy(), Facts::empty(), None);
+        let range = f.add_value(
+            ValueKind::Range { start, end },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let intrinsic = f.add_value(
+            ValueKind::Intrinsic {
+                op: IntrinsicOp::VecMeanF64,
+                args: vec![range],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let facts = DataflowSolver::analyze_values(&f, &[intrinsic]);
+        assert!(facts.contains_key(&intrinsic));
+        assert!(facts.contains_key(&range));
+        assert!(facts.contains_key(&start));
+        assert!(facts.contains_key(&end));
+    }
 }

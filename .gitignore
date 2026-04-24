@@ -8,3 +8,10 @@
 /proifile.json
 /.rr-cache
 .rr-cache/
+proof/lean/.lake/
+proof/coq/*.vo
+proof/coq/*.vos
+proof/coq/*.vok
+proof/coq/*.glob
+proof/coq/.*.aux
+proof/coq/.lia.cache

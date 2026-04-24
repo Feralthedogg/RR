@@ -51,6 +51,21 @@ fn tail_arg_is_direct_param_or_const(fn_ir: &FnIR, arg_id: ValueId) -> bool {
     }
 }
 
+fn ensure_separate_body_head(fn_ir: &mut FnIR) -> BlockId {
+    if fn_ir.body_head != fn_ir.entry {
+        return fn_ir.body_head;
+    }
+
+    let entry = fn_ir.entry;
+    let new_body_head = fn_ir.add_block();
+    let old_instrs = std::mem::take(&mut fn_ir.blocks[entry].instrs);
+    let old_term = std::mem::replace(&mut fn_ir.blocks[entry].term, Terminator::Goto(new_body_head));
+    fn_ir.blocks[new_body_head].instrs = old_instrs;
+    fn_ir.blocks[new_body_head].term = old_term;
+    fn_ir.body_head = new_body_head;
+    new_body_head
+}
+
 fn perform_tco(fn_ir: &mut FnIR, bid: BlockId) -> bool {
     let ret_val_id = if let Terminator::Return(Some(v)) = &fn_ir.blocks[bid].term {
         *v
@@ -93,10 +108,12 @@ fn perform_tco(fn_ir: &mut FnIR, bid: BlockId) -> bool {
     let mut new_instrs = Vec::new();
     crate::mir::opt::parallel_copy::emit_parallel_copy(fn_ir, &mut new_instrs, moves, span);
 
+    let body_head = ensure_separate_body_head(fn_ir);
+    let rewrite_bid = if bid == fn_ir.entry { body_head } else { bid };
+
     // Install instructions and jump to the BODY HEAD (skipping the prologue in entry)
-    fn_ir.blocks[bid].instrs = new_instrs;
-    let body_head = fn_ir.body_head;
-    fn_ir.blocks[bid].term = Terminator::Goto(body_head);
+    fn_ir.blocks[rewrite_bid].instrs = new_instrs;
+    fn_ir.blocks[rewrite_bid].term = Terminator::Goto(body_head);
 
     true
 }

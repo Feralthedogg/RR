@@ -304,10 +304,16 @@ fn ensure_value_range_inner(
             let ri = ensure_value_range_inner(*rhs, values, facts, seen);
             eval_binary(*op, &li, &ri)
         }
-        ValueKind::Unary { .. } => RangeInterval::top(),
-        ValueKind::RecordLit { .. } | ValueKind::FieldGet { .. } | ValueKind::FieldSet { .. } => {
-            RangeInterval::top()
+        ValueKind::Unary {
+            op: crate::syntax::ast::UnaryOp::Neg,
+            rhs,
+        } => {
+            let ri = ensure_value_range_inner(*rhs, values, facts, seen);
+            negate_interval(&ri)
         }
+        ValueKind::Unary { .. } => RangeInterval::top(),
+        ValueKind::RecordLit { .. } | ValueKind::FieldSet { .. } => RangeInterval::top(),
+        ValueKind::FieldGet { base, field } => ensure_field_range(*base, field, values, facts, seen),
         ValueKind::Phi { args } => {
             let mut acc = RangeInterval::bottom();
             for (arg_val, _pred) in args {
@@ -332,6 +338,65 @@ fn ensure_value_range_inner(
     // do not re-walk large value graphs.
     facts.values.insert(vid, interval.clone());
     interval
+}
+
+// Proof correspondence:
+// `proof/lean/RRProofs/RuntimeSafetyFieldRangeSubset.lean` and the Coq
+// `RuntimeSafetyFieldRangeSubset.v` companion model the reduced field-range
+// slice used here: plain field reads, nested field reads, and `FieldSet`
+// overrides are peeled into a set of candidate field values whose joined
+// intervals must preserve the same negative / below-one facts.
+fn ensure_field_range(
+    base: ValueId,
+    field: &str,
+    values: &[Value],
+    facts: &mut RangeFacts,
+    seen: &mut FxHashSet<ValueId>,
+) -> RangeInterval {
+    let Some(values_for_field) = collect_record_field_values(values, base, field) else {
+        return RangeInterval::top();
+    };
+    let mut acc = RangeInterval::bottom();
+    for value in values_for_field {
+        let intv = ensure_value_range_inner(value, values, facts, seen);
+        acc = acc.join(&intv);
+    }
+    acc
+}
+
+fn negate_interval(intv: &RangeInterval) -> RangeInterval {
+    RangeInterval {
+        lo: negate_hi_to_lo(&intv.hi),
+        hi: negate_lo_to_hi(&intv.lo),
+    }
+}
+
+fn negate_hi_to_lo(bound: &SymbolicBound) -> SymbolicBound {
+    match bound {
+        SymbolicBound::Const(n) => n
+            .checked_neg()
+            .map(SymbolicBound::Const)
+            .unwrap_or(SymbolicBound::NegInf),
+        SymbolicBound::NegInf => SymbolicBound::PosInf,
+        SymbolicBound::PosInf => SymbolicBound::NegInf,
+        SymbolicBound::LenOf(_, _) | SymbolicBound::VarPlus(_, _) => SymbolicBound::NegInf,
+    }
+}
+
+fn negate_lo_to_hi(bound: &SymbolicBound) -> SymbolicBound {
+    match bound {
+        SymbolicBound::Const(n) => n
+            .checked_neg()
+            .map(SymbolicBound::Const)
+            .unwrap_or(SymbolicBound::PosInf),
+        SymbolicBound::LenOf(_, off) => off
+            .checked_neg()
+            .map(SymbolicBound::Const)
+            .unwrap_or(SymbolicBound::PosInf),
+        SymbolicBound::NegInf => SymbolicBound::PosInf,
+        SymbolicBound::PosInf => SymbolicBound::NegInf,
+        SymbolicBound::VarPlus(_, _) => SymbolicBound::PosInf,
+    }
 }
 
 fn eval_binary(op: BinOp, l: &RangeInterval, r: &RangeInterval) -> RangeInterval {
@@ -522,5 +587,310 @@ fn overflow_bound_from_delta(delta: i64) -> SymbolicBound {
         SymbolicBound::NegInf
     } else {
         SymbolicBound::PosInf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RangeFacts, SymbolicBound, ensure_value_range};
+    use crate::mir::{Facts, FnIR, Lit, ValueKind};
+    use crate::utils::Span;
+
+    #[test]
+    fn field_get_reads_exact_field_interval_from_record_literal() {
+        let mut f = FnIR::new("range_field_record".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let neg_one = f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
+        let two = f.add_value(ValueKind::Const(Lit::Int(2)), Span::dummy(), Facts::empty(), None);
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one), ("j".to_string(), two)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: record,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut facts = RangeFacts::new();
+        let interval = ensure_value_range(field, &f.values, &mut facts);
+        assert_eq!(interval.lo, SymbolicBound::Const(-1));
+        assert_eq!(interval.hi, SymbolicBound::Const(-1));
+    }
+
+    #[test]
+    fn field_get_tracks_fieldset_override_range_precisely() {
+        let mut f = FnIR::new("range_field_set".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let neg_one = f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
+        let five = f.add_value(ValueKind::Const(Lit::Int(5)), Span::dummy(), Facts::empty(), None);
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let updated = f.add_value(
+            ValueKind::FieldSet {
+                base: record,
+                field: "i".to_string(),
+                value: five,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: updated,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut facts = RangeFacts::new();
+        let interval = ensure_value_range(field, &f.values, &mut facts);
+        assert_eq!(interval.lo, SymbolicBound::Const(5));
+        assert_eq!(interval.hi, SymbolicBound::Const(5));
+    }
+
+    #[test]
+    fn nested_field_get_reads_exact_interval() {
+        let mut f = FnIR::new("range_nested_field".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let neg_one =
+            f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
+        let inner = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let outer = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("inner".to_string(), inner)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let inner_field = f.add_value(
+            ValueKind::FieldGet {
+                base: outer,
+                field: "inner".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: inner_field,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut facts = RangeFacts::new();
+        let interval = ensure_value_range(field, &f.values, &mut facts);
+        assert_eq!(interval.lo, SymbolicBound::Const(-1));
+        assert_eq!(interval.hi, SymbolicBound::Const(-1));
+    }
+
+    #[test]
+    fn field_get_reads_exact_interval_through_phi_merged_records() {
+        let mut f = FnIR::new("range_phi_field".to_string(), Vec::new());
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let neg_one =
+            f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
+        let rec_a = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_b = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(rec_a, left), (rec_b, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        f.values[phi].phi_block = Some(merge);
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: phi,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut facts = RangeFacts::new();
+        let interval = ensure_value_range(field, &f.values, &mut facts);
+        assert_eq!(interval.lo, SymbolicBound::Const(-1));
+        assert_eq!(interval.hi, SymbolicBound::Const(-1));
+    }
+
+    #[test]
+    fn field_get_joins_interval_through_phi_merged_records() {
+        let mut f = FnIR::new("range_phi_field_join".to_string(), Vec::new());
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let neg_one =
+            f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
+        let neg_two =
+            f.add_value(ValueKind::Const(Lit::Int(-2)), Span::dummy(), Facts::empty(), None);
+        let rec_a = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_b = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_two)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(rec_a, left), (rec_b, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        f.values[phi].phi_block = Some(merge);
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: phi,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut facts = RangeFacts::new();
+        let interval = ensure_value_range(field, &f.values, &mut facts);
+        assert_eq!(interval.lo, SymbolicBound::Const(-2));
+        assert_eq!(interval.hi, SymbolicBound::Const(-1));
+    }
+
+    #[test]
+    fn unary_neg_of_constant_tracks_exact_interval() {
+        let mut f = FnIR::new("range_unary_const".to_string(), vec![]);
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let five = f.add_value(ValueKind::Const(Lit::Int(5)), Span::dummy(), Facts::empty(), None);
+        let neg = f.add_value(
+            ValueKind::Unary {
+                op: crate::syntax::ast::UnaryOp::Neg,
+                rhs: five,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut facts = RangeFacts::new();
+        let interval = ensure_value_range(neg, &f.values, &mut facts);
+        assert_eq!(interval.lo, SymbolicBound::Const(-5));
+        assert_eq!(interval.hi, SymbolicBound::Const(-5));
+    }
+
+    #[test]
+    fn unary_neg_of_len_plus_one_has_negative_upper_bound() {
+        let mut f = FnIR::new("range_unary_len".to_string(), vec!["x".to_string()]);
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let base = f.add_value(
+            ValueKind::Param { index: 0 },
+            Span::dummy(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let len = f.add_value(ValueKind::Len { base }, Span::dummy(), Facts::empty(), None);
+        let one = f.add_value(ValueKind::Const(Lit::Int(1)), Span::dummy(), Facts::empty(), None);
+        let plus = f.add_value(
+            ValueKind::Binary {
+                op: crate::syntax::ast::BinOp::Add,
+                lhs: len,
+                rhs: one,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let neg = f.add_value(
+            ValueKind::Unary {
+                op: crate::syntax::ast::UnaryOp::Neg,
+                rhs: plus,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut facts = RangeFacts::new();
+        let interval = ensure_value_range(neg, &f.values, &mut facts);
+        assert_eq!(interval.hi, SymbolicBound::Const(-1));
     }
 }

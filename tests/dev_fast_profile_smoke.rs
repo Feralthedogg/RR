@@ -5,6 +5,7 @@ use RR::compiler::{
     default_parallel_config, default_type_config,
 };
 use common::unique_dir;
+use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -53,7 +54,7 @@ main()
 
     let profile = fs::read_to_string(&profile_path).expect("failed to read run profile");
     assert!(profile.contains("\"compile_mode\": \"fast-dev\""));
-    assert!(profile.contains("\"disabled_pass_groups\": [\"poly\", \"vectorize\", \"inline\"]"));
+    assert!(profile.contains("\"disabled_pass_groups\": [\"poly\"]"));
 }
 
 #[test]
@@ -102,7 +103,7 @@ main()
 }
 
 #[test]
-fn fast_dev_build_disables_structural_pass_groups() {
+fn fast_dev_build_keeps_poly_disabled_and_can_still_vectorize_tiny_loops() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -170,11 +171,9 @@ main()
         fs::read_to_string(&standard_profile_path).expect("failed to read standard profile");
 
     assert!(fast_profile.contains("\"compile_mode\": \"fast-dev\""));
-    assert!(
-        fast_profile.contains("\"disabled_pass_groups\": [\"poly\", \"vectorize\", \"inline\"]")
-    );
+    assert!(fast_profile.contains("\"disabled_pass_groups\": [\"poly\"]"));
     assert!(!fast_profile.contains("\"poly\": {"));
-    assert!(!fast_profile.contains("\"vectorize\": {"));
+    assert!(fast_profile.contains("\"vectorize\": {"));
 
     assert!(standard_profile.contains("\"compile_mode\": \"standard\""));
     assert!(standard_profile.contains("\"disabled_pass_groups\": []"));
@@ -268,5 +267,609 @@ main()
         common::normalize(&standard_run.stderr),
         common::normalize(&fast_run.stderr),
         "fast-dev runtime stderr should match standard"
+    );
+}
+
+#[test]
+fn fast_dev_profile_runs_inline_on_small_helpers() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("dev_fast_profile_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "fast_dev_inline");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = write_case(
+        &proj_dir,
+        "main.rr",
+        r#"
+fn add1(x) {
+  let y = x + 1L
+  return y
+}
+
+fn pair_sum(a, b) {
+  let lhs = add1(a)
+  let rhs = add1(b)
+  return lhs + rhs
+}
+
+fn main() {
+  print(pair_sum(4L, 6L))
+}
+
+main()
+"#,
+    );
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("inline-profile.json");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&main_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .status()
+        .expect("failed to run fast-dev inline profile build");
+    assert!(
+        status.success(),
+        "fast-dev inline profile build should succeed"
+    );
+
+    let profile = fs::read_to_string(&profile_path).expect("failed to read inline profile");
+    let parsed: Value =
+        serde_json::from_str(&profile).expect("compile profile should be valid json");
+    assert_eq!(parsed["compile_mode"].as_str(), Some("fast-dev"));
+    assert_eq!(
+        parsed["tachyon"]["disabled_pass_groups"],
+        serde_json::json!(["poly"])
+    );
+    assert!(
+        parsed["tachyon"]["pulse_stats"]["inline_rounds"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev to record at least one inline round"
+    );
+    assert!(
+        parsed["tachyon"]["passes"]["inline"]["changed_invocations"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev inline pass to change the tiny helper fixture"
+    );
+}
+
+#[test]
+fn fast_dev_profile_vectorizes_tiny_loops_even_with_poly_disabled() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("dev_fast_profile_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "fast_dev_vectorize");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = write_case(
+        &proj_dir,
+        "main.rr",
+        r#"
+fn main() {
+  let n = 8.0
+  let xs = rep.int(0.0, n)
+  let i = 1.0
+  while i <= n {
+    xs[i] = i * 2.0
+    i += 1.0
+  }
+  print(sum(xs))
+}
+
+main()
+"#,
+    );
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("vectorize-profile.json");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&main_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .status()
+        .expect("failed to run fast-dev vectorize profile build");
+    assert!(
+        status.success(),
+        "fast-dev vectorize profile build should succeed"
+    );
+
+    let profile = fs::read_to_string(&profile_path).expect("failed to read vectorize profile");
+    let parsed: Value =
+        serde_json::from_str(&profile).expect("compile profile should be valid json");
+    assert_eq!(parsed["compile_mode"].as_str(), Some("fast-dev"));
+    assert_eq!(
+        parsed["tachyon"]["disabled_pass_groups"],
+        serde_json::json!(["poly"])
+    );
+    assert!(
+        parsed["tachyon"]["passes"]["vectorize"]["changed_invocations"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev vectorize pass to change the tiny loop fixture"
+    );
+    assert!(
+        parsed["tachyon"]["pulse_stats"]["vector_applied_total"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev to apply at least one vectorization on the tiny loop fixture"
+    );
+}
+
+#[test]
+fn fast_dev_profile_vectorizes_tiny_conditional_loops_when_poly_stays_disabled() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("dev_fast_profile_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "fast_dev_vectorize_conditional");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = write_case(
+        &proj_dir,
+        "main.rr",
+        r#"
+fn main() {
+  let xs = c(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)
+  let ys = rep.int(0.0, length(xs))
+  let i = 1.0
+  while i <= length(xs) {
+    if xs[i] > 4.0 {
+      ys[i] = xs[i] * 2.0
+    } else {
+      ys[i] = xs[i] + 3.0
+    }
+    i += 1.0
+  }
+  print(sum(ys))
+}
+
+main()
+"#,
+    );
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("vectorize-conditional-profile.json");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&main_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .status()
+        .expect("failed to run fast-dev conditional vectorize profile build");
+    assert!(
+        status.success(),
+        "fast-dev conditional vectorize profile build should succeed"
+    );
+
+    let profile =
+        fs::read_to_string(&profile_path).expect("failed to read conditional vectorize profile");
+    let parsed: Value =
+        serde_json::from_str(&profile).expect("compile profile should be valid json");
+    assert_eq!(parsed["compile_mode"].as_str(), Some("fast-dev"));
+    assert_eq!(
+        parsed["tachyon"]["disabled_pass_groups"],
+        serde_json::json!(["poly"])
+    );
+    assert!(
+        parsed["tachyon"]["passes"]["vectorize"]["changed_invocations"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev vectorize pass to change the tiny conditional loop fixture"
+    );
+    assert!(
+        parsed["tachyon"]["pulse_stats"]["vector_applied_total"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev to apply at least one vectorization on the tiny conditional loop fixture"
+    );
+}
+
+#[test]
+fn fast_dev_profile_vectorizes_tiny_call_map_loops_when_poly_stays_disabled() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("dev_fast_profile_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "fast_dev_vectorize_callmap");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = write_case(
+        &proj_dir,
+        "main.rr",
+        r#"
+fn main() {
+  let xs = c(1.0, -2.0, 3.0, -4.0, 5.0, -6.0, 7.0, -8.0)
+  let ys = rep.int(0.0, length(xs))
+  let i = 1.0
+  while i <= length(xs) {
+    ys[i] = abs(xs[i])
+    i += 1.0
+  }
+  print(sum(ys))
+}
+
+main()
+"#,
+    );
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("vectorize-callmap-profile.json");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&main_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .status()
+        .expect("failed to run fast-dev call-map vectorize profile build");
+    assert!(
+        status.success(),
+        "fast-dev call-map vectorize profile build should succeed"
+    );
+
+    let profile =
+        fs::read_to_string(&profile_path).expect("failed to read call-map vectorize profile");
+    let parsed: Value =
+        serde_json::from_str(&profile).expect("compile profile should be valid json");
+    assert_eq!(parsed["compile_mode"].as_str(), Some("fast-dev"));
+    assert_eq!(
+        parsed["tachyon"]["disabled_pass_groups"],
+        serde_json::json!(["poly"])
+    );
+    assert!(
+        parsed["tachyon"]["passes"]["vectorize"]["changed_invocations"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev vectorize pass to change the tiny call-map loop fixture"
+    );
+    assert!(
+        parsed["tachyon"]["pulse_stats"]["vector_applied_total"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev to apply at least one vectorization on the tiny call-map loop fixture"
+    );
+}
+
+#[test]
+fn fast_dev_profile_vectorizes_tiny_expr_map_loops_when_poly_stays_disabled() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("dev_fast_profile_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "fast_dev_vectorize_exprmap");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = write_case(
+        &proj_dir,
+        "main.rr",
+        r#"
+fn main() {
+  let xs = c(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)
+  let ys = rep.int(0.0, length(xs))
+  let i = 1.0
+  while i <= length(xs) {
+    let a = xs[i] + 1.0
+    let b = a * 2.0
+    ys[i] = b - 3.0
+    i += 1.0
+  }
+  print(sum(ys))
+}
+
+main()
+"#,
+    );
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("vectorize-exprmap-profile.json");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&main_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .status()
+        .expect("failed to run fast-dev expr-map vectorize profile build");
+    assert!(
+        status.success(),
+        "fast-dev expr-map vectorize profile build should succeed"
+    );
+
+    let profile =
+        fs::read_to_string(&profile_path).expect("failed to read expr-map vectorize profile");
+    let parsed: Value =
+        serde_json::from_str(&profile).expect("compile profile should be valid json");
+    assert_eq!(parsed["compile_mode"].as_str(), Some("fast-dev"));
+    assert_eq!(
+        parsed["tachyon"]["disabled_pass_groups"],
+        serde_json::json!(["poly"])
+    );
+    assert!(
+        parsed["tachyon"]["passes"]["vectorize"]["changed_invocations"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev vectorize pass to change the tiny expr-map loop fixture"
+    );
+    assert!(
+        parsed["tachyon"]["pulse_stats"]["vector_applied_total"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev to apply at least one vectorization on the tiny expr-map loop fixture"
+    );
+}
+
+#[test]
+fn fast_dev_profile_vectorizes_tiny_multi_store_loops_when_poly_stays_disabled() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("dev_fast_profile_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "fast_dev_vectorize_multi_store");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = write_case(
+        &proj_dir,
+        "main.rr",
+        r#"
+fn main() {
+  let n = 16.0
+  let xs = rep.int(0.0, n)
+  let ys = rep.int(0.0, n)
+  let i = 1.0
+  while i <= n {
+    xs[i] = i * 2.0
+    ys[i] = i + 5.0
+    i += 1.0
+  }
+  print(sum(xs) + sum(ys))
+}
+
+main()
+"#,
+    );
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("vectorize-multi-store-profile.json");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&main_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .status()
+        .expect("failed to run fast-dev multi-store vectorize profile build");
+    assert!(
+        status.success(),
+        "fast-dev multi-store vectorize profile build should succeed"
+    );
+
+    let profile =
+        fs::read_to_string(&profile_path).expect("failed to read multi-store vectorize profile");
+    let parsed: Value =
+        serde_json::from_str(&profile).expect("compile profile should be valid json");
+    assert_eq!(parsed["compile_mode"].as_str(), Some("fast-dev"));
+    assert_eq!(
+        parsed["tachyon"]["disabled_pass_groups"],
+        serde_json::json!(["poly"])
+    );
+    assert!(
+        parsed["tachyon"]["passes"]["vectorize"]["changed_invocations"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev vectorize pass to change the tiny multi-store loop fixture"
+    );
+    assert!(
+        parsed["tachyon"]["pulse_stats"]["vector_applied_total"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev to apply at least one vectorization on the tiny multi-store loop fixture"
+    );
+}
+
+#[test]
+fn fast_dev_profile_vectorizes_tiny_gather_loops_when_poly_stays_disabled() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("dev_fast_profile_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "fast_dev_vectorize_gather");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = write_case(
+        &proj_dir,
+        "main.rr",
+        r#"
+fn main() {
+  let xs = c(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0)
+  let idx = c(8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0)
+  let ys = rep.int(0.0, length(xs))
+  let i = 1.0
+  while i <= length(xs) {
+    ys[i] = xs[idx[i]]
+    i += 1.0
+  }
+  print(sum(ys))
+}
+
+main()
+"#,
+    );
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("vectorize-gather-profile.json");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&main_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .status()
+        .expect("failed to run fast-dev gather vectorize profile build");
+    assert!(
+        status.success(),
+        "fast-dev gather vectorize profile build should succeed"
+    );
+
+    let profile =
+        fs::read_to_string(&profile_path).expect("failed to read gather vectorize profile");
+    let parsed: Value =
+        serde_json::from_str(&profile).expect("compile profile should be valid json");
+    assert_eq!(parsed["compile_mode"].as_str(), Some("fast-dev"));
+    assert_eq!(
+        parsed["tachyon"]["disabled_pass_groups"],
+        serde_json::json!(["poly"])
+    );
+    assert!(
+        parsed["tachyon"]["passes"]["vectorize"]["changed_invocations"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev vectorize pass to change the tiny gather loop fixture"
+    );
+    assert!(
+        parsed["tachyon"]["pulse_stats"]["vector_applied_total"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev to apply at least one vectorization on the tiny gather loop fixture"
+    );
+}
+
+#[test]
+fn fast_dev_profile_vectorizes_tiny_scatter_loops_when_poly_stays_disabled() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("dev_fast_profile_smoke");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "fast_dev_vectorize_scatter");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let main_path = write_case(
+        &proj_dir,
+        "main.rr",
+        r#"
+fn main() {
+  let xs = c(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0)
+  let idx = c(8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0)
+  let ys = rep.int(0.0, length(xs))
+  let i = 1.0
+  while i <= length(xs) {
+    ys[idx[i]] = xs[i]
+    i += 1.0
+  }
+  print(sum(ys))
+}
+
+main()
+"#,
+    );
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("vectorize-scatter-profile.json");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&main_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .status()
+        .expect("failed to run fast-dev scatter vectorize profile build");
+    assert!(
+        status.success(),
+        "fast-dev scatter vectorize profile build should succeed"
+    );
+
+    let profile =
+        fs::read_to_string(&profile_path).expect("failed to read scatter vectorize profile");
+    let parsed: Value =
+        serde_json::from_str(&profile).expect("compile profile should be valid json");
+    assert_eq!(parsed["compile_mode"].as_str(), Some("fast-dev"));
+    assert_eq!(
+        parsed["tachyon"]["disabled_pass_groups"],
+        serde_json::json!(["poly"])
+    );
+    assert!(
+        parsed["tachyon"]["passes"]["vectorize"]["changed_invocations"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev vectorize pass to change the tiny scatter loop fixture"
+    );
+    assert!(
+        parsed["tachyon"]["pulse_stats"]["vector_applied_total"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "expected fast-dev to apply at least one vectorization on the tiny scatter loop fixture"
     );
 }

@@ -1,1 +1,2 @@
 *.rr linguist-language=RR
+native/rr_native.c linguist-vendored

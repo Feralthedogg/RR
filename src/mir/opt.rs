@@ -160,7 +160,7 @@ impl TachyonEngine {
     }
 
     fn inline_tier_enabled(&self) -> bool {
-        !self.fast_dev_enabled()
+        true
     }
 
     fn adjust_pass_groups_for_mode(&self, groups: &[types::PassGroup]) -> Vec<types::PassGroup> {
@@ -196,6 +196,13 @@ impl TachyonEngine {
     ) -> Vec<String> {
         let mut out = Vec::new();
         for name in ordered_names {
+            // Proof correspondence:
+            // `PhasePlanSummarySoundness` refines this ordered-summary
+            // consumption boundary on top of `PhasePlanLookupSoundness`.
+            // The reduced model keeps the same traversal shape:
+            // ordered function ids, lookup hit/miss, and summary entries that
+            // expose schedule/profile/pass-group payload from the looked-up
+            // plan.
             let Some(plan) = plans.get(name) else {
                 continue;
             };
@@ -232,6 +239,7 @@ impl TachyonEngine {
     }
 
     fn verify_or_reject(fn_ir: &mut FnIR, stage: &str) -> bool {
+        Self::clear_stale_phi_owner_metadata(fn_ir);
         match crate::mir::verify::verify_ir(fn_ir) {
             Ok(()) => true,
             Err(e) => {
@@ -239,6 +247,14 @@ impl TachyonEngine {
                 let reason = format!("invalid MIR at {}: {}", stage, e);
                 fn_ir.mark_unsupported_dynamic(reason);
                 false
+            }
+        }
+    }
+
+    fn clear_stale_phi_owner_metadata(fn_ir: &mut FnIR) {
+        for value in &mut fn_ir.values {
+            if !matches!(value.kind, ValueKind::Phi { .. }) {
+                value.phi_block = None;
             }
         }
     }
@@ -877,7 +893,11 @@ impl TachyonEngine {
 
     // Required lowering-to-codegen stabilization passes.
     // This must run even in O0, because codegen cannot emit Phi.
-    pub fn stabilize_for_codegen(&self, all_fns: &mut FxHashMap<String, FnIR>) {
+    fn stabilize_for_codegen_inner(
+        &self,
+        all_fns: &mut FxHashMap<String, FnIR>,
+        verify_start: bool,
+    ) {
         let floor_helpers = Self::collect_floor_helpers(all_fns);
         if !floor_helpers.is_empty() {
             let _ = Self::rewrite_floor_helper_calls(all_fns, &floor_helpers);
@@ -915,7 +935,7 @@ impl TachyonEngine {
             let Some(fn_ir) = all_fns.get_mut(name) else {
                 continue;
             };
-            if !Self::verify_or_reject(fn_ir, "PrepareForCodegen/Start") {
+            if verify_start && !Self::verify_or_reject(fn_ir, "PrepareForCodegen/Start") {
                 continue;
             }
             let _ = de_ssa::run(fn_ir);
@@ -933,6 +953,14 @@ impl TachyonEngine {
             }
             let _ = Self::verify_or_reject(fn_ir, "PrepareForCodegen/End");
         }
+    }
+
+    pub fn stabilize_for_codegen(&self, all_fns: &mut FxHashMap<String, FnIR>) {
+        self.stabilize_for_codegen_inner(all_fns, true);
+    }
+
+    pub fn stabilize_for_codegen_relaxed_start(&self, all_fns: &mut FxHashMap<String, FnIR>) {
+        self.stabilize_for_codegen_inner(all_fns, false);
     }
 
     fn run_always_tier_with_stats(
@@ -981,6 +1009,14 @@ impl TachyonEngine {
             changed = false;
             let before_hash = Self::fn_ir_fingerprint(fn_ir);
 
+            // Proof correspondence:
+            // `DataflowOptSoundness` approximates the local expression/value
+            // rewrite slice in this always-tier loop (`sccp`, `gvn`, `dce`,
+            // plus canonicalization-style simplifications).
+            // `CfgOptSoundness` approximates `simplify_cfg` / reduced entry
+            // retarget / dead-block cleanup style rewrites.
+            // `LoopOptSoundness` approximates the loop-focused slice
+            // (`tco`, `loop_opt`, bounded `bce`) under a reduced MIR model.
             let sc_changed =
                 Self::timed_bool_pass(pass_timings, "simplify_cfg", || self.simplify_cfg(fn_ir));
             if sc_changed {
@@ -1127,6 +1163,11 @@ impl TachyonEngine {
         all_fns: &mut FxHashMap<String, FnIR>,
         scheduler: &CompilerScheduler,
     ) -> TachyonRunProfile {
+        // Proof correspondence:
+        // `ProgramApiWrapperSoundness.run_program_with_profile_and_scheduler_*`
+        // fixes the reduced shell theorem family for this public optimizer
+        // entrypoint. The reduced model treats this as orchestration around
+        // the already-composed `run_program_with_profile_inner` boundary.
         self.run_program_with_profile_inner(all_fns, scheduler, None)
     }
 
@@ -1210,6 +1251,12 @@ impl TachyonEngine {
         scheduler: &CompilerScheduler,
         mut progress: Option<&mut dyn FnMut(TachyonProgress)>,
     ) -> TachyonRunProfile {
+        // Proof correspondence:
+        // `ProgramRunProfileInnerSoundness` fixes the reduced wrapper theorem
+        // family for this whole function. The reduced model composes:
+        // always-tier execution, heavy-tier plan flow, per-function heavy-tier
+        // execution, plan-summary emission, and the post-tier cleanup/de-ssa
+        // tail into one `run_program_with_profile_inner`-shaped boundary.
         let mut profile = TachyonRunProfile::default();
         let stats = &mut profile.pulse_stats;
         let pass_timings = &mut profile.pass_timings;
@@ -1217,7 +1264,10 @@ impl TachyonEngine {
         let plan = Self::build_opt_plan(all_fns);
         let selective_enabled = Self::selective_budget_enabled();
         let run_heavy_tier = !plan.selective_mode || selective_enabled;
-        let run_full_inline_tier = run_heavy_tier && self.inline_tier_enabled();
+        let run_full_inline_tier = run_heavy_tier
+            && self.inline_tier_enabled()
+            && !plan.selective_mode
+            && plan.total_ir <= Self::max_full_opt_ir();
         stats.total_program_ir = plan.total_ir;
         stats.max_function_ir = plan.max_fn_ir;
         stats.full_opt_ir_limit = plan.program_limit;
@@ -1326,6 +1376,14 @@ impl TachyonEngine {
             } else {
                 None
             };
+            // Proof correspondence:
+            // `ProgramPhasePipelineSoundness` fixes the reduced program-level
+            // composition boundary here:
+            // `ProgramOptPlan -> selected_functions ->
+            // collect_function_phase_plans -> plan_summary`.
+            // The reduced model keeps the same heavy-tier disabled/empty case,
+            // selected-function gating, lookup reuse, and summary emission
+            // boundaries over the collected plan set.
             self.collect_function_phase_plans(all_fns, &ordered_names, selected_functions)
         } else {
             FxHashMap::default()
@@ -1402,6 +1460,13 @@ impl TachyonEngine {
             tier_b_jobs,
             tier_b_total_ir,
             |(name, mut fn_ir)| {
+                // Proof correspondence:
+                // `ProgramTierExecutionSoundness` fixes the reduced per-
+                // function execution boundary for this closure. The reduced
+                // model keeps the same branch split:
+                // conservative skip, self-recursive skip, heavy-tier-disabled
+                // skip, budget skip, collected-plan hit, and legacy-plan
+                // fallback.
                 let mut local_profile = TachyonRunProfile::default();
                 if fn_ir.requires_conservative_optimization() {
                     local_profile.pulse_stats.skipped_functions += 1;
@@ -1460,16 +1525,24 @@ impl TachyonEngine {
         Self::restore_functions(all_fns, restored_tier_b);
 
         // Tier C (full-program): bounded inter-procedural inlining.
+        // Proof correspondence:
+        // `ProgramPostTierStagesSoundness.inline_cleanup_stage_*` fixes the
+        // reduced stage boundary for the inline cleanup slice below
+        // (`simplify_cfg -> dce` after an inlining round).
         if run_full_inline_tier {
             let mut changed = true;
             let mut iter = 0;
-            let inliner = inline::MirInliner::new();
+            let inliner = if self.fast_dev_enabled() {
+                inline::MirInliner::new_fast_dev()
+            } else {
+                inline::MirInliner::new()
+            };
             let hot_filter = if plan.selective_mode {
                 Some(&plan.selected_functions)
             } else {
                 None
             };
-            while changed && iter < Self::max_inline_rounds() {
+            while changed && iter < self.configured_max_inline_rounds() {
                 changed = false;
                 iter += 1;
                 // Inlining needs access to the whole map
@@ -1542,6 +1615,10 @@ impl TachyonEngine {
 
         let fresh_user_calls =
             fresh_alias::collect_fresh_returning_user_functions_for_parallel(all_fns);
+        // Proof correspondence:
+        // `ProgramPostTierStagesSoundness.fresh_alias_stage_*` fixes the
+        // reduced stage boundary for the fresh-alias cleanup pass applied
+        // across the restored program map here.
         let fresh_alias_names = Self::sorted_fn_names(all_fns);
         let fresh_alias_total_ir: usize = fresh_alias_names
             .iter()
@@ -1572,6 +1649,17 @@ impl TachyonEngine {
         Self::restore_functions(all_fns, restored_fresh_alias);
 
         // 3. De-SSA (Phi elimination via parallel copy) before codegen.
+        // Proof correspondence:
+        // `DeSsaBoundarySoundness` models the reduced redundant-copy
+        // elimination boundary here, while `OptimizerPipelineSoundness`
+        // exposes the staged theorem family that crosses this point:
+        // `program_post_dessa_*` for the `de_ssa` + cleanup boundary and
+        // `prepare_for_codegen_*` for the full pre-emission normalization
+        // slice. `DeSsaSubset` remains the lower-level reduced theorem for the
+        // canonical copy-boundary matcher itself.
+        // `ProgramPostTierStagesSoundness.de_ssa_program_stage_*` then lifts
+        // this same reduced boundary into the post-heavy, program-level tail
+        // stage family used by `run_program_with_profile_inner`.
         let ordered_names = Self::sorted_fn_names(all_fns);
         let de_ssa_total = ordered_names.len();
         let de_ssa_total_ir: usize = ordered_names
@@ -2118,7 +2206,18 @@ mod tests {
             "tail recursion should be rewritten before skip logic"
         );
         let fn_ir = all.get("recur").expect("function should remain present");
-        assert!(matches!(fn_ir.blocks[entry].term, Terminator::Goto(target) if target == entry));
+        assert_ne!(
+            fn_ir.body_head, entry,
+            "TCO should split a dedicated body_head when entry would otherwise become cyclic"
+        );
+        assert!(matches!(
+            fn_ir.blocks[entry].term,
+            Terminator::Goto(target) if target == fn_ir.body_head
+        ));
+        assert!(matches!(
+            fn_ir.blocks[fn_ir.body_head].term,
+            Terminator::Goto(target) if target == fn_ir.body_head
+        ));
         assert!(crate::mir::verify::verify_ir(fn_ir).is_ok());
     }
 

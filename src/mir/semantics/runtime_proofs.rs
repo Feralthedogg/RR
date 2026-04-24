@@ -30,6 +30,7 @@ pub(super) fn runtime_safety_needs(fn_ir: &FnIR) -> RuntimeSafetyNeeds {
             ) {
                 needs.needs_na = true;
                 needs.needs_range = true;
+                needs.needs_dataflow = true;
             }
         }
     }
@@ -43,11 +44,13 @@ pub(super) fn runtime_safety_needs(fn_ir: &FnIR) -> RuntimeSafetyNeeds {
                 needs.needs_dataflow = true;
                 needs.needs_range = true;
             }
-            ValueKind::Index1D { .. } | ValueKind::Index2D { .. } | ValueKind::Index3D { .. } => {
+            ValueKind::Call { callee, args, .. } if callee == "seq_len" && args.len() == 1 => {
+                needs.needs_dataflow = true;
                 needs.needs_range = true;
             }
-            ValueKind::Call { callee, args, .. } if callee == "seq_len" && args.len() == 1 => {
+            ValueKind::Index1D { .. } | ValueKind::Index2D { .. } | ValueKind::Index3D { .. } => {
                 needs.needs_range = true;
+                needs.needs_dataflow = true;
             }
             _ => {}
         }
@@ -96,6 +99,12 @@ pub(super) fn seq_len_negative_diagnostic(use_span: Span, origin_span: Span) -> 
     .build()
 }
 
+// Proof correspondence:
+// `proof/lean/RRProofs/RuntimeSafetyFieldRangeSubset.lean` and the Coq
+// `RuntimeSafetyFieldRangeSubset.v` companion establish the reduced bridge
+// from exact field-read intervals to concrete hazards. These helpers are the
+// Rust-side projection from those interval facts into the `< 1` / `< 0`
+// predicates consumed by runtime-safety diagnostics.
 pub(super) fn interval_guarantees_below_one(
     intv: &crate::mir::analyze::range::RangeInterval,
 ) -> bool {
@@ -159,6 +168,18 @@ pub(super) fn format_bound(bound: &crate::mir::analyze::range::SymbolicBound) ->
 
 pub(super) fn interval_guarantees_zero(interval: Option<crate::mir::flow::Interval>) -> bool {
     interval.is_some_and(|intv| intv.min == 0 && intv.max == 0)
+}
+
+pub(super) fn flow_interval_guarantees_negative(
+    interval: Option<crate::mir::flow::Interval>,
+) -> bool {
+    interval.is_some_and(|intv| !intv.is_empty() && intv.max < 0)
+}
+
+pub(super) fn flow_interval_guarantees_below_one(
+    interval: Option<crate::mir::flow::Interval>,
+) -> bool {
+    interval.is_some_and(|intv| !intv.is_empty() && intv.max < 1)
 }
 
 pub(super) fn range_interval_to_fact_interval(
@@ -253,53 +274,149 @@ pub(super) fn root_depends_on_value(
     if !seen.insert(root) {
         return false;
     }
-    let depends = match &fn_ir.values[root].kind {
-        ValueKind::Const(_)
-        | ValueKind::Param { .. }
-        | ValueKind::Load { .. }
-        | ValueKind::RSymbol { .. } => false,
-        ValueKind::Phi { args } => args
-            .iter()
-            .any(|(src, _)| root_depends_on_value(fn_ir, *src, target, seen)),
-        ValueKind::Len { base } | ValueKind::Indices { base } => {
-            root_depends_on_value(fn_ir, *base, target, seen)
-        }
-        ValueKind::Range { start, end } => {
-            root_depends_on_value(fn_ir, *start, target, seen)
-                || root_depends_on_value(fn_ir, *end, target, seen)
-        }
-        ValueKind::Binary { lhs, rhs, .. } => {
-            root_depends_on_value(fn_ir, *lhs, target, seen)
-                || root_depends_on_value(fn_ir, *rhs, target, seen)
-        }
-        ValueKind::Unary { rhs, .. } => root_depends_on_value(fn_ir, *rhs, target, seen),
-        ValueKind::RecordLit { fields } => fields
-            .iter()
-            .any(|(_, value)| root_depends_on_value(fn_ir, *value, target, seen)),
-        ValueKind::FieldGet { base, .. } => root_depends_on_value(fn_ir, *base, target, seen),
-        ValueKind::FieldSet { base, value, .. } => {
-            root_depends_on_value(fn_ir, *base, target, seen)
-                || root_depends_on_value(fn_ir, *value, target, seen)
-        }
-        ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args
-            .iter()
-            .any(|arg| root_depends_on_value(fn_ir, *arg, target, seen)),
-        ValueKind::Index1D { base, idx, .. } => {
-            root_depends_on_value(fn_ir, *base, target, seen)
-                || root_depends_on_value(fn_ir, *idx, target, seen)
-        }
-        ValueKind::Index2D { base, r, c } => {
-            root_depends_on_value(fn_ir, *base, target, seen)
-                || root_depends_on_value(fn_ir, *r, target, seen)
-                || root_depends_on_value(fn_ir, *c, target, seen)
-        }
-        ValueKind::Index3D { base, i, j, k } => {
-            root_depends_on_value(fn_ir, *base, target, seen)
-                || root_depends_on_value(fn_ir, *i, target, seen)
-                || root_depends_on_value(fn_ir, *j, target, seen)
-                || root_depends_on_value(fn_ir, *k, target, seen)
-        }
-    };
+    let depends = value_dependencies(&fn_ir.values[root].kind)
+        .into_iter()
+        .any(|dep| root_depends_on_value(fn_ir, dep, target, seen));
     seen.remove(&root);
     depends
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        bid_for_value, flow_interval_guarantees_below_one, flow_interval_guarantees_negative,
+        root_depends_on_value,
+    };
+    use crate::mir::flow::Interval;
+    use crate::mir::{Facts, FnIR, Instr, IntrinsicOp, Lit, Terminator, ValueKind};
+    use crate::utils::Span;
+    use rustc_hash::FxHashSet;
+
+    #[test]
+    fn flow_bottom_interval_does_not_prove_negative_or_below_one() {
+        let bottom = Some(Interval::BOTTOM);
+        assert!(!flow_interval_guarantees_negative(bottom));
+        assert!(!flow_interval_guarantees_below_one(bottom));
+
+        let negative = Some(Interval::new(-5, -1));
+        assert!(flow_interval_guarantees_negative(negative));
+        assert!(flow_interval_guarantees_below_one(negative));
+    }
+
+    #[test]
+    fn root_depends_on_value_tracks_record_intrinsic_phi_chain() {
+        let mut f = FnIR::new("runtime_proofs_dep_chain".to_string(), Vec::new());
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
+        let one = f.add_value(ValueKind::Const(Lit::Float(1.0)), Span::dummy(), Facts::empty(), None);
+        let two = f.add_value(ValueKind::Const(Lit::Float(2.0)), Span::dummy(), Facts::empty(), None);
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(one, left), (two, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+        let intrinsic = f.add_value(
+            ValueKind::Intrinsic {
+                op: IntrinsicOp::VecAbsF64,
+                args: vec![phi],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), intrinsic)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: left,
+            else_bb: right,
+        };
+        f.blocks[left].term = Terminator::Goto(merge);
+        f.blocks[right].term = Terminator::Goto(merge);
+        f.blocks[merge].instrs.push(Instr::Eval {
+            val: record,
+            span: Span::dummy(),
+        });
+        f.blocks[merge].term = Terminator::Return(Some(record));
+
+        assert!(root_depends_on_value(
+            &f,
+            record,
+            phi,
+            &mut FxHashSet::default()
+        ));
+    }
+
+    #[test]
+    fn bid_for_value_finds_use_through_record_intrinsic_phi_chain() {
+        let mut f = FnIR::new("runtime_proofs_bid_chain".to_string(), Vec::new());
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
+        let one = f.add_value(ValueKind::Const(Lit::Float(1.0)), Span::dummy(), Facts::empty(), None);
+        let two = f.add_value(ValueKind::Const(Lit::Float(2.0)), Span::dummy(), Facts::empty(), None);
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(one, left), (two, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+        let intrinsic = f.add_value(
+            ValueKind::Intrinsic {
+                op: IntrinsicOp::VecAbsF64,
+                args: vec![phi],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), intrinsic)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: left,
+            else_bb: right,
+        };
+        f.blocks[left].term = Terminator::Goto(merge);
+        f.blocks[right].term = Terminator::Goto(merge);
+        f.blocks[merge].instrs.push(Instr::Eval {
+            val: record,
+            span: Span::dummy(),
+        });
+        f.blocks[merge].term = Terminator::Return(Some(record));
+
+        assert_eq!(bid_for_value(&f, phi), merge);
+    }
 }

@@ -57,7 +57,13 @@ pub fn run(fn_ir: &mut FnIR) -> bool {
                     );
                     if let Some(existing) =
                         reaching_assign_source_for_pred(fn_ir, &pred_map, *pred, &dest)
-                        && existing == resolved_src
+                        && same_canonical_value_before_instr(
+                            fn_ir,
+                            *pred,
+                            fn_ir.blocks[*pred].instrs.len(),
+                            existing,
+                            resolved_src,
+                        )
                     {
                         continue;
                     }
@@ -183,6 +189,151 @@ fn canonicalize_move_source_for_pred(fn_ir: &FnIR, pred: BlockId, src: ValueId) 
     canonicalize_value_before_instr(fn_ir, pred, fn_ir.blocks[pred].instrs.len(), src)
 }
 
+fn is_commutative_binop(op: crate::syntax::ast::BinOp) -> bool {
+    matches!(
+        op,
+        crate::syntax::ast::BinOp::Add
+            | crate::syntax::ast::BinOp::Mul
+            | crate::syntax::ast::BinOp::Eq
+            | crate::syntax::ast::BinOp::Ne
+            | crate::syntax::ast::BinOp::And
+            | crate::syntax::ast::BinOp::Or
+    )
+}
+
+fn canonical_value_fingerprint_before_instr(
+    fn_ir: &FnIR,
+    pred: BlockId,
+    upto: usize,
+    src: ValueId,
+) -> Option<String> {
+    fn rec(
+        fn_ir: &FnIR,
+        pred: BlockId,
+        upto: usize,
+        src: ValueId,
+        seen: &mut HashSet<(ValueId, usize)>,
+    ) -> Option<String> {
+        if !seen.insert((src, upto)) {
+            return None;
+        }
+        let out = match &fn_ir.values[src].kind {
+            ValueKind::Load { var } => {
+                if let Some((idx, next)) = last_assign_to_var_before(fn_ir, pred, var, upto) {
+                    rec(fn_ir, pred, idx, next, seen)
+                } else {
+                    Some(format!("load:{var}"))
+                }
+            }
+            ValueKind::Const(lit) => Some(format!("const:{lit:?}")),
+            ValueKind::Param { index } => Some(format!("param:{index}")),
+            ValueKind::Binary { op, lhs, rhs } => {
+                let mut lhs_fp = rec(fn_ir, pred, upto, *lhs, seen)?;
+                let mut rhs_fp = rec(fn_ir, pred, upto, *rhs, seen)?;
+                if is_commutative_binop(*op) && lhs_fp > rhs_fp {
+                    std::mem::swap(&mut lhs_fp, &mut rhs_fp);
+                }
+                Some(format!("bin:{op:?}({lhs_fp},{rhs_fp})"))
+            }
+            ValueKind::Unary { op, rhs } => {
+                let rhs_fp = rec(fn_ir, pred, upto, *rhs, seen)?;
+                Some(format!("un:{op:?}({rhs_fp})"))
+            }
+            ValueKind::Call { callee, args, names } => {
+                let mut fps = Vec::with_capacity(args.len());
+                for arg in args {
+                    fps.push(rec(fn_ir, pred, upto, *arg, seen)?);
+                }
+                Some(format!("call:{callee}:{names:?}({})", fps.join(",")))
+            }
+            ValueKind::Intrinsic { op, args } => {
+                let mut fps = Vec::with_capacity(args.len());
+                for arg in args {
+                    fps.push(rec(fn_ir, pred, upto, *arg, seen)?);
+                }
+                Some(format!("intr:{op:?}({})", fps.join(",")))
+            }
+            ValueKind::RecordLit { fields } => {
+                let mut fps = Vec::with_capacity(fields.len());
+                for (name, value) in fields {
+                    fps.push(format!("{name}={}", rec(fn_ir, pred, upto, *value, seen)?));
+                }
+                Some(format!("record{{{}}}", fps.join(",")))
+            }
+            ValueKind::FieldGet { base, field } => {
+                let base_fp = rec(fn_ir, pred, upto, *base, seen)?;
+                Some(format!("get:{field}({base_fp})"))
+            }
+            ValueKind::FieldSet { base, field, value } => {
+                let base_fp = rec(fn_ir, pred, upto, *base, seen)?;
+                let value_fp = rec(fn_ir, pred, upto, *value, seen)?;
+                Some(format!("set:{field}({base_fp},{value_fp})"))
+            }
+            ValueKind::Len { base } => {
+                let base_fp = rec(fn_ir, pred, upto, *base, seen)?;
+                Some(format!("len({base_fp})"))
+            }
+            ValueKind::Indices { base } => {
+                let base_fp = rec(fn_ir, pred, upto, *base, seen)?;
+                Some(format!("indices({base_fp})"))
+            }
+            ValueKind::Range { start, end } => {
+                let start_fp = rec(fn_ir, pred, upto, *start, seen)?;
+                let end_fp = rec(fn_ir, pred, upto, *end, seen)?;
+                Some(format!("range({start_fp},{end_fp})"))
+            }
+            ValueKind::Index1D {
+                base,
+                idx,
+                is_safe,
+                is_na_safe,
+            } => {
+                let base_fp = rec(fn_ir, pred, upto, *base, seen)?;
+                let idx_fp = rec(fn_ir, pred, upto, *idx, seen)?;
+                Some(format!("idx1d:{is_safe}:{is_na_safe}({base_fp},{idx_fp})"))
+            }
+            ValueKind::Index2D { base, r, c } => {
+                let base_fp = rec(fn_ir, pred, upto, *base, seen)?;
+                let r_fp = rec(fn_ir, pred, upto, *r, seen)?;
+                let c_fp = rec(fn_ir, pred, upto, *c, seen)?;
+                Some(format!("idx2d({base_fp},{r_fp},{c_fp})"))
+            }
+            ValueKind::Index3D { base, i, j, k } => {
+                let base_fp = rec(fn_ir, pred, upto, *base, seen)?;
+                let i_fp = rec(fn_ir, pred, upto, *i, seen)?;
+                let j_fp = rec(fn_ir, pred, upto, *j, seen)?;
+                let k_fp = rec(fn_ir, pred, upto, *k, seen)?;
+                Some(format!("idx3d({base_fp},{i_fp},{j_fp},{k_fp})"))
+            }
+            ValueKind::RSymbol { name } => Some(format!("rsym:{name}")),
+            ValueKind::Phi { .. } => None,
+        };
+        seen.remove(&(src, upto));
+        out
+    }
+
+    rec(fn_ir, pred, upto, src, &mut HashSet::new())
+}
+
+fn same_canonical_value_before_instr(
+    fn_ir: &FnIR,
+    pred: BlockId,
+    upto: usize,
+    lhs: ValueId,
+    rhs: ValueId,
+) -> bool {
+    if lhs == rhs {
+        return true;
+    }
+    match (
+        canonical_value_fingerprint_before_instr(fn_ir, pred, upto, lhs),
+        canonical_value_fingerprint_before_instr(fn_ir, pred, upto, rhs),
+    ) {
+        (Some(lhs_fp), Some(rhs_fp)) => lhs_fp == rhs_fp,
+        _ => false,
+    }
+}
+
 fn canonicalize_value_before_instr(
     fn_ir: &FnIR,
     pred: BlockId,
@@ -292,12 +443,24 @@ fn normalize_block_moves(fn_ir: &FnIR, moves: &mut Vec<Move>) {
 }
 
 fn ensure_phi_var(fn_ir: &mut FnIR, phi: ValueId) -> VarId {
-    if let Some(name) = &fn_ir.values[phi].origin_var {
+    if let Some(name) = &fn_ir.values[phi].origin_var
+        && var_is_defined_in_fn(fn_ir, name)
+    {
         return name.clone();
     }
     let name = format!(".phi_{}", phi);
     fn_ir.values[phi].origin_var = Some(name.clone());
     name
+}
+
+fn var_is_defined_in_fn(fn_ir: &FnIR, var: &str) -> bool {
+    fn_ir.params.iter().any(|param| param == var)
+        || fn_ir.blocks.iter().any(|block| {
+            block.instrs.iter().any(|instr| match instr {
+                Instr::Assign { dst, .. } => dst == var,
+                _ => false,
+            })
+        })
 }
 
 fn simplify_trivial_phis(fn_ir: &mut FnIR, reachable: &HashSet<BlockId>) -> bool {
@@ -388,6 +551,9 @@ fn phi_shared_origin_var(fn_ir: &FnIR, phi: ValueId) -> Option<String> {
             ValueKind::Load { var } => Some(var.clone()),
             _ => fn_ir.values[arg].origin_var.clone(),
         }?;
+        if !var_is_defined_in_fn(fn_ir, &current) {
+            return None;
+        }
         match &shared {
             None => shared = Some(current),
             Some(prev) if *prev == current => {}
@@ -566,7 +732,7 @@ fn resolve_phi_source_for_pred(
 #[cfg(test)]
 mod tests {
     use super::run;
-    use crate::mir::{Facts, FnIR, Instr, Terminator, ValueKind};
+    use crate::mir::{Facts, FnIR, Instr, IntrinsicOp, Terminator, ValueKind};
     use crate::utils::Span;
 
     #[test]
@@ -1093,6 +1259,289 @@ mod tests {
         assert!(
             f.blocks.len() > before_blocks,
             "critical edge must still split when the predecessor's existing alias is stale relative to a later source-variable write"
+        );
+    }
+
+    #[test]
+    fn critical_edge_is_not_split_when_phi_input_matches_existing_field_get_shape() {
+        let mut f = FnIR::new("critical_edge_field_get_shape".to_string(), vec![]);
+        let entry = f.add_block();
+        let other = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(2)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let rec1 = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), one)],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let rec2 = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), one)],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let get_existing = f.add_value(
+            ValueKind::FieldGet {
+                base: rec1,
+                field: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let get_phi = f.add_value(
+            ValueKind::FieldGet {
+                base: rec2,
+                field: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(get_phi, entry), (two, other)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: get_existing,
+            span: Span::default(),
+        });
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: merge,
+            else_bb: other,
+        };
+        f.blocks[other].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: two,
+            span: Span::default(),
+        });
+        f.blocks[other].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let before_blocks = f.blocks.len();
+        let changed = run(&mut f);
+        assert!(changed);
+        assert_eq!(
+            f.blocks.len(),
+            before_blocks,
+            "critical edge should not split when predecessor already computes an equivalent field-get source"
+        );
+    }
+
+    #[test]
+    fn critical_edge_is_not_split_when_phi_input_matches_existing_intrinsic_shape() {
+        let mut f = FnIR::new("critical_edge_intrinsic_shape".to_string(), vec![]);
+        let entry = f.add_block();
+        let other = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(2)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let intr_existing = f.add_value(
+            ValueKind::Intrinsic {
+                op: IntrinsicOp::VecAbsF64,
+                args: vec![one],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let intr_phi = f.add_value(
+            ValueKind::Intrinsic {
+                op: IntrinsicOp::VecAbsF64,
+                args: vec![one],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(intr_phi, entry), (two, other)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: intr_existing,
+            span: Span::default(),
+        });
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: merge,
+            else_bb: other,
+        };
+        f.blocks[other].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: two,
+            span: Span::default(),
+        });
+        f.blocks[other].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let before_blocks = f.blocks.len();
+        let changed = run(&mut f);
+        assert!(changed);
+        assert_eq!(
+            f.blocks.len(),
+            before_blocks,
+            "critical edge should not split when predecessor already computes an equivalent intrinsic source"
+        );
+    }
+
+    #[test]
+    fn critical_edge_is_not_split_when_phi_input_matches_existing_fieldset_shape() {
+        let mut f = FnIR::new("critical_edge_fieldset_shape".to_string(), vec![]);
+        let entry = f.add_block();
+        let other = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(crate::syntax::ast::Lit::Int(2)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let rec1 = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), one)],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let rec2 = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), one)],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let set_existing = f.add_value(
+            ValueKind::FieldSet {
+                base: rec1,
+                field: "x".to_string(),
+                value: two,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let set_phi = f.add_value(
+            ValueKind::FieldSet {
+                base: rec2,
+                field: "x".to_string(),
+                value: two,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(set_phi, entry), (two, other)],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        f.values[phi].phi_block = Some(merge);
+
+        f.blocks[entry].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: set_existing,
+            span: Span::default(),
+        });
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: merge,
+            else_bb: other,
+        };
+        f.blocks[other].instrs.push(Instr::Assign {
+            dst: "x".to_string(),
+            src: two,
+            span: Span::default(),
+        });
+        f.blocks[other].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(phi));
+
+        let before_blocks = f.blocks.len();
+        let changed = run(&mut f);
+        assert!(changed);
+        assert_eq!(
+            f.blocks.len(),
+            before_blocks,
+            "critical edge should not split when predecessor already computes an equivalent field-set source"
         );
     }
 }

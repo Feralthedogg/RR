@@ -63,7 +63,7 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
                     }
                     acc
                 }
-                ValueKind::FieldGet { base, .. } => states[*base],
+                ValueKind::FieldGet { base, field } => field_value_na_state(*base, field, &fn_ir.values, &states),
                 ValueKind::FieldSet { base, value, .. } => {
                     NaState::propagate(states[*base], states[*value])
                 }
@@ -106,6 +106,21 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
     }
 
     states
+}
+
+fn field_value_na_state(base: ValueId, field: &str, values: &[Value], states: &[NaState]) -> NaState {
+    let Some(values_for_field) = collect_record_field_values(values, base, field) else {
+        return states[base];
+    };
+    let mut it = values_for_field.into_iter();
+    let Some(first) = it.next() else {
+        return states[base];
+    };
+    let mut acc = states[first];
+    for value in it {
+        acc = NaState::merge_flow(acc, states[value]);
+    }
+    acc
 }
 
 fn call_na_behavior(callee: &str, args: &[ValueId], states: &[NaState]) -> NaState {
@@ -197,4 +212,235 @@ fn call_na_behavior(callee: &str, args: &[ValueId], states: &[NaState]) -> NaSta
 
     // Unknown calls are conservatively Maybe.
     NaState::Maybe
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NaState, compute_na_states};
+    use crate::mir::{Facts, FnIR, Lit, ValueKind};
+    use crate::utils::Span;
+
+    #[test]
+    fn field_get_does_not_inherit_na_from_other_record_fields() {
+        let mut f = FnIR::new("na_field_get_record".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let ok = f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
+        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), ok), ("y".to_string(), na)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: record,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let states = compute_na_states(&f);
+        assert_eq!(states[field], NaState::Never);
+    }
+
+    #[test]
+    fn field_get_tracks_fieldset_override_precisely() {
+        let mut f = FnIR::new("na_field_get_fieldset".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let one = f.add_value(ValueKind::Const(Lit::Int(1)), Span::dummy(), Facts::empty(), None);
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), na)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let updated = f.add_value(
+            ValueKind::FieldSet {
+                base: record,
+                field: "x".to_string(),
+                value: one,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: updated,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let states = compute_na_states(&f);
+        assert_eq!(states[field], NaState::Never);
+    }
+
+    #[test]
+    fn nested_field_get_does_not_inherit_na_from_sibling_fields() {
+        let mut f = FnIR::new("na_nested_field_get".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let ok = f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
+        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let inner = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), ok), ("y".to_string(), na)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let outer = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("inner".to_string(), inner)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let inner_field = f.add_value(
+            ValueKind::FieldGet {
+                base: outer,
+                field: "inner".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: inner_field,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let states = compute_na_states(&f);
+        assert_eq!(states[field], NaState::Never);
+    }
+
+    #[test]
+    fn field_get_reads_precise_state_through_phi_merged_records() {
+        let mut f = FnIR::new("na_phi_field_get".to_string(), Vec::new());
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let ok =
+            f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
+        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let rec_a = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), ok), ("y".to_string(), na)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_b = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), ok), ("y".to_string(), na)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(rec_a, left), (rec_b, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        f.values[phi].phi_block = Some(merge);
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: phi,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let states = compute_na_states(&f);
+        assert_eq!(states[field], NaState::Never);
+    }
+
+    #[test]
+    fn field_get_merges_state_through_phi_merged_records() {
+        let mut f = FnIR::new("na_phi_field_join".to_string(), Vec::new());
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let ok =
+            f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
+        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let rec_a = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), ok)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_b = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), na)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(rec_a, left), (rec_b, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        f.values[phi].phi_block = Some(merge);
+        let field = f.add_value(
+            ValueKind::FieldGet {
+                base: phi,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let states = compute_na_states(&f);
+        assert_eq!(states[field], NaState::Maybe);
+    }
 }

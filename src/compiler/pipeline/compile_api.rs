@@ -262,6 +262,11 @@ pub(crate) fn compile_with_configs_using_emit_cache_and_compiler_parallel(
 fn compile_with_pipeline_request(
     mut request: CompilePipelineRequest<'_>,
 ) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
+    // Proof correspondence:
+    // `proof/pipeline_correspondence.md` ties the reduced
+    // lowering/codegen/pipeline proof layers, including the newer
+    // `PipelineBlockEnvSubset` / `PipelineFnEnvSubset` / `PipelineFnCfgSubset`
+    // shells, to this top-level Rust pipeline entry point.
     crate::pkg::with_project_root_hint(request.entry_path, || {
         let ui = CliLog::new();
         let scheduler = CompilerScheduler::new(request.compiler_parallel_cfg);

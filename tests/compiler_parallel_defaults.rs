@@ -9,12 +9,16 @@ fn compiler_parallel_defaults_are_auto_sized_from_host() {
     assert_eq!(cfg.mode, CompilerParallelMode::Auto);
     assert_eq!(cfg.threads, 0);
     assert_eq!(cfg.max_jobs, 0);
+    assert_eq!(cfg.min_functions, 2);
+    assert_eq!(cfg.min_fn_ir, 128);
     assert!(cfg.active_workers() >= 1);
 
     let scheduler = CompilerScheduler::new(cfg);
     assert_eq!(scheduler.config().mode, CompilerParallelMode::Auto);
     assert_eq!(scheduler.config().threads, 0);
     assert_eq!(scheduler.config().max_jobs, 0);
+    assert_eq!(scheduler.config().min_functions, 2);
+    assert_eq!(scheduler.config().min_fn_ir, 128);
 }
 
 #[test]

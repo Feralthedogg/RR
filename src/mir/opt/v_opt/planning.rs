@@ -1762,6 +1762,7 @@ pub(super) fn match_expr_map(
     lp: &LoopInfo,
     user_call_whitelist: &FxHashSet<String>,
 ) -> Option<VectorPlan> {
+    let trace_enabled = vectorize_trace_enabled();
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
     let start = iv.init_val;
@@ -1772,7 +1773,13 @@ pub(super) fn match_expr_map(
     for &bid in &lp.body {
         for instr in &fn_ir.blocks[bid].instrs {
             match instr {
-                Instr::Assign { .. } | Instr::Eval { .. } => {}
+                Instr::Assign { .. } => {}
+                Instr::Eval { .. } => {
+                    if trace_enabled {
+                        eprintln!("   [vec-expr-map] reject: saw Eval in loop body");
+                    }
+                    return None;
+                }
                 Instr::StoreIndex2D { .. } | Instr::StoreIndex3D { .. } => return None,
                 Instr::StoreIndex1D {
                     base,

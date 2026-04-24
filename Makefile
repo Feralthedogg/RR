@@ -1,10 +1,10 @@
-.PHONY: clean clean-target clean-fuzz clean-native clean-artifacts clean-r clean-docs clean-docs-deps clean-tool-cache distclean install-renjin compiler-parallel-smoke library-package-suite optimizer-suite-legality optimizer-suite-heavy optimizer-suite-all perf-gate recommended-package-coverage test-tier0 test-tier1 test-tier2-main test-tier2-differential
+.PHONY: clean clean-target clean-fuzz clean-native clean-artifacts clean-scratch clean-proof clean-r clean-docs clean-docs-deps clean-tool-cache distclean install-renjin compiler-parallel-smoke library-package-suite optimizer-suite-legality optimizer-suite-heavy optimizer-suite-all perf-gate recommended-package-coverage test-tier0 test-tier1 test-tier2-main test-tier2-differential
 
 RENJIN_VERSION := 3.5-beta76
 RENJIN_URL := https://www.renjin.org/repo/dist/renjin-$(RENJIN_VERSION).zip
 TOOL_CACHE_DIRS := target/tmp/bench-python target/tmp/renjin-dist
 
-clean: clean-target clean-fuzz clean-native clean-artifacts clean-r clean-docs
+clean: clean-target clean-fuzz clean-native clean-artifacts clean-scratch clean-proof clean-r clean-docs
 	@echo "[clean] done"
 
 clean-target:
@@ -69,6 +69,27 @@ clean-artifacts:
 		rm -f "$$f"; \
 	done
 	@find tests -type d -name '__triage_smoke_*' -prune -exec rm -rf {} +
+
+clean-scratch:
+	@echo "[clean] removing local scratch artifacts"
+	@rm -rf scratch
+
+clean-proof:
+	@echo "[clean] removing proof build artifacts"
+	@rm -rf proof/lean/.lake
+	@if [ -d proof/coq ]; then \
+		find proof/coq -maxdepth 1 -type f \( \
+			-name '*.vo' -o \
+			-name '*.vos' -o \
+			-name '*.vok' -o \
+			-name '*.glob' -o \
+			-name '.*.aux' -o \
+			-name '.lia.cache' \
+		\) -print0 | \
+		while IFS= read -r -d '' f; do \
+			rm -f "$$f"; \
+		done; \
+	fi
 
 clean-r:
 	@echo "[clean] removing untracked generated R files"

@@ -113,7 +113,10 @@ fn validate_function(
                         "RR.SemanticError",
                         RRCode::E1001,
                         Stage::Mir,
-                        format!("undefined variable '{}'", var),
+                        format!(
+                            "undefined variable '{}' in function '{}'",
+                            var, fn_ir.name
+                        ),
                     )
                     .at(v.span)
                     .push_frame("mir::semantics::validate_function/2", Some(v.span))
@@ -142,6 +145,429 @@ fn validate_function(
     errors
 }
 
+#[cfg(test)]
+mod tests {
+    use super::validate_function_runtime;
+    use crate::mir::{Facts, FnIR, Lit, Terminator, ValueKind};
+    use crate::utils::Span;
+
+    #[test]
+    fn runtime_safety_flags_negative_index_through_phi_merged_record_field() {
+        let mut f = FnIR::new("runtime_phi_field".to_string(), Vec::new());
+        let entry = f.add_block();
+        let left = f.add_block();
+        let right = f.add_block();
+        let merge = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let cond = f.add_value(
+            ValueKind::Const(Lit::Bool(true)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let neg_one = f.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let x1 = f.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let x2 = f.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let x3 = f.add_value(
+            ValueKind::Const(Lit::Int(3)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let x = f.add_value(
+            ValueKind::Call {
+                callee: "c".to_string(),
+                args: vec![x1, x2, x3],
+                names: vec![None, None, None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_a = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_b = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_phi = f.add_value(
+            ValueKind::Phi {
+                args: vec![(rec_a, left), (rec_b, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        f.values[rec_phi].phi_block = Some(merge);
+        let idx = f.add_value(
+            ValueKind::FieldGet {
+                base: rec_phi,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let read = f.add_value(
+            ValueKind::Index1D {
+                base: x,
+                idx,
+                is_safe: false,
+                is_na_safe: false,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        f.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: left,
+            else_bb: right,
+        };
+        f.blocks[left].term = Terminator::Goto(merge);
+        f.blocks[right].term = Terminator::Goto(merge);
+        f.blocks[merge].term = Terminator::Return(Some(read));
+
+        let errors = validate_function_runtime(&f);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("must be >= 1") || e.message.contains("out of bounds")),
+            "expected runtime negative-index diagnostic, got: {errors:#?}"
+        );
+    }
+
+    #[test]
+    fn runtime_safety_does_not_treat_unknown_index_as_proven_below_one() {
+        let mut f = FnIR::new("runtime_unknown_index".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let one = f.add_value(
+            ValueKind::Const(Lit::Float(1.0)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(Lit::Float(2.0)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let base = f.add_value(
+            ValueKind::Call {
+                callee: "c".to_string(),
+                args: vec![one, two],
+                names: vec![None, None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let idx = f.add_value(
+            ValueKind::Load {
+                var: "ii".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let read = f.add_value(
+            ValueKind::Index1D {
+                base,
+                idx,
+                is_safe: false,
+                is_na_safe: false,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        f.blocks[entry].term = Terminator::Return(Some(read));
+
+        let errors = validate_function_runtime(&f);
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.message.contains("must be >= 1") || e.message.contains("out of bounds")),
+            "unexpected proven-below-one diagnostic for unknown index: {errors:#?}"
+        );
+    }
+
+    #[test]
+    fn runtime_safety_does_not_treat_unknown_seq_len_arg_as_proven_negative() {
+        let mut f = FnIR::new("runtime_unknown_seq_len".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let n = f.add_value(
+            ValueKind::Load {
+                var: "n".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let seq = f.add_value(
+            ValueKind::Call {
+                callee: "seq_len".to_string(),
+                args: vec![n],
+                names: vec![None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        f.blocks[entry].term = Terminator::Return(Some(seq));
+
+        let errors = validate_function_runtime(&f);
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.message.contains("seq_len() with negative length")),
+            "unexpected proven-negative seq_len diagnostic for unknown arg: {errors:#?}"
+        );
+    }
+
+    #[test]
+    fn runtime_safety_flags_negative_seq_len_through_nested_record_field() {
+        let mut f = FnIR::new("runtime_nested_seq_len".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let neg_one = f.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let inner = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("n".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let outer = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("inner".to_string(), inner)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let inner_field = f.add_value(
+            ValueKind::FieldGet {
+                base: outer,
+                field: "inner".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let n = f.add_value(
+            ValueKind::FieldGet {
+                base: inner_field,
+                field: "n".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let seq = f.add_value(
+            ValueKind::Call {
+                callee: "seq_len".to_string(),
+                args: vec![n],
+                names: vec![None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        f.blocks[entry].term = Terminator::Return(Some(seq));
+
+        let errors = validate_function_runtime(&f);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("seq_len() with negative length")),
+            "expected proven-negative seq_len diagnostic, got: {errors:#?}"
+        );
+    }
+
+    #[test]
+    fn runtime_safety_flags_negative_seq_len_through_fieldset_override() {
+        let mut f = FnIR::new("runtime_fieldset_seq_len".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let five = f.add_value(
+            ValueKind::Const(Lit::Int(5)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let neg_two = f.add_value(
+            ValueKind::Const(Lit::Int(-2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("n".to_string(), five)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let updated = f.add_value(
+            ValueKind::FieldSet {
+                base: record,
+                field: "n".to_string(),
+                value: neg_two,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let n = f.add_value(
+            ValueKind::FieldGet {
+                base: updated,
+                field: "n".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let seq = f.add_value(
+            ValueKind::Call {
+                callee: "seq_len".to_string(),
+                args: vec![n],
+                names: vec![None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        f.blocks[entry].term = Terminator::Return(Some(seq));
+
+        let errors = validate_function_runtime(&f);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("seq_len() with negative length")),
+            "expected proven-negative seq_len diagnostic after fieldset override, got: {errors:#?}"
+        );
+    }
+
+    #[test]
+    fn runtime_safety_does_not_flag_positive_seq_len_after_fieldset_override() {
+        let mut f = FnIR::new("runtime_fieldset_seq_len_positive".to_string(), Vec::new());
+        let entry = f.add_block();
+        f.entry = entry;
+        f.body_head = entry;
+
+        let neg_one = f.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let five = f.add_value(
+            ValueKind::Const(Lit::Int(5)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let record = f.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("n".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let updated = f.add_value(
+            ValueKind::FieldSet {
+                base: record,
+                field: "n".to_string(),
+                value: five,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let n = f.add_value(
+            ValueKind::FieldGet {
+                base: updated,
+                field: "n".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let seq = f.add_value(
+            ValueKind::Call {
+                callee: "seq_len".to_string(),
+                args: vec![n],
+                names: vec![None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        f.blocks[entry].term = Terminator::Return(Some(seq));
+
+        let errors = validate_function_runtime(&f);
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.message.contains("seq_len() with negative length")),
+            "unexpected proven-negative seq_len diagnostic after positive override: {errors:#?}"
+        );
+    }
+}
+
 fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
     let mut errors = Vec::new();
     let mut memo: FxHashMap<ValueId, Option<Lit>> = FxHashMap::default();
@@ -162,25 +588,59 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
         out
     });
     let dataflow_targets: Vec<ValueId> = if needs.needs_dataflow {
-        fn_ir
+        let mut targets: Vec<ValueId> = fn_ir
             .values
             .iter()
-            .filter_map(|value| match value.kind {
+            .flat_map(|value| match value.kind {
                 ValueKind::Binary {
                     op: BinOp::Div | BinOp::Mod,
                     rhs,
                     ..
-                } => Some(rhs),
-                _ => None,
+                } => vec![rhs],
+                ValueKind::Call {
+                    ref callee,
+                    ref args,
+                    ..
+                } if callee == "seq_len" && args.len() == 1 => vec![args[0]],
+                ValueKind::Index1D { idx, .. } => vec![idx],
+                ValueKind::Index2D { r, c, .. } => vec![r, c],
+                ValueKind::Index3D { i, j, k, .. } => vec![i, j, k],
+                _ => Vec::new(),
             })
-            .collect()
+            .collect();
+        for block in &fn_ir.blocks {
+            for instr in &block.instrs {
+                match *instr {
+                    Instr::StoreIndex1D { idx, .. } => targets.push(idx),
+                    Instr::StoreIndex2D { r, c, .. } => {
+                        targets.push(r);
+                        targets.push(c);
+                    }
+                    Instr::StoreIndex3D { i, j, k, .. } => {
+                        targets.push(i);
+                        targets.push(j);
+                        targets.push(k);
+                    }
+                    Instr::Assign { .. } | Instr::Eval { .. } => {}
+                }
+            }
+        }
+        targets
     } else {
         Vec::new()
     };
     let dataflow = needs
         .needs_dataflow
         .then(|| crate::mir::flow::DataflowSolver::analyze_values(fn_ir, &dataflow_targets));
+    let dataflow_interval =
+        |value: ValueId| dataflow.as_ref().and_then(|facts| facts.get(&value).map(|f| f.interval));
 
+    // Proof correspondence:
+    // `proof/runtime_safety_correspondence.md` ties this reduced runtime slice
+    // to `RuntimeSafetyFieldRangeSubset`: range analysis first preserves exact
+    // field-derived intervals, then the hazard helpers in
+    // `semantics/runtime_proofs.rs` turn those intervals into the E2007-style
+    // `< 1` / `< 0` checks used below for indexing and `seq_len()`.
     for (bid, block) in fn_ir.blocks.iter().enumerate() {
         if !reachable_blocks.contains(&bid) {
             continue;
@@ -276,6 +736,25 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                             .fix("shift the index into the 1-based domain before writing")
                             .build(),
                         );
+                    } else if flow_interval_guarantees_below_one(dataflow_interval(*idx)) {
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.RuntimeError",
+                                RRCode::E2007,
+                                Stage::Mir,
+                                "assignment index is guaranteed out of bounds (must be >= 1)"
+                                    .to_string(),
+                            )
+                            .at(*span)
+                            .origin(
+                                fn_ir.values[*idx].span,
+                                "dataflow proves the index is always < 1",
+                            )
+                            .constraint(*span, "R assignment indexing is 1-based")
+                            .use_site(*span, "used here as an assignment index")
+                            .fix("shift the index into the 1-based domain before writing")
+                            .build(),
+                        );
                     } else if let Some(facts) = out_ranges {
                         let idx_range = facts.get(*idx);
                         if interval_guarantees_above_base_len(&idx_range, *base) {
@@ -359,6 +838,25 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                                         "index range is proven as {}",
                                         format_interval(&facts.get(idx))
                                     ),
+                                )
+                                .constraint(*span, "matrix indexing is 1-based")
+                                .use_site(*span, "used here as a matrix assignment index")
+                                .fix("shift the index into the 1-based domain before writing")
+                                .build(),
+                            );
+                        } else if flow_interval_guarantees_below_one(dataflow_interval(idx)) {
+                            errors.push(
+                                DiagnosticBuilder::new(
+                                    "RR.RuntimeError",
+                                    RRCode::E2007,
+                                    Stage::Mir,
+                                    "matrix assignment index is guaranteed out of bounds (must be >= 1)"
+                                        .to_string(),
+                                )
+                                .at(*span)
+                                .origin(
+                                    fn_ir.values[idx].span,
+                                    "dataflow proves the matrix index is always < 1",
                                 )
                                 .constraint(*span, "matrix indexing is 1-based")
                                 .use_site(*span, "used here as a matrix assignment index")
@@ -467,6 +965,25 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                                     .fix("shift the 3D index into the 1-based domain before writing")
                                     .build(),
                                 );
+                            } else if flow_interval_guarantees_below_one(dataflow_interval(idx)) {
+                                errors.push(
+                                    DiagnosticBuilder::new(
+                                        "RR.RuntimeError",
+                                        RRCode::E2007,
+                                        Stage::Mir,
+                                        "3D assignment index is guaranteed out of bounds (must be >= 1)"
+                                            .to_string(),
+                                    )
+                                    .at(*span)
+                                    .origin(
+                                        fn_ir.values[idx].span,
+                                        "dataflow proves the 3D index is always < 1",
+                                    )
+                                    .constraint(*span, "3D array indexing is 1-based")
+                                    .use_site(*span, "used here as a 3D assignment index")
+                                    .fix("shift the 3D index into the 1-based domain before writing")
+                                    .build(),
+                                );
                             }
                         }
                     }
@@ -540,6 +1057,24 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                             .fix("shift the index into the 1-based domain before reading")
                             .build(),
                         );
+                    } else if flow_interval_guarantees_below_one(dataflow_interval(*idx)) {
+                        errors.push(
+                            DiagnosticBuilder::new(
+                                "RR.RuntimeError",
+                                RRCode::E2007,
+                                Stage::Mir,
+                                "index is guaranteed out of bounds (must be >= 1)".to_string(),
+                            )
+                            .at(v.span)
+                            .origin(
+                                fn_ir.values[*idx].span,
+                                "dataflow proves the index is always < 1",
+                            )
+                            .constraint(v.span, "R indexing is 1-based at runtime")
+                            .use_site(v.span, "used here in an index read")
+                            .fix("shift the index into the 1-based domain before reading")
+                            .build(),
+                        );
                     } else if interval_guarantees_above_base_len(&idx_range, *base) {
                         errors.push(
                             DiagnosticBuilder::new(
@@ -592,6 +1127,27 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                                         "index range is proven as {}",
                                         format_interval(&idx_range)
                                     ),
+                                )
+                                .constraint(v.span, "R matrix indexing is 1-based at runtime")
+                                .use_site(v.span, "used here in a matrix index read")
+                                .fix(
+                                    "shift the row/column index into the 1-based domain before reading",
+                                )
+                                .build(),
+                            );
+                        } else if flow_interval_guarantees_below_one(dataflow_interval(idx)) {
+                            errors.push(
+                                DiagnosticBuilder::new(
+                                    "RR.RuntimeError",
+                                    RRCode::E2007,
+                                    Stage::Mir,
+                                    "matrix index is guaranteed out of bounds (must be >= 1)"
+                                        .to_string(),
+                                )
+                                .at(v.span)
+                                .origin(
+                                    fn_ir.values[idx].span,
+                                    "dataflow proves the matrix index is always < 1",
                                 )
                                 .constraint(v.span, "R matrix indexing is 1-based at runtime")
                                 .use_site(v.span, "used here in a matrix index read")
@@ -700,6 +1256,25 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                                 .fix("shift the 3D index into the 1-based domain before reading")
                                 .build(),
                             );
+                        } else if flow_interval_guarantees_below_one(dataflow_interval(idx)) {
+                            errors.push(
+                                DiagnosticBuilder::new(
+                                    "RR.RuntimeError",
+                                    RRCode::E2007,
+                                    Stage::Mir,
+                                    "3D index is guaranteed out of bounds (must be >= 1)"
+                                        .to_string(),
+                                )
+                                .at(v.span)
+                                .origin(
+                                    fn_ir.values[idx].span,
+                                    "dataflow proves the 3D index is always < 1",
+                                )
+                                .constraint(v.span, "3D array indexing is 1-based at runtime")
+                                .use_site(v.span, "used here in a 3D index read")
+                                .fix("shift the 3D index into the 1-based domain before reading")
+                                .build(),
+                            );
                         }
                     }
                 }
@@ -715,6 +1290,8 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
                     ));
                 } else if range_out.as_ref().is_some_and(|facts| {
                     interval_guarantees_negative(&facts[bid_for_value(fn_ir, vid)].get(args[0]))
+                }) || dataflow.as_ref().is_some_and(|facts| {
+                    flow_interval_guarantees_negative(facts.get(&args[0]).map(|f| f.interval))
                 }) {
                     errors.push(seq_len_negative_diagnostic(
                         v.span,

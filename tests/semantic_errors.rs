@@ -181,8 +181,8 @@ fn undefined_variable_diagnostic_output_is_exact() {
     assert!(!ok, "compile must fail for undefined variable");
     let actual = normalize_primary_diagnostic(&stdout, file_name);
     let expected = concat!(
-        "** (RR.SemanticError) undefined variable 'toatl'\n",
-        "    error[E1001]: undefined variable 'toatl'\n",
+        "** (RR.SemanticError) undefined variable 'toatl' in function 'Sym_1'\n",
+        "    error[E1001]: undefined variable 'toatl' in function 'Sym_1'\n",
         "    at <FILE>:3:10 (MIR)\n",
         "   3 |   return toatl + total\n",
         "                ^ [primary]\n",

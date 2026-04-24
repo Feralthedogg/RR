@@ -354,7 +354,16 @@ pub(crate) fn match_scatter_expr_map(
     for &bid in &lp.body {
         for instr in &fn_ir.blocks[bid].instrs {
             match instr {
-                Instr::Assign { .. } | Instr::Eval { .. } => {}
+                Instr::Assign { .. } => {}
+                Instr::Eval { .. } => {
+                    if trace_enabled {
+                        eprintln!(
+                            "   [vec-scatter] {} reject: saw Eval in loop body",
+                            fn_ir.name
+                        );
+                    }
+                    return None;
+                }
                 Instr::StoreIndex2D { .. } | Instr::StoreIndex3D { .. } => {
                     if trace_enabled {
                         eprintln!(
@@ -716,7 +725,16 @@ pub(crate) fn match_cube_slice_expr_map(
     for &bid in &lp.body {
         for instr in &fn_ir.blocks[bid].instrs {
             match instr {
-                Instr::Assign { .. } | Instr::Eval { .. } => {}
+                Instr::Assign { .. } => {}
+                Instr::Eval { .. } => {
+                    if trace_enabled {
+                        eprintln!(
+                            "   [vec-cube-slice] {} reject: saw Eval in loop body",
+                            fn_ir.name
+                        );
+                    }
+                    return None;
+                }
                 Instr::StoreIndex2D { .. } | Instr::StoreIndex3D { .. } => {
                     if trace_enabled {
                         eprintln!(

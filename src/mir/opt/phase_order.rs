@@ -31,6 +31,9 @@ impl TachyonEngine {
     const MAX_AUTO_COMPUTE_BLOCKS: usize = 16;
     const MAX_AUTO_CONTROL_FN_IR: usize = 128;
     const MAX_AUTO_CONTROL_BLOCKS: usize = 12;
+    const FAST_DEV_VECTORIZE_MAX_FN_IR: usize = 128;
+    const FAST_DEV_VECTORIZE_MAX_BLOCKS: usize = 12;
+    const FAST_DEV_VECTORIZE_MAX_LOOPS: usize = 1;
 
     fn phase_feature_helper_is_functionally_pure(callee: &str) -> bool {
         matches!(
@@ -165,6 +168,11 @@ impl TachyonEngine {
     }
 
     pub(super) fn classify_phase_profile(features: &FunctionPhaseFeatures) -> PhaseProfileKind {
+        // Proof correspondence:
+        // `PhasePlanSoundness` fixes a reduced classification boundary for
+        // `classify_phase_profile`, including concrete balanced /
+        // compute-heavy / control-flow-heavy witnesses and a reduced
+        // score-based classifier over plan features.
         let (compute_score, control_score) = Self::compute_phase_profile_scores(features);
         let branch_density_high = features.branch_terms.saturating_mul(3) >= features.block_count;
         let side_effects_light =
@@ -196,6 +204,11 @@ impl TachyonEngine {
         mode: PhaseOrderingMode,
         profile: PhaseProfileKind,
     ) -> PhaseScheduleId {
+        // Proof correspondence:
+        // `PhasePlanSoundness` fixes the reduced schedule-selection boundary
+        // for this function. The reduced theorem family names the same three
+        // cases: off/balanced mode forcing `Balanced`, and auto mode selecting
+        // the schedule that matches the classified profile.
         match mode {
             PhaseOrderingMode::Off | PhaseOrderingMode::Balanced => PhaseScheduleId::Balanced,
             PhaseOrderingMode::Auto => match profile {
@@ -242,9 +255,74 @@ impl TachyonEngine {
         features.canonical_loop_count > 0 && !branch_density_high && !side_effects_dominant
     }
 
+    fn fast_dev_vectorize_gate(features: &FunctionPhaseFeatures) -> bool {
+        features.canonical_loop_count > 0
+            && features.loop_count <= Self::FAST_DEV_VECTORIZE_MAX_LOOPS
+            && features.ir_size <= Self::FAST_DEV_VECTORIZE_MAX_FN_IR
+            && features.block_count <= Self::FAST_DEV_VECTORIZE_MAX_BLOCKS
+            && features.branch_terms <= 2
+            && features.side_effecting_calls <= 1
+            && features.store_instrs > 0
+    }
+
+    fn fast_dev_vectorize_enabled_for_fn(&self, fn_ir: &FnIR) -> bool {
+        self.fast_dev_enabled()
+            && Self::fast_dev_vectorize_gate(&Self::extract_function_phase_features(fn_ir))
+    }
+
+    fn run_fast_dev_vectorize_subpath(
+        &self,
+        fn_ir: &mut FnIR,
+        callmap_user_whitelist: &FxHashSet<String>,
+        stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
+    ) -> bool {
+        // Proof correspondence:
+        // `PhaseOrderIterationSoundness.fast_dev_subpath_preserves_*`
+        // fixes the reduced theorem family for this entrypoint. The reduced
+        // model currently approximates this Rust slice by the same structural
+        // cluster used elsewhere, but with a dedicated theorem name so the
+        // dispatch boundary stays 1:1 with the production helper.
+        let mut changed = false;
+
+        let type_spec_changed = Self::timed_bool_pass(pass_timings, "type_specialize", || {
+            type_specialize::optimize(fn_ir)
+        });
+        Self::maybe_verify(fn_ir, "After TypeSpecialize(FastDevVec)");
+        Self::debug_stage_dump(fn_ir, "After TypeSpecialize(FastDevVec)");
+        changed |= type_spec_changed;
+
+        let v_stats = {
+            let started = Instant::now();
+            let v_stats = v_opt::optimize_with_stats_with_whitelist(fn_ir, callmap_user_whitelist);
+            pass_timings.record("vectorize", started.elapsed().as_nanos(), v_stats.changed());
+            v_stats
+        };
+        let v_changed = v_stats.changed();
+        Self::accumulate_vector_stats(stats, v_stats);
+        Self::maybe_verify(fn_ir, "After Vectorization(FastDev)");
+        Self::debug_stage_dump(fn_ir, "After Vectorization(FastDev)");
+        changed |= v_changed;
+
+        let type_spec_post_vec = Self::timed_bool_pass(pass_timings, "type_specialize", || {
+            type_specialize::optimize(fn_ir)
+        });
+        Self::maybe_verify(fn_ir, "After TypeSpecialize(PostVecFastDev)");
+        Self::debug_stage_dump(fn_ir, "After TypeSpecialize(PostVecFastDev)");
+        changed |= type_spec_post_vec;
+
+        changed
+    }
+
     pub(super) fn control_flow_should_fallback_to_balanced(
         result: HeavyPhaseIterationResult,
     ) -> bool {
+        // Proof correspondence:
+        // `PhaseOrderFallbackSoundness.control_flow_fallback_preserves_*`
+        // fixes the reduced theorem boundary for this predicate. The reduced
+        // model keeps only `structural_progress` and `non_structural_changes`,
+        // then proves that falling back to the balanced path remains within
+        // the same invariant-preserving / semantics-preserving optimizer spine.
         !result.structural_progress && result.non_structural_changes <= 1
     }
 
@@ -255,6 +333,10 @@ impl TachyonEngine {
         trace_requested: bool,
         features: FunctionPhaseFeatures,
     ) -> FunctionPhasePlan {
+        // Proof correspondence:
+        // `PhasePlanSoundness` fixes the reduced `classify -> choose schedule
+        // -> build plan` boundary for this helper, including default pass
+        // groups, fast-dev filtering, and plan-selected schedule soundness.
         let profile = if matches!(mode, PhaseOrderingMode::Auto) {
             Self::classify_phase_profile(&features)
         } else {
@@ -290,6 +372,12 @@ impl TachyonEngine {
         ordered_names: &[String],
         selected_functions: Option<&FxHashSet<String>>,
     ) -> FxHashMap<String, FunctionPhasePlan> {
+        // Proof correspondence:
+        // `PhasePlanCollectionSoundness` fixes the reduced collection boundary
+        // for this helper. The reduced model keeps the same skip/filter shape:
+        // missing function entry, conservative-optimization requirement,
+        // self-recursive function, and selected-function filter miss, then
+        // reuses `PhasePlanSoundness` for every collected plan.
         let mut plans = FxHashMap::default();
         for name in ordered_names {
             let Some(fn_ir) = all_fns.get(name) else {
@@ -320,6 +408,13 @@ impl TachyonEngine {
         pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> HeavyPhaseIterationResult {
+        // Proof correspondence:
+        // `PhaseOrderOptimizerSoundness` fixes a reduced schedule family for
+        // the three Rust phase-order profiles dispatched here:
+        // `Balanced`, `ComputeHeavy`, and `ControlFlowHeavy`.
+        // Those reduced theorems currently refine the optimizer-only spine
+        // theorem names without yet modeling the full per-pass delta between
+        // the three production schedules.
         match schedule {
             PhaseScheduleId::Balanced => self.run_balanced_heavy_phase_iteration(
                 fn_ir,
@@ -357,6 +452,12 @@ impl TachyonEngine {
         pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> HeavyPhaseIterationResult {
+        // Proof correspondence:
+        // `PhaseOrderIterationSoundness.compute_heavy_iteration_preserves_*`
+        // names the reduced theorem family for this entrypoint. It composes
+        // the reduced standard cluster with the structural/cleanup and
+        // fast-dev fallback boundaries already fixed in the cluster/guard/
+        // feature-gate layers.
         let mut result = HeavyPhaseIterationResult::default();
 
         let sc_changed =
@@ -488,6 +589,19 @@ impl TachyonEngine {
                 result.ran_structural = true;
             }
 
+            if !self.structural_optimizations_enabled()
+                && self.fast_dev_vectorize_enabled_for_fn(fn_ir)
+                && self.run_fast_dev_vectorize_subpath(
+                    fn_ir,
+                    callmap_user_whitelist,
+                    stats,
+                    pass_timings,
+                )
+            {
+                result.changed = true;
+                result.non_structural_changes += 1;
+            }
+
             let fresh_changed =
                 Self::timed_bool_pass(pass_timings, "fresh_alloc", || fresh_alloc::optimize(fn_ir));
             if fresh_changed {
@@ -524,6 +638,11 @@ impl TachyonEngine {
         pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> HeavyPhaseIterationResult {
+        // Proof correspondence:
+        // `PhaseOrderIterationSoundness.balanced_iteration_preserves_*`
+        // names the reduced theorem family for this balanced entrypoint,
+        // including the structural cluster, optional cleanup, fast-dev
+        // fallback, and the trailing standard cluster.
         let mut result = HeavyPhaseIterationResult::default();
         let pass_changed = if run_budgeted_passes {
             if self.structural_optimizations_enabled() {
@@ -554,6 +673,20 @@ impl TachyonEngine {
             result.ran_structural = true;
         }
 
+        if run_budgeted_passes
+            && !self.structural_optimizations_enabled()
+            && self.fast_dev_vectorize_enabled_for_fn(fn_ir)
+            && self.run_fast_dev_vectorize_subpath(
+                fn_ir,
+                callmap_user_whitelist,
+                stats,
+                pass_timings,
+            )
+        {
+            result.changed = true;
+            result.non_structural_changes += 1;
+        }
+
         let standard_changed = self.run_balanced_standard_cluster(
             fn_ir,
             loop_opt,
@@ -577,6 +710,11 @@ impl TachyonEngine {
         pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> HeavyPhaseIterationResult {
+        // Proof correspondence:
+        // `PhaseOrderIterationSoundness.control_flow_heavy_iteration_preserves_*`
+        // names the reduced theorem family for this entrypoint. The reduced
+        // version keeps the same standard-prelude then structural/cleanup
+        // dispatch shape, keyed by the control-flow gate and fast-dev fallback.
         let mut result = HeavyPhaseIterationResult::default();
 
         let sc_changed =
@@ -719,6 +857,19 @@ impl TachyonEngine {
                 result.skipped_structural = true;
             }
 
+            if !self.structural_optimizations_enabled()
+                && self.fast_dev_vectorize_enabled_for_fn(fn_ir)
+                && self.run_fast_dev_vectorize_subpath(
+                    fn_ir,
+                    callmap_user_whitelist,
+                    stats,
+                    pass_timings,
+                )
+            {
+                result.changed = true;
+                result.non_structural_changes += 1;
+            }
+
             let fresh_changed =
                 Self::timed_bool_pass(pass_timings, "fresh_alloc", || fresh_alloc::optimize(fn_ir));
             if fresh_changed {
@@ -749,6 +900,11 @@ impl TachyonEngine {
         stats: &mut TachyonPulseStats,
         pass_timings: &mut TachyonPassTimings,
     ) -> bool {
+        // Proof correspondence:
+        // `PhaseOrderClusterSoundness` names this reduced boundary as the
+        // `structural_cluster_*` theorem family. In Rust this cluster covers
+        // the structural/vectorization-oriented slice:
+        // `type_specialize -> poly -> vectorize -> type_specialize -> tco`.
         let mut changed = false;
 
         let type_spec_changed = Self::timed_bool_pass(pass_timings, "type_specialize", || {
@@ -808,6 +964,11 @@ impl TachyonEngine {
         stats: &mut TachyonPulseStats,
         pass_timings: &mut TachyonPassTimings,
     ) -> bool {
+        // Proof correspondence:
+        // this is the control-flow-heavy structural cluster matched by the same
+        // reduced `structural_cluster_*` theorem family, but with the narrower
+        // Rust pass slice:
+        // `poly -> vectorize -> type_specialize`.
         let mut changed = false;
 
         let p_stats = {
@@ -851,6 +1012,10 @@ impl TachyonEngine {
         stats: &mut TachyonPulseStats,
         pass_timings: &mut TachyonPassTimings,
     ) -> bool {
+        // Proof correspondence:
+        // `PhaseOrderClusterSoundness.cleanup_cluster_*` approximates this
+        // reduced cleanup boundary:
+        // `simplify_cfg -> dce`.
         let mut changed = false;
 
         let sc_changed =
@@ -881,6 +1046,11 @@ impl TachyonEngine {
         pass_timings: &mut TachyonPassTimings,
         run_budgeted_passes: bool,
     ) -> bool {
+        // Proof correspondence:
+        // `PhaseOrderClusterSoundness.standard_cluster_*` approximates this
+        // reduced compute/dataflow/loop cluster:
+        // `simplify_cfg -> sccp -> intrinsics -> gvn -> simplify -> dce`
+        // plus, when budgeted, `loop_opt -> licm -> fresh_alloc -> bce`.
         let mut changed = false;
 
         let sc_changed =

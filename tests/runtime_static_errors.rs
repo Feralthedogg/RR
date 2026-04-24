@@ -132,6 +132,221 @@ main()
 }
 
 #[test]
+fn static_seq_len_negative_via_dataflow_must_fail() {
+    let src = r#"
+fn main() {
+  let x = c(1L, 2L, 3L)
+  let n = -(length(x) + 1L)
+  return seq_len(n)
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "seq_len_negative_dataflow.rr");
+    assert!(!ok, "compile must fail for dataflow-proven negative seq_len");
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("seq_len() with negative length is guaranteed to fail"),
+        "missing seq_len negative detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: clamp the length to 0 or prove it non-negative before calling seq_len()"),
+        "missing seq_len fix hint:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn static_negative_index_via_dataflow_must_fail() {
+    let src = r#"
+fn main() {
+  let x = c(1L, 2L, 3L)
+  let i = -(length(x))
+  return x[i]
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "negative_index_dataflow.rr");
+    assert!(!ok, "compile must fail for dataflow-proven negative index");
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("index is guaranteed out of bounds (must be >= 1)"),
+        "missing negative index detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: shift the index into the 1-based domain before reading"),
+        "missing negative index fix hint:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn static_negative_index_via_record_field_must_fail() {
+    let src = r#"
+fn main() {
+  let x = c(1L, 2L, 3L)
+  let rec = { i: -(length(x)) }
+  return x[rec.i]
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "negative_index_record_field.rr");
+    assert!(!ok, "compile must fail for record-field negative index");
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("out of bounds (must be >= 1)"),
+        "missing negative index detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: shift the index into the 1-based domain before"),
+        "missing negative index fix hint:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn static_negative_index_via_nested_record_field_must_fail() {
+    let src = r#"
+fn main() {
+  let x = c(1L, 2L, 3L)
+  let rec = { inner: { i: -(length(x)) } }
+  return x[rec.inner.i]
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "negative_index_nested_record_field.rr");
+    assert!(!ok, "compile must fail for nested record-field negative index");
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("out of bounds (must be >= 1)"),
+        "missing negative index detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: shift the index into the 1-based domain before"),
+        "missing negative index fix hint:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn static_invalid_matrix_read_via_nested_record_field_must_fail() {
+    let src = r#"
+fn main() {
+  let rec = { inner: { m: matrix(seq_len(6L), 2L, 3L) } }
+  return rec.inner.m[3L, 1L]
+}
+main()
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "matrix_nested_record_field_oob.rr");
+    assert!(!ok, "compile must fail for nested record-field matrix oob read");
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("matrix row index is guaranteed out of bounds"),
+        "missing matrix row oob detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: clamp or guard the row index against the matrix extent before reading"),
+        "missing matrix row oob fix hint:\n{}",
+        stdout
+    );
+}
+
+#[test]
+#[ignore = "branch-assigned record field detection requires Phi-merged const_eval, not yet implemented"]
+fn static_negative_index_via_branch_assigned_record_field_must_fail() {
+    let src = r#"
+fn main(flag: bool) {
+  let x = c(1L, 2L, 3L)
+  let rec = { i: 1L }
+  if (flag) {
+    rec = { i: -1L }
+  } else {
+    rec = { i: -1L }
+  }
+  return x[rec.i]
+}
+main(TRUE)
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "negative_index_branch_record_field.rr");
+    assert!(!ok, "compile must fail for branch-assigned record-field negative index");
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("out of bounds (must be >= 1)"),
+        "missing negative index detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: shift the index into the 1-based domain before"),
+        "missing negative index fix hint:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn static_invalid_matrix_read_via_branch_assigned_record_field_must_fail() {
+    let src = r#"
+fn main(flag: bool) {
+  let rec = { m: matrix(seq_len(6L), 2L, 3L) }
+  if (flag) {
+    rec = { m: matrix(seq_len(6L), 2L, 3L) }
+  } else {
+    rec = { m: matrix(seq_len(6L), 2L, 3L) }
+  }
+  return rec.m[3L, 1L]
+}
+main(TRUE)
+"#;
+    let (ok, stdout, _stderr) = run_compile(src, "matrix_branch_record_field_oob.rr");
+    assert!(
+        !ok,
+        "compile must fail for branch-assigned record-field matrix oob read"
+    );
+    assert!(
+        stdout.contains("** (RR.RuntimeError)"),
+        "missing runtime error header:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("matrix row index is guaranteed out of bounds"),
+        "missing matrix row oob detail:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("fix: clamp or guard the row index against the matrix extent before reading"),
+        "missing matrix row oob fix hint:\n{}",
+        stdout
+    );
+}
+
+#[test]
 fn multiple_static_runtime_errors_are_reported_together() {
     let src = r#"
 fn main() {

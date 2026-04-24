@@ -124,6 +124,13 @@ fn rewrite_reachable_value_uses_for_var_after(
     var: &str,
     replacement: ValueId,
 ) {
+    // Reduced correspondence:
+    // `VectorizeValueRewriteSubset` models the scalar replacement contract for
+    // a single expression, and `VectorizeUseRewriteSubset` lifts that to
+    // id-tagged reachable use sets. If the replacement expression evaluates to
+    // the same scalar value as `Load var`, then recursively rewriting
+    // reachable value trees and returns after the exit preserves the original
+    // scalar meaning.
     fn rewrite_value_tree_for_var(
         fn_ir: &mut FnIR,
         root: ValueId,
@@ -140,6 +147,13 @@ fn rewrite_reachable_value_uses_for_var_after(
             return root;
         }
 
+        // Reduced correspondence:
+        // `VectorizeOriginMemoSubset` models three local contracts used below:
+        // 1. exact `Load var` roots stay anchored
+        // 2. non-load nodes carrying `origin_var = var` redirect to the
+        //    replacement boundary
+        // 3. memo hits reuse the previously chosen value id rather than
+        //    allocating again
         let mapped = match fn_ir.values[root].kind.clone() {
             ValueKind::Load { var: load_var } if load_var == var => root,
             kind if fn_ir.values[root].origin_var.as_deref() == Some(var) => match kind {
@@ -654,6 +668,10 @@ pub(crate) fn finish_vector_assignments_versioned(
         return false;
     }
 
+    // Reduced MIR-machine correspondence:
+    // `VectorizeMirRewriteSubset` models this as
+    // `preheader -> apply/fallback -> exit -> done`, with the exit preserving
+    // the original scalar result once fallback and vectorized apply rejoin.
     let apply_bb = fn_ir.add_block();
     for assignment in &assignments {
         fn_ir.blocks[apply_bb].instrs.push(Instr::Assign {
@@ -669,6 +687,11 @@ pub(crate) fn finish_vector_assignments_versioned(
         else_bb: fallback_bb,
     };
 
+    // The reduced correspondence for this exit-phi merge lives in
+    // `proof/{lean,coq}/.../VectorizeRewriteSubset.*`:
+    // fallback edges keep the original scalar value, while result-preserving
+    // apply edges may merge the vectorized result without changing the scalar
+    // exit meaning.
     for assignment in assignments {
         let scalar_val = fn_ir.add_value(
             ValueKind::Load {
@@ -3528,6 +3551,11 @@ pub(super) fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorP
     }
 }
 
+// Transactional vectorization apply has a reduced proof model in
+// `proof/optimizer_correspondence.md` and
+// `proof/{lean,coq}/.../VectorizeApplySubset.*`:
+// rejected plans must roll back to the scalar original, and certified
+// result-preserving plans may commit without changing the scalar result.
 pub(crate) fn try_apply_vectorization_transactionally(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
@@ -3537,7 +3565,13 @@ pub(crate) fn try_apply_vectorization_transactionally(
     if !apply_vectorization(&mut cloned, lp, plan) {
         return false;
     }
-    if crate::mir::verify::verify_ir(&cloned).is_err() {
+    if let Err(err) = crate::mir::verify::verify_ir(&cloned) {
+        if super::debug::proof_trace_enabled() {
+            eprintln!(
+                "   [vec-transform] {} reject transactional apply: {}",
+                cloned.name, err
+            );
+        }
         return false;
     }
     *fn_ir = cloned;

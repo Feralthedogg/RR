@@ -198,6 +198,11 @@ pub(super) fn eval_const(
             }
             _ => None,
         },
+        ValueKind::FieldGet { base, field } => {
+            let value = resolve_record_field_value(&fn_ir.values, *base, field)?;
+            eval_const(fn_ir, value, memo, visiting)
+        }
+        ValueKind::FieldSet { .. } | ValueKind::RecordLit { .. } => None,
         ValueKind::Intrinsic { .. } => None,
         _ => None,
     };
@@ -256,6 +261,16 @@ fn matrix_known_dims_inner(
             let src = unique_assign_source_for_var(fn_ir, var)?;
             matrix_known_dims_inner(fn_ir, src, memo, visiting, seen)
         }
+        ValueKind::FieldGet { base, field } => {
+            let values = collect_record_field_values(&fn_ir.values, *base, field)?;
+            let first = matrix_known_dims_inner(fn_ir, *values.first()?, memo, visiting, seen)?;
+            for value in values.into_iter().skip(1) {
+                if matrix_known_dims_inner(fn_ir, value, memo, visiting, seen)? != first {
+                    return None;
+                }
+            }
+            Some(first)
+        }
         ValueKind::Phi { args } => {
             let first = matrix_known_dims_inner(fn_ir, args.first()?.0, memo, visiting, seen)?;
             for (src, _) in &args[1..] {
@@ -297,6 +312,17 @@ fn matrix_known_axis_inner(
         ValueKind::Load { var } => {
             let src = unique_assign_source_for_var(fn_ir, var)?;
             matrix_known_axis_inner(fn_ir, src, memo, visiting, seen, rows)
+        }
+        ValueKind::FieldGet { base, field } => {
+            let values = collect_record_field_values(&fn_ir.values, *base, field)?;
+            let first =
+                matrix_known_axis_inner(fn_ir, *values.first()?, memo, visiting, seen, rows)?;
+            for value in values.into_iter().skip(1) {
+                if matrix_known_axis_inner(fn_ir, value, memo, visiting, seen, rows)? != first {
+                    return None;
+                }
+            }
+            Some(first)
         }
         ValueKind::Phi { args } => {
             let first =
@@ -565,5 +591,341 @@ mod tests {
         let mut memo = FxHashMap::default();
         let mut visiting = FxHashSet::default();
         assert_eq!(eval_const(&fn_ir, ncol_v, &mut memo, &mut visiting), None);
+    }
+
+    #[test]
+    fn eval_const_reads_nested_record_field_literals() {
+        let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
+        let b0 = fn_ir.add_block();
+        fn_ir.entry = b0;
+        fn_ir.body_head = b0;
+
+        let seven = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(7)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let inner = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), seven)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let outer = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("inner".to_string(), inner)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let inner_field = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: outer,
+                field: "inner".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: inner_field,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut memo = FxHashMap::default();
+        let mut visiting = FxHashSet::default();
+        assert_eq!(eval_const(&fn_ir, field, &mut memo, &mut visiting), Some(Lit::Int(7)));
+    }
+
+    #[test]
+    fn eval_const_reads_fieldset_override_literals() {
+        let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
+        let b0 = fn_ir.add_block();
+        fn_ir.entry = b0;
+        fn_ir.body_head = b0;
+
+        let one = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let five = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(5)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let record = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let updated = fn_ir.add_value(
+            ValueKind::FieldSet {
+                base: record,
+                field: "i".to_string(),
+                value: five,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: updated,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut memo = FxHashMap::default();
+        let mut visiting = FxHashSet::default();
+        assert_eq!(eval_const(&fn_ir, field, &mut memo, &mut visiting), Some(Lit::Int(5)));
+    }
+
+    #[test]
+    fn matrix_known_dims_reads_nested_record_field_matrix() {
+        let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
+        let b0 = fn_ir.add_block();
+        fn_ir.entry = b0;
+        fn_ir.body_head = b0;
+
+        let data = fn_ir.add_value(
+            ValueKind::Const(Lit::Null),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rows = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let cols = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(3)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let matrix = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "matrix".to_string(),
+                args: vec![data, rows, cols],
+                names: vec![None, None, None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let inner = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("m".to_string(), matrix)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let outer = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("inner".to_string(), inner)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let inner_field = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: outer,
+                field: "inner".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let matrix_field = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: inner_field,
+                field: "m".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut memo = FxHashMap::default();
+        let mut visiting = FxHashSet::default();
+        assert_eq!(
+            matrix_known_dims(&fn_ir, matrix_field, &mut memo, &mut visiting),
+            Some((2, 3))
+        );
+    }
+
+    #[test]
+    fn matrix_known_dims_reads_phi_merged_record_field_when_dims_agree() {
+        let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        let left = fn_ir.add_block();
+        let right = fn_ir.add_block();
+        let merge = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let data_a = fn_ir.add_value(
+            ValueKind::Const(Lit::Null),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let data_b = fn_ir.add_value(
+            ValueKind::Const(Lit::Null),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rows = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let cols = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(3)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let mat_a = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "matrix".to_string(),
+                args: vec![data_a, rows, cols],
+                names: vec![None, None, None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let mat_b = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "matrix".to_string(),
+                args: vec![data_b, rows, cols],
+                names: vec![None, None, None],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_a = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("m".to_string(), mat_a)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_b = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("m".to_string(), mat_b)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_phi = fn_ir.add_value(
+            ValueKind::Phi {
+                args: vec![(rec_a, left), (rec_b, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.values[rec_phi].phi_block = Some(merge);
+        let field = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: rec_phi,
+                field: "m".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut memo = FxHashMap::default();
+        let mut visiting = FxHashSet::default();
+        assert_eq!(
+            matrix_known_dims(&fn_ir, field, &mut memo, &mut visiting),
+            Some((2, 3))
+        );
+    }
+
+    #[test]
+    fn eval_const_reads_phi_merged_record_field_when_arms_agree() {
+        let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        let left = fn_ir.add_block();
+        let right = fn_ir.add_block();
+        let merge = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let neg_one = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_a = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec_b = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("i".to_string(), neg_one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let phi = fn_ir.add_value(
+            ValueKind::Phi {
+                args: vec![(rec_a, left), (rec_b, right)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.values[phi].phi_block = Some(merge);
+        let field = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: phi,
+                field: "i".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        let mut memo = FxHashMap::default();
+        let mut visiting = FxHashSet::default();
+        assert_eq!(eval_const(&fn_ir, field, &mut memo, &mut visiting), Some(Lit::Int(-1)));
     }
 }

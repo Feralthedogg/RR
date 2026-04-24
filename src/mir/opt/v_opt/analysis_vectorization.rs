@@ -144,7 +144,10 @@ pub(crate) fn classify_store_1d_in_block(fn_ir: &FnIR, bid: BlockId) -> BlockSto
     let mut found: Option<BlockStore1D> = None;
     for instr in &fn_ir.blocks[bid].instrs {
         match instr {
-            Instr::Assign { .. } | Instr::Eval { .. } => {}
+            Instr::Assign { .. } => {}
+            Instr::Eval { .. } => {
+                return BlockStore1DMatch::Invalid;
+            }
             Instr::StoreIndex2D { .. } | Instr::StoreIndex3D { .. } => {
                 return BlockStore1DMatch::Invalid;
             }
@@ -177,7 +180,10 @@ pub(crate) fn classify_store_3d_in_block(fn_ir: &FnIR, bid: BlockId) -> BlockSto
     let mut found: Option<BlockStore3D> = None;
     for instr in &fn_ir.blocks[bid].instrs {
         match instr {
-            Instr::Assign { .. } | Instr::Eval { .. } => {}
+            Instr::Assign { .. } => {}
+            Instr::Eval { .. } => {
+                return BlockStore3DMatch::Invalid;
+            }
             Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. } => {
                 return BlockStore3DMatch::Invalid;
             }
@@ -2359,8 +2365,11 @@ pub(crate) fn unique_assign_source(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
 mod tests {
     use super::super::super::api::{rank_vector_plans, vector_plan_label};
     use super::super::super::planning::ExprMapEntry;
-    use super::{ResolvedCallInfo, VectorPlan, is_iv_equivalent, resolve_call_info};
-    use crate::mir::{BuiltinKind, FnIR, ValueKind};
+    use super::{
+        BlockStore3DMatch, ResolvedCallInfo, VectorPlan, classify_store_3d_in_block,
+        is_iv_equivalent, resolve_call_info,
+    };
+    use crate::mir::{BuiltinKind, FnIR, Instr, ValueKind};
     use crate::utils::Span;
 
     #[test]
@@ -2515,4 +2524,62 @@ mod tests {
             "expected deep recursive proof to bail out conservatively"
         );
     }
+
+    #[test]
+    fn classify_store_3d_rejects_block_with_eval_side_effect() {
+        let mut fn_ir = FnIR::new("store3d_eval".to_string(), vec![]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let zero = fn_ir.add_value(
+            ValueKind::Const(crate::mir::Lit::Int(0)),
+            Span::default(),
+            crate::mir::Facts::empty(),
+            None,
+        );
+        let one = fn_ir.add_value(
+            ValueKind::Const(crate::mir::Lit::Int(1)),
+            Span::default(),
+            crate::mir::Facts::empty(),
+            None,
+        );
+        let base = fn_ir.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            crate::mir::Facts::empty(),
+            Some("x".to_string()),
+        );
+        let impure = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "impure_helper".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::default(),
+            crate::mir::Facts::empty(),
+            None,
+        );
+
+        fn_ir.blocks[entry].instrs.push(Instr::Eval {
+            val: impure,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].instrs.push(Instr::StoreIndex3D {
+            base,
+            i: one,
+            j: one,
+            k: one,
+            val: zero,
+            span: Span::default(),
+        });
+
+        assert!(matches!(
+            classify_store_3d_in_block(&fn_ir, entry),
+            BlockStore3DMatch::Invalid
+        ));
+    }
+
 }

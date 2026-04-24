@@ -54,7 +54,7 @@ main()
     let profile_path = proj_dir.join("profile.json");
     let profile = compile_profile(&rr_bin, &src_path, &out_dir, &profile_path, &["-O1"]);
     assert!(profile.contains("\"active_pass_groups\": [\"required\", \"dev-cheap\"]"));
-    assert!(profile.contains("\"disabled_pass_groups\": [\"poly\", \"vectorize\", \"inline\"]"));
+    assert!(profile.contains("\"disabled_pass_groups\": [\"poly\"]"));
 }
 
 #[test]

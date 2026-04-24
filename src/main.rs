@@ -198,10 +198,10 @@ fn print_usage() {
         "  --compiler-parallel-threads <N>           Compiler worker threads (0=auto, default)"
     );
     eprintln!(
-        "  --compiler-parallel-min-functions <N>     Minimum functions before compiler parallelism"
+        "  --compiler-parallel-min-functions <N>     Minimum functions before compiler parallelism (default 2)"
     );
     eprintln!(
-        "  --compiler-parallel-min-fn-ir <N>         Minimum aggregate IR before compiler parallelism"
+        "  --compiler-parallel-min-fn-ir <N>         Minimum aggregate IR before compiler parallelism (default 128)"
     );
     eprintln!(
         "  --compiler-parallel-max-jobs <N>          Maximum concurrent compiler jobs (0=threads)"
@@ -221,7 +221,9 @@ fn print_usage() {
         "  --profile-compile                         Emit compile profile JSON for this compile"
     );
     eprintln!("  --profile-compile-out <file>              Write compile profile JSON to a file");
-    eprintln!("  --compile-mode <standard|fast-dev>        Compiler pass profile selection");
+    eprintln!(
+        "  --compile-mode <standard|fast-dev>        Compiler pass profile selection (build/run/watch default fast-dev)"
+    );
     eprintln!("  --poll-ms <N>                             Watch polling interval in milliseconds");
     eprintln!("  --once                                    Run a single watch tick and exit");
     eprintln!("  --keep-r                      Keep generated .gen.R when running");

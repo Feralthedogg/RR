@@ -249,6 +249,13 @@ impl RBackend {
             ));
         }
 
+        // Proof correspondence:
+        // `proof/lean/RRProofs/CodegenSubset.lean`,
+        // `proof/lean/RRProofs/PipelineBlockEnvSubset.lean`,
+        // `proof/lean/RRProofs/PipelineFnEnvSubset.lean`,
+        // `proof/lean/RRProofs/PipelineFnCfgSubset.lean`, and the Coq
+        // `Codegen*` / `Pipeline*Subset` files approximate reduced slices of
+        // the semantics under this structured MIR emission path.
         let structured = Structurizer::new(fn_ir).build();
         if std::env::var_os("RR_DEBUG_STRUCTURED").is_some() {
             eprintln!(

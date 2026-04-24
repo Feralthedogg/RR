@@ -838,14 +838,14 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         "temp <- rep.int(300.0, TOTAL)",
         "qv <- rep.int(0.015, TOTAL)",
         "qc <- rep.int(0.001, TOTAL)",
-        "qr <- rep.int(0.0, TOTAL)",
-        "qi <- qr",
-        "qs <- qr",
-        "qg <- qr",
+        "v <- rep.int(0.0, TOTAL)",
+        "qr <- v",
+        "qi <- v",
+        "qs <- v",
+        "qg <- v",
         "h_trn <- v",
-        "coriolis <- qr",
-        "u_new <- qr",
-        "v <- qr",
+        "coriolis <- v",
+        "u_new <- v",
         "p_x <- Sym_183(1000.0)",
         "p_y <- p_x",
         "p_f <- rep.int(1.0, 1000.0)",
@@ -859,14 +859,15 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
         );
     }
     assert!(
-        raw_code.contains("qi <- qr")
-            && (raw_code.contains("qs <- qi") || raw_code.contains("qs <- qr"))
-            && raw_code.contains("qg <- qr")
+        raw_code.contains("qr <- v")
+            && raw_code.contains("qi <- v")
+            && raw_code.contains("qs <- v")
+            && raw_code.contains("qg <- v")
             && !raw_code.contains("qg <- qs"),
         "expected raw tesseract output to keep the zero-fill alias-reuse chain for qs/qg after raw helper cleanup"
     );
     assert!(
-        raw_code.contains("u_new <- qr")
+        raw_code.contains("u_new <- v")
             && raw_code.contains("u_stage <- (u + (dt * (du1 - adv_u)))"),
         "expected raw tesseract output to keep the zero-fill alias-reuse chain for u_stage/u_new after raw helper cleanup"
     );

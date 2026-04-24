@@ -301,6 +301,12 @@ impl TachyonEngine {
         all_fns: &FxHashMap<String, FnIR>,
         profile_counts: &FxHashMap<String, usize>,
     ) -> ProgramOptPlan {
+        // Proof correspondence:
+        // `ProgramOptPlanSoundness` fixes the reduced program-budget boundary
+        // for this helper. The reduced model keeps the same three top-level
+        // cases: under-budget all-safe selection, over-budget selective mode,
+        // and fallback to the smallest eligible function when selective
+        // selection would otherwise be empty.
         let total_ir: usize = all_fns.values().map(Self::fn_ir_size).sum();
         let max_fn_ir: usize = all_fns.values().map(Self::fn_ir_size).max().unwrap_or(0);
         let (program_limit, fn_limit) =

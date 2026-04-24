@@ -173,7 +173,7 @@ fn answer() {
         }
     };
 
-    wait_for_output("return(1L)");
+    wait_for_output("print(1L)");
 
     fs::write(
         &module_path,
@@ -185,7 +185,7 @@ fn answer() {
     )
     .expect("failed to update module.rr");
 
-    wait_for_output("return(2L)");
+    wait_for_output("print(2L)");
 
     child.kill().expect("failed to stop rr watch");
     let _ = child.wait();

@@ -156,6 +156,12 @@ Common options:
 - `--incremental[=auto|off|1|1,2|1,2,3|all]`
 - `--no-incremental`
 
+Default compile policy:
+
+- `RR build`, `RR run`, and `RR watch` default to `--compile-mode fast-dev`
+- `-O2` on those managed flows promotes back to `standard` unless overridden
+- compiler parallel scheduling defaults to `auto` with thresholds `min-functions=2` and `min-fn-ir=128`
+
 ## Project Layout
 
 - CLI entry: `src/main.rs`

@@ -291,7 +291,7 @@ pub(crate) fn run_tachyon_phase(
             run_profile = tachyon.run_program_with_profile_and_scheduler(all_fns, scheduler);
         }
     } else {
-        tachyon.stabilize_for_codegen(all_fns);
+        tachyon.stabilize_for_codegen_relaxed_start(all_fns);
     }
     crate::mir::semantics::validate_program(all_fns)?;
     crate::mir::semantics::validate_runtime_safety(all_fns)?;

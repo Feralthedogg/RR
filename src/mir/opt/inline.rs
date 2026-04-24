@@ -4,7 +4,9 @@ use crate::utils::Span;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
-pub struct MirInliner;
+pub struct MirInliner {
+    policy: InlinePolicy,
+}
 type InlineCall = (String, Vec<ValueId>, ValueId, Option<VarId>, Span);
 
 #[derive(Default)]
@@ -34,7 +36,15 @@ impl Default for MirInliner {
 
 impl MirInliner {
     pub fn new() -> Self {
-        Self
+        Self {
+            policy: Self::standard_policy(),
+        }
+    }
+
+    pub fn new_fast_dev() -> Self {
+        Self {
+            policy: Self::fast_dev_policy(),
+        }
     }
 
     pub fn optimize(&self, all_fns: &mut FxHashMap<String, FnIR>) -> bool {
@@ -49,7 +59,7 @@ impl MirInliner {
         if Self::inline_disabled() {
             return false;
         }
-        let policy = Self::policy();
+        let policy = self.policy;
         let mut growth = InlineGrowthBudget::new(all_fns, &policy);
         let mut global_changed = false;
         let mut fn_names: Vec<String> = all_fns.keys().cloned().collect();
@@ -125,7 +135,7 @@ impl MirInliner {
                         if !self.should_inline(callee, caller, policy) {
                             continue;
                         }
-                        let predicted_growth = Self::estimate_inline_growth(callee);
+                        let predicted_growth = Self::estimate_inline_growth(callee, policy);
                         if !growth.can_inline(
                             Self::fn_ir_size(caller),
                             caller_growth_limit,
@@ -213,6 +223,13 @@ impl MirInliner {
         if caller_instr_cnt.saturating_add(instr_cnt) > policy.max_total_instrs {
             return false;
         }
+        if target
+            .values
+            .iter()
+            .any(|value| matches!(value.kind, ValueKind::Call { .. }))
+        {
+            return false;
+        }
 
         let mut loop_edges = 0usize;
         for (bid, bb) in target.blocks.iter().enumerate() {
@@ -257,7 +274,7 @@ impl MirInliner {
         default_v
     }
 
-    fn policy() -> InlinePolicy {
+    fn standard_policy() -> InlinePolicy {
         InlinePolicy {
             max_blocks: Self::env_usize("RR_INLINE_MAX_BLOCKS", 24),
             max_instrs: Self::env_usize("RR_INLINE_MAX_INSTRS", 160),
@@ -267,7 +284,23 @@ impl MirInliner {
             max_total_instrs: Self::env_usize("RR_INLINE_MAX_TOTAL_INSTRS", 900),
             max_unit_growth_pct: Self::env_usize("RR_INLINE_MAX_UNIT_GROWTH_PCT", 25),
             max_fn_growth_pct: Self::env_usize("RR_INLINE_MAX_FN_GROWTH_PCT", 35),
+            min_growth_abs: 0,
             allow_loops: Self::env_bool("RR_INLINE_ALLOW_LOOPS", false),
+        }
+    }
+
+    fn fast_dev_policy() -> InlinePolicy {
+        InlinePolicy {
+            max_blocks: 8,
+            max_instrs: 48,
+            max_cost: 72,
+            max_callsite_cost: 80,
+            max_caller_instrs: 192,
+            max_total_instrs: 320,
+            max_unit_growth_pct: 8,
+            max_fn_growth_pct: 12,
+            min_growth_abs: 24,
+            allow_loops: false,
         }
     }
 
@@ -536,13 +569,21 @@ impl MirInliner {
             .saturating_add(call_count.saturating_mul(8))
     }
 
-    fn estimate_inline_growth(callee: &FnIR) -> usize {
-        // Conservative upper-bound estimate to avoid overshooting growth budgets.
-        let callee_ir = Self::fn_ir_size(callee);
-        callee_ir
-            .saturating_add(callee.values.len())
-            .saturating_add(callee.blocks.len().saturating_mul(4))
-            .saturating_add(16)
+    fn estimate_inline_growth(callee: &FnIR, policy: &InlinePolicy) -> usize {
+        if policy.min_growth_abs == 0 {
+            // Keep the standard profile on the historical conservative estimate.
+            let callee_ir = Self::fn_ir_size(callee);
+            return callee_ir
+                .saturating_add(callee.values.len())
+                .saturating_add(callee.blocks.len().saturating_mul(4))
+                .saturating_add(16);
+        }
+
+        // Fast-dev uses a tighter upper-bound for tiny helpers so growth
+        // budgeting does not completely starve otherwise-safe local inlining.
+        Self::fn_ir_size(callee)
+            .saturating_add(callee.blocks.len())
+            .saturating_add(4)
     }
 
     fn inline_value_calls(
@@ -572,7 +613,7 @@ impl MirInliner {
             if self.inline_callsite_cost(callee) > policy.max_callsite_cost {
                 continue;
             }
-            let predicted_growth = Self::estimate_inline_growth(callee);
+            let predicted_growth = Self::estimate_inline_growth(callee, policy);
             if !growth.can_inline(
                 Self::fn_ir_size(caller),
                 caller_growth_limit,
@@ -616,6 +657,7 @@ impl MirInliner {
                 match instr {
                     Instr::StoreIndex1D { .. }
                     | Instr::StoreIndex2D { .. }
+                    | Instr::StoreIndex3D { .. }
                     | Instr::Eval { .. } => return None,
                     _ => {}
                 }
@@ -804,6 +846,100 @@ impl MirInliner {
                         map.insert(vid, new_id);
                         Some(new_id)
                     }
+                    ValueKind::Index3D { base, i, j, k } => {
+                        let b = clone_rec(*base, caller, callee, map, args)?;
+                        let iv = clone_rec(*i, caller, callee, map, args)?;
+                        let jv = clone_rec(*j, caller, callee, map, args)?;
+                        let kv = clone_rec(*k, caller, callee, map, args)?;
+                        let new_id = caller.add_value(
+                            ValueKind::Index3D {
+                                base: b,
+                                i: iv,
+                                j: jv,
+                                k: kv,
+                            },
+                            val.span,
+                            val.facts,
+                            None,
+                        );
+                        map.insert(vid, new_id);
+                        Some(new_id)
+                    }
+                    ValueKind::RecordLit { fields } => {
+                        let mut new_fields = Vec::with_capacity(fields.len());
+                        for (name, field_val) in fields {
+                            let mapped = clone_rec(*field_val, caller, callee, map, args)?;
+                            new_fields.push((name.clone(), mapped));
+                        }
+                        let new_id = caller.add_value(
+                            ValueKind::RecordLit { fields: new_fields },
+                            val.span,
+                            val.facts,
+                            None,
+                        );
+                        map.insert(vid, new_id);
+                        Some(new_id)
+                    }
+                    ValueKind::FieldGet { base, field } => {
+                        let b = clone_rec(*base, caller, callee, map, args)?;
+                        let new_id = caller.add_value(
+                            ValueKind::FieldGet {
+                                base: b,
+                                field: field.clone(),
+                            },
+                            val.span,
+                            val.facts,
+                            None,
+                        );
+                        map.insert(vid, new_id);
+                        Some(new_id)
+                    }
+                    ValueKind::FieldSet { base, field, value } => {
+                        let b = clone_rec(*base, caller, callee, map, args)?;
+                        let v = clone_rec(*value, caller, callee, map, args)?;
+                        let new_id = caller.add_value(
+                            ValueKind::FieldSet {
+                                base: b,
+                                field: field.clone(),
+                                value: v,
+                            },
+                            val.span,
+                            val.facts,
+                            None,
+                        );
+                        map.insert(vid, new_id);
+                        Some(new_id)
+                    }
+                    ValueKind::Intrinsic {
+                        op,
+                        args: intrinsic_args,
+                    } => {
+                        let mut new_args = Vec::with_capacity(intrinsic_args.len());
+                        for arg in intrinsic_args {
+                            new_args.push(clone_rec(*arg, caller, callee, map, args)?);
+                        }
+                        let new_id = caller.add_value(
+                            ValueKind::Intrinsic {
+                                op: *op,
+                                args: new_args,
+                            },
+                            val.span,
+                            val.facts,
+                            None,
+                        );
+                        map.insert(vid, new_id);
+                        Some(new_id)
+                    }
+                    ValueKind::RSymbol { name } => {
+                        let new_id = caller.add_value(
+                            ValueKind::RSymbol { name: name.clone() },
+                            val.span,
+                            val.facts,
+                            None,
+                        );
+                        map.insert(vid, new_id);
+                        Some(new_id)
+                    }
                     _ => None,
                 }
             }
@@ -839,6 +975,13 @@ impl MirInliner {
                     }
                 }
             }
+            ValueKind::Intrinsic { args, .. } => {
+                for a in args {
+                    if let Some(&n) = map.v.get(a) {
+                        *a = n;
+                    }
+                }
+            }
             ValueKind::Phi { args } => {
                 for (v, b) in args {
                     if let Some(&n) = map.v.get(v) {
@@ -868,6 +1011,20 @@ impl MirInliner {
                     *c = n;
                 }
             }
+            ValueKind::Index3D { base, i, j, k } => {
+                if let Some(&n) = map.v.get(base) {
+                    *base = n;
+                }
+                if let Some(&n) = map.v.get(i) {
+                    *i = n;
+                }
+                if let Some(&n) = map.v.get(j) {
+                    *j = n;
+                }
+                if let Some(&n) = map.v.get(k) {
+                    *k = n;
+                }
+            }
             ValueKind::Len { base } | ValueKind::Indices { base } => {
                 if let Some(&n) = map.v.get(base) {
                     *base = n;
@@ -879,6 +1036,26 @@ impl MirInliner {
                 }
                 if let Some(&n) = map.v.get(end) {
                     *end = n;
+                }
+            }
+            ValueKind::RecordLit { fields } => {
+                for (_, value) in fields {
+                    if let Some(&n) = map.v.get(value) {
+                        *value = n;
+                    }
+                }
+            }
+            ValueKind::FieldGet { base, .. } => {
+                if let Some(&n) = map.v.get(base) {
+                    *base = n;
+                }
+            }
+            ValueKind::FieldSet { base, value, .. } => {
+                if let Some(&n) = map.v.get(base) {
+                    *base = n;
+                }
+                if let Some(&n) = map.v.get(value) {
+                    *value = n;
                 }
             }
             ValueKind::Load { var } => {
@@ -1006,6 +1183,13 @@ impl MirInliner {
                         }
                     }
                 }
+                ValueKind::Intrinsic { args, .. } => {
+                    for a in args {
+                        if *a == old {
+                            *a = new;
+                        }
+                    }
+                }
                 ValueKind::Phi { args } => {
                     for (v, _) in args {
                         if *v == old {
@@ -1032,6 +1216,20 @@ impl MirInliner {
                         *c = new;
                     }
                 }
+                ValueKind::Index3D { base, i, j, k } => {
+                    if *base == old {
+                        *base = new;
+                    }
+                    if *i == old {
+                        *i = new;
+                    }
+                    if *j == old {
+                        *j = new;
+                    }
+                    if *k == old {
+                        *k = new;
+                    }
+                }
                 ValueKind::Len { base } | ValueKind::Indices { base } => {
                     if *base == old {
                         *base = new;
@@ -1043,6 +1241,26 @@ impl MirInliner {
                     }
                     if *end == old {
                         *end = new;
+                    }
+                }
+                ValueKind::RecordLit { fields } => {
+                    for (_, value) in fields {
+                        if *value == old {
+                            *value = new;
+                        }
+                    }
+                }
+                ValueKind::FieldGet { base, .. } => {
+                    if *base == old {
+                        *base = new;
+                    }
+                }
+                ValueKind::FieldSet { base, value, .. } => {
+                    if *base == old {
+                        *base = new;
+                    }
+                    if *value == old {
+                        *value = new;
                     }
                 }
                 _ => {}
@@ -1127,6 +1345,7 @@ impl MirInliner {
     }
 }
 
+#[derive(Clone, Copy)]
 struct InlinePolicy {
     max_blocks: usize,
     max_instrs: usize,
@@ -1136,6 +1355,7 @@ struct InlinePolicy {
     max_total_instrs: usize,
     max_unit_growth_pct: usize,
     max_fn_growth_pct: usize,
+    min_growth_abs: usize,
     allow_loops: bool,
 }
 
@@ -1146,13 +1366,16 @@ struct InlineGrowthBudget {
 }
 
 impl InlineGrowthBudget {
-    fn growth_cap(base: usize, pct: usize) -> usize {
+    fn growth_cap(base: usize, pct: usize, min_bonus: usize) -> usize {
+        if pct == 0 {
+            return base;
+        }
         let capped_pct = pct.min(1000);
         let bonus = base
             .saturating_mul(capped_pct)
             .saturating_add(99)
             .saturating_div(100);
-        base.saturating_add(bonus).max(base)
+        base.saturating_add(bonus.max(min_bonus)).max(base)
     }
 
     fn new(all_fns: &FxHashMap<String, FnIR>, policy: &InlinePolicy) -> Self {
@@ -1161,10 +1384,11 @@ impl InlineGrowthBudget {
         for (name, fn_ir) in all_fns {
             let ir = MirInliner::fn_ir_size(fn_ir);
             total_ir = total_ir.saturating_add(ir);
-            let limit = Self::growth_cap(ir, policy.max_fn_growth_pct);
+            let limit = Self::growth_cap(ir, policy.max_fn_growth_pct, policy.min_growth_abs);
             fn_limits.insert(name.clone(), limit);
         }
-        let max_total_ir = Self::growth_cap(total_ir, policy.max_unit_growth_pct);
+        let max_total_ir =
+            Self::growth_cap(total_ir, policy.max_unit_growth_pct, policy.min_growth_abs);
         Self {
             total_ir,
             max_total_ir,
@@ -1235,9 +1459,9 @@ mod tests {
 
     #[test]
     fn inline_growth_cap_is_saturating() {
-        let cap = InlineGrowthBudget::growth_cap(100, 25);
+        let cap = InlineGrowthBudget::growth_cap(100, 25, 0);
         assert!(cap >= 125);
-        let huge = InlineGrowthBudget::growth_cap(usize::MAX - 16, 1000);
+        let huge = InlineGrowthBudget::growth_cap(usize::MAX - 16, 1000, 0);
         assert!(huge >= usize::MAX - 16);
     }
 
@@ -1254,6 +1478,7 @@ mod tests {
             max_total_instrs: 900,
             max_unit_growth_pct: 0,
             max_fn_growth_pct: 0,
+            min_growth_abs: 0,
             allow_loops: false,
         };
         let budget = InlineGrowthBudget::new(&all, &policy);
@@ -1261,5 +1486,593 @@ mod tests {
         let caller_ir = MirInliner::fn_ir_size(caller);
         let caller_limit = budget.caller_limit("caller");
         assert!(!budget.can_inline(caller_ir, caller_limit, 1));
+    }
+
+    #[test]
+    fn inline_value_calls_rejects_store_index3d_side_effect_helpers() {
+        let mut callee = FnIR::new("helper3d".to_string(), vec!["arr".to_string()]);
+        let centry = callee.add_block();
+        callee.entry = centry;
+        callee.body_head = centry;
+        let arr = callee.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arr".to_string()),
+        );
+        let one = callee.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let zero = callee.add_value(
+            ValueKind::Const(Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        callee.blocks[centry].instrs.push(Instr::StoreIndex3D {
+            base: arr,
+            i: one,
+            j: one,
+            k: one,
+            val: zero,
+            span: Span::default(),
+        });
+        callee.blocks[centry].term = Terminator::Return(Some(zero));
+
+        let mut caller = FnIR::new("caller".to_string(), vec!["arr".to_string()]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let carg = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arr".to_string()),
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "helper3d".to_string(),
+                args: vec![carg],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(call));
+
+        let mut all = FxHashMap::default();
+        all.insert("helper3d".to_string(), callee);
+        all.insert("caller".to_string(), caller);
+
+        let changed = MirInliner::new().optimize(&mut all);
+        assert!(!changed, "StoreIndex3D helpers must not inline as pure expressions");
+        let caller = all.get("caller").expect("caller should remain present");
+        assert!(matches!(
+            caller.blocks[entry].term,
+            Terminator::Return(Some(v)) if matches!(caller.values[v].kind, ValueKind::Call { .. })
+        ));
+    }
+
+    #[test]
+    fn inline_rejects_helpers_with_nested_calls() {
+        let mut callee = FnIR::new("call_wrapper".to_string(), vec!["x".to_string()]);
+        let centry = callee.add_block();
+        callee.entry = centry;
+        callee.body_head = centry;
+        let x = callee.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let nested = callee.add_value(
+            ValueKind::Call {
+                callee: "print".to_string(),
+                args: vec![x],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        callee.blocks[centry].instrs.push(Instr::Eval {
+            val: nested,
+            span: Span::default(),
+        });
+        callee.blocks[centry].term = Terminator::Return(Some(x));
+
+        let mut caller = FnIR::new("caller".to_string(), vec!["arg".to_string()]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let arg = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arg".to_string()),
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "call_wrapper".to_string(),
+                args: vec![arg],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].instrs.push(Instr::Assign {
+            dst: "out".to_string(),
+            src: call,
+            span: Span::default(),
+        });
+        caller.blocks[entry].term = Terminator::Return(Some(call));
+
+        let mut all = FxHashMap::default();
+        all.insert("call_wrapper".to_string(), callee);
+        all.insert("caller".to_string(), caller);
+
+        let changed = MirInliner::new().optimize(&mut all);
+        assert!(
+            !changed,
+            "helpers with nested calls should not be chosen for full-program inlining"
+        );
+        let caller = all.get("caller").expect("caller should remain present");
+        let Instr::Assign { src, .. } = &caller.blocks[entry].instrs[0] else {
+            panic!("expected original call assignment to remain");
+        };
+        assert!(
+            matches!(caller.values[*src].kind, ValueKind::Call { .. }),
+            "nested-call helper must remain as a call"
+        );
+    }
+
+    #[test]
+    fn perform_inline_remaps_record_field_value_ids() {
+        let mut callee = FnIR::new("field_helper".to_string(), vec!["x".to_string()]);
+        let centry = callee.add_block();
+        callee.entry = centry;
+        callee.body_head = centry;
+        let param_x = callee.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let rec = callee.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("v".to_string(), param_x)],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let ret = callee.add_value(
+            ValueKind::FieldGet {
+                base: rec,
+                field: "v".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        callee.blocks[centry].instrs.push(Instr::Assign {
+            dst: "out".to_string(),
+            src: ret,
+            span: Span::default(),
+        });
+        callee.blocks[centry].instrs.push(Instr::Eval {
+            val: ret,
+            span: Span::default(),
+        });
+        callee.blocks[centry].term = Terminator::Return(Some(ret));
+
+        let mut caller = FnIR::new("caller".to_string(), vec!["arg".to_string()]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let c1 = caller.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let arg = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arg".to_string()),
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "field_helper".to_string(),
+                args: vec![arg],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let sum = caller.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: c1,
+                rhs: call,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].instrs.push(Instr::Assign {
+            dst: "y".to_string(),
+            src: call,
+            span: Span::default(),
+        });
+        caller.blocks[entry].term = Terminator::Return(Some(sum));
+
+        let inliner = MirInliner::new();
+        inliner.perform_inline(
+            &mut caller,
+            entry,
+            0,
+            &[arg],
+            call,
+            Some("y".to_string()),
+            &callee,
+            Span::default(),
+        );
+
+        let ret_id = caller
+            .blocks
+            .iter()
+            .find_map(|blk| match blk.term {
+                Terminator::Return(Some(v)) => Some(v),
+                _ => None,
+            })
+            .expect("expected return after inline");
+        let ValueKind::Binary { rhs, .. } = caller.values[ret_id].kind else {
+            panic!("expected return sum to stay binary");
+        };
+        let ValueKind::FieldGet { base, .. } = caller.values[rhs].kind else {
+            panic!("expected inlined field get");
+        };
+        let ValueKind::RecordLit { ref fields } = caller.values[base].kind else {
+            panic!("expected inlined record literal");
+        };
+        assert_eq!(fields[0].1, arg, "record field should remap to caller arg, not stale callee id");
+    }
+
+    #[test]
+    fn inline_value_calls_supports_record_field_helpers() {
+        let mut callee = FnIR::new("field_expr_helper".to_string(), vec!["x".to_string()]);
+        let centry = callee.add_block();
+        callee.entry = centry;
+        callee.body_head = centry;
+        let param_x = callee.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let rec = callee.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("v".to_string(), param_x)],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let ret = callee.add_value(
+            ValueKind::FieldGet {
+                base: rec,
+                field: "v".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        callee.blocks[centry].term = Terminator::Return(Some(ret));
+
+        let mut caller = FnIR::new("caller".to_string(), vec!["arg".to_string()]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let arg = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arg".to_string()),
+        );
+        let one = caller.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "field_expr_helper".to_string(),
+                args: vec![arg],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let sum = caller.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: call,
+                rhs: one,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(sum));
+
+        let inliner = MirInliner::new();
+        let ret = inliner
+            .can_inline_expr(&callee)
+            .expect("pure field helper should be expression-inlineable");
+        let replacement = inliner
+            .inline_call_value(&mut caller, call, &callee, ret, &[arg])
+            .expect("field helper should clone into caller value graph");
+        inliner.replace_uses(&mut caller, call, replacement);
+
+        let ret_id = match caller.blocks[entry].term {
+            Terminator::Return(Some(v)) => v,
+            _ => panic!("expected return"),
+        };
+        let ValueKind::Binary { lhs, .. } = caller.values[ret_id].kind else {
+            panic!("expected return sum");
+        };
+        let ValueKind::FieldGet { base, .. } = caller.values[lhs].kind else {
+            panic!("expected inlined field get");
+        };
+        let ValueKind::RecordLit { ref fields } = caller.values[base].kind else {
+            panic!("expected inlined record literal");
+        };
+        assert_eq!(fields[0].1, arg, "inlined field helper should remap record payload to caller arg");
+    }
+
+    #[test]
+    fn inline_value_calls_supports_intrinsic_helpers() {
+        let mut callee = FnIR::new("intrinsic_expr_helper".to_string(), vec!["x".to_string()]);
+        let centry = callee.add_block();
+        callee.entry = centry;
+        callee.body_head = centry;
+        let param_x = callee.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let ret = callee.add_value(
+            ValueKind::Intrinsic {
+                op: IntrinsicOp::VecAbsF64,
+                args: vec![param_x],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        callee.blocks[centry].term = Terminator::Return(Some(ret));
+
+        let mut caller = FnIR::new("caller".to_string(), vec!["arg".to_string()]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let arg = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arg".to_string()),
+        );
+        let one = caller.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "intrinsic_expr_helper".to_string(),
+                args: vec![arg],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let sum = caller.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: call,
+                rhs: one,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(sum));
+
+        let inliner = MirInliner::new();
+        let ret = inliner
+            .can_inline_expr(&callee)
+            .expect("pure intrinsic helper should be expression-inlineable");
+        let replacement = inliner
+            .inline_call_value(&mut caller, call, &callee, ret, &[arg])
+            .expect("intrinsic helper should clone into caller value graph");
+        inliner.replace_uses(&mut caller, call, replacement);
+
+        let ret_id = match caller.blocks[entry].term {
+            Terminator::Return(Some(v)) => v,
+            _ => panic!("expected return"),
+        };
+        let ValueKind::Binary { lhs, .. } = caller.values[ret_id].kind else {
+            panic!("expected return sum");
+        };
+        let ValueKind::Intrinsic { ref args, .. } = caller.values[lhs].kind else {
+            panic!("expected inlined intrinsic");
+        };
+        assert_eq!(args.as_slice(), &[arg], "inlined intrinsic helper should remap args to caller");
+    }
+
+    #[test]
+    fn inline_value_calls_supports_fieldset_helpers() {
+        let mut callee = FnIR::new("fieldset_expr_helper".to_string(), vec!["x".to_string()]);
+        let centry = callee.add_block();
+        callee.entry = centry;
+        callee.body_head = centry;
+        let param_x = callee.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let zero = callee.add_value(
+            ValueKind::Const(Lit::Int(0)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let ret = callee.add_value(
+            ValueKind::FieldSet {
+                base: param_x,
+                field: "v".to_string(),
+                value: zero,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        callee.blocks[centry].term = Terminator::Return(Some(ret));
+
+        let mut caller = FnIR::new("caller".to_string(), vec!["arg".to_string()]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let arg = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arg".to_string()),
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "fieldset_expr_helper".to_string(),
+                args: vec![arg],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(call));
+
+        let inliner = MirInliner::new();
+        let ret = inliner
+            .can_inline_expr(&callee)
+            .expect("pure fieldset helper should be expression-inlineable");
+        let replacement = inliner
+            .inline_call_value(&mut caller, call, &callee, ret, &[arg])
+            .expect("fieldset helper should clone into caller value graph");
+        inliner.replace_uses(&mut caller, call, replacement);
+
+        let ret_id = match caller.blocks[entry].term {
+            Terminator::Return(Some(v)) => v,
+            _ => panic!("expected return"),
+        };
+        let ValueKind::FieldSet {
+            base,
+            ref field,
+            value,
+        } = caller.values[ret_id].kind
+        else {
+            panic!("expected inlined fieldset");
+        };
+        assert_eq!(base, arg, "fieldset base should remap to caller arg");
+        assert_eq!(field, "v");
+        assert!(matches!(caller.values[value].kind, ValueKind::Const(Lit::Int(0))));
+    }
+
+    #[test]
+    fn inline_value_calls_supports_index3d_helpers() {
+        let mut callee = FnIR::new("index3d_expr_helper".to_string(), vec!["arr".to_string()]);
+        let centry = callee.add_block();
+        callee.entry = centry;
+        callee.body_head = centry;
+        let arr = callee.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arr".to_string()),
+        );
+        let one = callee.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let ret = callee.add_value(
+            ValueKind::Index3D {
+                base: arr,
+                i: one,
+                j: one,
+                k: one,
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        callee.blocks[centry].term = Terminator::Return(Some(ret));
+
+        let mut caller = FnIR::new("caller".to_string(), vec!["arr".to_string()]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let arg = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("arr".to_string()),
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "index3d_expr_helper".to_string(),
+                args: vec![arg],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(call));
+
+        let inliner = MirInliner::new();
+        let ret = inliner
+            .can_inline_expr(&callee)
+            .expect("pure index3d helper should be expression-inlineable");
+        let replacement = inliner
+            .inline_call_value(&mut caller, call, &callee, ret, &[arg])
+            .expect("index3d helper should clone into caller value graph");
+        inliner.replace_uses(&mut caller, call, replacement);
+
+        let ret_id = match caller.blocks[entry].term {
+            Terminator::Return(Some(v)) => v,
+            _ => panic!("expected return"),
+        };
+        let ValueKind::Index3D { base, i, j, k } = caller.values[ret_id].kind else {
+            panic!("expected inlined index3d");
+        };
+        assert_eq!(base, arg, "index3d base should remap to caller arg");
+        assert_eq!(i, j);
+        assert_eq!(j, k);
+        assert!(matches!(caller.values[i].kind, ValueKind::Const(Lit::Int(1))));
     }
 }

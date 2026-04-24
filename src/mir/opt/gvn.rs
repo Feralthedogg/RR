@@ -245,18 +245,24 @@ fn value_reads_mutated_alias(
     }
 }
 
+// Proof correspondence:
+// `proof/lean/RRProofs/GvnSubset.lean` and the Coq `GvnSubset.v` companion
+// model the reduced expression-level slice used here: commutative `add`
+// canonicalization, intrinsic wrappers, and `fieldset -> field` reads all
+// normalize through the same structural walk before CSE lookup.
 fn canonicalize_kind(mut kind: ValueKind, replacements: &HashMap<ValueId, ValueId>) -> ValueKind {
     // 1. Map inputs to their canonical IDs if already replaced
     match &mut kind {
-        ValueKind::Binary { lhs, rhs, .. } => {
+        ValueKind::Binary { op, lhs, rhs } => {
             if let Some(&n) = replacements.get(lhs) {
                 *lhs = n;
             }
             if let Some(&n) = replacements.get(rhs) {
                 *rhs = n;
             }
-            // Sort if commutative
-            // Add/Mul/Eq/Ne/...
+            if is_commutative_binop(*op) && *lhs > *rhs {
+                std::mem::swap(lhs, rhs);
+            }
         }
         ValueKind::Unary { rhs, .. } => {
             if let Some(&n) = replacements.get(rhs) {
@@ -268,6 +274,33 @@ fn canonicalize_kind(mut kind: ValueKind, replacements: &HashMap<ValueId, ValueI
                 if let Some(&n) = replacements.get(a) {
                     *a = n;
                 }
+            }
+        }
+        ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => {
+            for a in args {
+                if let Some(&n) = replacements.get(a) {
+                    *a = n;
+                }
+            }
+        }
+        ValueKind::RecordLit { fields } => {
+            for (_, value) in fields {
+                if let Some(&n) = replacements.get(value) {
+                    *value = n;
+                }
+            }
+        }
+        ValueKind::FieldGet { base, .. } => {
+            if let Some(&n) = replacements.get(base) {
+                *base = n;
+            }
+        }
+        ValueKind::FieldSet { base, value, .. } => {
+            if let Some(&n) = replacements.get(base) {
+                *base = n;
+            }
+            if let Some(&n) = replacements.get(value) {
+                *value = n;
             }
         }
         ValueKind::Index1D { base, idx, .. } => {
@@ -310,6 +343,13 @@ fn canonicalize_kind(mut kind: ValueKind, replacements: &HashMap<ValueId, ValueI
         _ => {}
     }
     kind
+}
+
+fn is_commutative_binop(op: BinOp) -> bool {
+    matches!(
+        op,
+        BinOp::Add | BinOp::Mul | BinOp::Eq | BinOp::Ne | BinOp::And | BinOp::Or
+    )
 }
 
 fn apply_replacements(fn_ir: &mut FnIR, replacements: &HashMap<ValueId, ValueId>) {
@@ -419,6 +459,33 @@ fn apply_replacements(fn_ir: &mut FnIR, replacements: &HashMap<ValueId, ValueId>
                     }
                 }
             }
+            ValueKind::Intrinsic { args, .. } => {
+                for a in args {
+                    if let Some(&n) = replacements.get(a) {
+                        *a = n;
+                    }
+                }
+            }
+            ValueKind::RecordLit { fields } => {
+                for (_, value) in fields {
+                    if let Some(&n) = replacements.get(value) {
+                        *value = n;
+                    }
+                }
+            }
+            ValueKind::FieldGet { base, .. } => {
+                if let Some(&n) = replacements.get(base) {
+                    *base = n;
+                }
+            }
+            ValueKind::FieldSet { base, value, .. } => {
+                if let Some(&n) = replacements.get(base) {
+                    *base = n;
+                }
+                if let Some(&n) = replacements.get(value) {
+                    *value = n;
+                }
+            }
             ValueKind::Index1D { base, idx, .. } => {
                 if let Some(&n) = replacements.get(base) {
                     *base = n;
@@ -450,6 +517,19 @@ fn apply_replacements(fn_ir: &mut FnIR, replacements: &HashMap<ValueId, ValueId>
                 }
                 if let Some(&n) = replacements.get(k) {
                     *k = n;
+                }
+            }
+            ValueKind::Len { base } | ValueKind::Indices { base } => {
+                if let Some(&n) = replacements.get(base) {
+                    *base = n;
+                }
+            }
+            ValueKind::Range { start, end } => {
+                if let Some(&n) = replacements.get(start) {
+                    *start = n;
+                }
+                if let Some(&n) = replacements.get(end) {
+                    *end = n;
                 }
             }
             _ => {}
@@ -634,10 +714,27 @@ fn compute_def_blocks(fn_ir: &FnIR, reachable: &HashSet<BlockId>) -> Vec<Option<
                     worklist.push_back((*a, bid));
                 }
             }
+            ValueKind::Intrinsic { args, .. } => {
+                for a in args {
+                    worklist.push_back((*a, bid));
+                }
+            }
             ValueKind::Phi { args } => {
                 for (a, _) in args {
                     worklist.push_back((*a, bid));
                 }
+            }
+            ValueKind::RecordLit { fields } => {
+                for (_, value) in fields {
+                    worklist.push_back((*value, bid));
+                }
+            }
+            ValueKind::FieldGet { base, .. } => {
+                worklist.push_back((*base, bid));
+            }
+            ValueKind::FieldSet { base, value, .. } => {
+                worklist.push_back((*base, bid));
+                worklist.push_back((*value, bid));
             }
             ValueKind::Index1D { base, idx, .. } => {
                 worklist.push_back((*base, bid));
@@ -812,6 +909,262 @@ mod tests {
         match fn_ir.values[sum].kind {
             ValueKind::Binary { lhs, rhs, .. } => {
                 assert_eq!(lhs, rhs, "expected duplicated Index2D read to be CSE'd")
+            }
+            _ => panic!("sum value shape changed unexpectedly"),
+        }
+    }
+
+    #[test]
+    fn gvn_propagates_record_literal_cse_into_field_gets() {
+        let mut fn_ir = one_block_fn("gvn_record_field");
+        let one = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let record1 = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let record2 = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field1 = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: record1,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let field2 = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: record2,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let sum = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: field1,
+                rhs: field2,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(sum));
+
+        let changed = optimize(&mut fn_ir);
+        assert!(changed, "expected record/field CSE to fire");
+        match fn_ir.values[sum].kind {
+            ValueKind::Binary { lhs, rhs, .. } => {
+                assert_eq!(lhs, rhs, "expected duplicate field gets to be CSE'd");
+            }
+            _ => panic!("sum value shape changed unexpectedly"),
+        }
+    }
+
+    #[test]
+    fn gvn_canonicalizes_commutative_binary_operands() {
+        let mut fn_ir = one_block_fn("gvn_commutative");
+        let two = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let five = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(5)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let add1 = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: two,
+                rhs: five,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let add2 = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: five,
+                rhs: two,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let sum = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: add1,
+                rhs: add2,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(sum));
+
+        let changed = optimize(&mut fn_ir);
+        assert!(changed, "expected commutative binary CSE to fire");
+        match fn_ir.values[sum].kind {
+            ValueKind::Binary { lhs, rhs, .. } => {
+                assert_eq!(lhs, rhs, "expected swapped commutative operands to canonicalize");
+            }
+            _ => panic!("sum value shape changed unexpectedly"),
+        }
+    }
+
+    #[test]
+    fn gvn_cse_duplicate_intrinsics() {
+        let mut fn_ir = one_block_fn("gvn_intrinsic");
+        let x = fn_ir.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let intr1 = fn_ir.add_value(
+            ValueKind::Intrinsic {
+                op: IntrinsicOp::VecAbsF64,
+                args: vec![x],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let intr2 = fn_ir.add_value(
+            ValueKind::Intrinsic {
+                op: IntrinsicOp::VecAbsF64,
+                args: vec![x],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let sum = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: intr1,
+                rhs: intr2,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(sum));
+
+        let changed = optimize(&mut fn_ir);
+        assert!(changed, "expected intrinsic CSE to fire");
+        match fn_ir.values[sum].kind {
+            ValueKind::Binary { lhs, rhs, .. } => {
+                assert_eq!(lhs, rhs, "expected duplicated intrinsic values to be CSE'd");
+            }
+            _ => panic!("sum value shape changed unexpectedly"),
+        }
+    }
+
+    #[test]
+    fn gvn_propagates_fieldset_cse_into_field_gets() {
+        let mut fn_ir = one_block_fn("gvn_fieldset_field");
+        let one = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let two = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let rec = fn_ir.add_value(
+            ValueKind::RecordLit {
+                fields: vec![("x".to_string(), one)],
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let set1 = fn_ir.add_value(
+            ValueKind::FieldSet {
+                base: rec,
+                field: "x".to_string(),
+                value: two,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let set2 = fn_ir.add_value(
+            ValueKind::FieldSet {
+                base: rec,
+                field: "x".to_string(),
+                value: two,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let get1 = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: set1,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let get2 = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: set2,
+                field: "x".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let sum = fn_ir.add_value(
+            ValueKind::Binary {
+                op: BinOp::Add,
+                lhs: get1,
+                rhs: get2,
+            },
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(sum));
+
+        let changed = optimize(&mut fn_ir);
+        assert!(changed, "expected fieldset/field CSE to fire");
+        match fn_ir.values[sum].kind {
+            ValueKind::Binary { lhs, rhs, .. } => {
+                assert_eq!(lhs, rhs, "expected duplicate field gets through identical fieldset to be CSE'd");
             }
             _ => panic!("sum value shape changed unexpectedly"),
         }

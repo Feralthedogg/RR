@@ -502,6 +502,25 @@ pub(super) fn classify_cond_reduction_store_branches(
     else_bb: usize,
     iv_phi: ValueId,
 ) -> Result<Option<(ValueId, ValueId, ValueId)>, ProofFallbackReason> {
+    fn block_is_pure_store_1d(fn_ir: &FnIR, bid: usize) -> bool {
+        let mut stores = 0usize;
+        for instr in &fn_ir.blocks[bid].instrs {
+            match instr {
+                Instr::StoreIndex1D { .. } => {
+                    stores += 1;
+                    if stores > 1 {
+                        return false;
+                    }
+                }
+                Instr::Assign { .. }
+                | Instr::Eval { .. }
+                | Instr::StoreIndex2D { .. }
+                | Instr::StoreIndex3D { .. } => return false,
+            }
+        }
+        stores == 1
+    }
+
     let (then_store, else_store) = match (
         classify_store_1d_in_block(fn_ir, then_bb),
         classify_store_1d_in_block(fn_ir, else_bb),
@@ -510,7 +529,9 @@ pub(super) fn classify_cond_reduction_store_branches(
             if !then_store.is_vector
                 && !else_store.is_vector
                 && is_iv_equivalent(fn_ir, then_store.idx, iv_phi)
-                && is_iv_equivalent(fn_ir, else_store.idx, iv_phi) =>
+                && is_iv_equivalent(fn_ir, else_store.idx, iv_phi)
+                && block_is_pure_store_1d(fn_ir, then_bb)
+                && block_is_pure_store_1d(fn_ir, else_bb) =>
         {
             (then_store, else_store)
         }

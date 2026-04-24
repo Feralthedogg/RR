@@ -62,7 +62,17 @@ impl CompilerParallelStage {
     }
 
     const fn enabled_by_default(self) -> bool {
-        matches!(self, Self::MirLowering | Self::Emit)
+        matches!(
+            self,
+            Self::MirLowering
+                | Self::TypeAnalysis
+                | Self::TachyonAlways
+                | Self::TachyonHeavy
+                | Self::TachyonInlineCleanup
+                | Self::TachyonFreshAlias
+                | Self::TachyonDeSsa
+                | Self::Emit
+        )
     }
 
     fn all() -> &'static [Self] {
@@ -183,8 +193,8 @@ impl Default for CompilerParallelConfig {
         Self {
             mode: CompilerParallelMode::Auto,
             threads: 0,
-            min_functions: 8,
-            min_fn_ir: 256,
+            min_functions: 2,
+            min_fn_ir: 128,
             max_jobs: 0,
         }
     }

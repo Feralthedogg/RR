@@ -48,9 +48,11 @@ impl<'a> LoopAnalyzer<'a> {
         for (src, targets) in self.get_cfg_edges() {
             for &dst in &targets {
                 if self.dominates(&doms, dst, src) {
+                    println!("Found back-edge: {} -> {}", src, dst);
                     // Back-edge src -> dst
                     // dst is Header, src is Latch
                     if let Some(loop_info) = self.analyze_natural_loop(dst, src) {
+                        println!("Analyzed loop: {:?}", loop_info);
                         let mut body_key: Vec<BlockId> = loop_info.body.iter().copied().collect();
                         body_key.sort_unstable();
                         let mut exits_key = loop_info.exits.clone();
