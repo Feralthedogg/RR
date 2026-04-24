@@ -74,6 +74,19 @@ required_ci_checks_file = "policy/required_ci_checks.txt"
 perf_delta_threshold_file = "policy/perf_delta_thresholds.txt"
 
 [[subsystems]]
+name = "docs"
+owners = [
+  "@Feralthedogg",
+]
+paths = [
+  "docs/",
+]
+checks = [
+  "docs_generated",
+  "semantic_audit",
+]
+
+[[subsystems]]
 name = "tooling"
 owners = [
   "@Feralthedogg",
@@ -129,7 +142,10 @@ owners = [
 ]
 paths = [
   "src/hir/",
+  "src/mir/lower_hir",
   "src/typeck/",
+  "tests/golden/control_flow_match",
+  "tests/mir_lowering_loop_match.rs",
   "tests/syntax_errors.rs",
   "tests/parse_multi_errors.rs",
   "tests/statement_boundaries.rs",
@@ -168,7 +184,9 @@ paths = [
   "src/mir/opt/",
   "src/mir/semantics.rs",
   "src/mir/semantics/",
+  "src/mir/verify",
   "src/mir/verify.rs",
+  "src/compiler/pipeline/function_props.rs",
   "src/compiler/pipeline/phases/tachyon_runtime.rs",
   "src/compiler/peephole/",
   "tests/cases/optimizer/",
