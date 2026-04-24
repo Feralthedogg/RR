@@ -146,6 +146,7 @@ fn validate_function(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::validate_function_runtime;
     use crate::mir::{Facts, FnIR, Lit, Terminator, ValueKind};
