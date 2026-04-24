@@ -3,6 +3,7 @@ mod common;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -10,6 +11,11 @@ fn repo_root() -> PathBuf {
 
 fn read_repo_file(rel: &str) -> String {
     fs::read_to_string(repo_root().join(rel)).expect("failed to read repository file")
+}
+
+fn contributing_audit_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn fenced_code_block_after_marker(doc: &str, marker: &str) -> Vec<String> {
@@ -59,6 +65,7 @@ fn bad() {
     .expect("failed to write bad file");
 
     let script = root.join("scripts").join("contributing_audit.pl");
+    let _audit_guard = contributing_audit_lock().lock().unwrap();
     let bad_output = Command::new("perl")
         .arg(&script)
         .arg("--scan-only")
@@ -178,6 +185,7 @@ fn contributing_audit_rejects_unstructured_actionable_comments() {
     .expect("failed to write bad comment file");
 
     let script = root.join("scripts").join("contributing_audit.pl");
+    let _audit_guard = contributing_audit_lock().lock().unwrap();
     let output = Command::new("perl")
         .arg(&script)
         .arg("--scan-only")
@@ -234,6 +242,7 @@ fn contributing_audit_validates_contributing_md_structure() {
     .expect("failed to write bad CONTRIBUTING.md");
 
     let script = root.join("scripts").join("contributing_audit.pl");
+    let _audit_guard = contributing_audit_lock().lock().unwrap();
     let output = Command::new("perl")
         .arg(&script)
         .arg("--scan-only")
@@ -256,6 +265,7 @@ fn contributing_audit_validates_contributing_md_structure() {
 fn contributing_audit_all_scope_includes_fuzz_and_native_paths() {
     let root = repo_root();
     let script = root.join("scripts").join("contributing_audit.pl");
+    let _audit_guard = contributing_audit_lock().lock().unwrap();
 
     let expected_output = Command::new("bash")
         .arg("-lc")
@@ -350,6 +360,7 @@ fn risky(all_fns: HashMap<String, usize>) {
     .expect("failed to write risky file");
 
     let script = root.join("scripts").join("contributing_audit.pl");
+    let _audit_guard = contributing_audit_lock().lock().unwrap();
     let output = Command::new("perl")
         .arg(&script)
         .arg("--scan-only")
@@ -551,6 +562,7 @@ fn contributing_policy_render_is_in_sync() {
 fn contributing_audit_keeps_docs_cli_out_of_cache_logic_scope() {
     let root = repo_root();
     let script = root.join("scripts").join("contributing_audit.pl");
+    let _audit_guard = contributing_audit_lock().lock().unwrap();
     let output = Command::new("perl")
         .arg(&script)
         .arg("--scan-only")
@@ -573,6 +585,7 @@ fn contributing_audit_keeps_docs_cli_out_of_cache_logic_scope() {
 fn contributing_audit_policy_sync_warning_respects_generated_check() {
     let root = repo_root();
     let script = root.join("scripts").join("contributing_audit.pl");
+    let _audit_guard = contributing_audit_lock().lock().unwrap();
     let output = Command::new("perl")
         .arg(&script)
         .arg("--scan-only")
