@@ -1030,7 +1030,10 @@ mod tests {
         assert!(changed, "expected commutative binary CSE to fire");
         match fn_ir.values[sum].kind {
             ValueKind::Binary { lhs, rhs, .. } => {
-                assert_eq!(lhs, rhs, "expected swapped commutative operands to canonicalize");
+                assert_eq!(
+                    lhs, rhs,
+                    "expected swapped commutative operands to canonicalize"
+                );
             }
             _ => panic!("sum value shape changed unexpectedly"),
         }
@@ -1164,7 +1167,10 @@ mod tests {
         assert!(changed, "expected fieldset/field CSE to fire");
         match fn_ir.values[sum].kind {
             ValueKind::Binary { lhs, rhs, .. } => {
-                assert_eq!(lhs, rhs, "expected duplicate field gets through identical fieldset to be CSE'd");
+                assert_eq!(
+                    lhs, rhs,
+                    "expected duplicate field gets through identical fieldset to be CSE'd"
+                );
             }
             _ => panic!("sum value shape changed unexpectedly"),
         }

@@ -2,8 +2,9 @@ mod common;
 
 use RR::compiler::{
     CompileMode, CompileOutputOptions, CompileProfile, CompilerParallelConfig,
-    CompilerParallelMode, OptLevel, compile_with_configs_with_options_and_compiler_parallel_and_profile,
-    default_parallel_config, default_type_config,
+    CompilerParallelMode, OptLevel,
+    compile_with_configs_with_options_and_compiler_parallel_and_profile, default_parallel_config,
+    default_type_config,
 };
 use common::unique_dir;
 use std::path::PathBuf;

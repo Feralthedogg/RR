@@ -239,7 +239,11 @@ fn canonical_value_fingerprint_before_instr(
                 let rhs_fp = rec(fn_ir, pred, upto, *rhs, seen)?;
                 Some(format!("un:{op:?}({rhs_fp})"))
             }
-            ValueKind::Call { callee, args, names } => {
+            ValueKind::Call {
+                callee,
+                args,
+                names,
+            } => {
                 let mut fps = Vec::with_capacity(args.len());
                 for arg in args {
                     fps.push(rec(fn_ir, pred, upto, *arg, seen)?);

@@ -142,7 +142,10 @@ fn main() {
 main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "seq_len_negative_dataflow.rr");
-    assert!(!ok, "compile must fail for dataflow-proven negative seq_len");
+    assert!(
+        !ok,
+        "compile must fail for dataflow-proven negative seq_len"
+    );
     assert!(
         stdout.contains("** (RR.RuntimeError)"),
         "missing runtime error header:\n{}",
@@ -154,7 +157,9 @@ main()
         stdout
     );
     assert!(
-        stdout.contains("fix: clamp the length to 0 or prove it non-negative before calling seq_len()"),
+        stdout.contains(
+            "fix: clamp the length to 0 or prove it non-negative before calling seq_len()"
+        ),
         "missing seq_len fix hint:\n{}",
         stdout
     );
@@ -229,7 +234,10 @@ fn main() {
 main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "negative_index_nested_record_field.rr");
-    assert!(!ok, "compile must fail for nested record-field negative index");
+    assert!(
+        !ok,
+        "compile must fail for nested record-field negative index"
+    );
     assert!(
         stdout.contains("** (RR.RuntimeError)"),
         "missing runtime error header:\n{}",
@@ -257,7 +265,10 @@ fn main() {
 main()
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "matrix_nested_record_field_oob.rr");
-    assert!(!ok, "compile must fail for nested record-field matrix oob read");
+    assert!(
+        !ok,
+        "compile must fail for nested record-field matrix oob read"
+    );
     assert!(
         stdout.contains("** (RR.RuntimeError)"),
         "missing runtime error header:\n{}",
@@ -269,7 +280,8 @@ main()
         stdout
     );
     assert!(
-        stdout.contains("fix: clamp or guard the row index against the matrix extent before reading"),
+        stdout
+            .contains("fix: clamp or guard the row index against the matrix extent before reading"),
         "missing matrix row oob fix hint:\n{}",
         stdout
     );
@@ -292,7 +304,10 @@ fn main(flag: bool) {
 main(TRUE)
 "#;
     let (ok, stdout, _stderr) = run_compile(src, "negative_index_branch_record_field.rr");
-    assert!(!ok, "compile must fail for branch-assigned record-field negative index");
+    assert!(
+        !ok,
+        "compile must fail for branch-assigned record-field negative index"
+    );
     assert!(
         stdout.contains("** (RR.RuntimeError)"),
         "missing runtime error header:\n{}",
@@ -340,7 +355,8 @@ main(TRUE)
         stdout
     );
     assert!(
-        stdout.contains("fix: clamp or guard the row index against the matrix extent before reading"),
+        stdout
+            .contains("fix: clamp or guard the row index against the matrix extent before reading"),
         "missing matrix row oob fix hint:\n{}",
         stdout
     );

@@ -1,5 +1,5 @@
-use crate::mir::semantics::call_model::is_namespaced_r_call;
 use crate::mir::opt::loop_analysis::LoopAnalyzer;
+use crate::mir::semantics::call_model::is_namespaced_r_call;
 use crate::mir::*;
 use rustc_hash::FxHashSet;
 use std::fmt;
@@ -158,10 +158,18 @@ impl fmt::Display for VerifyError {
                 write!(f, "Value {} directly references itself", value)
             }
             VerifyError::NonPhiValueCycle { value } => {
-                write!(f, "Non-Phi value {} participates in a cyclic dependency", value)
+                write!(
+                    f,
+                    "Non-Phi value {} participates in a cyclic dependency",
+                    value
+                )
             }
             VerifyError::InvalidBodyHead { block } => {
-                write!(f, "Function body_head {} is not reachable from entry", block)
+                write!(
+                    f,
+                    "Function body_head {} is not reachable from entry",
+                    block
+                )
             }
             VerifyError::InvalidEntryPredecessor { pred } => {
                 write!(f, "Entry block must not have predecessor {}", pred)
@@ -195,7 +203,11 @@ impl fmt::Display for VerifyError {
                 )
             }
             VerifyError::InvalidBodyHeadTerminator { block } => {
-                write!(f, "body_head block {} must not terminate as unreachable", block)
+                write!(
+                    f,
+                    "body_head block {} must not terminate as unreachable",
+                    block
+                )
             }
             VerifyError::InvalidLoopHeaderSplit {
                 header,
@@ -532,12 +544,7 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
             .filter(|pred| {
                 !lp.body.contains(pred)
                     && !is_loop_header_forwarder_pred(
-                        fn_ir,
-                        &preds,
-                        &reachable,
-                        lp.header,
-                        &lp.body,
-                        **pred,
+                        fn_ir, &preds, &reachable, lp.header, &lp.body, **pred,
                     )
             })
             .count();
@@ -570,10 +577,7 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
             continue;
         };
         let inferred_phi_block = infer_phi_owner_block(fn_ir, args);
-        let Some(phi_block) = val
-            .phi_block
-            .or(inferred_phi_block)
-        else {
+        let Some(phi_block) = val.phi_block.or(inferred_phi_block) else {
             if args.is_empty() || !used_values.contains(&vid) {
                 continue;
             }
@@ -616,9 +620,7 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
             .filter(|(_, pred)| reachable.contains(pred))
             .collect();
         let has_dead_only_arms = args.len() != reachable_args.len()
-            || args
-                .iter()
-                .any(|(_, pred)| !expected_preds.contains(pred));
+            || args.iter().any(|(_, pred)| !expected_preds.contains(pred));
         if reachable_expected_preds.len() < 2 && !has_dead_only_arms {
             return Err(VerifyError::InvalidPhiPredecessorAliases {
                 phi_val: vid,
@@ -636,12 +638,9 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
             if !reachable_args.iter().any(|(arg, _)| *arg != vid) {
                 return Err(VerifyError::SelfReferentialValue { value: vid });
             }
-            if reachable_args
-                .iter()
-                .any(|(arg, pred)| {
-                    *arg == vid && (*pred == phi_block || !block_reaches(fn_ir, phi_block, *pred))
-                })
-            {
+            if reachable_args.iter().any(|(arg, pred)| {
+                *arg == vid && (*pred == phi_block || !block_reaches(fn_ir, phi_block, *pred))
+            }) {
                 return Err(VerifyError::SelfReferentialValue { value: vid });
             }
         }
@@ -822,8 +821,7 @@ pub fn verify_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
             if !reachable.contains(pred) {
                 continue;
             }
-            if let Some(value) =
-                first_undefined_load_in_value(fn_ir, *arg, &out_defs[*pred], false)
+            if let Some(value) = first_undefined_load_in_value(fn_ir, *arg, &out_defs[*pred], false)
             {
                 return Err(VerifyError::UseBeforeDef {
                     block: *pred,
@@ -935,7 +933,10 @@ fn fn_is_self_recursive(fn_ir: &FnIR) -> bool {
 
 fn value_has_direct_self_reference(vid: ValueId, kind: &ValueKind) -> bool {
     match kind {
-        ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } | ValueKind::RSymbol { .. } => false,
+        ValueKind::Const(_)
+        | ValueKind::Param { .. }
+        | ValueKind::Load { .. }
+        | ValueKind::RSymbol { .. } => false,
         ValueKind::Len { base }
         | ValueKind::Indices { base }
         | ValueKind::Unary { rhs: base, .. }
@@ -943,16 +944,12 @@ fn value_has_direct_self_reference(vid: ValueId, kind: &ValueKind) -> bool {
         ValueKind::Range { start, end } => *start == vid || *end == vid,
         ValueKind::Binary { lhs, rhs, .. } => *lhs == vid || *rhs == vid,
         ValueKind::Phi { args } => args.iter().any(|(arg, _)| *arg == vid),
-        ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => {
-            args.contains(&vid)
-        }
+        ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args.contains(&vid),
         ValueKind::RecordLit { fields } => fields.iter().any(|(_, value)| *value == vid),
         ValueKind::FieldSet { base, value, .. } => *base == vid || *value == vid,
         ValueKind::Index1D { base, idx, .. } => *base == vid || *idx == vid,
         ValueKind::Index2D { base, r, c } => *base == vid || *r == vid || *c == vid,
-        ValueKind::Index3D { base, i, j, k } => {
-            *base == vid || *i == vid || *j == vid || *k == vid
-        }
+        ValueKind::Index3D { base, i, j, k } => *base == vid || *i == vid || *j == vid || *k == vid,
     }
 }
 
@@ -996,7 +993,8 @@ fn detect_non_phi_value_cycle(fn_ir: &FnIR) -> Option<ValueId> {
         }
         colors[vid] = 1;
         for dep in non_phi_dependencies(&fn_ir.values[vid].kind) {
-            if dep >= fn_ir.values.len() || matches!(fn_ir.values[dep].kind, ValueKind::Phi { .. }) {
+            if dep >= fn_ir.values.len() || matches!(fn_ir.values[dep].kind, ValueKind::Phi { .. })
+            {
                 continue;
             }
             if let Some(cycle) = visit(fn_ir, dep, colors) {
@@ -1027,7 +1025,10 @@ fn non_phi_dependencies(kind: &ValueKind) -> Vec<ValueId> {
     // `VerifyIrConsumerGraphSubset` then lifts those extracted child ids into
     // a reduced seen/fuel graph closer to the recursive traversal below.
     match kind {
-        ValueKind::Const(_) | ValueKind::Param { .. } | ValueKind::Load { .. } | ValueKind::RSymbol { .. } => Vec::new(),
+        ValueKind::Const(_)
+        | ValueKind::Param { .. }
+        | ValueKind::Load { .. }
+        | ValueKind::RSymbol { .. } => Vec::new(),
         ValueKind::Len { base }
         | ValueKind::Indices { base }
         | ValueKind::Unary { rhs: base, .. }
@@ -1215,7 +1216,10 @@ fn compute_must_defined_vars(
             let new_in = if bid == fn_ir.entry {
                 entry_defs.clone()
             } else {
-                let mut reachable_preds = preds[bid].iter().copied().filter(|pred| reachable.contains(pred));
+                let mut reachable_preds = preds[bid]
+                    .iter()
+                    .copied()
+                    .filter(|pred| reachable.contains(pred));
                 match reachable_preds.next() {
                     Some(first_pred) => {
                         let mut acc = out_defs[first_pred].clone();
@@ -1341,14 +1345,22 @@ fn first_undefined_load_in_value(
             ValueKind::Index2D { base, r, c } => rec(fn_ir, *base, defined, follow_phi_args, seen)
                 .or_else(|| rec(fn_ir, *r, defined, follow_phi_args, seen))
                 .or_else(|| rec(fn_ir, *c, defined, follow_phi_args, seen)),
-            ValueKind::Index3D { base, i, j, k } => rec(fn_ir, *base, defined, follow_phi_args, seen)
-                .or_else(|| rec(fn_ir, *i, defined, follow_phi_args, seen))
-                .or_else(|| rec(fn_ir, *j, defined, follow_phi_args, seen))
-                .or_else(|| rec(fn_ir, *k, defined, follow_phi_args, seen)),
+            ValueKind::Index3D { base, i, j, k } => {
+                rec(fn_ir, *base, defined, follow_phi_args, seen)
+                    .or_else(|| rec(fn_ir, *i, defined, follow_phi_args, seen))
+                    .or_else(|| rec(fn_ir, *j, defined, follow_phi_args, seen))
+                    .or_else(|| rec(fn_ir, *k, defined, follow_phi_args, seen))
+            }
         }
     }
 
-    rec(fn_ir, root, defined, follow_phi_args, &mut FxHashSet::default())
+    rec(
+        fn_ir,
+        root,
+        defined,
+        follow_phi_args,
+        &mut FxHashSet::default(),
+    )
 }
 
 fn collect_used_values(fn_ir: &FnIR, reachable: &FxHashSet<BlockId>) -> FxHashSet<ValueId> {
@@ -2275,8 +2287,8 @@ mod tests {
         f.blocks[right].term = Terminator::Goto(merge);
         f.blocks[merge].term = Terminator::Return(Some(phi_b));
 
-        let err = verify_ir(&f)
-            .expect_err("phi operand depending on same-block phi must be rejected");
+        let err =
+            verify_ir(&f).expect_err("phi operand depending on same-block phi must be rejected");
         assert!(matches!(
             err,
             VerifyError::InvalidPhiEdgeValue { phi_val, value }
@@ -2340,8 +2352,8 @@ mod tests {
         f.blocks[right].term = Terminator::Goto(merge);
         f.blocks[merge].term = Terminator::Return(Some(intrinsic));
 
-        let err =
-            verify_emittable_ir(&f).expect_err("reachable phi nested in intrinsic must be rejected");
+        let err = verify_emittable_ir(&f)
+            .expect_err("reachable phi nested in intrinsic must be rejected");
         assert!(matches!(err, VerifyError::ReachablePhi { value } if value == phi));
     }
 
@@ -2362,7 +2374,8 @@ mod tests {
         );
         f.blocks[entry].term = Terminator::Return(Some(record));
 
-        let err = verify_ir(&f).expect_err("record literal with invalid field operand must be rejected");
+        let err =
+            verify_ir(&f).expect_err("record literal with invalid field operand must be rejected");
         assert!(matches!(err, VerifyError::BadValue(999)));
     }
 
@@ -2452,7 +2465,8 @@ mod tests {
         f.blocks[right].term = Terminator::Goto(join);
         f.blocks[join].term = Terminator::Return(Some(load_x));
 
-        let err = verify_ir(&f).expect_err("join load without all-path definition must be rejected");
+        let err =
+            verify_ir(&f).expect_err("join load without all-path definition must be rejected");
         assert!(matches!(
             err,
             VerifyError::UseBeforeDef { block, value }
@@ -2527,8 +2541,7 @@ mod tests {
         f.blocks[body].term = Terminator::Return(Some(self_call));
         f.blocks[other].term = Terminator::Return(None);
 
-        let err =
-            verify_ir(&f).expect_err("body_head must be entered by a direct entry goto");
+        let err = verify_ir(&f).expect_err("body_head must be entered by a direct entry goto");
         assert!(matches!(
             err,
             VerifyError::InvalidBodyHeadEntryEdge { entry: e, body_head: h }
@@ -2538,7 +2551,10 @@ mod tests {
 
     #[test]
     fn verify_ir_rejects_non_param_entry_prologue_when_body_head_is_separate() {
-        let mut f = FnIR::new("entry_prologue_not_param_copy".to_string(), vec!["p".to_string()]);
+        let mut f = FnIR::new(
+            "entry_prologue_not_param_copy".to_string(),
+            vec!["p".to_string()],
+        );
         let entry = f.add_block();
         let body = f.add_block();
         f.entry = entry;
@@ -2569,8 +2585,8 @@ mod tests {
         f.blocks[entry].term = Terminator::Goto(body);
         f.blocks[body].term = Terminator::Return(Some(self_call));
 
-        let err = verify_ir(&f)
-            .expect_err("separate body_head entry prologue must be param-copy-only");
+        let err =
+            verify_ir(&f).expect_err("separate body_head entry prologue must be param-copy-only");
         assert!(matches!(
             err,
             VerifyError::InvalidEntryPrologue { block, value }
@@ -2580,8 +2596,10 @@ mod tests {
 
     #[test]
     fn verify_ir_rejects_entry_prologue_copy_into_non_runtime_param_target() {
-        let mut f =
-            FnIR::new("entry_prologue_wrong_param_target".to_string(), vec!["p".to_string()]);
+        let mut f = FnIR::new(
+            "entry_prologue_wrong_param_target".to_string(),
+            vec!["p".to_string()],
+        );
         let entry = f.add_block();
         let body = f.add_block();
         f.entry = entry;
@@ -2612,8 +2630,9 @@ mod tests {
         f.blocks[entry].term = Terminator::Goto(body);
         f.blocks[body].term = Terminator::Return(Some(self_call));
 
-        let err = verify_ir(&f)
-            .expect_err("separate body_head entry prologue must copy params only into runtime param targets");
+        let err = verify_ir(&f).expect_err(
+            "separate body_head entry prologue must copy params only into runtime param targets",
+        );
         assert!(matches!(
             err,
             VerifyError::InvalidEntryPrologue { block, value }
@@ -2748,7 +2767,10 @@ mod tests {
 
     #[test]
     fn verify_ir_ignores_unused_unreachable_phi_without_owner_block() {
-        let mut f = FnIR::new("unused_unreachable_phi_without_owner".to_string(), Vec::new());
+        let mut f = FnIR::new(
+            "unused_unreachable_phi_without_owner".to_string(),
+            Vec::new(),
+        );
         let entry = f.add_block();
         let exit = f.add_block();
         f.entry = entry;
@@ -2975,8 +2997,7 @@ mod tests {
         f.blocks[body].term = Terminator::Goto(header);
         f.blocks[exit].term = Terminator::Return(Some(sum_phi));
 
-        verify_ir(&f)
-            .expect("loop header backedge values may depend on other header phis");
+        verify_ir(&f).expect("loop header backedge values may depend on other header phis");
     }
 
     #[test]
@@ -3070,8 +3091,8 @@ mod tests {
         f.blocks[body_b].term = Terminator::Goto(header);
         f.blocks[exit].term = Terminator::Return(None);
 
-        let err = verify_ir(&f)
-            .expect_err("loop header must not have multiple in-body predecessors");
+        let err =
+            verify_ir(&f).expect_err("loop header must not have multiple in-body predecessors");
         assert!(matches!(
             err,
             VerifyError::InvalidLoopHeaderPredecessors {
@@ -3206,8 +3227,8 @@ mod tests {
         f.blocks[body].term = Terminator::Goto(header);
         f.blocks[exit].term = Terminator::Return(None);
 
-        let err = verify_ir(&f)
-            .expect_err("loop header outer predecessor must jump directly to header");
+        let err =
+            verify_ir(&f).expect_err("loop header outer predecessor must jump directly to header");
         assert!(matches!(
             err,
             VerifyError::InvalidLoopHeaderPredecessors {

@@ -439,8 +439,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let one = f.add_value(ValueKind::Const(Lit::Int(1)), Span::dummy(), Facts::empty(), None);
-        let two = f.add_value(ValueKind::Const(Lit::Int(2)), Span::dummy(), Facts::empty(), None);
+        let one = f.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let sum = f.add_value(
             ValueKind::Binary {
                 op: crate::syntax::ast::BinOp::Add,
@@ -474,8 +484,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let start = f.add_value(ValueKind::Const(Lit::Int(1)), Span::dummy(), Facts::empty(), None);
-        let end = f.add_value(ValueKind::Const(Lit::Int(4)), Span::dummy(), Facts::empty(), None);
+        let start = f.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let end = f.add_value(
+            ValueKind::Const(Lit::Int(4)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let range = f.add_value(
             ValueKind::Range { start, end },
             Span::dummy(),

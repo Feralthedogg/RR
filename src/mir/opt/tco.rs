@@ -59,7 +59,10 @@ fn ensure_separate_body_head(fn_ir: &mut FnIR) -> BlockId {
     let entry = fn_ir.entry;
     let new_body_head = fn_ir.add_block();
     let old_instrs = std::mem::take(&mut fn_ir.blocks[entry].instrs);
-    let old_term = std::mem::replace(&mut fn_ir.blocks[entry].term, Terminator::Goto(new_body_head));
+    let old_term = std::mem::replace(
+        &mut fn_ir.blocks[entry].term,
+        Terminator::Goto(new_body_head),
+    );
     fn_ir.blocks[new_body_head].instrs = old_instrs;
     fn_ir.blocks[new_body_head].term = old_term;
     fn_ir.body_head = new_body_head;

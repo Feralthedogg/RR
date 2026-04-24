@@ -643,7 +643,10 @@ mod tests {
 
         let mut memo = FxHashMap::default();
         let mut visiting = FxHashSet::default();
-        assert_eq!(eval_const(&fn_ir, field, &mut memo, &mut visiting), Some(Lit::Int(7)));
+        assert_eq!(
+            eval_const(&fn_ir, field, &mut memo, &mut visiting),
+            Some(Lit::Int(7))
+        );
     }
 
     #[test]
@@ -695,7 +698,10 @@ mod tests {
 
         let mut memo = FxHashMap::default();
         let mut visiting = FxHashSet::default();
-        assert_eq!(eval_const(&fn_ir, field, &mut memo, &mut visiting), Some(Lit::Int(5)));
+        assert_eq!(
+            eval_const(&fn_ir, field, &mut memo, &mut visiting),
+            Some(Lit::Int(5))
+        );
     }
 
     #[test]
@@ -926,6 +932,9 @@ mod tests {
 
         let mut memo = FxHashMap::default();
         let mut visiting = FxHashSet::default();
-        assert_eq!(eval_const(&fn_ir, field, &mut memo, &mut visiting), Some(Lit::Int(-1)));
+        assert_eq!(
+            eval_const(&fn_ir, field, &mut memo, &mut visiting),
+            Some(Lit::Int(-1))
+        );
     }
 }

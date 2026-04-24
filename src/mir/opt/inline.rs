@@ -1549,7 +1549,10 @@ mod tests {
         all.insert("caller".to_string(), caller);
 
         let changed = MirInliner::new().optimize(&mut all);
-        assert!(!changed, "StoreIndex3D helpers must not inline as pure expressions");
+        assert!(
+            !changed,
+            "StoreIndex3D helpers must not inline as pure expressions"
+        );
         let caller = all.get("caller").expect("caller should remain present");
         assert!(matches!(
             caller.blocks[entry].term,
@@ -1743,7 +1746,10 @@ mod tests {
         let ValueKind::RecordLit { ref fields } = caller.values[base].kind else {
             panic!("expected inlined record literal");
         };
-        assert_eq!(fields[0].1, arg, "record field should remap to caller arg, not stale callee id");
+        assert_eq!(
+            fields[0].1, arg,
+            "record field should remap to caller arg, not stale callee id"
+        );
     }
 
     #[test]
@@ -1837,7 +1843,10 @@ mod tests {
         let ValueKind::RecordLit { ref fields } = caller.values[base].kind else {
             panic!("expected inlined record literal");
         };
-        assert_eq!(fields[0].1, arg, "inlined field helper should remap record payload to caller arg");
+        assert_eq!(
+            fields[0].1, arg,
+            "inlined field helper should remap record payload to caller arg"
+        );
     }
 
     #[test]
@@ -1920,7 +1929,11 @@ mod tests {
         let ValueKind::Intrinsic { ref args, .. } = caller.values[lhs].kind else {
             panic!("expected inlined intrinsic");
         };
-        assert_eq!(args.as_slice(), &[arg], "inlined intrinsic helper should remap args to caller");
+        assert_eq!(
+            args.as_slice(),
+            &[arg],
+            "inlined intrinsic helper should remap args to caller"
+        );
     }
 
     #[test]
@@ -1998,7 +2011,10 @@ mod tests {
         };
         assert_eq!(base, arg, "fieldset base should remap to caller arg");
         assert_eq!(field, "v");
-        assert!(matches!(caller.values[value].kind, ValueKind::Const(Lit::Int(0))));
+        assert!(matches!(
+            caller.values[value].kind,
+            ValueKind::Const(Lit::Int(0))
+        ));
     }
 
     #[test]
@@ -2073,6 +2089,9 @@ mod tests {
         assert_eq!(base, arg, "index3d base should remap to caller arg");
         assert_eq!(i, j);
         assert_eq!(j, k);
-        assert!(matches!(caller.values[i].kind, ValueKind::Const(Lit::Int(1))));
+        assert!(matches!(
+            caller.values[i].kind,
+            ValueKind::Const(Lit::Int(1))
+        ));
     }
 }

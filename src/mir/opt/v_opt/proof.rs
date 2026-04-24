@@ -1083,9 +1083,13 @@ mod tests {
             None,
         );
         let body = 2usize;
-        fn_ir.blocks[body]
-            .instrs
-            .insert(0, Instr::Eval { val: impure, span: Span::default() });
+        fn_ir.blocks[body].instrs.insert(
+            0,
+            Instr::Eval {
+                val: impure,
+                span: Span::default(),
+            },
+        );
         fn_ir
     }
 
@@ -1240,9 +1244,13 @@ mod tests {
             None,
         );
         let body = 2usize;
-        fn_ir.blocks[body]
-            .instrs
-            .insert(0, Instr::Eval { val: impure, span: Span::default() });
+        fn_ir.blocks[body].instrs.insert(
+            0,
+            Instr::Eval {
+                val: impure,
+                span: Span::default(),
+            },
+        );
         fn_ir
     }
 
@@ -1897,9 +1905,13 @@ mod tests {
             None,
         );
         let then_bb = 3usize;
-        fn_ir.blocks[then_bb]
-            .instrs
-            .insert(0, Instr::Eval { val: impure, span: Span::default() });
+        fn_ir.blocks[then_bb].instrs.insert(
+            0,
+            Instr::Eval {
+                val: impure,
+                span: Span::default(),
+            },
+        );
         fn_ir
     }
 
@@ -2137,9 +2149,13 @@ mod tests {
             None,
         );
         let then_bb = 3usize;
-        fn_ir.blocks[then_bb]
-            .instrs
-            .insert(0, Instr::Eval { val: impure, span: Span::default() });
+        fn_ir.blocks[then_bb].instrs.insert(
+            0,
+            Instr::Eval {
+                val: impure,
+                span: Span::default(),
+            },
+        );
         fn_ir
     }
 
@@ -2679,8 +2695,11 @@ mod tests {
         let loops = LoopAnalyzer::new(&fn_ir).find_loops();
         assert_eq!(loops.len(), 1);
 
-        let plan =
-            super::super::planning::match_scatter_expr_map(&fn_ir, &loops[0], &FxHashSet::default());
+        let plan = super::super::planning::match_scatter_expr_map(
+            &fn_ir,
+            &loops[0],
+            &FxHashSet::default(),
+        );
         assert!(
             plan.is_none(),
             "scatter matcher must reject loops that contain Eval side effects"

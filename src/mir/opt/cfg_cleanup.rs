@@ -507,7 +507,10 @@ mod tests {
         fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(zero));
 
         let changed = TachyonEngine::new().dce(&mut fn_ir);
-        assert!(changed, "dead assign should be rewritten to eval, not dropped");
+        assert!(
+            changed,
+            "dead assign should be rewritten to eval, not dropped"
+        );
         assert!(matches!(
             fn_ir.blocks[fn_ir.entry].instrs.as_slice(),
             [Instr::Eval { val, .. }] if *val == field
@@ -610,7 +613,10 @@ mod tests {
         fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(zero));
 
         let changed = TachyonEngine::new().dce(&mut fn_ir);
-        assert!(changed, "dead assign should be rewritten to eval, not dropped");
+        assert!(
+            changed,
+            "dead assign should be rewritten to eval, not dropped"
+        );
         assert!(matches!(
             fn_ir.blocks[fn_ir.entry].instrs.as_slice(),
             [Instr::Eval { val, .. }] if *val == updated
@@ -714,7 +720,10 @@ mod tests {
         fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(zero));
 
         let changed = TachyonEngine::new().dce(&mut fn_ir);
-        assert!(changed, "dead assign should be rewritten to eval, not dropped");
+        assert!(
+            changed,
+            "dead assign should be rewritten to eval, not dropped"
+        );
         assert!(matches!(
             fn_ir.blocks[fn_ir.entry].instrs.as_slice(),
             [Instr::Eval { val, .. }] if *val == wrapped
@@ -856,7 +865,10 @@ mod tests {
         fn_ir.blocks[merge].term = Terminator::Return(Some(zero));
 
         let changed = TachyonEngine::new().dce(&mut fn_ir);
-        assert!(changed, "dead assign should be rewritten to eval, not dropped");
+        assert!(
+            changed,
+            "dead assign should be rewritten to eval, not dropped"
+        );
         assert!(matches!(
             fn_ir.blocks[merge].instrs.as_slice(),
             [Instr::Eval { val, .. }] if *val == phi
@@ -947,7 +959,10 @@ mod tests {
         fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(zero));
 
         let changed = TachyonEngine::new().dce(&mut fn_ir);
-        assert!(changed, "dead assign should be rewritten to eval, not dropped");
+        assert!(
+            changed,
+            "dead assign should be rewritten to eval, not dropped"
+        );
         assert!(matches!(
             fn_ir.blocks[fn_ir.entry].instrs.as_slice(),
             [Instr::Eval { val, .. }] if *val == wrapped
@@ -1029,7 +1044,10 @@ mod tests {
         fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(zero));
 
         let changed = TachyonEngine::new().dce(&mut fn_ir);
-        assert!(changed, "dead assign should be rewritten to eval, not dropped");
+        assert!(
+            changed,
+            "dead assign should be rewritten to eval, not dropped"
+        );
         assert!(matches!(
             fn_ir.blocks[fn_ir.entry].instrs.as_slice(),
             [Instr::Eval { val, .. }] if *val == wrapped
@@ -1131,7 +1149,10 @@ mod tests {
         fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(zero));
 
         let changed = TachyonEngine::new().dce(&mut fn_ir);
-        assert!(changed, "dead assign should be rewritten to eval, not dropped");
+        assert!(
+            changed,
+            "dead assign should be rewritten to eval, not dropped"
+        );
         assert!(matches!(
             fn_ir.blocks[fn_ir.entry].instrs.as_slice(),
             [Instr::Eval { val, .. }] if *val == wrapped
@@ -1235,7 +1256,10 @@ mod tests {
         fn_ir.blocks[fn_ir.entry].term = Terminator::Return(Some(zero));
 
         let changed = TachyonEngine::new().dce(&mut fn_ir);
-        assert!(changed, "dead assign should be rewritten to eval, not dropped");
+        assert!(
+            changed,
+            "dead assign should be rewritten to eval, not dropped"
+        );
         assert!(matches!(
             fn_ir.blocks[fn_ir.entry].instrs.as_slice(),
             [Instr::Eval { val, .. }] if *val == wrapped

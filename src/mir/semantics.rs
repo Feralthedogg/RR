@@ -113,10 +113,7 @@ fn validate_function(
                         "RR.SemanticError",
                         RRCode::E1001,
                         Stage::Mir,
-                        format!(
-                            "undefined variable '{}' in function '{}'",
-                            var, fn_ir.name
-                        ),
+                        format!("undefined variable '{}' in function '{}'", var, fn_ir.name),
                     )
                     .at(v.span)
                     .push_frame("mir::semantics::validate_function/2", Some(v.span))
@@ -633,8 +630,11 @@ fn validate_function_runtime(fn_ir: &FnIR) -> Vec<RRException> {
     let dataflow = needs
         .needs_dataflow
         .then(|| crate::mir::flow::DataflowSolver::analyze_values(fn_ir, &dataflow_targets));
-    let dataflow_interval =
-        |value: ValueId| dataflow.as_ref().and_then(|facts| facts.get(&value).map(|f| f.interval));
+    let dataflow_interval = |value: ValueId| {
+        dataflow
+            .as_ref()
+            .and_then(|facts| facts.get(&value).map(|f| f.interval))
+    };
 
     // Proof correspondence:
     // `proof/runtime_safety_correspondence.md` ties this reduced runtime slice

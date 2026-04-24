@@ -3,7 +3,8 @@ mod common;
 use RR::compiler::{
     CompileMode, CompileOutputOptions, CompileProfile, CompilerParallelConfig,
     CompilerParallelMode, IncrementalCompileOutput, IncrementalOptions, IncrementalSession,
-    OptLevel, compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile,
+    OptLevel,
+    compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile,
     default_compiler_parallel_config, default_parallel_config, default_type_config,
 };
 use common::unique_dir;
@@ -317,24 +318,25 @@ fn invoke_incremental_compile(
 ) -> (IncrementalCompileOutput, ProfileSample) {
     let mut profile = CompileProfile::default();
     let started = Instant::now();
-    let output = compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile(
-        entry_path,
-        entry_input,
-        OptLevel::O1,
-        default_type_config(),
-        default_parallel_config(),
-        config_compiler_parallel(config),
-        options,
-        output_opts_for_mode(config_compile_mode(config)),
-        session,
-        Some(&mut profile),
-    )
-    .unwrap_or_else(|err| {
-        panic!(
-            "incremental compile failed for {} [{}]: {err:?}",
-            entry_path, config.label
+    let output =
+        compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile(
+            entry_path,
+            entry_input,
+            OptLevel::O1,
+            default_type_config(),
+            default_parallel_config(),
+            config_compiler_parallel(config),
+            options,
+            output_opts_for_mode(config_compile_mode(config)),
+            session,
+            Some(&mut profile),
         )
-    });
+        .unwrap_or_else(|err| {
+            panic!(
+                "incremental compile failed for {} [{}]: {err:?}",
+                entry_path, config.label
+            )
+        });
     let wall_ms = started.elapsed().as_millis();
     (output, profile_sample_from_profile(&profile, wall_ms))
 }
@@ -350,11 +352,7 @@ fn summarize(samples: &[u128]) -> SummaryStats {
     }
 }
 
-fn print_case_line(
-    case_label: &str,
-    config_label: &str,
-    samples: &SampleBucket,
-) {
+fn print_case_line(case_label: &str, config_label: &str, samples: &SampleBucket) {
     let cold_total = summarize(&samples.cold_total_ms);
     let warm_total = summarize(&samples.warm_total_ms);
     let cold_tachyon = summarize(&samples.cold_tachyon_ms);
@@ -388,7 +386,11 @@ fn print_case_line(
     );
 }
 
-fn print_incremental_case_line(case_label: &str, config_label: &str, bucket: &IncrementalReuseBucket) {
+fn print_incremental_case_line(
+    case_label: &str,
+    config_label: &str,
+    bucket: &IncrementalReuseBucket,
+) {
     let phase2_seed = summarize(&bucket.phase2_seed_ms);
     let phase2_hit = summarize(&bucket.phase2_hit_ms);
     let phase2_emit_hits = summarize(&bucket.phase2_hit_emit_hits);
@@ -468,11 +470,8 @@ fn compile_mode_perf_matrix_reports_cold_and_warm_compile_time_axes() {
                     config.label.replace('/', "_"),
                     repeat
                 ));
-                let out_dir = proj_dir.join(format!(
-                    "out_{}_{}",
-                    config.label.replace('/', "_"),
-                    repeat
-                ));
+                let out_dir =
+                    proj_dir.join(format!("out_{}_{}", config.label.replace('/', "_"), repeat));
                 fs::create_dir_all(&out_dir).expect("failed to create perf output dir");
                 let cold_profile_path = proj_dir.join(format!(
                     "{}_{}_cold_{}.json",
@@ -522,8 +521,7 @@ fn compile_mode_perf_matrix_reports_cold_and_warm_compile_time_axes() {
                 assert!(
                     !cold.phase1_artifact_hit,
                     "{} {} cold compile unexpectedly hit phase1 artifact cache",
-                    case.label,
-                    config.label
+                    case.label, config.label
                 );
                 assert!(
                     cold.phase2_emit_misses > 0 || cold.phase2_emit_hits > 0,
@@ -649,8 +647,8 @@ fn compile_mode_perf_matrix_reports_phase2_and_phase3_reuse_axes() {
 
     for case in cases {
         let rr_src = root.join(case.path);
-        let entry_input =
-            fs::read_to_string(&rr_src).unwrap_or_else(|e| panic!("failed to read {}: {e}", rr_src.display()));
+        let entry_input = fs::read_to_string(&rr_src)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", rr_src.display()));
         let entry_path = rr_src
             .to_str()
             .unwrap_or_else(|| panic!("non-unicode benchmark path {}", rr_src.display()))
@@ -735,14 +733,12 @@ fn compile_mode_perf_matrix_reports_phase2_and_phase3_reuse_axes() {
                 assert!(
                     !phase3_seed_out.stats.phase3_memory_hit,
                     "{} {} phase3 seed should miss memory cache",
-                    case.label,
-                    config.label
+                    case.label, config.label
                 );
                 assert!(
                     phase3_hit_out.stats.phase3_memory_hit,
                     "{} {} phase3 warm should hit in-memory artifact cache",
-                    case.label,
-                    config.label
+                    case.label, config.label
                 );
                 assert_eq!(
                     phase3_seed_out.r_code, phase3_hit_out.r_code,

@@ -313,9 +313,24 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let cond = f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
-        let one = f.add_value(ValueKind::Const(Lit::Float(1.0)), Span::dummy(), Facts::empty(), None);
-        let two = f.add_value(ValueKind::Const(Lit::Float(2.0)), Span::dummy(), Facts::empty(), None);
+        let cond = f.add_value(
+            ValueKind::Const(Lit::Bool(true)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(Lit::Float(1.0)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(Lit::Float(2.0)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let phi = f.add_value(
             ValueKind::Phi {
                 args: vec![(one, left), (two, right)],
@@ -374,9 +389,24 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let cond = f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
-        let one = f.add_value(ValueKind::Const(Lit::Float(1.0)), Span::dummy(), Facts::empty(), None);
-        let two = f.add_value(ValueKind::Const(Lit::Float(2.0)), Span::dummy(), Facts::empty(), None);
+        let cond = f.add_value(
+            ValueKind::Const(Lit::Bool(true)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(Lit::Float(1.0)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(Lit::Float(2.0)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let phi = f.add_value(
             ValueKind::Phi {
                 args: vec![(one, left), (two, right)],

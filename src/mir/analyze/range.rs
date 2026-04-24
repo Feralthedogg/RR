@@ -313,7 +313,9 @@ fn ensure_value_range_inner(
         }
         ValueKind::Unary { .. } => RangeInterval::top(),
         ValueKind::RecordLit { .. } | ValueKind::FieldSet { .. } => RangeInterval::top(),
-        ValueKind::FieldGet { base, field } => ensure_field_range(*base, field, values, facts, seen),
+        ValueKind::FieldGet { base, field } => {
+            ensure_field_range(*base, field, values, facts, seen)
+        }
         ValueKind::Phi { args } => {
             let mut acc = RangeInterval::bottom();
             for (arg_val, _pred) in args {
@@ -603,8 +605,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let neg_one = f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
-        let two = f.add_value(ValueKind::Const(Lit::Int(2)), Span::dummy(), Facts::empty(), None);
+        let neg_one = f.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let two = f.add_value(
+            ValueKind::Const(Lit::Int(2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let record = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("i".to_string(), neg_one), ("j".to_string(), two)],
@@ -636,8 +648,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let neg_one = f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
-        let five = f.add_value(ValueKind::Const(Lit::Int(5)), Span::dummy(), Facts::empty(), None);
+        let neg_one = f.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let five = f.add_value(
+            ValueKind::Const(Lit::Int(5)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let record = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("i".to_string(), neg_one)],
@@ -679,8 +701,12 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let neg_one =
-            f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
+        let neg_one = f.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let inner = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("i".to_string(), neg_one)],
@@ -732,8 +758,12 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let neg_one =
-            f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
+        let neg_one = f.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let rec_a = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("i".to_string(), neg_one)],
@@ -785,10 +815,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let neg_one =
-            f.add_value(ValueKind::Const(Lit::Int(-1)), Span::dummy(), Facts::empty(), None);
-        let neg_two =
-            f.add_value(ValueKind::Const(Lit::Int(-2)), Span::dummy(), Facts::empty(), None);
+        let neg_one = f.add_value(
+            ValueKind::Const(Lit::Int(-1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let neg_two = f.add_value(
+            ValueKind::Const(Lit::Int(-2)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let rec_a = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("i".to_string(), neg_one)],
@@ -837,7 +875,12 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let five = f.add_value(ValueKind::Const(Lit::Int(5)), Span::dummy(), Facts::empty(), None);
+        let five = f.add_value(
+            ValueKind::Const(Lit::Int(5)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let neg = f.add_value(
             ValueKind::Unary {
                 op: crate::syntax::ast::UnaryOp::Neg,
@@ -868,7 +911,12 @@ mod tests {
             Some("x".to_string()),
         );
         let len = f.add_value(ValueKind::Len { base }, Span::dummy(), Facts::empty(), None);
-        let one = f.add_value(ValueKind::Const(Lit::Int(1)), Span::dummy(), Facts::empty(), None);
+        let one = f.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let plus = f.add_value(
             ValueKind::Binary {
                 op: crate::syntax::ast::BinOp::Add,

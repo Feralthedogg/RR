@@ -63,7 +63,9 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
                     }
                     acc
                 }
-                ValueKind::FieldGet { base, field } => field_value_na_state(*base, field, &fn_ir.values, &states),
+                ValueKind::FieldGet { base, field } => {
+                    field_value_na_state(*base, field, &fn_ir.values, &states)
+                }
                 ValueKind::FieldSet { base, value, .. } => {
                     NaState::propagate(states[*base], states[*value])
                 }
@@ -108,7 +110,12 @@ pub fn compute_na_states(fn_ir: &FnIR) -> Vec<NaState> {
     states
 }
 
-fn field_value_na_state(base: ValueId, field: &str, values: &[Value], states: &[NaState]) -> NaState {
+fn field_value_na_state(
+    base: ValueId,
+    field: &str,
+    values: &[Value],
+    states: &[NaState],
+) -> NaState {
     let Some(values_for_field) = collect_record_field_values(values, base, field) else {
         return states[base];
     };
@@ -227,8 +234,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let ok = f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
-        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let ok = f.add_value(
+            ValueKind::Const(Lit::Bool(true)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let na = f.add_value(
+            ValueKind::Const(Lit::Na),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let record = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("x".to_string(), ok), ("y".to_string(), na)],
@@ -258,8 +275,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
-        let one = f.add_value(ValueKind::Const(Lit::Int(1)), Span::dummy(), Facts::empty(), None);
+        let na = f.add_value(
+            ValueKind::Const(Lit::Na),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let one = f.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let record = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("x".to_string(), na)],
@@ -299,8 +326,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let ok = f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
-        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let ok = f.add_value(
+            ValueKind::Const(Lit::Bool(true)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let na = f.add_value(
+            ValueKind::Const(Lit::Na),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let inner = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("x".to_string(), ok), ("y".to_string(), na)],
@@ -350,9 +387,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let ok =
-            f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
-        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let ok = f.add_value(
+            ValueKind::Const(Lit::Bool(true)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let na = f.add_value(
+            ValueKind::Const(Lit::Na),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let rec_a = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("x".to_string(), ok), ("y".to_string(), na)],
@@ -402,9 +448,18 @@ mod tests {
         f.entry = entry;
         f.body_head = entry;
 
-        let ok =
-            f.add_value(ValueKind::Const(Lit::Bool(true)), Span::dummy(), Facts::empty(), None);
-        let na = f.add_value(ValueKind::Const(Lit::Na), Span::dummy(), Facts::empty(), None);
+        let ok = f.add_value(
+            ValueKind::Const(Lit::Bool(true)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let na = f.add_value(
+            ValueKind::Const(Lit::Na),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
         let rec_a = f.add_value(
             ValueKind::RecordLit {
                 fields: vec![("x".to_string(), ok)],
