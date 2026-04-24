@@ -170,6 +170,17 @@ If a workload is:
 
 RR is much more likely to preserve correctness by skipping aggressive rewrites.
 
+## Raw Rewrite and Cache Boundary
+
+The late raw-R rewrite and emitted-IR peephole layers are split by rewrite
+family rather than kept in one large file. This is a structure boundary, not a
+semantic one: the public compatibility contract stays at the emitted-R behavior
+described above.
+
+Compiler cache invalidation is expected to include the split rewrite fragments
+that can affect emitted R. Structural refactors in this area should keep that
+cache-salt coverage and the existing golden/runtime parity tests in sync.
+
 ## Related Manuals
 
 - [Language Reference](language.md)
