@@ -138,6 +138,7 @@ RR_PERF_GATE_TESTS=(
   perf_regression_gate
   benchmark_vectorization
   commercial_determinism
+  compile_mode_perf_matrix
   example_perf_smoke
 )
 
@@ -242,6 +243,7 @@ RR_TIER2_MAIN_TESTS=(
   cli_commands
   commercial_negative_corpus
   commercial_stress_differential
+  compile_mode_stability_matrix
   comprehensive_all
   example_numeric_regression
   example_simulations

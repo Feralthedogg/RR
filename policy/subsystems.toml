@@ -157,7 +157,12 @@ owners = [
   "@levish0",
 ]
 paths = [
+  "src/mir/analyze/",
+  "src/mir/flow.rs",
   "src/mir/opt/",
+  "src/mir/semantics.rs",
+  "src/mir/semantics/",
+  "src/mir/verify.rs",
   "src/compiler/pipeline/phases/tachyon_runtime.rs",
   "src/compiler/peephole/",
   "tests/cases/optimizer/",
@@ -197,6 +202,8 @@ owners = [
 paths = [
   "src/compiler/scheduler.rs",
   "src/mir/opt/poly/",
+  "tests/compile_mode_stability_matrix.rs",
+  "tests/compiler_parallel_",
   "tests/fallback_correctness_matrix.rs",
   "tests/parallel_optional_fallback_semantics.rs",
   "tests/native_optional_fallback.rs",
@@ -224,6 +231,7 @@ paths = [
   "tests/common/",
   "tests/commercial_determinism.rs",
   "tests/compiler_parallel_equivalence.rs",
+  "tests/compile_mode_perf_matrix.rs",
   "tests/example_perf_smoke.rs",
   "tests/tesseract_runtime_smoke.rs",
 ]
