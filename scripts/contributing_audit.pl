@@ -96,10 +96,14 @@ sub run_status {
     my (@cmd) = @_;
     open my $null, '>', File::Spec->devnull() or die "failed to open devnull: $!";
     open my $stdout_old, '>&', \*STDOUT or die "failed to dup STDOUT: $!";
+    open my $stderr_old, '>&', \*STDERR or die "failed to dup STDERR: $!";
     open STDOUT, '>&', $null or die "failed to redirect STDOUT: $!";
+    open STDERR, '>&', $null or die "failed to redirect STDERR: $!";
     my $status = system(@cmd);
     open STDOUT, '>&', $stdout_old or die "failed to restore STDOUT: $!";
+    open STDERR, '>&', $stderr_old or die "failed to restore STDERR: $!";
     close $stdout_old;
+    close $stderr_old;
     close $null;
     return $status == 0;
 }
@@ -294,8 +298,6 @@ my @pass_sensitive_prefixes = (
 my @cache_sensitive_prefixes = (
     'src/compiler/incremental.rs',
     'src/compiler/pipeline.rs',
-    'docs/compiler/pipeline.md',
-    'docs/cli.md',
 );
 my @core_compiler_prefixes = (
     'src/compiler/',
@@ -671,6 +673,8 @@ my $interesting_docs_changed = scalar(grep { my $p = $_; scalar grep { path_matc
 my $interesting_tests_changed = scalar(grep { my $p = $_; scalar grep { path_matches_prefix($p, $_) } @interesting_test_prefixes } @audit_paths) > 0;
 my $pass_sensitive_changed = scalar(grep { my $p = $_; scalar grep { path_matches_prefix($p, $_) } @pass_sensitive_prefixes } @audit_paths) > 0;
 my $cache_sensitive_changed = scalar(grep { my $p = $_; scalar grep { path_matches_prefix($p, $_) } @cache_sensitive_prefixes } @audit_paths) > 0;
+my $contributing_generated_docs_synced = !$contributing_policy_changed
+    || run_status('python3', File::Spec->catfile($ROOT, 'scripts', 'render_contributing_docs.py'), '--check');
 
 for my $idx (0 .. $#paths) {
     my $path = $paths[$idx];
@@ -805,11 +809,7 @@ add_record(\@warnings, 'cache-tests-review', '(scope)', 0, 'cache/incremental lo
 add_record(\@warnings, 'contributing-doc-sync', '(scope)', 0, 'CONTRIBUTING.md changed without docs/compiler/contributing-audit.md update in the audit scope')
     if $contributing_changed && !$contributing_audit_doc_changed;
 add_record(\@warnings, 'contributing-policy-sync', '(scope)', 0, 'policy/contributing_rules.toml changed without refreshing generated contributing docs and PR template in the audit scope')
-    if $contributing_policy_changed
-       && !($contributing_changed
-            && $contributing_audit_doc_changed
-            && scalar(grep { path_matches_prefix($_, 'docs/compiler/testing.md') } @audit_paths)
-            && scalar(grep { path_matches_prefix($_, '.github/pull_request_template.md') } @audit_paths));
+    if $contributing_policy_changed && !$contributing_generated_docs_synced;
 
 add_manual('confirm externally visible behavior is still deterministic anywhere ordering, hashing, or parallel scheduling could matter');
 add_manual('confirm touched semantic areas such as cache behavior, fallback behavior, numeric semantics, and IR invariants still match intent');

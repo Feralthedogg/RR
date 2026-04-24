@@ -548,6 +548,55 @@ fn contributing_policy_render_is_in_sync() {
 }
 
 #[test]
+fn contributing_audit_keeps_docs_cli_out_of_cache_logic_scope() {
+    let root = repo_root();
+    let script = root.join("scripts").join("contributing_audit.pl");
+    let output = Command::new("perl")
+        .arg(&script)
+        .arg("--scan-only")
+        .arg("--files")
+        .arg(root.join("docs").join("cli.md"))
+        .current_dir(&root)
+        .output()
+        .expect("failed to run contributing audit on CLI docs");
+    assert!(
+        output.status.success(),
+        "CLI docs-only audit should pass\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("warn[cache-tests-review]"));
+}
+
+#[test]
+fn contributing_audit_policy_sync_warning_respects_generated_check() {
+    let root = repo_root();
+    let script = root.join("scripts").join("contributing_audit.pl");
+    let output = Command::new("perl")
+        .arg(&script)
+        .arg("--scan-only")
+        .arg("--files")
+        .arg(root.join("policy").join("contributing_rules.toml"))
+        .arg(
+            root.join("docs")
+                .join("compiler")
+                .join("contributing-audit.md"),
+        )
+        .current_dir(&root)
+        .output()
+        .expect("failed to run contributing audit on synced policy docs");
+    assert!(
+        output.status.success(),
+        "synced contributing policy audit should pass\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("warn[contributing-policy-sync]"));
+}
+
+#[test]
 fn pr_evidence_script_enforces_policy_sections() {
     let root = repo_root();
     let sandbox_root = root
