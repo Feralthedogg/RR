@@ -2,7 +2,7 @@
 
 This page is the driver manual for RR.
 
-Current compiler line: `RR Tachyon v1.2.0`.
+Current compiler line: `RR Tachyon v1.3.0`.
 
 ## Audience
 

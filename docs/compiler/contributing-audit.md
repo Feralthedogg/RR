@@ -5,7 +5,7 @@ This file is generated from `policy/contributing_rules.toml`. Edit the policy fi
 
 # Contributing Audit Checklist
 
-Current compiler line: `RR Tachyon v1.2.0`.
+Current compiler line: `RR Tachyon v1.3.0`.
 
 Use this checklist after meaningful compiler changes to verify that the code still matches [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 

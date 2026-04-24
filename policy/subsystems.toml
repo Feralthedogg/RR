@@ -80,9 +80,13 @@ owners = [
 ]
 paths = [
   ".gitignore",
+  "Cargo.lock",
+  "Cargo.toml",
+  "README.md",
   "dist-workspace.toml",
   "CONTRIBUTING.md",
   ".github/",
+  "docs/README.md",
   "docs/cli.md",
   "docs/compiler/",
   "fuzz/",

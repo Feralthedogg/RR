@@ -1,7 +1,7 @@
 [meta]
 title = "Contributing to RR (Compiler Code Style)"
 subtitle = "This file is generated from `policy/contributing_rules.toml`. Edit the policy file, not the rendered Markdown."
-current_line = "RR Tachyon v1.1.0"
+current_line = "RR Tachyon v1.3.0"
 manual_audit_status_date = "2026-04-04"
 
 [scope]
