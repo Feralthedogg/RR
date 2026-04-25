@@ -1,4 +1,5 @@
 /target
+/target 2/
 /Build
 /example/**/Build/
 .idea
