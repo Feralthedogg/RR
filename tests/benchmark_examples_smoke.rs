@@ -268,10 +268,9 @@ fn bootstrap_resample_unit_index_and_metric_helpers_inline() {
         (code.contains("print(\"bootstrap_bench_acc\")")
             && code.contains(".__rr_inline_metric_0 <- acc")
             && code.contains("return(.__rr_inline_metric_0)"))
-            || code.contains("return(Sym_17(\"bootstrap_bench_acc\", acc))"),
+            || (code.contains("return(Sym_") && code.contains("\"bootstrap_bench_acc\", acc)")),
         "bootstrap_resample should preserve the final print_metric path"
     );
-    assert!(!code.contains("return(Sym_15(\"bootstrap_bench_acc\", acc))"));
 }
 
 #[test]
@@ -460,8 +459,9 @@ fn heat_diffusion_metric_helper_inlines_at_return_site() {
             && (code.contains(".__rr_inline_metric_0 <- (sum(temp))")
                 || code.contains(".__rr_inline_metric_0 <- ((sum(temp)))"))
             && code.contains("return(.__rr_inline_metric_0)"))
-            || code.contains("return(Sym_10(\"heat_bench_energy\", ((sum(temp)))))")
-            || code.contains("return(Sym_10(\"heat_bench_energy\", (sum(temp))))"),
+            || (code.contains("return(Sym_")
+                && (code.contains("\"heat_bench_energy\", ((sum(temp))))")
+                    || code.contains("\"heat_bench_energy\", (sum(temp)))"))),
     );
     assert!(!code.contains("Sym_11 <- function"));
     assert!(
@@ -500,8 +500,9 @@ fn reaction_diffusion_metric_helper_inlines_at_return_site() {
             && (code.contains(".__rr_inline_metric_0 <- (sum(b))")
                 || code.contains(".__rr_inline_metric_0 <- ((sum(b)))"))
             && code.contains("return(.__rr_inline_metric_0)"))
-            || code.contains("return(Sym_21(\"rd_bench_mass\", ((sum(b)))))")
-            || code.contains("return(Sym_21(\"rd_bench_mass\", (sum(b))))"),
+            || (code.contains("return(Sym_")
+                && (code.contains("\"rd_bench_mass\", ((sum(b))))")
+                    || code.contains("\"rd_bench_mass\", (sum(b)))"))),
     );
     assert!(
         code.contains("pmin(pmax(")

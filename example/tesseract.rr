@@ -1382,7 +1382,11 @@ fn tesseract_main() {
 
     print("  Typed/Parallel Feature Probe...")
     let probe_vec = typed.vec.fused(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))
-    let probe_energy = typed.vec.energy(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))
+    let probe_pair: FieldPair = {
+        left: c(1.0, 2.0, 3.0, 4.0),
+        right: c(4.0, 3.0, 2.0, 1.0)
+    }
+    let probe_energy = typed_trait_energy(probe_pair)
     let probe_generic = typed.generic.count.samples(list(c(1.0), c(2.0), c(3.0)))
     print("    Probe Vec[1]:")
     print(probe_vec[1.0])
@@ -1620,6 +1624,20 @@ fn tesseract_main() {
 
     return 0
 
+}
+
+trait FieldEnergy {
+    fn energy(self: Self) -> float
+}
+
+impl FieldEnergy for FieldPair {
+    fn energy(self: FieldPair) -> float {
+        typed.vec.energy(self.left, self.right)
+    }
+}
+
+fn typed_trait_energy<T>(sample: T) -> float where T: FieldEnergy {
+    FieldEnergy.energy(sample)
 }
 
 print(tesseract_main())
