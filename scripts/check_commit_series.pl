@@ -111,6 +111,11 @@ sub read_commit_files {
     return \@files;
 }
 
+sub is_github_merge_subject {
+    my ($subject) = @_;
+    return ($subject // q{}) =~ /^Merge pull request #\d+ from \S+$/;
+}
+
 sub parse_trailers {
     my ($body) = @_;
     my %trailers;
@@ -220,6 +225,7 @@ my @errors;
 for my $commit (@{$commits}) {
     my ($subject, $body) = read_commit_subject_body($commit);
     my $files = read_commit_files($commit);
+    my $is_github_merge = is_github_merge_subject($subject);
     my $match = match_subsystems($policy, $files);
     if (@{$match->{unmapped}}) {
         push @errors, "$commit has unmapped paths: " . join(', ', @{$match->{unmapped}});
@@ -228,13 +234,16 @@ for my $commit (@{$commits}) {
 
     my @touched = map { $_->{name} } @{$match->{touched}};
     my %allowed = map { $_ => 1 } (@{$policy->{meta}{allowed_commit_prefixes} // []}, @touched);
-    if ($subject !~ /^([a-z0-9][a-z0-9_-]*):\s+\S/) {
+    if ($is_github_merge) {
+        # GitHub merge commits carry the PR title in the body, while the subject is
+        # always "Merge pull request #..."; validate the commits before merging.
+    } elsif ($subject !~ /^([a-z0-9][a-z0-9_-]*):\s+\S/) {
         push @errors, "$commit subject must look like 'subsystem: summary' -> $subject";
     } elsif (!$allowed{$1}) {
         push @errors, "$commit subject prefix '$1' is not allowed for touched subsystems (" . join(', ', @touched) . ")";
     }
 
-    if ($enforce_trailers) {
+    if ($enforce_trailers && !$is_github_merge) {
         my $trailers = parse_trailers($body);
         check_required_trailers(\@errors, $commit, $trailers, $policy->{meta}{required_commit_trailers});
         if (exists $trailers->{Subsystem}) {

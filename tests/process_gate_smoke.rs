@@ -47,8 +47,11 @@ fn commit_metadata_check_rejects_missing_sections_and_bad_prefix() {
     let good_title = sandbox.join("good_title.txt");
     let good_body = sandbox.join("good_body.txt");
     let good_subjects = sandbox.join("good_subjects.txt");
-    fs::write(&good_subjects, "incremental: tighten cache validation\n")
-        .expect("failed to write good commit subjects");
+    fs::write(
+        &good_subjects,
+        "incremental: tighten cache validation\nMerge pull request #9 from Feralthedogg/dev\n",
+    )
+    .expect("failed to write good commit subjects");
     fs::write(&good_title, "incremental: tighten cache validation\n")
         .expect("failed to write good title");
     fs::write(
@@ -455,7 +458,13 @@ fn commit_series_check_can_skip_trailer_enforcement_for_push_style_runs() {
     )
     .expect("failed to update file");
     git(&["add", "."]);
-    git(&["commit", "-m", "incremental: push-safe change"]);
+    git(&[
+        "commit",
+        "-m",
+        "Merge pull request #9 from Feralthedogg/dev",
+        "-m",
+        "incremental: push-safe change",
+    ]);
 
     let script = root.join("scripts").join("check_commit_series.pl");
     let output = Command::new("perl")
