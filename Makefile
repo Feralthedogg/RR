@@ -4,7 +4,7 @@ RENJIN_VERSION := 3.5-beta76
 RENJIN_URL := https://www.renjin.org/repo/dist/renjin-$(RENJIN_VERSION).zip
 TOOL_CACHE_DIRS := target/tmp/bench-python target/tmp/renjin-dist
 
-clean: clean-target clean-fuzz clean-native clean-artifacts clean-scratch clean-proof clean-r clean-docs
+clean: clean-target clean-fuzz clean-native clean-proof clean-artifacts clean-scratch clean-r clean-docs
 	@echo "[clean] done"
 
 clean-target:
@@ -39,17 +39,7 @@ clean-native:
 clean-artifacts:
 	@echo "[clean] removing generated reports, plots, csv outputs, and triage artifacts"
 	@rm -rf .artifacts
-	@rm -f Rplots.pdf
-	@find . \
-		\( \
-			-path './docs/node_modules' -o \
-			-path './docs/node_modules/*' -o \
-			-path './target/tmp/bench-python' -o \
-			-path './target/tmp/bench-python/*' -o \
-			-path './target/tmp/renjin-dist' -o \
-			-path './target/tmp/renjin-dist/*' \
-		\) -prune -o \
-		-type f \( \
+	@find . -maxdepth 1 -type f \( \
 		-name '*.png' -o \
 		-name '*.pdf' -o \
 		-name '*.jpg' -o \
@@ -61,13 +51,7 @@ clean-artifacts:
 		-name '.Rhistory' -o \
 		-name '.RData' -o \
 		-name '__triage_smoke_*' \
-	\) -print0 | \
-	while IFS= read -r -d '' f; do \
-		if git ls-files --error-unmatch "$$f" >/dev/null 2>&1; then \
-			continue; \
-		fi; \
-		rm -f "$$f"; \
-	done
+	\) -exec rm -f {} +
 	@find tests -type d -name '__triage_smoke_*' -prune -exec rm -rf {} +
 
 clean-scratch:
@@ -85,24 +69,12 @@ clean-proof:
 			-name '*.glob' -o \
 			-name '.*.aux' -o \
 			-name '.lia.cache' \
-		\) -print0 | \
-		while IFS= read -r -d '' f; do \
-			rm -f "$$f"; \
-		done; \
+		\) -exec rm -f {} +; \
 	fi
 
 clean-r:
 	@echo "[clean] removing untracked generated R files"
-	@find . -type f \( -name '*.R' -o -name '*.r' -o -name '*.gen.R' \) -print0 | \
-	while IFS= read -r -d '' f; do \
-		if [ "$$f" = "./src/runtime/runtime_prelude.R" ] || [ "$$f" = "src/runtime/runtime_prelude.R" ]; then \
-			continue; \
-		fi; \
-		if git ls-files --error-unmatch "$$f" >/dev/null 2>&1; then \
-			continue; \
-		fi; \
-		rm -f "$$f"; \
-	done
+	@find . -maxdepth 1 -type f \( -name '*.R' -o -name '*.r' -o -name '*.gen.R' \) -exec rm -f {} +
 
 clean-docs:
 	@echo "[clean] removing docs build artifacts"

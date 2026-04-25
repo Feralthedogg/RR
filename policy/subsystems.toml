@@ -80,6 +80,8 @@ owners = [
 ]
 paths = [
   "docs/",
+  "proof/",
+  "tests/docs_surface_sync.rs",
 ]
 checks = [
   "docs_generated",
@@ -95,6 +97,7 @@ paths = [
   ".gitignore",
   "Cargo.lock",
   "Cargo.toml",
+  "Makefile",
   "README.md",
   "dist-workspace.toml",
   "CONTRIBUTING.md",
@@ -141,9 +144,12 @@ owners = [
   "@levish0",
 ]
 paths = [
+  "src/syntax/",
   "src/hir/",
   "src/mir/lower_hir",
+  "src/legacy/ir/lower.rs",
   "src/typeck/",
+  "tests/trait_static_dispatch.rs",
   "tests/golden/control_flow_match",
   "tests/mir_lowering_loop_match.rs",
   "tests/syntax_errors.rs",
@@ -163,6 +169,8 @@ owners = [
 paths = [
   "src/compiler/incremental.rs",
   "src/main_compile.rs",
+  "src/main_compile_entry.rs",
+  "tests/module_export_cache_roundtrip.rs",
   "tests/incremental_",
   "tests/cache_equivalence_matrix.rs",
   "tests/cli_incremental_default.rs",
@@ -250,6 +258,7 @@ paths = [
   "src/compiler/pipeline/late_raw_rewrites",
   "src/compiler/pipeline/raw_rewrites.rs",
   "src/compiler/pipeline.rs",
+  "example/",
   "example/benchmarks/",
   "tests/benchmark_examples_smoke.rs",
   "tests/codegen_binding_regression.rs",
