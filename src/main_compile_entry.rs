@@ -5,7 +5,11 @@ use std::path::Path;
 
 fn expr_contains_plain_main_call(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Call { callee, args } => {
+        ExprKind::Call {
+            callee,
+            type_args: _,
+            args,
+        } => {
             matches!(&callee.kind, ExprKind::Name(name) if name == "main")
                 || expr_contains_plain_main_call(callee)
                 || args.iter().any(expr_contains_plain_main_call)
@@ -53,7 +57,11 @@ fn stmt_contains_plain_main_call(stmt: &Stmt) -> bool {
     match &stmt.kind {
         StmtKind::Let { init, .. } => init.as_ref().is_some_and(expr_contains_plain_main_call),
         StmtKind::Assign { value, .. } => expr_contains_plain_main_call(value),
-        StmtKind::FnDecl { .. } | StmtKind::Export(_) | StmtKind::Import { .. } => false,
+        StmtKind::FnDecl { .. }
+        | StmtKind::TraitDecl(_)
+        | StmtKind::ImplDecl(_)
+        | StmtKind::Export(_)
+        | StmtKind::Import { .. } => false,
         StmtKind::If {
             cond,
             then_blk,

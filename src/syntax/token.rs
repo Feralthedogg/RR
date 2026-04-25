@@ -20,6 +20,9 @@ pub enum TokenKind {
     Match,
     Import,
     Export,
+    Trait,
+    Impl,
+    Where,
 
     // Identifiers & Literals
     Ident(String),
@@ -66,7 +69,8 @@ pub enum TokenKind {
     LBracket,
     RBracket, // [ ]
     Comma,
-    Colon, // , :
+    Colon,
+    DoubleColon, // , : ::
 
     Invalid(String),
     EOF,

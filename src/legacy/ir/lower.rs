@@ -55,8 +55,10 @@ impl Lowerer {
             }
             StmtKind::FnDecl {
                 name,
+                type_params: _,
                 params,
                 ret_ty_hint: _,
+                where_bounds: _,
                 body,
             } => {
                 let mut ir_body = Vec::new();
@@ -68,6 +70,11 @@ impl Lowerer {
                     name,
                     params: param_names,
                     body: ir_body,
+                }
+            }
+            StmtKind::TraitDecl(_) | StmtKind::ImplDecl(_) => {
+                IRStmtKind::ExprStmt {
+                    expr: IRExprKind::Lit(Lit::Null),
                 }
             }
             StmtKind::If { cond, then_blk, else_blk } => {
@@ -131,7 +138,12 @@ impl Lowerer {
                 };
                 if !rhs_is_one { return Ok(None); }
 
-                if let ExprKind::Call { callee, args } = &lhs.kind {
+                if let ExprKind::Call {
+                    callee,
+                    type_args: _,
+                    args,
+                } = &lhs.kind
+                {
                     if args.len() == 1 {
                         if let ExprKind::Name(n) = &callee.kind {
                             if n == "len" || n == "length" {
@@ -202,7 +214,11 @@ impl Lowerer {
                 for (n, e) in fields { ir_fields.push((n, self.lower_expr(e)?)); }
                 IRExprKind::ListLit(ir_fields)
             }
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call {
+                callee,
+                type_args: _,
+                args,
+            } => {
                 let mut lowered_callee = self.lower_expr(*callee)?;
                 let mut lowered_args = Vec::new();
                 for e in args { lowered_args.push(self.lower_expr(e)?); }
@@ -268,10 +284,19 @@ impl Lowerer {
                 }
             }
             ExprKind::Pipe { lhs, rhs_call } => {
-                if let ExprKind::Call { callee, mut args } = rhs_call.kind {
+                if let ExprKind::Call {
+                    callee,
+                    type_args,
+                    mut args,
+                } = rhs_call.kind
+                {
                    args.insert(0, *lhs);
                    let new_call = Expr {
-                       kind: ExprKind::Call { callee, args },
+                       kind: ExprKind::Call {
+                           callee,
+                           type_args,
+                           args,
+                       },
                        span: expr.span,
                    };
                    return self.lower_expr(new_call);

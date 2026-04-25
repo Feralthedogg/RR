@@ -4,6 +4,7 @@ pub mod lattice;
 pub(crate) mod sigs;
 pub mod solver;
 pub mod term;
+pub mod trait_solver;
 
 pub use constraints::{ConstraintSet, TyVar, TypeConstraint};
 pub use lattice::{LenSym, NaTy, PrimTy, ShapeTy, TypeState};
