@@ -167,8 +167,8 @@ fn docs_tidy_data_mask_surface_matches_code() {
 
 #[test]
 fn docs_cli_long_options_match_driver_usage() {
-    let code = read("src/main.rs");
-    let body = extract_function_body(&code, "fn print_usage()");
+    let code = read("src/main_usage.rs");
+    let body = extract_function_body(&code, "pub(crate) fn print_usage()");
     let code_opts = long_options(body);
 
     let docs = read("docs/cli.md");
@@ -176,7 +176,7 @@ fn docs_cli_long_options_match_driver_usage() {
 
     assert_eq!(
         doc_opts, code_opts,
-        "docs/cli.md long-option surface drifted from src/main.rs::print_usage"
+        "docs/cli.md long-option surface drifted from src/main_usage.rs::print_usage"
     );
 }
 

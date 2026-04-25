@@ -74,6 +74,7 @@ for those topics.
 - `return`, `break`, `next`
 - `match`
 - `import`, `export`
+- `trait`, `impl`, `where`
 
 Literal keywords:
 
@@ -122,6 +123,17 @@ fn add(a, b) {
 fn add(a: float, b: float) -> float = a + b
 ```
 
+Generic type parameters and trait bounds are accepted on function declarations:
+
+```rust
+trait Numeric {}
+trait Parallel {}
+
+fn solve<T>(x: T) -> T where T: Numeric + Parallel {
+    x
+}
+```
+
 When a function has vector slice parameters RR can prove from explicit hints or
 flow-typed straight-line bindings, and it lowers to a slice-stable vector return
 expression, RR may emit it as:
@@ -130,6 +142,300 @@ expression, RR may emit it as:
 - a public parallel wrapper that can dispatch through the runtime parallel path
 
 This is automatic at codegen time; you do not need a separate parallel annotation.
+
+### 2.1. Traits and Static Dispatch
+RR supports a first static trait slice for compile-time polymorphism over the R
+runtime model. Traits and impls are compile-time declarations; they do not create
+R S3/S4 method tables.
+
+Claim boundary: RR traits are a Rust-inspired static dispatch feature, not a
+full Rust trait system. The supported contract is that a resolvable trait call is
+checked before MIR lowering, rewritten to a concrete helper, and emitted as a
+direct R call. This removes R runtime trait lookup from supported monomorphic
+and monomorphized generic paths.
+
+```rust
+trait Physical {
+    fn energy(self: Self) -> float
+}
+
+impl Physical for Body {
+    fn energy(self: Body) -> float {
+        self.mass * self.velocity * self.velocity * 0.5
+    }
+}
+
+fn main() {
+    let b: Body = {mass: 2.0, velocity: 3.0}
+    Physical.energy(b)
+    b.energy()
+}
+```
+
+The `Trait.method(receiver, ...)` and `receiver.method(...)` call forms are
+resolved during lowering. The receiver must have an explicit source-level type
+hint, such as `let b: Body`. RR rewrites the call to the concrete impl function
+before MIR/codegen, so the emitted R does not perform dynamic trait lookup.
+RR also accepts UFCS-style `Trait::method(receiver, ...)`; it is equivalent to
+`Trait.method(receiver, ...)` in this static trait slice.
+
+Receiver-method sugar is accepted only when RR can identify exactly one trait
+impl method for the receiver type. If multiple traits implemented for the same
+type expose the same method name, use explicit `Trait.method(receiver, ...)`
+syntax.
+
+The arithmetic operator traits `Add.add`, `Sub.sub`, `Mul.mul`, `Div.div`,
+`Mod.mod`, and `MatMul.matmul` are recognized for statically typed left-hand
+receivers. Unary negation recognizes `Neg.neg`, and `Index.index` is recognized
+for bracket reads such as `x[i]`. If an exact impl exists, RR lowers the
+operator to that impl method; otherwise the ordinary R-style operator lowering
+is kept.
+
+Generic functions can use `where` trait bounds. When a call site supplies enough
+source-level type information, RR monomorphizes the generic function into a
+private concrete helper and rewrites the call to that helper.
+
+```rust
+fn energy_of<T>(x: T) -> float where T: Physical {
+    x.energy()
+}
+
+fn main() {
+    let b: Body = {mass: 2.0, velocity: 3.0}
+    energy_of(b)  // lowers through a Body-specialized helper
+    energy_of::<Body>(b)
+}
+```
+
+RR also accepts explicit turbofish type arguments on generic function calls:
+
+```rust
+let out = id::<Body>(b)
+```
+
+Associated type projections can participate in bounds. RR resolves projections
+such as `T::Item` from the trait impl selected for the concrete `T`, then checks
+the projected type's own bounds at the monomorphized call site:
+
+```rust
+trait Label {
+    fn label(self: Self) -> str
+}
+
+trait Container {
+    type Item
+    fn get(self: Self) -> Self::Item
+}
+
+fn label_item<T>(x: T) -> str where T: Container, T::Item: Label {
+    let item: T::Item = x.get()
+    item.label()
+}
+```
+
+Rust-style fully-qualified projection syntax is accepted as an equivalent
+spelling:
+
+```rust
+fn label_item<T>(x: T) -> str where T: Container, <T as Container>::Item: Label {
+    let item: <T as Container>::Item = x.get()
+    item.label()
+}
+```
+
+Static trait dispatch may also supply the receiver type explicitly. This is the
+RR form for receiver-less associated functions and for fully-qualified trait
+method calls when the receiver expression itself has no source-level type hint:
+
+```rust
+trait Factory {
+    fn make() -> Self
+}
+
+impl Factory for Body {
+    fn make() -> Body {
+        {mass: 4.0}
+    }
+}
+
+let b = Factory::make::<Body>()
+let e = Physical::energy::<Body>(b)
+let b2 = <Body as Factory>::make()
+let e2 = <Body as Physical>::energy(b2)
+```
+
+Const generics are supported in RR's static-dispatch subset. Const parameters
+are monomorphization keys, and integer const parameters used in the specialized
+body are substituted as integer literals:
+
+```rust
+impl<const N> StaticLen for StaticVec<N> {
+    fn len(self: StaticVec<N>) -> int { N }
+}
+
+let v: StaticVec<3> = {values: [1, 2, 3]}
+v.len()
+```
+
+If a generic function's type parameter appears only in the return type, RR can
+infer it from an annotated `let` binding:
+
+```rust
+fn make<T>() -> T {
+    {mass: 4.0}
+}
+
+let b: Body = make()
+```
+
+Generic impl blocks are supported for source-level static dispatch:
+
+```rust
+trait Mass {
+    fn mass(self: Self) -> float
+}
+
+impl<T> Mass for Box<T> where T: Physical {
+    fn mass(self: Box<T>) -> float {
+        self.value.mass
+    }
+}
+
+let boxed: Box<Body> = {value: b}
+boxed.mass()
+```
+
+For user-defined generic wrappers such as `Box<Body>`, the generic source type
+guides trait dispatch. If the inner type is not a built-in RR MIR type, the
+wrapper is not treated as a strict MIR `box` type; it remains an ordinary R
+record/list shape at runtime.
+
+Exact impls may specialize a generic blanket impl for the same trait. Generic
+impls may also specialize broader generic patterns when one pattern is a strict
+instance of the other, such as `Wrap<Inner<T>>` over `Wrap<T>`. Negative impls
+are accepted with `impl !Trait for Type {}` and block matching blanket impls
+during dispatch:
+
+```rust
+impl<T> Show for Box<T> {
+    fn show(self: Box<T>) -> str { "generic" }
+}
+
+impl Show for Box<Body> {
+    fn show(self: Box<Body>) -> str { "body" }
+}
+
+impl !Show for Box<Rock> {}
+```
+
+Traits may declare supertraits, associated types, associated consts, and
+default method bodies:
+
+```rust
+trait Eqish {
+    fn eqish(self: Self) -> bool
+}
+
+trait Measure: Eqish {
+    type Output
+    const EPSILON: float = 0.0
+
+    fn value(self: Self) -> Self::Output
+
+    fn positive(self: Self) -> bool {
+        self.value() > 0.0
+    }
+}
+
+impl Measure for Body {
+    type Output = float
+    const EPSILON: float = 1e-9
+
+    fn value(self: Body) -> float {
+        self.mass
+    }
+}
+
+let eps = Measure::EPSILON::<Body>()
+```
+
+RR accepts a concrete GAT-family subset. A trait may declare `type Out<T>`, and
+an impl may provide concrete family instances such as `type Out<float> = float`.
+Trait method signatures can then use `Self::Out<float>` or
+`<Self as Trait>::Out<float>`.
+
+Lifetime parameters and higher-ranked lifetime binders are parsed and erased.
+They are documentation/static-interface markers in RR, not borrow-checker
+constraints:
+
+```rust
+fn passthrough<'a, T>(x: T) -> T where for<'a> T: Borrowable {
+    x.id()
+}
+```
+
+`dyn Trait` is supported for monomorphic concrete bindings:
+
+```rust
+let b: Body = {mass: 4.0}
+let obj: dyn Physical = b
+obj.energy()  // still lowers to Body's concrete impl
+```
+
+Each impl must provide every associated type and every associated const declared
+by the trait unless the const has a default value. Impl method signatures may
+use the concrete associated type where the trait uses `Self::Name`. If an impl
+omits a method with a default body or an associated const with a default value,
+RR materializes a concrete impl helper during lowering. Receiver-less
+associated functions use `Trait::method::<Type>(...)`; associated const
+selection uses `Trait::CONST::<Type>()`. The emitted R receives concrete helper
+calls rather than dynamic trait lookup. Dispatch through a subtrait requires the
+receiver type to also satisfy every declared supertrait.
+
+Only public trait metadata crosses RR module boundaries. Use `export trait` and
+`export impl` when an importing module should be able to dispatch through that
+trait or impl; non-exported trait and impl declarations remain available only
+while lowering their defining module. Module artifacts store versioned
+source-level metadata for exported trait and generic declarations so cached
+module replay preserves static dispatch metadata without reparsing the imported
+source file.
+
+Bound checking is static:
+
+- using `x.energy()` inside `fn f<T>(x: T)` requires a bound whose trait declares `energy`
+- using `a + b` on a generic `T` requires `where T: Add`
+- using `-x` on a generic `T` requires `where T: Neg`
+- using `x[i]` on a generic `T` requires `where T: Index`
+- using a method on `T::Item` requires a projection bound such as `where T::Item: TraitWithMethod`
+- calling `f<T>` with `T = Body` requires an actual `impl Trait for Body` for every bound
+- repeated uses of the same type parameter must infer the same concrete source type
+- dispatching through `impl<T> Trait for Box<T> where T: OtherTrait` requires the concrete `T` to implement `OtherTrait`
+- overlapping impl headers for the same trait are rejected before lowering unless
+  one impl pattern is strictly more specific than the other
+
+Current trait limits and non-claims:
+
+- receiver-method sugar still requires an explicit source-level receiver type
+  hint unless you use `Trait::method::<Type>(receiver, ...)`
+- generic monomorphization currently infers type parameters from annotated variables, simple literals, explicit turbofish type arguments, and annotated `let` return types
+- trait solving is nominal over source-level type hints; it is not Rust's full
+  coherence, specialization, or lifetime solver
+- lifetimes and `for<'a>` higher-ranked lifetime binders are erased; RR does not
+  borrow-check references, model regions, or prove lifetime outlives relations
+- `dyn Trait` currently requires a concrete initializer whose type is known at
+  compile time; heterogeneous runtime vtables and runtime trait-object dispatch
+  are not emitted
+- GAT support is limited to concrete associated type family instances; RR does
+  not implement Rust's full projection normalization or equality constraint
+  solver
+- const generics currently support integer const arguments in monomorphized
+  static-dispatch paths; arbitrary const expressions and const-eval based
+  trait solving are not implemented
+- specialization is limited to exact-over-generic static impl selection; RR does
+  not implement Rust's unstable specialization semantics
+- receiver-method sugar rejects ambiguous method names across traits for the same receiver type
+- operator trait dispatch is limited to the arithmetic/index operators listed above
+- user-defined trait type names guide static dispatch, but they are not yet full nominal MIR types
 
 ### 3. Control Flow (Loops and Ifs)
 **Traditional R:**
@@ -193,7 +499,7 @@ Current lexer limits:
 - Arithmetic/comparison: `+ - * / % %*% == != < <= > >=`
 - Logical: `!`, `&&`, `||`
 - Single `&` and `|` are also tokenized as logical operators
-- Others: `..`, `.`, `|>`, `?`, `@`, `^`, `=>`, `->`
+- Others: `..`, `.`, `::`, `|>`, `?`, `@`, `^`, `=>`, `->`
 - Delimiters: `()`, `{}`, `[]`, `,`, `:`
 - `;` is rejected; statements are newline-delimited
 
@@ -416,7 +722,7 @@ Note: `export` is parsed as `export` + function declaration, not as general expo
 - Formula shorthand: `~label`, `y ~ x`, `~grp + kind`
 - Binary: `+ - * / % %*% == != < <= > >= && ||` (or `&`, `|`)
 - Range: `a .. b`
-- Call: `f(x, y)`
+- Call: `f(x, y)`, `f::<Type>(x)`
 - Named call args: `f(x = 1, y = 2)`
 - Index: `x[i]`, `m[i, j]`, `a[i, j, k]`
 - Field: `rec.a`

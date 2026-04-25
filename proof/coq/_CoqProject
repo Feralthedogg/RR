@@ -28,6 +28,7 @@ ProgramPostTierStagesSoundness.v
 ProgramRunProfileInnerSoundness.v
 ProgramApiWrapperSoundness.v
 CompilerEndToEndSoundness.v
+TraitDispatchSoundness.v
 InlineCleanupRefinementSoundness.v
 FreshAliasRewriteSoundness.v
 PhaseOrderOptimizerSoundness.v
