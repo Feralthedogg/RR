@@ -643,8 +643,8 @@ mod imp {
             return;
         }
         // SAFETY: `ctx` is a freshly allocated ISL context owned by the caller.
-        // RR treats scheduler failures as optimizer misses, so libisl should
-        // return null/error states instead of writing warnings to stderr.
+        // The libisl FFI option call/raw pointer cannot be expressed safely.
+        // RR uses null/error states as optimizer misses instead of stderr noise.
         unsafe {
             let _ = isl_options_set_on_error(ctx, ISL_ON_ERROR_CONTINUE);
         }

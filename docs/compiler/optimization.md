@@ -62,6 +62,13 @@ Important rules:
 - no reduction when the loop carries extra non-accumulator state
 - no helper rewrite that changes scalar/vector semantics
 
+Helper rewrite scanners are required to be monotonic over a line or expression:
+when an earlier candidate is dynamic or otherwise not rewriteable, the scanner
+must skip that candidate and continue looking for later rewriteable helper calls.
+This keeps raw R cleanup deterministic and prevents one unsafe `rr_index1_*`,
+`rr_field_get`, or `rr_named_list` occurrence from blocking an independent
+literal helper cleanup later in the same emitted line.
+
 ## Optimization Levels
 
 - `-O0`

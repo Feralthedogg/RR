@@ -116,6 +116,34 @@ fn warn_only() {
     assert!(warn_stdout.contains("warn[tests-review]"));
     assert!(warn_stdout.contains("confirm touched semantic areas such as cache behavior, fallback behavior, numeric semantics, and IR invariants still match intent"));
 
+    let safe_alt_file = sandbox.join("src").join("mir").join("safe_alt.rs");
+    fs::write(
+        &safe_alt_file,
+        r#"
+fn has_safe_alt_rationale() {
+    // SAFETY: caller owns the raw pointer; FFI cannot use safe alternatives.
+    unsafe { side_effect(); }
+}
+"#,
+    )
+    .expect("failed to write safe-alt file");
+
+    let safe_alt_output = Command::new("perl")
+        .arg(&script)
+        .arg("--scan-only")
+        .arg("--files")
+        .arg(&safe_alt_file)
+        .output()
+        .expect("failed to execute contributing audit script for safe-alt file");
+    assert!(
+        safe_alt_output.status.success(),
+        "safe-alt audit input should pass\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&safe_alt_output.stdout),
+        String::from_utf8_lossy(&safe_alt_output.stderr)
+    );
+    let safe_alt_stdout = String::from_utf8_lossy(&safe_alt_output.stdout);
+    assert!(!safe_alt_stdout.contains("warn[unsafe-safe-alt-review]"));
+
     let good_file = sandbox.join("src").join("good.rs");
     fs::write(
         &good_file,
