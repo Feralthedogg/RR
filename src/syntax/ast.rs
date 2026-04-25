@@ -1,24 +1,24 @@
 use crate::utils::Span;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TypeExpr {
     Named(String),
     Generic { base: String, args: Vec<TypeExpr> },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Program {
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StmtKind {
     Let {
         name: String,
@@ -31,10 +31,14 @@ pub enum StmtKind {
     },
     FnDecl {
         name: String,
+        type_params: Vec<String>,
         params: Vec<FnParam>,
         ret_ty_hint: Option<TypeExpr>,
+        where_bounds: Vec<TraitBound>,
         body: Block,
     }, // Global fn
+    TraitDecl(TraitDecl),
+    ImplDecl(ImplDecl),
     If {
         cond: Expr,
         then_blk: Block,
@@ -66,26 +70,26 @@ pub enum StmtKind {
     Export(FnDecl), // export fn
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImportSource {
     Module,
     RPackage,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImportSpec {
     Glob,
     Named(Vec<ImportBinding>),
     Namespace(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportBinding {
     pub imported: String,
     pub local: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FnParam {
     pub name: String,
     pub ty_hint: Option<TypeExpr>,
@@ -93,41 +97,122 @@ pub struct FnParam {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FnDecl {
     pub name: String,
+    pub type_params: Vec<String>,
     pub params: Vec<FnParam>,
     pub ret_ty_hint: Option<TypeExpr>,
+    pub where_bounds: Vec<TraitBound>,
     pub body: Block,
     pub public: bool, // export
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraitDecl {
+    pub name: String,
+    pub type_params: Vec<String>,
+    pub supertraits: Vec<String>,
+    pub where_bounds: Vec<TraitBound>,
+    #[serde(default)]
+    pub assoc_types: Vec<TraitAssocType>,
+    #[serde(default)]
+    pub assoc_consts: Vec<TraitAssocConst>,
+    pub methods: Vec<TraitMethodSig>,
+    #[serde(default)]
+    pub public: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplDecl {
+    pub trait_name: String,
+    pub type_params: Vec<String>,
+    #[serde(default)]
+    pub negative: bool,
+    pub for_ty: TypeExpr,
+    pub where_bounds: Vec<TraitBound>,
+    #[serde(default)]
+    pub assoc_types: Vec<ImplAssocType>,
+    #[serde(default)]
+    pub assoc_consts: Vec<ImplAssocConst>,
+    pub methods: Vec<FnDecl>,
+    #[serde(default)]
+    pub public: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TraitBound {
+    pub type_name: String,
+    pub trait_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraitAssocType {
+    pub name: String,
+    #[serde(default)]
+    pub type_params: Vec<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraitAssocConst {
+    pub name: String,
+    pub ty_hint: TypeExpr,
+    pub default: Option<Expr>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplAssocType {
+    pub name: String,
+    pub ty: TypeExpr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplAssocConst {
+    pub name: String,
+    pub ty_hint: TypeExpr,
+    pub value: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraitMethodSig {
+    pub name: String,
+    pub params: Vec<FnParam>,
+    pub ret_ty_hint: Option<TypeExpr>,
+    pub where_bounds: Vec<TraitBound>,
+    pub default_body: Option<Block>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LValue {
     pub kind: LValueKind,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LValueKind {
     Name(String),
     Index { base: Expr, idx: Vec<Expr> }, // x[i], m[i,j]
     Field { base: Expr, name: String },   // obj.x
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExprKind {
     Lit(Lit),
     Name(String),
@@ -159,6 +244,7 @@ pub enum ExprKind {
 
     Call {
         callee: Box<Expr>,
+        type_args: Vec<TypeExpr>,
         args: Vec<Expr>,
     },
     NamedArg {
@@ -196,7 +282,7 @@ pub enum ExprKind {
     Column(String),     // @name
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchArm {
     pub pat: Pattern,
     pub guard: Option<Box<Expr>>,
@@ -204,7 +290,7 @@ pub struct MatchArm {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pattern {
     pub kind: PatternKind,
     pub span: Span,
@@ -216,7 +302,7 @@ impl Pattern {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PatternKind {
     Wild,
     Lit(Lit),

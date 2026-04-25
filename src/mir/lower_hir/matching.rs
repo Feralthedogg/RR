@@ -149,13 +149,16 @@ impl<'a> MirLowerer<'a> {
                 Ok(cond)
             }
             hir::HirPat::List { items, rest } => {
+                let is_list_matchable =
+                    self.add_call_value("rr_list_pattern_matchable", vec![scrut], span);
                 let len = self.add_value(ValueKind::Len { base: scrut }, span);
                 let expected = self.add_int_val(items.len() as i64, span);
-                let mut cond = if rest.is_some() {
+                let len_cond = if rest.is_some() {
                     self.add_bin_bool(BinOp::Ge, len, expected, span)
                 } else {
                     self.add_bin_bool(BinOp::Eq, len, expected, span)
                 };
+                let mut cond = self.add_bin_bool(BinOp::And, is_list_matchable, len_cond, span);
 
                 for (i, item_pat) in items.iter().enumerate() {
                     let idx = self.add_int_val((i + 1) as i64, span);

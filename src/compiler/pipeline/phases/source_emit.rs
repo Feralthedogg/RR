@@ -13,6 +13,8 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CachedModuleArtifact {
     schema: String,
+    #[serde(default)]
+    schema_version: u32,
     compiler_version: String,
     canonical_path: String,
     source_len: u64,
@@ -22,14 +24,18 @@ struct CachedModuleArtifact {
     emit_roots: Vec<String>,
     module_fingerprint: u64,
     symbols: Vec<(u32, String)>,
+    #[serde(default)]
+    source_metadata: Option<crate::syntax::ast::Program>,
     module: crate::hir::def::HirModule,
 }
 
 struct ModuleLoadJob {
     path: PathBuf,
     content: Option<String>,
+    ast: Option<crate::syntax::ast::Program>,
     mod_id: u32,
     is_entry: bool,
+    imports_preloaded: bool,
 }
 
 /// Owned lowering job for a user-declared function.
@@ -332,6 +338,7 @@ fn collect_public_symbols_from_module(
     for item in &module.items {
         if let crate::hir::def::HirItem::Fn(f) = item
             && f.public
+            && f.type_params.is_empty()
         {
             if let Some(name) = symbol_map.get(&f.name) {
                 names.push(name.clone());
@@ -351,6 +358,7 @@ fn collect_public_function_arities(
     for item in &module.items {
         if let crate::hir::def::HirItem::Fn(f) = item
             && f.public
+            && f.type_params.is_empty()
             && let Some(name) = symbol_map.get(&f.name)
         {
             out.push((name.clone(), f.params.len()));
@@ -381,6 +389,7 @@ fn build_cached_module_artifact(
     module_path: &Path,
     module: &crate::hir::def::HirModule,
     lowerer: &crate::hir::lower::Lowerer,
+    source_metadata: crate::syntax::ast::Program,
 ) -> crate::error::RR<CachedModuleArtifact> {
     let (source_len, source_mtime_ns) = source_file_signature(module_path).map_err(|e| {
         RRException::new(
@@ -407,6 +416,7 @@ fn build_cached_module_artifact(
         .unwrap_or(0);
     Ok(CachedModuleArtifact {
         schema: "rr-module-artifact".to_string(),
+        schema_version: 2,
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),
         canonical_path: module_path.to_string_lossy().to_string(),
         source_len,
@@ -419,6 +429,7 @@ fn build_cached_module_artifact(
             .into_iter()
             .map(|(id, name)| (id.0, name))
             .collect(),
+        source_metadata: Some(source_metadata),
         module: module.clone(),
     })
 }
@@ -428,6 +439,7 @@ fn store_module_artifact(
     module_path: &Path,
     module: &crate::hir::def::HirModule,
     lowerer: &crate::hir::lower::Lowerer,
+    source_metadata: crate::syntax::ast::Program,
 ) -> crate::error::RR<()> {
     fs::create_dir_all(cache_root).map_err(|e| {
         RRException::new(
@@ -441,7 +453,7 @@ fn store_module_artifact(
             ),
         )
     })?;
-    let artifact = build_cached_module_artifact(module_path, module, lowerer)?;
+    let artifact = build_cached_module_artifact(module_path, module, lowerer, source_metadata)?;
     let payload = serde_json::to_vec_pretty(&artifact).map_err(|e| {
         InternalCompilerError::new(
             Stage::Codegen,
@@ -487,6 +499,7 @@ fn load_module_artifact(
         Err(_) => return Ok(None),
     };
     if artifact.schema != "rr-module-artifact"
+        || artifact.schema_version != 2
         || artifact.compiler_version != env!("CARGO_PKG_VERSION")
         || artifact.canonical_path != module_path.to_string_lossy()
     {
@@ -499,17 +512,110 @@ fn load_module_artifact(
     if artifact.source_len != source_len || artifact.source_mtime_ns != source_mtime_ns {
         return Ok(None);
     }
+    let mut module = artifact.module;
     let symbols: Vec<(crate::hir::def::SymbolId, String)> = artifact
         .symbols
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|(id, name)| (crate::hir::def::SymbolId(id), name))
         .collect();
     if !lowerer.try_preload_symbols(&symbols) {
         return Ok(None);
     }
-    let mut module = artifact.module;
+    if let Some(source_metadata) = artifact.source_metadata.as_ref() {
+        if public_impl_metadata_needs_external_traits(source_metadata) {
+            return Ok(None);
+        }
+        lowerer.preload_public_module_metadata(source_metadata)?;
+    } else if hir_module_requires_source_lowering_for_metadata(&module) {
+        return Ok(None);
+    }
     module.id = mod_id;
     Ok(Some(module))
+}
+
+fn hir_module_requires_source_lowering_for_metadata(module: &crate::hir::def::HirModule) -> bool {
+    module.items.iter().any(|item| match item {
+        crate::hir::def::HirItem::Trait(_) | crate::hir::def::HirItem::Impl(_) => true,
+        crate::hir::def::HirItem::Fn(f) => !f.type_params.is_empty(),
+        _ => false,
+    })
+}
+
+fn public_impl_metadata_needs_external_traits(prog: &crate::syntax::ast::Program) -> bool {
+    let public_traits = prog
+        .stmts
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            crate::syntax::ast::StmtKind::TraitDecl(decl) if decl.public => {
+                Some(decl.name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<FxHashSet<_>>();
+
+    prog.stmts.iter().any(|stmt| {
+        matches!(
+            &stmt.kind,
+            crate::syntax::ast::StmtKind::ImplDecl(decl)
+                if decl.public && !public_traits.contains(decl.trait_name.as_str())
+        )
+    })
+}
+
+fn enqueue_ast_module_imports(
+    stmts: &[crate::syntax::ast::Stmt],
+    curr_path: &Path,
+    loaded_paths: &mut FxHashSet<PathBuf>,
+    queue: &mut std::collections::VecDeque<ModuleLoadJob>,
+    next_mod_id: &mut u32,
+) -> crate::error::RR<usize> {
+    let mut targets = Vec::new();
+    for stmt in stmts {
+        let crate::syntax::ast::StmtKind::Import {
+            source: crate::syntax::ast::ImportSource::Module,
+            path,
+            ..
+        } = &stmt.kind
+        else {
+            continue;
+        };
+        let target = crate::pkg::resolve_import_path(curr_path, path)?;
+        if loaded_paths.contains(&target) {
+            continue;
+        }
+        if !target.is_absolute() {
+            return Err(crate::error::RRException::new(
+                "RR.ParseError",
+                crate::error::RRCode::E0001,
+                crate::error::Stage::Parse,
+                format!(
+                    "relative import resolution requires an absolute entry path; normalize '{}' before compiling",
+                    curr_path.display()
+                ),
+            ));
+        }
+        loaded_paths.insert(target.clone());
+        targets.push(target);
+    }
+
+    let mut jobs = Vec::with_capacity(targets.len());
+    for target in targets {
+        jobs.push(ModuleLoadJob {
+            path: target,
+            content: None,
+            ast: None,
+            mod_id: *next_mod_id,
+            is_entry: false,
+            imports_preloaded: false,
+        });
+        *next_mod_id += 1;
+    }
+    let enqueued = jobs.len();
+    for job in jobs.into_iter().rev() {
+        queue.push_front(job);
+    }
+    Ok(enqueued)
 }
 
 fn enqueue_module_imports(
@@ -538,8 +644,10 @@ fn enqueue_module_imports(
                 queue.push_back(ModuleLoadJob {
                     path: target,
                     content: None,
+                    ast: None,
                     mod_id: *next_mod_id,
                     is_entry: false,
+                    imports_preloaded: false,
                 });
                 *next_mod_id += 1;
             }
@@ -564,8 +672,10 @@ pub(crate) fn run_source_analysis_and_canonicalization(
     queue.push_back(ModuleLoadJob {
         path: entry_abs,
         content: Some(entry_input.to_string()),
+        ast: None,
         mod_id: 0,
         is_entry: true,
+        imports_preloaded: false,
     });
 
     let mut next_mod_id = 1;
@@ -588,16 +698,23 @@ pub(crate) fn run_source_analysis_and_canonicalization(
     let mut cached_modules = 0usize;
 
     while let Some(job) = queue.pop_front() {
-        let curr_path = job.path;
+        let ModuleLoadJob {
+            path: curr_path,
+            content,
+            ast,
+            mod_id,
+            is_entry,
+            imports_preloaded,
+        } = job;
         let curr_path_str = curr_path.to_string_lossy().to_string();
-        ui.trace(&format!("module#{}", job.mod_id), &curr_path_str);
+        ui.trace(&format!("module#{}", mod_id), &curr_path_str);
 
-        if !job.is_entry {
+        if !is_entry && ast.is_none() {
             let artifact_started = Instant::now();
             if let Some(module) = load_module_artifact(
                 &module_cache_root,
                 &curr_path,
-                crate::hir::def::ModuleId(job.mod_id),
+                crate::hir::def::ModuleId(mod_id),
                 &mut hir_lowerer,
             )? {
                 source_analysis_elapsed_ns += artifact_started.elapsed().as_nanos();
@@ -616,41 +733,68 @@ pub(crate) fn run_source_analysis_and_canonicalization(
             source_analysis_elapsed_ns += artifact_started.elapsed().as_nanos();
         }
 
-        let content = if let Some(content) = job.content {
-            content
+        let source_started = Instant::now();
+        let ast_prog = if let Some(ast_prog) = ast {
+            ast_prog
         } else {
-            match fs::read_to_string(&curr_path) {
-                Ok(content) => content,
+            let content = if let Some(content) = content {
+                content
+            } else {
+                match fs::read_to_string(&curr_path) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        return Err(crate::error::RRException::new(
+                            "RR.ParseError",
+                            crate::error::RRCode::E0001,
+                            crate::error::Stage::Parse,
+                            format!("failed to load imported module '{}': {}", curr_path_str, e),
+                        ));
+                    }
+                }
+            };
+            parsed_modules += 1;
+            let mut parser = Parser::new(&content);
+            match parser.parse_program() {
+                Ok(p) => p,
                 Err(e) => {
-                    return Err(crate::error::RRException::new(
-                        "RR.ParseError",
-                        crate::error::RRCode::E0001,
-                        crate::error::Stage::Parse,
-                        format!("failed to load imported module '{}': {}", curr_path_str, e),
-                    ));
+                    load_errors.push(e);
+                    continue;
                 }
             }
         };
-        parsed_modules += 1;
+        if !imports_preloaded {
+            let import_count = enqueue_ast_module_imports(
+                &ast_prog.stmts,
+                &curr_path,
+                &mut loaded_paths,
+                &mut queue,
+                &mut next_mod_id,
+            )?;
+            if import_count > 0 {
+                queue.insert(
+                    import_count,
+                    ModuleLoadJob {
+                        path: curr_path,
+                        content: None,
+                        ast: Some(ast_prog),
+                        mod_id,
+                        is_entry,
+                        imports_preloaded: true,
+                    },
+                );
+                source_analysis_elapsed_ns += source_started.elapsed().as_nanos();
+                continue;
+            }
+        }
 
-        let source_started = Instant::now();
-        let mut parser = Parser::new(&content);
-        let ast_prog = match parser.parse_program() {
-            Ok(p) => p,
+        let source_metadata = ast_prog.clone();
+        let hir_mod = match hir_lowerer.lower_module(ast_prog, crate::hir::def::ModuleId(mod_id)) {
+            Ok(v) => v,
             Err(e) => {
                 load_errors.push(e);
                 continue;
             }
         };
-
-        let hir_mod =
-            match hir_lowerer.lower_module(ast_prog, crate::hir::def::ModuleId(job.mod_id)) {
-                Ok(v) => v,
-                Err(e) => {
-                    load_errors.push(e);
-                    continue;
-                }
-            };
         source_analysis_elapsed_ns += source_started.elapsed().as_nanos();
         for w in hir_lowerer.take_warnings() {
             ui.warn(&format!("{}: {}", curr_path_str, w));
@@ -667,13 +811,15 @@ pub(crate) fn run_source_analysis_and_canonicalization(
         let canonicalize_started = Instant::now();
         let desugared_module = desugar_single_module(hir_mod)?;
         canonicalization_elapsed_ns += canonicalize_started.elapsed().as_nanos();
-        if !job.is_entry {
+        if !is_entry {
             store_module_artifact(
                 &module_cache_root,
                 &curr_path,
                 &desugared_module,
                 &hir_lowerer,
+                source_metadata.clone(),
             )?;
+            hir_lowerer.prune_private_module_metadata(&source_metadata);
         }
         hir_modules.push(desugared_module);
     }
@@ -695,6 +841,7 @@ pub(crate) fn run_source_analysis_and_canonicalization(
         format_duration(duration_from_nanos(source_analysis_elapsed_ns))
     ));
 
+    hir_modules.sort_by_key(|module| module.id.0);
     let hir_prog = crate::hir::def::HirProgram {
         modules: hir_modules,
     };
@@ -1778,6 +1925,7 @@ pub(crate) fn run_mir_synthesis(
     for module in &desugared_hir.modules {
         for item in &module.items {
             if let crate::hir::def::HirItem::Fn(f) = item
+                && f.type_params.is_empty()
                 && let Some(name) = global_symbols.get(&f.name).cloned()
             {
                 known_fn_arities.insert(name, f.params.len());
@@ -1790,7 +1938,7 @@ pub(crate) fn run_mir_synthesis(
 
         for item in module.items {
             match item {
-                crate::hir::def::HirItem::Fn(f) => {
+                crate::hir::def::HirItem::Fn(f) if f.type_params.is_empty() => {
                     let fn_name = format!("Sym_{}", f.name.0);
                     let is_public = f.public;
                     let mut params = Vec::with_capacity(f.params.len());
@@ -1822,6 +1970,7 @@ pub(crate) fn run_mir_synthesis(
                     }
                     emit_order.push(fn_name);
                 }
+                crate::hir::def::HirItem::Fn(_) => {}
                 crate::hir::def::HirItem::Stmt(s) => top_level_stmts.push(s),
                 _ => {}
             }
@@ -1832,6 +1981,8 @@ pub(crate) fn run_mir_synthesis(
             let top_fn = crate::hir::def::HirFn {
                 id: crate::hir::def::FnId(1_000_000 + module.id.0),
                 name: crate::hir::def::SymbolId(1_000_000 + module.id.0),
+                type_params: Vec::new(),
+                where_bounds: Vec::new(),
                 params: Vec::new(),
                 has_varargs: false,
                 ret_ty: None,

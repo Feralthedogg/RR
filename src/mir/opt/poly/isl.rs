@@ -4,7 +4,7 @@ use super::schedule::{SchedulePlan, SchedulePlanKind};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,6 +225,8 @@ fn try_materialize_via_helper(request: &MaterializeRequest) -> Option<Option<Isl
         .arg(ISL_MATERIALIZE_HELPER_CMD)
         .arg(&request_path)
         .arg(&response_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
     let response = match status {
         Ok(status) if status.success() => read_materialize_response(&response_path).ok(),
@@ -565,6 +567,7 @@ mod imp {
     const ISL_SCHEDULE_NODE_LEAF: i32 = 7;
     const ISL_SCHEDULE_NODE_SEQUENCE: i32 = 10;
     const ISL_SCHEDULE_NODE_SET: i32 = 11;
+    const ISL_ON_ERROR_CONTINUE: c_int = 1;
 
     // SAFETY: These declarations model ISL/libc FFI entry points. The C ABI and
     // raw pointer signatures cannot be expressed safely in Rust, so callers keep
@@ -572,6 +575,7 @@ mod imp {
     unsafe extern "C" {
         fn isl_ctx_alloc() -> *mut isl_ctx;
         fn isl_ctx_free(ctx: *mut isl_ctx);
+        fn isl_options_set_on_error(ctx: *mut isl_ctx, val: c_int) -> c_int;
 
         fn isl_set_read_from_str(ctx: *mut isl_ctx, s: *const c_char) -> *mut isl_set;
         fn isl_union_set_read_from_str(ctx: *mut isl_ctx, s: *const c_char) -> *mut isl_union_set;
@@ -632,6 +636,18 @@ mod imp {
         fn isl_schedule_node_free(node: *mut isl_schedule_node) -> *mut isl_schedule_node;
 
         fn free(ptr: *mut c_void);
+    }
+
+    fn configure_isl_context(ctx: *mut isl_ctx) {
+        if ctx.is_null() {
+            return;
+        }
+        // SAFETY: `ctx` is a freshly allocated ISL context owned by the caller.
+        // The libisl FFI option call/raw pointer cannot be expressed safely.
+        // RR uses null/error states as optimizer misses instead of stderr noise.
+        unsafe {
+            let _ = isl_options_set_on_error(ctx, ISL_ON_ERROR_CONTINUE);
+        }
     }
 
     fn node_type_name(kind: i32) -> &'static str {
@@ -940,6 +956,7 @@ mod imp {
             if ctx.is_null() {
                 return None;
             }
+            configure_isl_context(ctx);
             let map = isl_map_read_from_str(ctx, raw_c.as_ptr());
             if map.is_null() {
                 isl_ctx_free(ctx);
@@ -971,6 +988,7 @@ mod imp {
             if ctx.is_null() {
                 return None;
             }
+            configure_isl_context(ctx);
             let mut union: *mut isl_union_map = std::ptr::null_mut();
             for raw in maps {
                 let raw_c = match CString::new(raw.as_str()) {
@@ -1042,6 +1060,7 @@ mod imp {
             if ctx.is_null() {
                 return None;
             }
+            configure_isl_context(ctx);
 
             let (
                 constraints,

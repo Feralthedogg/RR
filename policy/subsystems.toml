@@ -74,6 +74,21 @@ required_ci_checks_file = "policy/required_ci_checks.txt"
 perf_delta_threshold_file = "policy/perf_delta_thresholds.txt"
 
 [[subsystems]]
+name = "docs"
+owners = [
+  "@Feralthedogg",
+]
+paths = [
+  "docs/",
+  "proof/",
+  "tests/docs_surface_sync.rs",
+]
+checks = [
+  "docs_generated",
+  "semantic_audit",
+]
+
+[[subsystems]]
 name = "tooling"
 owners = [
   "@Feralthedogg",
@@ -82,10 +97,12 @@ paths = [
   ".gitignore",
   "Cargo.lock",
   "Cargo.toml",
+  "Makefile",
   "README.md",
   "dist-workspace.toml",
   "CONTRIBUTING.md",
   ".github/",
+  "src/main",
   "docs/README.md",
   "docs/cli.md",
   "docs/compiler/",
@@ -107,6 +124,7 @@ paths = [
   "scripts/check_pr_evidence.py",
   "scripts/lib/test_manifests.sh",
   "tests/process_gate_smoke.rs",
+  "tests/compiler_hardcode_guard.rs",
   "scripts/verify_cleanroom.sh",
   "tests/contributing_audit_smoke.rs",
   "policy/required_ci_checks.txt",
@@ -126,8 +144,14 @@ owners = [
   "@levish0",
 ]
 paths = [
+  "src/syntax/",
   "src/hir/",
+  "src/mir/lower_hir",
+  "src/legacy/ir/lower.rs",
   "src/typeck/",
+  "tests/trait_static_dispatch.rs",
+  "tests/golden/control_flow_match",
+  "tests/mir_lowering_loop_match.rs",
   "tests/syntax_errors.rs",
   "tests/parse_multi_errors.rs",
   "tests/statement_boundaries.rs",
@@ -145,6 +169,8 @@ owners = [
 paths = [
   "src/compiler/incremental.rs",
   "src/main_compile.rs",
+  "src/main_compile_entry.rs",
+  "tests/module_export_cache_roundtrip.rs",
   "tests/incremental_",
   "tests/cache_equivalence_matrix.rs",
   "tests/cli_incremental_default.rs",
@@ -166,7 +192,9 @@ paths = [
   "src/mir/opt/",
   "src/mir/semantics.rs",
   "src/mir/semantics/",
+  "src/mir/verify",
   "src/mir/verify.rs",
+  "src/compiler/pipeline/function_props.rs",
   "src/compiler/pipeline/phases/tachyon_runtime.rs",
   "src/compiler/peephole/",
   "tests/cases/optimizer/",
@@ -227,8 +255,10 @@ owners = [
 paths = [
   "src/codegen/",
   "src/compiler/pipeline/phases/source_emit.rs",
+  "src/compiler/pipeline/late_raw_rewrites",
   "src/compiler/pipeline/raw_rewrites.rs",
   "src/compiler/pipeline.rs",
+  "example/",
   "example/benchmarks/",
   "tests/benchmark_examples_smoke.rs",
   "tests/codegen_binding_regression.rs",

@@ -215,15 +215,12 @@ fn tesseract_compiles_across_opt_levels() {
                     flag
                 );
                 assert!(
-                    (code.contains("probe_energy <- mean(abs(probe_vec))")
-                        || code.contains("probe_energy <- (mean(abs(probe_vec)))"))
-                        && !code.contains(
-                            "probe_energy <- mean(abs(rr_parallel_typed_vec_call(\"Sym_49\""
-                        )
-                        && !code.contains(
-                            "probe_energy <- (mean(abs((rr_parallel_typed_vec_call(\"Sym_49\""
-                        ),
-                    "expected probe_energy to reuse the earlier probe_vec typed call for {}",
+                    code.contains("probe_pair <- list(left = c(1.0, 2.0, 3.0, 4.0), right = c(4.0, 3.0, 2.0, 1.0))")
+                        && code.contains("probe_pair[[\"left\"]]")
+                        && code.contains("probe_pair[[\"right\"]]")
+                        && !code.contains("FieldEnergy.energy")
+                        && !code.contains("typed_trait_energy("),
+                    "expected probe_energy to lower through the static FieldEnergy trait probe for {}",
                     flag
                 );
             }
@@ -953,10 +950,15 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
     );
     assert!(
         raw_code.contains("probe_vec <- Sym_49(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))")
-            && raw_code.contains("probe_energy <- mean(abs(probe_vec))")
-            && !raw_code.contains("Sym_51 <- function(a, b)")
-            && !raw_code.contains("probe_energy <- Sym_51("),
-        "expected raw tesseract output to reuse the earlier probe_vec call when forming probe_energy and drop the now-unreachable Sym_51 helper"
+            && raw_code.contains(
+                "probe_pair <- list(left = c(1.0, 2.0, 3.0, 4.0), right = c(4.0, 3.0, 2.0, 1.0))"
+            )
+            && raw_code.contains("probe_energy <- Sym_313(probe_pair)")
+            && raw_code.contains("Sym_316 <- function(self)")
+            && raw_code.contains("return(Sym_51(self[[\"left\"]], self[[\"right\"]]))")
+            && !raw_code.contains("FieldEnergy.energy")
+            && !raw_code.contains("typed_trait_energy("),
+        "expected raw tesseract output to route probe_energy through the static FieldEnergy trait dispatch path"
     );
     let raw_sym_183 = extract_r_function(&raw_code, "Sym_183")
         .unwrap_or_else(|| panic!("raw tesseract output should contain Sym_183"));

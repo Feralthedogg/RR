@@ -149,6 +149,19 @@ Current gap:
 - proof uses reduced program fragments
 - Rust path includes caching, root selection, emitted-R rewrites, and runtime
   injection
+- Rust source analysis now also performs trait/generic metadata-sensitive module
+  ordering, module-artifact source metadata replay, explicit turbofish lowering,
+  generic return-type inference from annotated `let` bindings, impl-coherence
+  checks, associated-type substitution, default method materialization,
+  supertrait obligation checks, exact-over-generic specialization, negative impl
+  blocking, operator trait lowering, and generic impl instantiation. The reduced
+  `TraitDispatchSoundness` files model static target preservation after
+  resolution, negative-impl exclusion, reduced operator-to-trait mapping, and
+  public trait metadata filtering; most source/HIR trait-solver behavior is
+  still outside the reduced lowering/codegen proof layers. Rust-level
+  heterogeneous `dyn Trait` vtables, borrow/lifetime or HRTB solving, full GAT
+  projection normalization, arbitrary const-generic evaluation, and unstable
+  specialization semantics are explicit non-claims for the current proof spine.
 
 ## CFG Pipeline
 

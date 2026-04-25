@@ -181,7 +181,7 @@ read, and mix them when that helps migration from existing R code.
 RR keeps the `int` / `float` boundary more explicitly than ordinary R code.
 
 - `/` widens to floating-point
-- `%%` stays integer when both sides are integer
+- RR source `%` emits R `%%`, and stays integer when both sides are integer
 - `sum(int-vector)` stays integer when RR can prove the input type
 
 Use:

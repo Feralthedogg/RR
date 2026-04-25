@@ -91,6 +91,7 @@ RR_TIER0_FAST_TESTS=(
   builtin_shadowing
   type_hint_conflict
   type_lattice
+  trait_static_dispatch
   type_diagnostic_aggregation
   type_solver_intraprocedural
   type_solver_interprocedural

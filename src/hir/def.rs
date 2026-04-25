@@ -51,6 +51,8 @@ pub struct HirModule {
 pub enum HirItem {
     Import(HirImport),
     Fn(HirFn),
+    Trait(HirTrait),
+    Impl(HirImpl),
     Export(SymbolId),
     TypeAlias { name: SymbolId, ty: Ty, span: Span },
     Stmt(HirStmt),
@@ -74,6 +76,8 @@ pub enum HirImportSpec {
 pub struct HirFn {
     pub id: FnId,
     pub name: SymbolId,
+    pub type_params: Vec<String>,
+    pub where_bounds: Vec<HirTraitBound>,
     pub params: Vec<HirParam>,
     pub has_varargs: bool,
     pub ret_ty: Option<Ty>,
@@ -102,6 +106,115 @@ pub struct HirParam {
     pub name: SymbolId,
     pub ty: Option<Ty>,
     pub default: Option<HirExpr>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HirTypeRef {
+    Named(String),
+    Generic { base: String, args: Vec<HirTypeRef> },
+}
+
+impl HirTypeRef {
+    pub fn key(&self) -> String {
+        match self {
+            HirTypeRef::Named(name) => name.clone(),
+            HirTypeRef::Generic { base, args } => {
+                let args = args.iter().map(HirTypeRef::key).collect::<Vec<_>>();
+                format!("{}<{}>", base, args.join(","))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HirTraitBound {
+    pub type_name: String,
+    pub trait_names: Vec<SymbolId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirTrait {
+    pub name: SymbolId,
+    pub type_params: Vec<String>,
+    pub supertraits: Vec<SymbolId>,
+    pub where_bounds: Vec<HirTraitBound>,
+    #[serde(default)]
+    pub assoc_types: Vec<HirTraitAssocType>,
+    #[serde(default)]
+    pub assoc_consts: Vec<HirTraitAssocConst>,
+    pub methods: Vec<HirTraitMethodSig>,
+    pub span: Span,
+    #[serde(default)]
+    pub public: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirTraitAssocType {
+    pub name: SymbolId,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirTraitAssocConst {
+    pub name: SymbolId,
+    pub ty: HirTypeRef,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirTraitMethodSig {
+    pub name: SymbolId,
+    pub params: Vec<HirTraitParamSig>,
+    pub ret_ty: Option<HirTypeRef>,
+    pub where_bounds: Vec<HirTraitBound>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirTraitParamSig {
+    pub name: SymbolId,
+    pub ty: Option<HirTypeRef>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirImpl {
+    pub trait_name: SymbolId,
+    pub type_params: Vec<String>,
+    #[serde(default)]
+    pub negative: bool,
+    pub for_ty: HirTypeRef,
+    pub where_bounds: Vec<HirTraitBound>,
+    #[serde(default)]
+    pub assoc_types: Vec<HirImplAssocType>,
+    #[serde(default)]
+    pub assoc_consts: Vec<HirImplAssocConst>,
+    pub methods: Vec<HirImplMethod>,
+    pub span: Span,
+    #[serde(default)]
+    pub public: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirImplAssocType {
+    pub name: SymbolId,
+    pub ty: HirTypeRef,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirImplAssocConst {
+    pub name: SymbolId,
+    pub ty: HirTypeRef,
+    pub value_fn: SymbolId,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HirImplMethod {
+    pub trait_method: SymbolId,
+    pub impl_fn: SymbolId,
     pub span: Span,
 }
 

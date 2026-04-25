@@ -1,4 +1,26 @@
-use super::*;
+use RR::compiler::CliLog;
+use std::env;
+use std::path::PathBuf;
+
+fn current_project_root(ui: &CliLog, command: &str) -> Result<PathBuf, i32> {
+    let cwd = match env::current_dir() {
+        Ok(path) => path,
+        Err(e) => {
+            ui.error(&format!("Failed to determine current directory: {}", e));
+            return Err(1);
+        }
+    };
+    let Some(project_root) = RR::pkg::find_manifest_root(&cwd) else {
+        ui.error(&format!(
+            "RR {command} requires an rr.mod manifest in the current directory or a parent directory"
+        ));
+        ui.warn(&format!(
+            "run RR init first, then retry RR {command} from inside that project"
+        ));
+        return Err(1);
+    };
+    Ok(project_root)
+}
 
 pub(crate) fn cmd_install(args: &[String]) -> i32 {
     let ui = CliLog::new();
@@ -8,19 +30,9 @@ pub(crate) fn cmd_install(args: &[String]) -> i32 {
         return 1;
     }
 
-    let cwd = match env::current_dir() {
-        Ok(path) => path,
-        Err(e) => {
-            ui.error(&format!("Failed to determine current directory: {}", e));
-            return 1;
-        }
-    };
-    let Some(project_root) = RR::pkg::find_manifest_root(&cwd) else {
-        ui.error(
-            "RR install requires an rr.mod manifest in the current directory or a parent directory",
-        );
-        ui.warn("run RR init first, then retry RR install from inside that project");
-        return 1;
+    let project_root = match current_project_root(&ui, "install") {
+        Ok(root) => root,
+        Err(code) => return code,
     };
 
     match RR::pkg::install_dependency_in_project(&project_root, &args[0]) {
@@ -48,19 +60,9 @@ pub(crate) fn cmd_remove(args: &[String]) -> i32 {
         return 1;
     }
 
-    let cwd = match env::current_dir() {
-        Ok(path) => path,
-        Err(e) => {
-            ui.error(&format!("Failed to determine current directory: {}", e));
-            return 1;
-        }
-    };
-    let Some(project_root) = RR::pkg::find_manifest_root(&cwd) else {
-        ui.error(
-            "RR remove requires an rr.mod manifest in the current directory or a parent directory",
-        );
-        ui.warn("run RR init first, then retry RR remove from inside that project");
-        return 1;
+    let project_root = match current_project_root(&ui, "remove") {
+        Ok(root) => root,
+        Err(code) => return code,
     };
 
     match RR::pkg::remove_dependency_from_project(&project_root, &args[0]) {
@@ -88,17 +90,9 @@ pub(crate) fn cmd_outdated(args: &[String]) -> i32 {
         ui.warn("use RR outdated");
         return 1;
     }
-    let cwd = match env::current_dir() {
-        Ok(path) => path,
-        Err(e) => {
-            ui.error(&format!("Failed to determine current directory: {}", e));
-            return 1;
-        }
-    };
-    let Some(project_root) = RR::pkg::find_manifest_root(&cwd) else {
-        ui.error("RR outdated requires an rr.mod manifest in the current directory or a parent directory");
-        ui.warn("run RR init first, then retry RR outdated from inside that project");
-        return 1;
+    let project_root = match current_project_root(&ui, "outdated") {
+        Ok(root) => root,
+        Err(code) => return code,
     };
     match RR::pkg::outdated_direct_dependencies(&project_root) {
         Ok(entries) => {
@@ -129,19 +123,9 @@ pub(crate) fn cmd_update(args: &[String]) -> i32 {
         ui.warn("use RR update [module-path]");
         return 1;
     }
-    let cwd = match env::current_dir() {
-        Ok(path) => path,
-        Err(e) => {
-            ui.error(&format!("Failed to determine current directory: {}", e));
-            return 1;
-        }
-    };
-    let Some(project_root) = RR::pkg::find_manifest_root(&cwd) else {
-        ui.error(
-            "RR update requires an rr.mod manifest in the current directory or a parent directory",
-        );
-        ui.warn("run RR init first, then retry RR update from inside that project");
-        return 1;
+    let project_root = match current_project_root(&ui, "update") {
+        Ok(root) => root,
+        Err(code) => return code,
     };
     match RR::pkg::update_project_dependencies(&project_root, args.first().map(String::as_str)) {
         Ok(modules) => {
@@ -211,19 +195,9 @@ pub(crate) fn cmd_publish(args: &[String]) -> i32 {
         return 1;
     };
 
-    let cwd = match env::current_dir() {
-        Ok(path) => path,
-        Err(e) => {
-            ui.error(&format!("Failed to determine current directory: {}", e));
-            return 1;
-        }
-    };
-    let Some(project_root) = RR::pkg::find_manifest_root(&cwd) else {
-        ui.error(
-            "RR publish requires an rr.mod manifest in the current directory or a parent directory",
-        );
-        ui.warn("run RR init first, then retry RR publish from inside that project");
-        return 1;
+    let project_root = match current_project_root(&ui, "publish") {
+        Ok(root) => root,
+        Err(code) => return code,
     };
 
     match RR::pkg::publish_project(&project_root, &version, &options) {

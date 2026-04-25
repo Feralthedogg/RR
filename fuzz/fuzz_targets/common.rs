@@ -147,6 +147,8 @@ pub fn build_mir(src: &str) -> Option<FxHashMap<String, FnIR>> {
                 id: RR::hir::def::FnId(1_000_000 + module.id.0),
                 name: RR::hir::def::SymbolId(1_000_000 + module.id.0),
                 params: Vec::new(),
+                type_params: Vec::new(),
+                where_bounds: Vec::new(),
                 has_varargs: false,
                 ret_ty: None,
                 body: RR::hir::def::HirBlock {

@@ -129,6 +129,9 @@ impl<'a> Lexer<'a> {
                     "match" => TokenKind::Match,
                     "import" => TokenKind::Import,
                     "export" => TokenKind::Export,
+                    "trait" => TokenKind::Trait,
+                    "impl" => TokenKind::Impl,
+                    "where" => TokenKind::Where,
                     _ => TokenKind::Ident(ident),
                 }
             }
@@ -194,6 +197,16 @@ impl<'a> Lexer<'a> {
                     TokenKind::String(s)
                 } else {
                     TokenKind::Invalid("unterminated string literal".to_string())
+                }
+            }
+            Some('\'') => {
+                self.advance(); // eat '
+                match self.peek() {
+                    Some(c) if c.is_alphabetic() || c == '_' => {
+                        let ident = self.read_while(|c| c.is_alphanumeric() || c == '_');
+                        TokenKind::Ident(format!("'{ident}"))
+                    }
+                    _ => TokenKind::Invalid("expected lifetime name after '\''".to_string()),
                 }
             }
             Some('=') => {
@@ -359,6 +372,15 @@ impl<'a> Lexer<'a> {
                     TokenKind::Percent
                 }
             }
+            Some(':') => {
+                self.advance();
+                if let Some(':') = self.peek() {
+                    self.advance();
+                    TokenKind::DoubleColon
+                } else {
+                    TokenKind::Colon
+                }
+            }
             Some('(') => {
                 self.advance();
                 TokenKind::LParen
@@ -386,10 +408,6 @@ impl<'a> Lexer<'a> {
             Some(',') => {
                 self.advance();
                 TokenKind::Comma
-            }
-            Some(':') => {
-                self.advance();
-                TokenKind::Colon
             }
             Some(';') => {
                 self.advance();

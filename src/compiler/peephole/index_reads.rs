@@ -52,6 +52,38 @@ pub(super) fn expr_is_floor_clamped_scalar_index_source(expr: &str) -> bool {
         || compact.starts_with("pmin(pmax(1.0+floor(")
 }
 
+fn find_next_callee<'a>(
+    line: &str,
+    search_start: usize,
+    callees: &'a [&'a str],
+) -> Option<(&'a str, usize)> {
+    callees
+        .iter()
+        .filter_map(|callee| {
+            line[search_start..]
+                .find(&format!("{callee}("))
+                .map(|offset| (*callee, search_start + offset))
+        })
+        .min_by_key(|(_, start)| *start)
+}
+
+fn find_call_end(line: &str, call_start: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (off, ch) in line[call_start..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(call_start + off);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn rewrite_index_access_calls_in_line(
     mut rewritten: String,
     safe_index_vars: &FxHashSet<String>,
@@ -60,38 +92,23 @@ fn rewrite_index_access_calls_in_line(
     prev_lines: &[String],
     current_idx: usize,
 ) -> String {
+    let mut search_start = 0usize;
     loop {
-        let read_pos = rewritten.find("rr_index1_read(");
-        let write_pos = rewritten.find("rr_index1_write(");
-        let (callee, start) = match (read_pos, write_pos) {
-            (Some(r), Some(w)) if r <= w => ("rr_index1_read", r),
-            (Some(r), Some(_)) => ("rr_index1_read", r),
-            (Some(r), None) => ("rr_index1_read", r),
-            (None, Some(w)) => ("rr_index1_write", w),
-            (None, None) => break,
+        let Some((callee, start)) = find_next_callee(
+            &rewritten,
+            search_start,
+            &["rr_index1_read", "rr_index1_write"],
+        ) else {
+            break;
         };
         let call_start = start + callee.len();
-        let mut depth = 0i32;
-        let mut end = None;
-        for (off, ch) in rewritten[call_start..].char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = Some(call_start + off);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let Some(call_end) = end else {
+        let Some(call_end) = find_call_end(&rewritten, call_start) else {
             break;
         };
         let args_inner = &rewritten[call_start + 1..call_end];
         let Some(args) = split_top_level_args(args_inner) else {
-            break;
+            search_start = call_end + 1;
+            continue;
         };
         let replacement = match callee {
             "rr_index1_read" if args.len() >= 2 => {
@@ -131,9 +148,12 @@ fn rewrite_index_access_calls_in_line(
             _ => None,
         };
         let Some(replacement) = replacement else {
-            break;
+            search_start = call_end + 1;
+            continue;
         };
+        let replacement_end = start + replacement.len();
         rewritten.replace_range(start..=call_end, &replacement);
+        search_start = replacement_end;
     }
     rewritten
 }
@@ -254,35 +274,24 @@ pub(super) fn rewrite_safe_named_index_read_calls(lines: Vec<String>) -> Vec<Str
             }
         }
 
+        let mut search_start = 0usize;
         loop {
-            let Some(start) = rewritten.find("rr_index1_read(") else {
+            let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
+            else {
                 break;
             };
             let call_start = start + "rr_index1_read".len();
-            let mut depth = 0i32;
-            let mut end = None;
-            for (off, ch) in rewritten[call_start..].char_indices() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = Some(call_start + off);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let Some(call_end) = end else {
+            let Some(call_end) = find_call_end(&rewritten, call_start) else {
                 break;
             };
             let args_inner = &rewritten[call_start + 1..call_end];
             let Some(args) = split_top_level_args(args_inner) else {
-                break;
+                search_start = call_end + 1;
+                continue;
             };
             if args.len() < 2 {
-                break;
+                search_start = call_end + 1;
+                continue;
             }
             let base = args[0].trim();
             let idx = args[1].trim();
@@ -290,9 +299,13 @@ pub(super) fn rewrite_safe_named_index_read_calls(lines: Vec<String>) -> Vec<Str
                 || !(safe_index_vars.contains(idx) || expr_is_safe_scalar_index_source(idx))
                 || !(args.len() == 2 || is_literal_index_ctx(&args[2]))
             {
-                break;
+                search_start = call_end + 1;
+                continue;
             }
-            rewritten.replace_range(start..=call_end, &format!("{base}[{idx}]"));
+            let replacement = format!("{base}[{idx}]");
+            let replacement_end = start + replacement.len();
+            rewritten.replace_range(start..=call_end, &replacement);
+            search_start = replacement_end;
         }
 
         out.push(rewritten);
@@ -327,41 +340,31 @@ pub(super) fn rewrite_safe_flat_loop_index_read_calls(lines: Vec<String>) -> Vec
             continue;
         }
         let mut rewritten = out[idx].clone();
+        let mut search_start = 0usize;
         loop {
-            let Some(start) = rewritten.find("rr_index1_read(") else {
+            let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
+            else {
                 break;
             };
             let call_start = start + "rr_index1_read".len();
-            let mut depth = 0i32;
-            let mut end = None;
-            for (off, ch) in rewritten[call_start..].char_indices() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = Some(call_start + off);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let Some(call_end) = end else {
+            let Some(call_end) = find_call_end(&rewritten, call_start) else {
                 break;
             };
             let args_inner = &rewritten[call_start + 1..call_end];
             let Some(args) = split_top_level_args(args_inner) else {
-                break;
+                search_start = call_end + 1;
+                continue;
             };
             if args.len() < 2 {
-                break;
+                search_start = call_end + 1;
+                continue;
             }
             let base = args[0].trim();
             let index_expr = args[1].trim();
             let Some((outer, bound, inner)) = parse_flat_positive_loop_index_expr(index_expr)
             else {
-                break;
+                search_start = call_end + 1;
+                continue;
             };
             if !plain_ident_re().is_some_and(|re| re.is_match(base))
                 || !var_has_known_positive_progression_before(&out, idx, &outer)
@@ -369,9 +372,13 @@ pub(super) fn rewrite_safe_flat_loop_index_read_calls(lines: Vec<String>) -> Vec
                 || !positive_guard_for_var_before(&out, idx, &inner, &bound)
                 || !(args.len() == 2 || is_literal_index_ctx(&args[2]))
             {
-                break;
+                search_start = call_end + 1;
+                continue;
             }
-            rewritten.replace_range(start..=call_end, &format!("{base}[{index_expr}]"));
+            let replacement = format!("{base}[{index_expr}]");
+            let replacement_end = start + replacement.len();
+            rewritten.replace_range(start..=call_end, &replacement);
+            search_start = replacement_end;
         }
         out[idx] = rewritten;
     }
@@ -490,35 +497,24 @@ pub(super) fn rewrite_same_len_scalar_tail_reads(lines: Vec<String>) -> Vec<Stri
         let trimmed = line.trim().to_string();
         let mut rewritten = line;
 
+        let mut search_start = 0usize;
         loop {
-            let Some(start) = rewritten.find("rr_index1_read(") else {
+            let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
+            else {
                 break;
             };
             let call_start = start + "rr_index1_read".len();
-            let mut depth = 0i32;
-            let mut end = None;
-            for (off, ch) in rewritten[call_start..].char_indices() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = Some(call_start + off);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let Some(call_end) = end else {
+            let Some(call_end) = find_call_end(&rewritten, call_start) else {
                 break;
             };
             let args_inner = &rewritten[call_start + 1..call_end];
             let Some(args) = split_top_level_args(args_inner) else {
-                break;
+                search_start = call_end + 1;
+                continue;
             };
             if args.len() < 2 {
-                break;
+                search_start = call_end + 1;
+                continue;
             }
             let base = args[0].trim();
             let idx = args[1].trim();
@@ -528,9 +524,13 @@ pub(super) fn rewrite_same_len_scalar_tail_reads(lines: Vec<String>) -> Vec<Stri
                 || vector_lens.get(base).map(String::as_str) != Some(idx)
                 || !(args.len() == 2 || is_literal_index_ctx(&args[2]))
             {
-                break;
+                search_start = call_end + 1;
+                continue;
             }
-            rewritten.replace_range(start..=call_end, &format!("{base}[{idx}]"));
+            let replacement = format!("{base}[{idx}]");
+            let replacement_end = start + replacement.len();
+            rewritten.replace_range(start..=call_end, &replacement);
+            search_start = replacement_end;
         }
 
         if is_control_flow_boundary(&trimmed) {
@@ -582,32 +582,20 @@ pub(super) fn rewrite_wrap_index_scalar_access_helpers(lines: Vec<String>) -> Ve
             }
             let mut rewritten = line;
             loop {
+                let mut search_start = 0usize;
                 let mut changed = false;
-                for callee in ["rr_index1_read", "rr_index1_write"] {
-                    let Some(start) = rewritten.find(&format!("{callee}(")) else {
-                        continue;
-                    };
+                while let Some((callee, start)) = find_next_callee(
+                    &rewritten,
+                    search_start,
+                    &["rr_index1_read", "rr_index1_write"],
+                ) {
                     let call_start = start + callee.len();
-                    let mut depth = 0i32;
-                    let mut end = None;
-                    for (off, ch) in rewritten[call_start..].char_indices() {
-                        match ch {
-                            '(' => depth += 1,
-                            ')' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    end = Some(call_start + off);
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    let Some(call_end) = end else {
-                        continue;
+                    let Some(call_end) = find_call_end(&rewritten, call_start) else {
+                        break;
                     };
                     let args_inner = &rewritten[call_start + 1..call_end];
                     let Some(args) = split_top_level_args(args_inner) else {
+                        search_start = call_end + 1;
                         continue;
                     };
                     let replacement = match callee {
@@ -636,6 +624,7 @@ pub(super) fn rewrite_wrap_index_scalar_access_helpers(lines: Vec<String>) -> Ve
                         _ => None,
                     };
                     let Some(replacement) = replacement else {
+                        search_start = call_end + 1;
                         continue;
                     };
                     rewritten.replace_range(start..=call_end, &replacement);

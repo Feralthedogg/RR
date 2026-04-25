@@ -27,6 +27,7 @@ import RRProofs.ProgramPostTierStagesSoundness
 import RRProofs.ProgramRunProfileInnerSoundness
 import RRProofs.ProgramApiWrapperSoundness
 import RRProofs.CompilerEndToEndSoundness
+import RRProofs.TraitDispatchSoundness
 import RRProofs.InlineCleanupRefinementSoundness
 import RRProofs.FreshAliasRewriteSoundness
 import RRProofs.PhaseOrderOptimizerSoundness
