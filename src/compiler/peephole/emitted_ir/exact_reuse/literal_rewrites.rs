@@ -38,8 +38,12 @@ pub(in super::super) fn rewrite_literal_field_get_calls_ir(lines: Vec<String>) -
 
 fn rewrite_literal_named_list_line_ir(line: &str) -> String {
     let mut rewritten = line.to_string();
+    let mut search_start = 0usize;
     loop {
-        let Some(start) = rewritten.find("rr_named_list(") else {
+        let Some(start) = rewritten[search_start..]
+            .find("rr_named_list(")
+            .map(|offset| search_start + offset)
+        else {
             break;
         };
         let call_start = start + "rr_named_list".len();
@@ -63,10 +67,12 @@ fn rewrite_literal_named_list_line_ir(line: &str) -> String {
         };
         let args_inner = &rewritten[call_start + 1..call_end];
         let Some(args) = split_top_level_args(args_inner) else {
-            break;
+            search_start = call_end + 1;
+            continue;
         };
         if args.len() % 2 != 0 {
-            break;
+            search_start = call_end + 1;
+            continue;
         }
         let mut fields = Vec::new();
         let mut ok = true;
@@ -78,14 +84,17 @@ fn rewrite_literal_named_list_line_ir(line: &str) -> String {
             fields.push(format!("{name} = {}", pair[1].trim()));
         }
         if !ok {
-            break;
+            search_start = call_end + 1;
+            continue;
         }
         let replacement = if fields.is_empty() {
             "list()".to_string()
         } else {
             format!("list({})", fields.join(", "))
         };
+        let replacement_end = start + replacement.len();
         rewritten.replace_range(start..=call_end, &replacement);
+        search_start = replacement_end;
     }
     rewritten
 }

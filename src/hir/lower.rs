@@ -47,6 +47,13 @@ enum TraitStaticMethodResolution {
     Concrete(SymbolId),
 }
 
+#[derive(Clone, Copy)]
+struct TypeProjectionParts<'a> {
+    base: &'a str,
+    trait_name: Option<&'a str>,
+    assoc: &'a str,
+}
+
 pub struct Lowerer {
     // Symbol resolution state
     scopes: Vec<FxHashMap<String, LocalId>>,
@@ -346,10 +353,18 @@ impl Lowerer {
 
     fn type_ref_contains_type_param(ty: &HirTypeRef, type_params: &FxHashSet<String>) -> bool {
         match ty {
-            HirTypeRef::Named(name) => type_params.contains(name),
-            HirTypeRef::Generic { args, .. } => args
-                .iter()
-                .any(|arg| Self::type_ref_contains_type_param(arg, type_params)),
+            HirTypeRef::Named(name) => {
+                type_params.contains(name)
+                    || Self::type_projection_parts(name)
+                        .is_some_and(|parts| type_params.contains(parts.base))
+            }
+            HirTypeRef::Generic { base, args } => {
+                Self::type_projection_parts(base)
+                    .is_some_and(|parts| type_params.contains(parts.base))
+                    || args
+                        .iter()
+                        .any(|arg| Self::type_ref_contains_type_param(arg, type_params))
+            }
         }
     }
 
@@ -387,12 +402,103 @@ impl Lowerer {
         out
     }
 
-    fn type_projection_parts(name: &str) -> Option<(&str, &str)> {
+    fn type_projection_parts(name: &str) -> Option<TypeProjectionParts<'_>> {
+        if let Some(rest) = name.strip_prefix('<') {
+            let (base, rest) = rest.split_once(" as ")?;
+            let (trait_name, assoc) = rest.split_once(">::")?;
+            if base.is_empty() || trait_name.is_empty() || assoc.is_empty() {
+                return None;
+            }
+            return Some(TypeProjectionParts {
+                base,
+                trait_name: Some(trait_name),
+                assoc,
+            });
+        }
         let (base, assoc) = name.split_once("::")?;
         if base.is_empty() || assoc.is_empty() {
             return None;
         }
-        Some((base, assoc))
+        Some(TypeProjectionParts {
+            base,
+            trait_name: None,
+            assoc,
+        })
+    }
+
+    fn qualified_type_projection_key(base: &str, trait_name: &str, assoc: &str) -> String {
+        format!("<{} as {}>::{}", base, trait_name, assoc)
+    }
+
+    fn insert_assoc_projection_subst(
+        out: &mut FxHashMap<String, HirTypeRef>,
+        projection_key: String,
+        assoc_ty: &HirTypeRef,
+        span: Span,
+    ) -> RR<bool> {
+        if let Some(prev) = out.get(&projection_key) {
+            if prev != assoc_ty {
+                return Err(RRException::new(
+                    "RR.SemanticError",
+                    RRCode::E1002,
+                    Stage::Lower,
+                    format!(
+                        "associated type projection '{}' is ambiguous between '{}' and '{}'",
+                        projection_key,
+                        prev.key(),
+                        assoc_ty.key()
+                    ),
+                )
+                .at(span));
+            }
+            return Ok(false);
+        }
+        out.insert(projection_key, assoc_ty.clone());
+        Ok(true)
+    }
+
+    fn insert_alias_assoc_projection_subst(
+        out: &mut FxHashMap<String, HirTypeRef>,
+        projection_key: String,
+        assoc_ty: &HirTypeRef,
+        ambiguous_projections: &mut FxHashSet<String>,
+        requested_projections: &FxHashSet<String>,
+        span: Span,
+    ) -> RR<bool> {
+        if ambiguous_projections.contains(&projection_key) {
+            return Ok(false);
+        }
+        if let Some(prev) = out.get(&projection_key).cloned() {
+            if &prev != assoc_ty {
+                out.remove(&projection_key);
+                ambiguous_projections.insert(projection_key.clone());
+                if requested_projections.contains(&projection_key) {
+                    return Err(RRException::new(
+                        "RR.SemanticError",
+                        RRCode::E1002,
+                        Stage::Lower,
+                        format!(
+                            "associated type projection '{}' is ambiguous between '{}' and '{}'",
+                            projection_key,
+                            prev.key(),
+                            assoc_ty.key()
+                        ),
+                    )
+                    .at(span));
+                }
+            }
+            return Ok(false);
+        }
+        out.insert(projection_key, assoc_ty.clone());
+        Ok(true)
+    }
+
+    fn self_assoc_projection_name(name: &str) -> Option<&str> {
+        if let Some(rest) = name.strip_prefix("Self::") {
+            return Some(rest);
+        }
+        let parts = Self::type_projection_parts(name)?;
+        (parts.base == "Self").then_some(parts.assoc)
     }
 
     fn current_generic_ref_key(&self, ty: &HirTypeRef) -> Option<String> {
@@ -401,9 +507,11 @@ impl Lowerer {
                 Some(name.clone())
             }
             HirTypeRef::Named(name) => Self::type_projection_parts(name)
-                .filter(|(base, _)| self.current_type_params.contains(*base))
+                .filter(|parts| self.current_type_params.contains(parts.base))
                 .map(|_| name.clone()),
-            _ => None,
+            HirTypeRef::Generic { base, .. } => Self::type_projection_parts(base)
+                .filter(|parts| self.current_type_params.contains(parts.base))
+                .map(|_| ty.key()),
         }
     }
 
@@ -602,26 +710,28 @@ impl Lowerer {
     ) -> bool {
         match trait_ty {
             HirTypeRef::Named(name) if name == "Self" => impl_ty == for_ty,
-            HirTypeRef::Named(name) if name.starts_with("Self::") => assoc_types
-                .get(name.trim_start_matches("Self::"))
-                .is_some_and(|assoc_ty| impl_ty == assoc_ty),
             HirTypeRef::Named(name) => {
+                if let Some(assoc_name) = Self::self_assoc_projection_name(name) {
+                    return assoc_types
+                        .get(assoc_name)
+                        .is_some_and(|assoc_ty| impl_ty == assoc_ty);
+                }
                 matches!(impl_ty, HirTypeRef::Named(impl_name) if impl_name == name)
             }
-            HirTypeRef::Generic { base, args } if base.starts_with("Self::") => {
-                let key = format!(
-                    "{}<{}>",
-                    base.trim_start_matches("Self::"),
-                    args.iter()
-                        .map(HirTypeRef::key)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                );
-                assoc_types
-                    .get(&key)
-                    .is_some_and(|assoc_ty| impl_ty == assoc_ty)
-            }
             HirTypeRef::Generic { base, args } => {
+                if let Some(assoc_name) = Self::self_assoc_projection_name(base) {
+                    let key = format!(
+                        "{}<{}>",
+                        assoc_name,
+                        args.iter()
+                            .map(HirTypeRef::key)
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
+                    return assoc_types
+                        .get(&key)
+                        .is_some_and(|assoc_ty| impl_ty == assoc_ty);
+                }
                 let HirTypeRef::Generic {
                     base: impl_base,
                     args: impl_args,
@@ -2986,6 +3096,24 @@ impl Lowerer {
         span: Span,
     ) -> RR<FxHashMap<String, HirTypeRef>> {
         let mut out = subst.clone();
+        let requested_unqualified_projections = bounds
+            .iter()
+            .filter(|bound| {
+                Self::type_projection_parts(&bound.type_name)
+                    .is_some_and(|parts| parts.trait_name.is_none())
+            })
+            .map(|bound| bound.type_name.clone())
+            .collect::<FxHashSet<_>>();
+        let requested_qualified_bound_projections = bounds
+            .iter()
+            .filter(|bound| {
+                Self::type_projection_parts(&bound.type_name)
+                    .is_some_and(|parts| parts.trait_name.is_some())
+            })
+            .map(|bound| bound.type_name.clone())
+            .collect::<FxHashSet<_>>();
+        let mut ambiguous_unqualified_projections = FxHashSet::default();
+        let mut ambiguous_qualified_bound_projections = FxHashSet::default();
         let mut changed = true;
         while changed {
             changed = false;
@@ -3004,26 +3132,41 @@ impl Lowerer {
                         else {
                             continue;
                         };
-                        let projection_key = format!("{}::{}", bound.type_name, assoc_name);
-                        if let Some(prev) = out.get(&projection_key) {
-                            if prev != &assoc_ty {
-                                return Err(RRException::new(
-                                    "RR.SemanticError",
-                                    RRCode::E1002,
-                                    Stage::Lower,
-                                    format!(
-                                        "associated type projection '{}' is ambiguous between '{}' and '{}'",
-                                        projection_key,
-                                        prev.key(),
-                                        assoc_ty.key()
-                                    ),
-                                )
-                                .at(span));
-                            }
-                            continue;
-                        }
-                        out.insert(projection_key, assoc_ty);
-                        changed = true;
+                        let owner_projection_key = Self::qualified_type_projection_key(
+                            &bound.type_name,
+                            &owner_trait,
+                            &assoc_name,
+                        );
+                        changed |= Self::insert_assoc_projection_subst(
+                            &mut out,
+                            owner_projection_key,
+                            &assoc_ty,
+                            span,
+                        )?;
+                        let bound_projection_key = Self::qualified_type_projection_key(
+                            &bound.type_name,
+                            trait_name,
+                            &assoc_name,
+                        );
+                        changed |= Self::insert_alias_assoc_projection_subst(
+                            &mut out,
+                            bound_projection_key,
+                            &assoc_ty,
+                            &mut ambiguous_qualified_bound_projections,
+                            &requested_qualified_bound_projections,
+                            span,
+                        )?;
+
+                        let unqualified_projection_key =
+                            format!("{}::{}", bound.type_name, assoc_name);
+                        changed |= Self::insert_alias_assoc_projection_subst(
+                            &mut out,
+                            unqualified_projection_key,
+                            &assoc_ty,
+                            &mut ambiguous_unqualified_projections,
+                            &requested_unqualified_projections,
+                            span,
+                        )?;
                     }
                 }
             }

@@ -9,8 +9,9 @@ pub(super) fn rewrite_literal_field_get_calls(output: &mut String) {
             continue;
         }
         let mut rewritten = line.to_string();
+        let mut search_start = 0usize;
         loop {
-            let Some(start) = rewritten.find("rr_field_get(") else {
+            let Some(start) = find_next_call(&rewritten, search_start, "rr_field_get") else {
                 break;
             };
             let call_start = start + "rr_field_get".len();
@@ -19,17 +20,22 @@ pub(super) fn rewrite_literal_field_get_calls(output: &mut String) {
             };
             let args_inner = &rewritten[call_start + 1..call_end];
             let Some(args) = split_top_level_args_local(args_inner) else {
-                break;
+                search_start = call_end + 1;
+                continue;
             };
             if args.len() != 2 {
-                break;
+                search_start = call_end + 1;
+                continue;
             }
             let base = args[0].trim();
             let Some(name) = literal_record_field_name(args[1].trim()) else {
-                break;
+                search_start = call_end + 1;
+                continue;
             };
             let replacement = format!(r#"{base}[["{name}"]]"#);
+            let replacement_end = start + replacement.len();
             rewritten.replace_range(start..=call_end, &replacement);
+            search_start = replacement_end;
         }
         out.push(rewritten);
     }

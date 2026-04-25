@@ -2101,6 +2101,140 @@ print(main())
 }
 
 #[test]
+fn fully_qualified_associated_type_projection_disambiguates_same_assoc_names() {
+    let src = r#"
+trait ScalarLabel {
+  fn label(self: Self) -> str
+}
+
+impl ScalarLabel for float {
+  fn label(self: float) -> str {
+    "float"
+  }
+}
+
+trait First {
+  type Item
+  fn get_first(self: Self) -> Self::Item
+}
+
+trait Second {
+  type Item
+}
+
+impl First for FloatBox {
+  type Item = float
+
+  fn get_first(self: FloatBox) -> float {
+    self.value
+  }
+}
+
+impl Second for FloatBox {
+  type Item = str
+}
+
+fn label_first<T>(x: T) -> str where T: First + Second, <T as First>::Item: ScalarLabel {
+  let item: <T as First>::Item = x.get_first()
+  item.label()
+}
+
+fn main() {
+  let boxed: FloatBox = {value: 2.0}
+  label_first(boxed)
+}
+
+print(main())
+"#;
+
+    let (output, _) = compile_with_config(
+        "trait_fully_qualified_projection_disambiguates.rr",
+        src,
+        OptLevel::O2,
+        TypeConfig {
+            mode: TypeMode::Strict,
+            native_backend: NativeBackend::Off,
+        },
+    )
+    .expect("fully-qualified projection should pick First.Item without Second.Item ambiguity");
+
+    assert!(
+        output.contains("return(\"float\")") && !output.contains("item.label"),
+        "qualified projection should monomorphize to the First.Item impl:\n{output}"
+    );
+}
+
+#[test]
+fn qualified_projection_through_supertrait_bound_ignores_sibling_assoc_alias() {
+    let src = r#"
+trait ScalarLabel {
+  fn label(self: Self) -> str
+}
+
+impl ScalarLabel for float {
+  fn label(self: float) -> str {
+    "float"
+  }
+}
+
+trait First {
+  type Item
+  fn get_first(self: Self) -> Self::Item
+}
+
+trait Second {
+  type Item
+}
+
+trait Child: First + Second {
+}
+
+impl First for FloatBox {
+  type Item = float
+
+  fn get_first(self: FloatBox) -> float {
+    self.value
+  }
+}
+
+impl Second for FloatBox {
+  type Item = str
+}
+
+impl Child for FloatBox {
+}
+
+fn label_first<T>(x: T) -> str where T: Child, <T as First>::Item: ScalarLabel {
+  let item: <T as First>::Item = First::get_first(x)
+  item.label()
+}
+
+fn main() {
+  let boxed: FloatBox = {value: 2.0}
+  label_first(boxed)
+}
+
+print(main())
+"#;
+
+    let (output, _) = compile_with_config(
+        "trait_supertrait_projection_disambiguates.rr",
+        src,
+        OptLevel::O2,
+        TypeConfig {
+            mode: TypeMode::Strict,
+            native_backend: NativeBackend::Off,
+        },
+    )
+    .expect("qualified owner projection should not be blocked by sibling supertrait assoc names");
+
+    assert!(
+        output.contains("return(\"float\")") && !output.contains("item.label"),
+        "owner-qualified supertrait projection should lower statically:\n{output}"
+    );
+}
+
+#[test]
 fn associated_type_projection_method_requires_projection_bound() {
     let src = r#"
 trait ScalarLabel {
@@ -2131,7 +2265,7 @@ fn label_item<T>(x: T) -> str where T: Container {
 
     assert!(
         err.message
-            .contains("generic receiver type 'T::Item' uses method 'label'"),
+            .contains("generic receiver type '<T as Container>::Item' uses method 'label'"),
         "unexpected error: {err:?}"
     );
 }
@@ -2179,8 +2313,9 @@ fn main() {
     .expect_err("projection bound should be validated for the concrete associated type");
 
     assert!(
-        err.message
-            .contains("generic bound 'T::Item' requires trait 'ScalarLabel' for 'Rock'"),
+        err.message.contains(
+            "generic bound '<T as Container>::Item' requires trait 'ScalarLabel' for 'Rock'"
+        ),
         "unexpected error: {err:?}"
     );
 }
@@ -2427,6 +2562,50 @@ fn main() {
     assert!(
         err.message.contains("no impl of trait 'Ordish'"),
         "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn repeated_type_param_impl_does_not_overlap_inconsistent_exact_impl() {
+    let src = r#"
+trait Label {
+  fn label(self: Self) -> str
+}
+
+impl<T> Label for Pair<T,T> {
+  fn label(self: Pair<T,T>) -> str {
+    "same"
+  }
+}
+
+impl Label for Pair<int,float> {
+  fn label(self: Pair<int,float>) -> str {
+    "mixed"
+  }
+}
+
+fn main() {
+  let p: Pair<int,float> = {left: 1, right: 2.0}
+  p.label()
+}
+
+print(main())
+"#;
+
+    let (output, _) = compile_with_config(
+        "trait_repeated_type_param_overlap.rr",
+        src,
+        OptLevel::O1,
+        TypeConfig {
+            mode: TypeMode::Strict,
+            native_backend: NativeBackend::Off,
+        },
+    )
+    .expect("inconsistent exact impl should not overlap Pair<T,T>");
+
+    assert!(
+        output.contains("\"mixed\"") && !output.contains("\"same\""),
+        "exact mixed impl should be selected without overlap false positive:\n{output}"
     );
 }
 

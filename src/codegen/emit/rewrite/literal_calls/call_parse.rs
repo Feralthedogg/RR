@@ -23,6 +23,12 @@ fn find_matching_call_close(output: &str, open_idx: usize) -> Option<usize> {
     None
 }
 
+fn find_next_call(output: &str, search_start: usize, callee: &str) -> Option<usize> {
+    output[search_start..]
+        .find(&format!("{callee}("))
+        .map(|offset| search_start + offset)
+}
+
 fn split_top_level_args_local(expr: &str) -> Option<Vec<String>> {
     let mut args = Vec::new();
     let mut depth = 0i32;

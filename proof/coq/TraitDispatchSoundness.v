@@ -156,3 +156,66 @@ Proof.
   intros inst tail generic tys Hmatch.
   simpl. rewrite Hmatch. reflexivity.
 Qed.
+
+Definition repeated_param_pair_overlaps_exact
+    (left_component right_component : reduced_trait_type) : bool :=
+  String.eqb left_component right_component.
+
+Theorem repeated_param_pair_rejects_inconsistent_exact_types :
+  repeated_param_pair_overlaps_exact "int" "float" = false.
+Proof. reflexivity. Qed.
+
+Theorem repeated_param_pair_accepts_consistent_exact_type :
+  forall component,
+    repeated_param_pair_overlaps_exact component component = true.
+Proof.
+  intros component.
+  unfold repeated_param_pair_overlaps_exact.
+  apply String.eqb_refl.
+Qed.
+
+Record reduced_assoc_projection := {
+  base_type : reduced_trait_type;
+  owner_trait : string;
+  assoc_name : string;
+  resolved_type : reduced_trait_type
+}.
+
+Definition matches_assoc_projection
+    (base owner assoc : string)
+    (entry : reduced_assoc_projection) : bool :=
+  String.eqb entry.(base_type) base
+  && String.eqb entry.(owner_trait) owner
+  && String.eqb entry.(assoc_name) assoc.
+
+Fixpoint resolve_assoc_projection
+    (entries : list reduced_assoc_projection)
+    (base owner assoc : string) : option reduced_trait_type :=
+  match entries with
+  | [] => None
+  | entry :: tail =>
+      if matches_assoc_projection base owner assoc entry
+      then Some entry.(resolved_type)
+      else resolve_assoc_projection tail base owner assoc
+  end.
+
+Theorem qualified_assoc_projection_preserves_owner_resolution :
+  forall entry tail base owner assoc,
+    matches_assoc_projection base owner assoc entry = true ->
+    resolve_assoc_projection (entry :: tail) base owner assoc =
+      Some entry.(resolved_type).
+Proof.
+  intros entry tail base owner assoc Hmatch.
+  simpl. rewrite Hmatch. reflexivity.
+Qed.
+
+Theorem qualified_assoc_projection_ignores_sibling_owner :
+  forall sibling entry tail base owner assoc,
+    matches_assoc_projection base owner assoc sibling = false ->
+    matches_assoc_projection base owner assoc entry = true ->
+    resolve_assoc_projection (sibling :: entry :: tail) base owner assoc =
+      Some entry.(resolved_type).
+Proof.
+  intros sibling entry tail base owner assoc Hsibling Hmatch.
+  simpl. rewrite Hsibling. simpl. rewrite Hmatch. reflexivity.
+Qed.

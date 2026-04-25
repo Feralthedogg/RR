@@ -1,6 +1,29 @@
 use super::common::*;
 
 #[test]
+fn raw_literal_rewrites_skip_dynamic_candidates_and_continue() {
+    let mut output = "\
+Sym_top_0 <- function() \n\
+{\n\
+  a <- rr_field_get(particles, dynamic_name) + rr_field_get(particles, \"px\")\n\
+  return(c(rr_named_list(dynamic_name, px), rr_named_list(\"py\", py)))\n\
+}\n"
+    .to_string();
+
+    RBackend::rewrite_literal_field_get_calls(&mut output);
+    RBackend::rewrite_literal_named_list_calls(&mut output);
+
+    assert!(
+        output.contains("a <- rr_field_get(particles, dynamic_name) + particles[[\"px\"]]"),
+        "{output}"
+    );
+    assert!(
+        output.contains("return(c(rr_named_list(dynamic_name, px), list(py = py)))"),
+        "{output}"
+    );
+}
+
+#[test]
 fn init_plus_scalar_conditional_loop_is_emitted_as_vector_ifelse() {
     let mut fn_ir = FnIR::new("loop_ifelse".to_string(), vec![]);
     let entry = fn_ir.add_block();

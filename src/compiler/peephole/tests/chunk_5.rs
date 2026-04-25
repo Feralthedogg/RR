@@ -35,6 +35,26 @@ Sym_top_0()\n";
 }
 
 #[test]
+fn rewrites_later_literal_helpers_when_earlier_literal_candidate_is_dynamic() {
+    let input = "\
+Sym_top_0 <- function() \n\
+{\n\
+  a <- rr_field_get(particles, dynamic_name) + rr_field_get(particles, \"px\")\n\
+  return(c(a, rr_named_list(dynamic_name, px), rr_named_list(\"py\", py)))\n\
+}\n\
+Sym_top_0()\n";
+    let out = optimize_emitted_r(input, true);
+    assert!(
+        out.contains("rr_field_get(particles, dynamic_name) + particles[[\"px\"]]"),
+        "{out}"
+    );
+    assert!(
+        out.contains("rr_named_list(dynamic_name, px), list(py = py)"),
+        "{out}"
+    );
+}
+
+#[test]
 fn rewrites_safe_loop_index_write_calls_to_base_indexing() {
     let input = "\
 Sym_1 <- function(n, xs) \n\
@@ -87,6 +107,29 @@ Sym_1 <- function(u, f, ix, iy, N) \n\
         "{out}"
     );
     assert!(!out.contains("rr_index1_read(u, idx, \"index\")"), "{out}");
+}
+
+#[test]
+fn rewrites_later_safe_index_read_when_earlier_call_is_unsafe() {
+    let input = "\
+Sym_1 <- function(samples, draws, f, ix, iy, n, raw_idx) \n\
+{\n\
+  idx <- rr_idx_cube_vec_i(f, ix, iy, n)\n\
+  score <- (rr_index1_read(draws, raw_idx, \"index\") + rr_index1_read(samples, idx, \"index\"))\n\
+  return(score)\n\
+}\n";
+    let out = optimize_emitted_r(input, true);
+    assert!(
+        out.contains("score <- (rr_index1_read(draws, raw_idx, \"index\") + samples[idx])")
+            || out.contains(
+                "score <- (rr_index1_read(draws, raw_idx, \"index\") + samples[rr_idx_cube_vec_i(f, ix, iy, n)])"
+            ),
+        "{out}"
+    );
+    assert!(
+        !out.contains("rr_index1_read(samples, idx, \"index\")"),
+        "{out}"
+    );
 }
 
 #[test]

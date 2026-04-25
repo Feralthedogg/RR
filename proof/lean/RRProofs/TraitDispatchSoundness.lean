@@ -116,4 +116,57 @@ theorem monomorphization_preserves_resolved_target
       some inst.monomorphizedName := by
   simp [resolveMonomorphizedTarget, hResolve]
 
+def repeatedParamPairOverlapsExact
+    (leftComponent rightComponent : ReducedTraitType) : Bool :=
+  leftComponent == rightComponent
+
+theorem repeated_param_pair_rejects_inconsistent_exact_types :
+    repeatedParamPairOverlapsExact "int" "float" = false := by
+  rfl
+
+theorem repeated_param_pair_accepts_consistent_exact_type
+    (component : ReducedTraitType) :
+    repeatedParamPairOverlapsExact component component = true := by
+  simp [repeatedParamPairOverlapsExact]
+
+structure ReducedAssocProjection where
+  baseType : ReducedTraitType
+  ownerTrait : String
+  assocName : String
+  resolvedType : ReducedTraitType
+  deriving DecidableEq, Repr
+
+def matchesAssocProjection
+    (baseType ownerTrait assocName : String)
+    (entry : ReducedAssocProjection) : Bool :=
+  entry.baseType == baseType
+    && entry.ownerTrait == ownerTrait
+    && entry.assocName == assocName
+
+def resolveAssocProjection
+    (entries : List ReducedAssocProjection)
+    (baseType ownerTrait assocName : String) : Option ReducedTraitType :=
+  (entries.find? (matchesAssocProjection baseType ownerTrait assocName)).map
+    (fun entry => entry.resolvedType)
+
+theorem qualified_assoc_projection_preserves_owner_resolution
+    (entry : ReducedAssocProjection)
+    (tail : List ReducedAssocProjection)
+    (hResolve :
+      matchesAssocProjection baseType ownerTrait assocName entry = true) :
+    resolveAssocProjection (entry :: tail) baseType ownerTrait assocName =
+      some entry.resolvedType := by
+  simp [resolveAssocProjection, hResolve]
+
+theorem qualified_assoc_projection_ignores_sibling_owner
+    (sibling entry : ReducedAssocProjection)
+    (tail : List ReducedAssocProjection)
+    (hSibling :
+      matchesAssocProjection baseType ownerTrait assocName sibling = false)
+    (hResolve :
+      matchesAssocProjection baseType ownerTrait assocName entry = true) :
+    resolveAssocProjection (sibling :: entry :: tail) baseType ownerTrait assocName =
+      some entry.resolvedType := by
+  simp [resolveAssocProjection, hSibling, hResolve]
+
 end RRProofs

@@ -35,11 +35,13 @@ The workspace does **not** currently support the following stronger claim:
   `TraitDispatchSoundness` models only the reduced target-preservation spine for
   static trait dispatch and monomorphized calls, plus reduced lemmas for
   negative-impl exclusion, operator-to-trait mapping, and public trait metadata
-  filtering. Associated-type substitution, default method materialization,
-  supertrait obligations, impl-coherence checks, exact-over-generic
-  specialization, explicit turbofish calls, generic impl matching, and full
-  cross-module cache replay remain implementation features covered primarily by
-  Rust regression tests today. The proof claim also does not cover Rust-level
+  filtering, repeated generic pattern discrimination, and owner-qualified
+  associated-type projection lookup. Production associated-type substitution,
+  default method materialization, supertrait obligations, impl-coherence checks,
+  exact-over-generic specialization, explicit turbofish calls, generic impl
+  matching, and full cross-module cache replay remain implementation features
+  covered primarily by Rust regression tests today. The proof claim also does
+  not cover Rust-level
   heterogeneous `dyn Trait` vtables, borrow/lifetime or HRTB solving, full GAT
   projection normalization, arbitrary const-generic evaluation, or Rust's
   unstable specialization semantics.

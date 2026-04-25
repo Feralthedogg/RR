@@ -255,11 +255,16 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Lt)?;
         let receiver_ty = self.parse_type_expr(ctx)?;
         self.parse_as_keyword("inside fully-qualified associated type")?;
-        let _trait_name = self.parse_type_path_ident("after 'as' in associated type")?;
+        let trait_name = self.parse_type_path_ident("after 'as' in associated type")?;
         self.expect(TokenKind::Gt)?;
         self.expect(TokenKind::DoubleColon)?;
         let assoc_name = self.parse_dotted_ident("after '::' in associated type")?;
-        let base = format!("{}::{}", Self::type_expr_key(&receiver_ty), assoc_name);
+        let base = format!(
+            "<{} as {}>::{}",
+            Self::type_expr_key(&receiver_ty),
+            trait_name,
+            assoc_name
+        );
         if self.current.kind != TokenKind::Lt {
             return Ok(TypeExpr::Named(base));
         }

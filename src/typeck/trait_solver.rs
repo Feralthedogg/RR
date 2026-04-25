@@ -130,6 +130,113 @@ pub fn trait_impl_is_more_specific(a: &TraitImplHeader, b: &TraitImplHeader) -> 
         && !type_pattern_is_instance_of(&b.for_ty, &b_params, &a.for_ty, &a_params)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PatternVar {
+    side: u8,
+    name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PatternTerm {
+    Var(PatternVar),
+    Named(String),
+    Generic {
+        base: String,
+        args: Vec<PatternTerm>,
+    },
+}
+
+impl PatternTerm {
+    fn from_type_ref(ty: &HirTypeRef, params: &FxHashSet<String>, side: u8) -> Self {
+        match ty {
+            HirTypeRef::Named(name) if params.contains(name) => PatternTerm::Var(PatternVar {
+                side,
+                name: name.clone(),
+            }),
+            HirTypeRef::Named(name) => PatternTerm::Named(name.clone()),
+            HirTypeRef::Generic { base, args } => PatternTerm::Generic {
+                base: base.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| PatternTerm::from_type_ref(arg, params, side))
+                    .collect(),
+            },
+        }
+    }
+}
+
+fn resolve_pattern_term(
+    term: &PatternTerm,
+    subst: &FxHashMap<PatternVar, PatternTerm>,
+) -> PatternTerm {
+    match term {
+        PatternTerm::Var(var) => subst
+            .get(var)
+            .map(|next| resolve_pattern_term(next, subst))
+            .unwrap_or_else(|| term.clone()),
+        PatternTerm::Named(_) => term.clone(),
+        PatternTerm::Generic { base, args } => PatternTerm::Generic {
+            base: base.clone(),
+            args: args
+                .iter()
+                .map(|arg| resolve_pattern_term(arg, subst))
+                .collect(),
+        },
+    }
+}
+
+fn pattern_occurs(
+    needle: &PatternVar,
+    term: &PatternTerm,
+    subst: &FxHashMap<PatternVar, PatternTerm>,
+) -> bool {
+    match resolve_pattern_term(term, subst) {
+        PatternTerm::Var(var) => &var == needle,
+        PatternTerm::Named(_) => false,
+        PatternTerm::Generic { args, .. } => {
+            args.iter().any(|arg| pattern_occurs(needle, arg, subst))
+        }
+    }
+}
+
+fn unify_pattern_terms(
+    lhs: &PatternTerm,
+    rhs: &PatternTerm,
+    subst: &mut FxHashMap<PatternVar, PatternTerm>,
+) -> bool {
+    let lhs = resolve_pattern_term(lhs, subst);
+    let rhs = resolve_pattern_term(rhs, subst);
+    match (lhs, rhs) {
+        (PatternTerm::Var(lhs_var), PatternTerm::Var(rhs_var)) if lhs_var == rhs_var => true,
+        (PatternTerm::Var(var), term) | (term, PatternTerm::Var(var)) => {
+            if pattern_occurs(&var, &term, subst) {
+                return false;
+            }
+            subst.insert(var, term);
+            true
+        }
+        (PatternTerm::Named(lhs), PatternTerm::Named(rhs)) => lhs == rhs,
+        (
+            PatternTerm::Generic {
+                base: lhs_base,
+                args: lhs_args,
+            },
+            PatternTerm::Generic {
+                base: rhs_base,
+                args: rhs_args,
+            },
+        ) => {
+            lhs_base == rhs_base
+                && lhs_args.len() == rhs_args.len()
+                && lhs_args
+                    .iter()
+                    .zip(rhs_args.iter())
+                    .all(|(lhs_arg, rhs_arg)| unify_pattern_terms(lhs_arg, rhs_arg, subst))
+        }
+        _ => false,
+    }
+}
+
 fn bind_pattern_key(bindings: &mut FxHashMap<String, String>, param: &str, key: String) -> bool {
     if let Some(prev) = bindings.get(param) {
         prev == &key
@@ -195,29 +302,10 @@ pub fn type_patterns_may_overlap(
     b: &HirTypeRef,
     b_params: &FxHashSet<String>,
 ) -> bool {
-    match (a, b) {
-        (HirTypeRef::Named(a_name), _) if a_params.contains(a_name) => true,
-        (_, HirTypeRef::Named(b_name)) if b_params.contains(b_name) => true,
-        (HirTypeRef::Named(a_name), HirTypeRef::Named(b_name)) => a_name == b_name,
-        (
-            HirTypeRef::Generic {
-                base: a_base,
-                args: a_args,
-            },
-            HirTypeRef::Generic {
-                base: b_base,
-                args: b_args,
-            },
-        ) => {
-            a_base == b_base
-                && a_args.len() == b_args.len()
-                && a_args.iter().zip(b_args).all(|(a_arg, b_arg)| {
-                    type_patterns_may_overlap(a_arg, a_params, b_arg, b_params)
-                })
-        }
-        (HirTypeRef::Generic { .. }, HirTypeRef::Named(_))
-        | (HirTypeRef::Named(_), HirTypeRef::Generic { .. }) => false,
-    }
+    let lhs = PatternTerm::from_type_ref(a, a_params, 0);
+    let rhs = PatternTerm::from_type_ref(b, b_params, 1);
+    let mut subst = FxHashMap::default();
+    unify_pattern_terms(&lhs, &rhs, &mut subst)
 }
 
 #[derive(Default)]
@@ -305,5 +393,49 @@ impl TraitSolver {
             .at(obligation.span));
         }
         Ok(matches == 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(name: &str) -> HirTypeRef {
+        HirTypeRef::Named(name.to_string())
+    }
+
+    fn generic(base: &str, args: Vec<HirTypeRef>) -> HirTypeRef {
+        HirTypeRef::Generic {
+            base: base.to_string(),
+            args,
+        }
+    }
+
+    fn params(names: &[&str]) -> FxHashSet<String> {
+        names.iter().map(|name| (*name).to_string()).collect()
+    }
+
+    #[test]
+    fn overlap_respects_repeated_type_parameters() {
+        let repeated = generic("Pair", vec![named("T"), named("T")]);
+        let mixed = generic("Pair", vec![named("int"), named("float")]);
+        assert!(!type_patterns_may_overlap(
+            &repeated,
+            &params(&["T"]),
+            &mixed,
+            &FxHashSet::default()
+        ));
+    }
+
+    #[test]
+    fn overlap_allows_consistent_repeated_type_parameters() {
+        let repeated = generic("Pair", vec![named("T"), named("T")]);
+        let same = generic("Pair", vec![named("int"), named("int")]);
+        assert!(type_patterns_may_overlap(
+            &repeated,
+            &params(&["T"]),
+            &same,
+            &FxHashSet::default()
+        ));
     }
 }
