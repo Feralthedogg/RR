@@ -2676,7 +2676,6 @@ fn direct_call_uses_are_alias_and_field_gets(
     };
     direct_field_gets.into_iter().all(|field_get| {
         value_uses_occur_after_instr(
-            caller,
             uses,
             field_get,
             alias_block,
@@ -2687,7 +2686,6 @@ fn direct_call_uses_are_alias_and_field_gets(
 }
 
 fn value_uses_occur_after_instr(
-    caller: &FnIR,
     uses: &FxHashMap<ValueId, Vec<SroaUse>>,
     value: ValueId,
     anchor_block: BlockId,
@@ -2700,14 +2698,9 @@ fn value_uses_occur_after_instr(
     let ok = uses.get(&value).is_some_and(|value_uses| {
         !value_uses.is_empty()
             && value_uses.iter().all(|value_use| match value_use.user {
-                SroaUser::Value(next) => value_uses_occur_after_instr(
-                    caller,
-                    uses,
-                    next,
-                    anchor_block,
-                    anchor_instr,
-                    seen,
-                ),
+                SroaUser::Value(next) => {
+                    value_uses_occur_after_instr(uses, next, anchor_block, anchor_instr, seen)
+                }
                 SroaUser::Instr { block, instr } => block == anchor_block && instr > anchor_instr,
                 SroaUser::Terminator { block } => block == anchor_block,
             })
@@ -2741,7 +2734,6 @@ fn alias_load_uses_are_field_gets(
                             ) =>
                         {
                             value_uses_occur_after_instr(
-                                caller,
                                 uses,
                                 user,
                                 alias_block,
