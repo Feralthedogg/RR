@@ -373,6 +373,85 @@ print(main())
 }
 
 #[test]
+fn trait_record_chain_scalarizes_in_emitted_r() {
+    let src = r#"
+trait Add {
+  fn add(self: Self, rhs: Self) -> Self
+}
+
+trait Neg {
+  fn neg(self: Self) -> Self
+}
+
+trait Transformable {
+  fn translate(self: Self, offset: Self) -> Self
+  fn scale(self: Self, factor: float) -> Self
+}
+
+impl Add for Vec2 {
+  fn add(self: Vec2, rhs: Vec2) -> Vec2 {
+    {x: self.x + rhs.x, y: self.y + rhs.y}
+  }
+}
+
+impl Neg for Vec2 {
+  fn neg(self: Vec2) -> Vec2 {
+    {x: 0.0 - self.x, y: 0.0 - self.y}
+  }
+}
+
+impl Transformable for Vec2 {
+  fn translate(self: Vec2, offset: Vec2) -> Vec2 {
+    self + offset
+  }
+
+  fn scale(self: Vec2, factor: float) -> Vec2 {
+    {x: self.x * factor, y: self.y * factor}
+  }
+}
+
+fn simulate_rebound<T>(entity: T, velocity: T, time: float) -> T
+  where T: Add + Neg + Transformable
+{
+  let moved = entity + velocity
+  let rebounded_vel = -velocity
+  moved.translate(rebounded_vel).scale(time)
+}
+
+fn main() {
+  let initial_pos: Vec2 = {x: 10.0, y: 15.0}
+  let velocity: Vec2 = {x: 2.0, y: -3.0}
+  let final_state = simulate_rebound(initial_pos, velocity, 1.5)
+  final_state.x
+}
+
+main()
+"#;
+
+    let (output, _) = compile_with_config(
+        "trait_record_chain_sroa.rr",
+        src,
+        OptLevel::O2,
+        TypeConfig {
+            mode: TypeMode::Strict,
+            native_backend: NativeBackend::Off,
+        },
+    )
+    .expect("compile");
+
+    assert!(
+        output.contains("__rr_sroa_x"),
+        "record chain should lower through scalar SROA temps:\n{output}"
+    );
+    assert!(
+        !output.contains(".__rr_inline_expr_0 <- list(")
+            && !output.contains("final_state <- ((list(")
+            && !output.contains("final_state <- (list("),
+        "hot trait record chain should not keep avoidable list temporaries:\n{output}"
+    );
+}
+
+#[test]
 fn neg_operator_trait_dispatches_statically_and_runs() {
     let rscript = match rscript_path() {
         Some(p) if rscript_available(&p) => p,
@@ -735,6 +814,117 @@ print(main())
         "unexpected R output:\n{}",
         stdout
     );
+}
+
+#[test]
+fn generic_trait_return_inference_allows_unannotated_locals_and_method_chains() {
+    let rscript = match rscript_path() {
+        Some(p) if rscript_available(&p) => Some(p),
+        _ => None,
+    };
+
+    let src = r#"
+trait Add {
+  fn add(self: Self, rhs: Self) -> Self
+}
+trait Neg {
+  fn neg(self: Self) -> Self
+}
+trait Transformable {
+  fn translate(self: Self, offset: Self) -> Self
+  fn scale(self: Self, factor: float) -> Self
+}
+
+impl Add for Vec2 {
+  fn add(self: Vec2, rhs: Vec2) -> Vec2 {
+    {x: self.x + rhs.x, y: self.y + rhs.y}
+  }
+}
+impl Neg for Vec2 {
+  fn neg(self: Vec2) -> Vec2 {
+    {x: 0.0 - self.x, y: 0.0 - self.y}
+  }
+}
+impl Transformable for Vec2 {
+  fn translate(self: Vec2, offset: Vec2) -> Vec2 {
+    self + offset
+  }
+  fn scale(self: Vec2, factor: float) -> Vec2 {
+    {x: self.x * factor, y: self.y * factor}
+  }
+}
+
+fn simulate_rebound<T>(entity: T, velocity: T, time: float) -> T
+  where T: Add + Neg + Transformable
+{
+  let moved = entity + velocity
+  let rebounded_vel = -velocity
+  moved.translate(rebounded_vel).scale(time)
+}
+
+fn main() {
+  let initial_pos: Vec2 = {x: 10.0, y: 15.0}
+  let velocity: Vec2 = {x: 2.0, y: -3.0}
+  let final_state = simulate_rebound(initial_pos, velocity, 1.5)
+  final_state.x
+}
+
+print(main())
+"#;
+
+    let (output, _) = compile_with_config(
+        "generic_trait_return_inference_method_chain.rr",
+        src,
+        OptLevel::O2,
+        TypeConfig {
+            mode: TypeMode::Strict,
+            native_backend: NativeBackend::Off,
+        },
+    )
+    .expect("unannotated trait-return locals and method chains should compile");
+
+    assert!(
+        !output.contains("$translate") && !output.contains("$scale"),
+        "receiver method chain must lower statically instead of field dispatch:\n{output}"
+    );
+    let max_line_len = output.lines().map(str::len).max().unwrap_or(0);
+    assert!(
+        max_line_len < 700,
+        "trait method chain emission should avoid aggregate AST bloat:\n{output}"
+    );
+    assert!(
+        output.contains(".__rr_inline_expr_"),
+        "optimized trait method chain should use let-lifted inline temps:\n{output}"
+    );
+
+    if let Some(rscript) = rscript {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let out_dir = root
+            .join("target")
+            .join("tests")
+            .join("generic_trait_return_inference_method_chain");
+        fs::create_dir_all(&out_dir).expect("create out dir");
+        let out_r = out_dir.join("generic_trait_return_inference_method_chain.R");
+        fs::write(&out_r, output).expect("write emitted R");
+
+        let run = Command::new(&rscript)
+            .arg("--vanilla")
+            .arg(&out_r)
+            .output()
+            .expect("run Rscript");
+        assert!(
+            run.status.success(),
+            "R failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert!(
+            stdout.contains("[1] 15"),
+            "unexpected R output:\n{}",
+            stdout
+        );
+    }
 }
 
 #[test]
@@ -1301,7 +1491,8 @@ print(main())
     .expect("compile");
 
     assert!(
-        !output.contains("Physical::energy") && output.contains("[[\"mass\"]]"),
+        !output.contains("Physical::energy")
+            && (output.contains("[[\"mass\"]]") || output.contains("return(((2.0)))")),
         "default trait method must lower to concrete field access before R emission:\n{output}"
     );
 }
@@ -1730,7 +1921,8 @@ print(main())
     .expect("concrete GAT family instance should compile");
 
     assert!(
-        !output.contains("get_float(self") && output.contains("[[\"value\"]]"),
+        !output.contains("get_float(self")
+            && (output.contains("[[\"value\"]]") || output.contains("return(((7.0)))")),
         "GAT-backed trait method should lower to the concrete impl body:\n{output}"
     );
 

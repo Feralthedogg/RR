@@ -279,6 +279,29 @@ impl TachyonEngine {
         }
         Self::restore_functions(all_fns, restored_tier_a);
         Self::debug_wrap_candidates(all_fns);
+        Self::debug_sroa_candidates(all_fns);
+        let sroa_call_specialized =
+            Self::timed_bool_pass(pass_timings, "sroa_record_call_specialize", || {
+                sroa::specialize_record_field_calls(all_fns)
+            });
+        if sroa_call_specialized {
+            for name in Self::sorted_fn_names(all_fns) {
+                if let Some(fn_ir) = all_fns.get(&name) {
+                    Self::maybe_verify(fn_ir, "After SROA Record Call Specialization");
+                }
+            }
+        }
+        let sroa_return_specialized =
+            Self::timed_bool_pass(pass_timings, "sroa_record_return_specialize", || {
+                sroa::specialize_record_return_field_calls(all_fns)
+            });
+        if sroa_return_specialized {
+            for name in Self::sorted_fn_names(all_fns) {
+                if let Some(fn_ir) = all_fns.get(&name) {
+                    Self::maybe_verify(fn_ir, "After SROA Record Return Specialization");
+                }
+            }
+        }
 
         let heavy_phase_plans = if run_heavy_tier {
             let selected_functions = if plan.selective_mode {
@@ -438,7 +461,7 @@ impl TachyonEngine {
         // Proof correspondence:
         // `ProgramPostTierStagesSoundness.inline_cleanup_stage_*` fixes the
         // reduced stage boundary for the inline cleanup slice below
-        // (`simplify_cfg -> dce` after an inlining round).
+        // (`simplify_cfg -> sroa -> dce` after an inlining round).
         if run_full_inline_tier {
             let mut changed = true;
             let mut iter = 0;
@@ -494,12 +517,17 @@ impl TachyonEngine {
                                 "simplify_cfg",
                                 || self.simplify_cfg(&mut fn_ir),
                             );
+                            let inline_sroa_changed = Self::timed_bool_pass(
+                                &mut local_profile.pass_timings,
+                                "sroa",
+                                || sroa::optimize(&mut fn_ir),
+                            );
                             let inline_dce_changed = Self::timed_bool_pass(
                                 &mut local_profile.pass_timings,
                                 "dce",
                                 || self.dce(&mut fn_ir),
                             );
-                            if inline_sc_changed || inline_dce_changed {
+                            if inline_sc_changed || inline_sroa_changed || inline_dce_changed {
                                 local_profile.pulse_stats.inline_cleanup_hits += 1;
                             }
                             if inline_sc_changed {

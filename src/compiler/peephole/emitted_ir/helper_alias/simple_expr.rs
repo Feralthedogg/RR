@@ -85,6 +85,98 @@ fn substitute_helper_expr_ir(expr: &str, bindings: &FxHashMap<String, String>) -
     out
 }
 
+fn helper_arg_is_trivial_to_duplicate_ir(arg: &str) -> bool {
+    let trimmed = arg.trim();
+    plain_ident_re().is_some_and(|re| re.is_match(trimmed))
+        || scalar_lit_re().is_some_and(|re| re.is_match(trimmed))
+        || ((trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
+}
+
+fn helper_param_use_counts_ir(
+    expr: &str,
+    params: &[String],
+) -> FxHashMap<String, usize> {
+    let params = params.iter().map(String::as_str).collect::<FxHashSet<_>>();
+    let mut counts = FxHashMap::default();
+    for ident in expr_idents(expr) {
+        if params.contains(ident.as_str()) {
+            *counts.entry(ident).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn helper_arg_is_bloat_sensitive_ir(arg: &str) -> bool {
+    let trimmed = arg.trim();
+    !helper_arg_is_trivial_to_duplicate_ir(trimmed)
+        && (trimmed.len() > 48
+            || trimmed.contains("Sym_")
+            || trimmed.contains("list(")
+            || trimmed.contains("[[")
+            || trimmed.contains("rr_field_set("))
+}
+
+fn helper_expr_is_aggregate_like_ir(expr: &str) -> bool {
+    expr.contains("list(")
+        || expr.contains("rr_field_set(")
+        || expr.contains("rr_named_list(")
+        || expr.contains("[[")
+}
+
+fn simple_expr_inline_would_bloat_ir(
+    helper: &SimpleExprHelperIr,
+    args: &[String],
+    original_call: &str,
+    expanded: &str,
+    allowed_helpers: Option<&FxHashSet<String>>,
+) -> bool {
+    if allowed_helpers.is_some() {
+        return false;
+    }
+
+    let param_uses = helper_param_use_counts_ir(&helper.expr, &helper.params);
+    if helper
+        .params
+        .iter()
+        .zip(args.iter())
+        .any(|(param, arg)| {
+            param_uses.get(param).copied().unwrap_or(0) > 1
+                && helper_arg_is_bloat_sensitive_ir(arg)
+        })
+    {
+        return true;
+    }
+
+    let aggregate_heavy = expanded.contains("rr_field_set(")
+        || expanded.matches("list(").count() >= 2
+        || expanded.matches("[[").count() >= 4;
+    aggregate_heavy
+        && expanded.len()
+            > original_call
+                .len()
+                .saturating_mul(4)
+                .max(160)
+}
+
+fn next_simple_expr_inline_temp_ir(counter: &mut usize) -> String {
+    let name = format!(".__rr_inline_expr_{}", *counter);
+    *counter += 1;
+    name
+}
+
+fn next_simple_expr_inline_temp_index_ir(body: &[EmittedStmt]) -> usize {
+    body.iter()
+        .flat_map(|stmt| expr_idents(&stmt.text))
+        .filter_map(|ident| {
+            ident
+                .strip_prefix(".__rr_inline_expr_")
+                .and_then(|idx| idx.parse::<usize>().ok())
+        })
+        .max()
+        .map_or(0, |idx| idx + 1)
+}
+
 fn collect_simple_expr_helpers_ir(
     lines: &[String],
     _pure_user_calls: &FxHashSet<String>,
@@ -306,6 +398,18 @@ fn rewrite_simple_expr_helper_calls_in_text_ir(
                 .map(|(param, arg)| (param.clone(), arg.trim().to_string()))
                 .collect::<FxHashMap<_, _>>();
             let expanded = substitute_helper_expr_ir(&helper.expr, &subst);
+            let original_call = &rewritten[ident_start..=call_end];
+            if simple_expr_inline_would_bloat_ir(
+                helper,
+                &args,
+                original_call,
+                &expanded,
+                allowed_helpers,
+            ) {
+                next.push_str(original_call);
+                idx = call_end + 1;
+                continue;
+            }
             next.push('(');
             next.push_str(&expanded);
             next.push(')');
@@ -316,6 +420,209 @@ fn rewrite_simple_expr_helper_calls_in_text_ir(
             break rewritten;
         }
         rewritten = next;
+    }
+}
+
+fn rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
+    expr: &str,
+    helpers: &FxHashMap<String, SimpleExprHelperIr>,
+    allowed_helpers: Option<&FxHashSet<String>>,
+    temp_counter: &mut usize,
+    allow_lift_result: bool,
+    indent: &str,
+) -> (Vec<String>, String) {
+    let mut rewritten = expr.to_string();
+    let mut hoisted = Vec::new();
+    loop {
+        let mut changed = false;
+        let mut next = String::with_capacity(rewritten.len());
+        let mut idx = 0usize;
+        while idx < rewritten.len() {
+            let slice = &rewritten[idx..];
+            let Some(caps) = ident_re().and_then(|re| re.captures(slice)) else {
+                next.push_str(slice);
+                break;
+            };
+            let Some(mat) = caps.get(0) else {
+                next.push_str(slice);
+                break;
+            };
+            let ident_start = idx + mat.start();
+            let ident_end = idx + mat.end();
+            next.push_str(&rewritten[idx..ident_start]);
+            let ident = mat.as_str();
+            let Some(helper) = helpers.get(ident) else {
+                next.push_str(ident);
+                idx = ident_end;
+                continue;
+            };
+            if allowed_helpers.is_some_and(|allowed| !allowed.contains(ident)) {
+                next.push_str(ident);
+                idx = ident_end;
+                continue;
+            }
+            if !rewritten[ident_end..].starts_with('(') {
+                next.push_str(ident);
+                idx = ident_end;
+                continue;
+            }
+
+            let mut depth = 0i32;
+            let mut end = None;
+            for (off, ch) in rewritten[ident_end..].char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(ident_end + off);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(call_end) = end else {
+                next.push_str(ident);
+                idx = ident_end;
+                continue;
+            };
+            let original_call = &rewritten[ident_start..=call_end];
+            let args_inner = &rewritten[ident_end + 1..call_end];
+            let Some(args) = split_top_level_args(args_inner) else {
+                next.push_str(original_call);
+                idx = call_end + 1;
+                continue;
+            };
+            if args.len() != helper.params.len() {
+                next.push_str(original_call);
+                idx = call_end + 1;
+                continue;
+            }
+
+            let mut processed_args = Vec::with_capacity(args.len());
+            for arg in args {
+                let (mut arg_hoists, rewritten_arg) =
+                    rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
+                        &arg,
+                        helpers,
+                        allowed_helpers,
+                        temp_counter,
+                        true,
+                        indent,
+                    );
+                hoisted.append(&mut arg_hoists);
+                processed_args.push(rewritten_arg);
+            }
+
+            let subst = helper
+                .params
+                .iter()
+                .zip(processed_args.iter())
+                .map(|(param, arg)| (param.clone(), arg.trim().to_string()))
+                .collect::<FxHashMap<_, _>>();
+            let expanded = substitute_helper_expr_ir(&helper.expr, &subst);
+            let (mut expanded_hoists, expanded) =
+                rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
+                    &expanded,
+                    helpers,
+                    allowed_helpers,
+                    temp_counter,
+                    allow_lift_result,
+                    indent,
+                );
+            hoisted.append(&mut expanded_hoists);
+
+            let should_lift = allowed_helpers.is_none()
+                && allow_lift_result
+                && (helper_expr_is_aggregate_like_ir(&expanded)
+                    || simple_expr_inline_would_bloat_ir(
+                        helper,
+                        &processed_args,
+                        original_call,
+                        &expanded,
+                        allowed_helpers,
+                    ));
+            if should_lift {
+                let temp = next_simple_expr_inline_temp_ir(temp_counter);
+                hoisted.push(format!("{indent}{temp} <- {expanded}"));
+                next.push_str(&temp);
+            } else {
+                next.push('(');
+                next.push_str(&expanded);
+                next.push(')');
+            }
+            idx = call_end + 1;
+            changed = true;
+        }
+        if !changed || next == rewritten {
+            break;
+        }
+        rewritten = next;
+    }
+    (hoisted, rewritten)
+}
+
+fn rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
+    stmt: &EmittedStmt,
+    helpers: &FxHashMap<String, SimpleExprHelperIr>,
+    allowed_helpers: Option<&FxHashSet<String>>,
+    temp_counter: &mut usize,
+) -> Vec<EmittedStmt> {
+    match &stmt.kind {
+        EmittedStmtKind::Assign { lhs, rhs } => {
+            let indent = stmt.indent();
+            let (hoists, rewritten_rhs) = rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
+                rhs,
+                helpers,
+                allowed_helpers,
+                temp_counter,
+                false,
+                &indent,
+            );
+            let mut out = hoists
+                .into_iter()
+                .map(|line| EmittedStmt::parse(&line))
+                .collect::<Vec<_>>();
+            out.push(EmittedStmt::parse(&format!(
+                "{indent}{lhs} <- {rewritten_rhs}"
+            )));
+            out
+        }
+        EmittedStmtKind::Return => {
+            let trimmed = stmt.text.trim();
+            let Some(inner) = trimmed
+                .strip_prefix("return(")
+                .and_then(|s| s.strip_suffix(')'))
+            else {
+                return vec![stmt.clone()];
+            };
+            let indent = stmt.indent();
+            let (hoists, rewritten_inner) = rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
+                inner,
+                helpers,
+                allowed_helpers,
+                temp_counter,
+                false,
+                &indent,
+            );
+            let mut out = hoists
+                .into_iter()
+                .map(|line| EmittedStmt::parse(&line))
+                .collect::<Vec<_>>();
+            out.push(EmittedStmt::parse(&format!(
+                "{indent}return({rewritten_inner})"
+            )));
+            out
+        }
+        _ => {
+            let rewritten = rewrite_simple_expr_helper_calls_in_text_ir(
+                &stmt.text,
+                helpers,
+                allowed_helpers,
+            );
+            vec![EmittedStmt::parse(&rewritten)]
+        }
     }
 }
 
@@ -351,6 +658,29 @@ fn apply_rewrite_simple_expr_helper_calls_ir(
     for item in &mut program.items {
         match item {
             EmittedItem::Function(function) => {
+                if allowed_helpers.is_none() {
+                    let mut temp_counter =
+                        next_simple_expr_inline_temp_index_ir(&function.body);
+                    let mut rewritten_body = Vec::with_capacity(function.body.len());
+                    for stmt in &function.body {
+                        if !stmt.text.contains('(')
+                            || !stmt.text.contains("Sym_")
+                            || !helper_names.iter().any(|name| stmt.text.contains(name))
+                        {
+                            rewritten_body.push(stmt.clone());
+                            continue;
+                        }
+                        rewritten_body.extend(rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
+                            stmt,
+                            helpers,
+                            allowed_helpers,
+                            &mut temp_counter,
+                        ));
+                    }
+                    function.body = rewritten_body;
+                    continue;
+                }
+
                 for stmt in &mut function.body {
                     if !stmt.text.contains('(')
                         || !stmt.text.contains("Sym_")

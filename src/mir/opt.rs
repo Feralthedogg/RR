@@ -35,6 +35,8 @@ mod plan;
 mod program_driver;
 #[path = "opt/safety.rs"]
 mod safety;
+#[path = "opt/sroa.rs"]
+mod sroa;
 #[path = "opt/stabilize.rs"]
 mod stabilize;
 #[path = "opt/types.rs"]

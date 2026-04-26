@@ -99,6 +99,15 @@ fn source_defines_main_function(source: &str) -> Result<(bool, bool), RRExceptio
     Ok((has_main_fn, has_top_level_main_call))
 }
 
+fn source_with_main_call_appended(source: &str) -> String {
+    let mut patched = source.to_string();
+    if !patched.ends_with('\n') {
+        patched.push('\n');
+    }
+    patched.push_str("\nmain()\n");
+    patched
+}
+
 pub(super) fn prepare_project_entry_source(
     input_path: &Path,
     source: &str,
@@ -124,10 +133,13 @@ pub(super) fn prepare_project_entry_source(
         return Ok(source.to_string());
     }
 
-    let mut patched = source.to_string();
-    if !patched.ends_with('\n') {
-        patched.push('\n');
+    Ok(source_with_main_call_appended(source))
+}
+
+pub(super) fn prepare_single_file_build_source(source: &str) -> Result<String, RRException> {
+    let (has_main_fn, has_top_level_main_call) = source_defines_main_function(source)?;
+    if has_main_fn && !has_top_level_main_call {
+        return Ok(source_with_main_call_appended(source));
     }
-    patched.push_str("\nmain()\n");
-    Ok(patched)
+    Ok(source.to_string())
 }

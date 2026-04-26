@@ -149,6 +149,94 @@ fn raw_emitted_particle_idx_alias_rewrites_into_dx_dy() {
 }
 
 #[test]
+fn raw_emitted_static_record_scalarization_splits_list_temps() {
+    let input = [
+        "Sym_29 <- function() ",
+        "{",
+        "  .__rr_inline_expr_0 <- list(x = (10.0 + 2.0), y = (15.0 + -3.0))",
+        "  .__rr_inline_expr_1 <- list(x = (0.0 - 2.0), y = (0.0 - -3.0))",
+        "  .__rr_inline_expr_2 <- list(x = (.__rr_inline_expr_0[[\"x\"]] + (.__rr_inline_expr_1)[[\"x\"]]), y = (.__rr_inline_expr_0[[\"y\"]] + (.__rr_inline_expr_1)[[\"y\"]]))",
+        "  final_state <- list(x = (.__rr_inline_expr_2[[\"x\"]] * 1.5), y = (.__rr_inline_expr_2[[\"y\"]] * 1.5))",
+        "  return(final_state[[\"x\"]])",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_static_record_scalarization_in_raw_emitted_r(&input);
+
+    assert!(
+        out.contains(".__rr_inline_expr_0__rr_sroa_x <- (10.0 + 2.0)"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            ".__rr_inline_expr_2__rr_sroa_x <- (.__rr_inline_expr_0__rr_sroa_x + .__rr_inline_expr_1__rr_sroa_x)"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("return(final_state__rr_sroa_x)"), "{out}");
+    assert!(!out.contains("<- list("), "{out}");
+}
+
+#[test]
+fn raw_emitted_static_record_scalarization_keeps_impure_literal_projection() {
+    let input = [
+        "Sym_29 <- function() ",
+        "{",
+        "  return(list(x = print(1), y = 2)[[\"y\"]])",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_static_record_scalarization_in_raw_emitted_r(&input);
+
+    assert!(
+        out.contains("return(list(x = print(1), y = 2)[[\"y\"]])"),
+        "{out}"
+    );
+}
+
+#[test]
+fn raw_emitted_static_record_scalarization_skips_self_dependent_record() {
+    let input = [
+        "Sym_29 <- function() ",
+        "{",
+        "  p <- list(x = p[[\"x\"]], y = 2)",
+        "  return(p[[\"x\"]])",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_static_record_scalarization_in_raw_emitted_r(&input);
+
+    assert!(out.contains("p <- list(x = p[[\"x\"]], y = 2)"), "{out}");
+    assert!(out.contains("return(p[[\"x\"]])"), "{out}");
+}
+
+#[test]
+fn raw_emitted_static_record_scalarization_skips_field_write_records() {
+    let input = [
+        "Sym_29 <- function() ",
+        "{",
+        "  cfg <- list(alpha = 1L, beta = 2L)",
+        "  cfg[[\"alpha\"]] <- 7L",
+        "  return(cfg[[\"alpha\"]])",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_static_record_scalarization_in_raw_emitted_r(&input);
+
+    assert!(out.contains("cfg <- list(alpha = 1L, beta = 2L)"), "{out}");
+    assert!(out.contains("cfg[[\"alpha\"]] <- 7L"), "{out}");
+    assert!(out.contains("return(cfg[[\"alpha\"]])"), "{out}");
+}
+
+#[test]
 fn raw_emitted_loop_index_alias_ii_rewrites_to_i() {
     let input = [
         "Sym_186 <- function(u, du1, adv_u, TOTAL) ",

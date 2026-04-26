@@ -106,6 +106,108 @@ main()
 }
 
 #[test]
+fn build_command_single_entry_file_appends_main_call() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_build");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "single_entry_file");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let rr_path = proj_dir.join("entry.rr");
+    fs::write(
+        &rr_path,
+        r#"
+fn main() {
+  print(456L)
+}
+"#,
+    )
+    .expect("failed to write entry.rr");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let out_dir = proj_dir.join("build");
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&rr_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O0")
+        .arg("--no-incremental")
+        .status()
+        .expect("failed to run rr build on explicit entry file");
+    assert!(status.success(), "rr build explicit entry file failed");
+
+    let generated_path = out_dir.join("entry.R");
+    let generated = fs::read_to_string(&generated_path).expect("failed to read generated entry.R");
+    assert!(
+        generated.contains("# --- RR synthesized entrypoints") && generated.contains("Sym_top_0()"),
+        "expected explicit entry-file build to synthesize main() call in {}\n{}",
+        generated_path.display(),
+        generated
+    );
+}
+
+#[test]
+fn build_command_sroa_trace_reports_record_candidates() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_build");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "sroa_trace");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let rr_path = proj_dir.join("main.rr");
+    fs::write(
+        &rr_path,
+        r#"
+fn main() {
+  let point = { x: 1L, y: 2L }
+  point.x = 4L
+  print(point.x + point.y)
+}
+main()
+"#,
+    )
+    .expect("failed to write main.rr");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let out_dir = proj_dir.join("build");
+    let output = Command::new(&rr_bin)
+        .env("RR_SROA_TRACE", "1")
+        .arg("build")
+        .arg(&rr_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .output()
+        .expect("failed to run rr build with SROA trace");
+    assert!(
+        output.status.success(),
+        "rr build with SROA trace failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("[sroa-cand]") && stderr.contains("record="),
+        "expected SROA candidate trace in stderr:\n{}",
+        stderr
+    );
+
+    let generated_path = out_dir.join("main.R");
+    let generated = fs::read_to_string(&generated_path).expect("failed to read generated main.R");
+    assert!(
+        generated.contains("return(print(6L))")
+            && !generated.contains("point <- list(")
+            && !generated.contains("rr_field_set("),
+        "expected straight-line SROA to remove temporary record and field-set allocation in {}\n{}",
+        generated_path.display(),
+        generated
+    );
+}
+
+#[test]
 fn new_command_creates_cargo_like_binary_project() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root.join("target").join("tests").join("cli_new");
@@ -293,6 +395,62 @@ fn main() {
         stdout.contains("[1] 123"),
         "expected runtime output from main.rr, got:\n{}",
         stdout
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_command_accepts_explicit_non_main_entry_file() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_run");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "explicit_entry_file");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let rr_path = proj_dir.join("entry.rr");
+    fs::write(
+        &rr_path,
+        r#"
+fn main() {
+  print(456L)
+}
+"#,
+    )
+    .expect("failed to write entry.rr");
+
+    let fake_rscript = proj_dir.join("fake_rscript.sh");
+    fs::write(
+        &fake_rscript,
+        "#!/bin/sh\nif ! grep -q 'Sym_top_0()' \"$2\"; then\n  echo 'missing synthesized entrypoint' >&2\n  exit 7\nfi\nprintf '[1] 456\\n'\nexit 0\n",
+    )
+    .expect("failed to write fake Rscript");
+    let mut perms = fs::metadata(&fake_rscript)
+        .expect("failed to stat fake Rscript")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fake_rscript, perms).expect("failed to chmod fake Rscript");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let output = Command::new(&rr_bin)
+        .current_dir(&proj_dir)
+        .arg("run")
+        .arg(&rr_path)
+        .arg("-O0")
+        .arg("--no-incremental")
+        .env("RRSCRIPT", &fake_rscript)
+        .output()
+        .expect("failed to run rr run explicit entry file");
+
+    assert!(
+        output.status.success(),
+        "rr run explicit entry file failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("[1] 456"),
+        "expected fake Rscript output, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
     );
 }
 

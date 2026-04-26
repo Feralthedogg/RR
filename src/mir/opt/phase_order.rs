@@ -526,6 +526,14 @@ impl TachyonEngine {
             result.non_structural_changes += 1;
         }
 
+        let sroa_changed = Self::timed_bool_pass(pass_timings, "sroa", || sroa::optimize(fn_ir));
+        Self::maybe_verify(fn_ir, "After SROA");
+        Self::debug_stage_dump(fn_ir, "After SROA");
+        if sroa_changed {
+            result.changed = true;
+            result.non_structural_changes += 1;
+        }
+
         let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
         if dce_changed {
             stats.dce_hits += 1;
@@ -768,6 +776,14 @@ impl TachyonEngine {
         }
         Self::maybe_verify(fn_ir, "After Simplify");
         Self::debug_stage_dump(fn_ir, "After Simplify");
+
+        let sroa_changed = Self::timed_bool_pass(pass_timings, "sroa", || sroa::optimize(fn_ir));
+        Self::maybe_verify(fn_ir, "After SROA");
+        Self::debug_stage_dump(fn_ir, "After SROA");
+        if sroa_changed {
+            result.changed = true;
+            result.non_structural_changes += 1;
+        }
 
         let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
         if dce_changed {
@@ -1016,7 +1032,7 @@ impl TachyonEngine {
         // Proof correspondence:
         // `PhaseOrderClusterSoundness.cleanup_cluster_*` approximates this
         // reduced cleanup boundary:
-        // `simplify_cfg -> dce`.
+        // `simplify_cfg -> sroa -> dce`.
         let mut changed = false;
 
         let sc_changed =
@@ -1027,6 +1043,11 @@ impl TachyonEngine {
         Self::maybe_verify(fn_ir, "After Structural SimplifyCFG");
         Self::debug_stage_dump(fn_ir, "After Structural SimplifyCFG");
         changed |= sc_changed;
+
+        let sroa_changed = Self::timed_bool_pass(pass_timings, "sroa", || sroa::optimize(fn_ir));
+        Self::maybe_verify(fn_ir, "After Structural SROA");
+        Self::debug_stage_dump(fn_ir, "After Structural SROA");
+        changed |= sroa_changed;
 
         let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
         if dce_changed {
@@ -1050,7 +1071,7 @@ impl TachyonEngine {
         // Proof correspondence:
         // `PhaseOrderClusterSoundness.standard_cluster_*` approximates this
         // reduced compute/dataflow/loop cluster:
-        // `simplify_cfg -> sccp -> intrinsics -> gvn -> simplify -> dce`
+        // `simplify_cfg -> sccp -> intrinsics -> gvn -> simplify -> sroa -> dce`
         // plus, when budgeted, `loop_opt -> licm -> fresh_alloc -> bce`.
         let mut changed = false;
 
@@ -1103,6 +1124,11 @@ impl TachyonEngine {
         Self::maybe_verify(fn_ir, "After Simplify");
         Self::debug_stage_dump(fn_ir, "After Simplify");
         changed |= simplify_changed;
+
+        let sroa_changed = Self::timed_bool_pass(pass_timings, "sroa", || sroa::optimize(fn_ir));
+        Self::maybe_verify(fn_ir, "After SROA");
+        Self::debug_stage_dump(fn_ir, "After SROA");
+        changed |= sroa_changed;
 
         let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
         if dce_changed {

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use super::super::{
     CliCompileRequest, CommandMode, compile_cli_source, compile_output_options,
-    default_build_output_dir, file_name_is_main_rr, parse_command_opts,
-    prepare_project_entry_source, report_dir_create_failure, report_file_write_failure,
+    default_build_output_dir, parse_command_opts, prepare_project_entry_source,
+    prepare_single_file_build_source, report_dir_create_failure, report_file_write_failure,
     report_path_read_failure, resolve_project_entry_in_dir, write_compile_profile_artifact,
     write_compile_profile_collection,
 };
@@ -104,8 +104,16 @@ pub(crate) fn cmd_build(args: &[String]) -> i32 {
                 return 1;
             }
         };
-        let input = if file_name_is_main_rr(&rr_abs) && project_entry.as_ref() == Some(&rr_abs) {
+        let input = if project_entry.as_ref() == Some(&rr_abs) {
             match prepare_project_entry_source(&rr_abs, &raw_input, "build") {
+                Ok(source) => source,
+                Err(err) => {
+                    err.display(Some(&raw_input), Some(&rr_path_str));
+                    return 1;
+                }
+            }
+        } else if !dir_mode {
+            match prepare_single_file_build_source(&raw_input) {
                 Ok(source) => source,
                 Err(err) => {
                     err.display(Some(&raw_input), Some(&rr_path_str));

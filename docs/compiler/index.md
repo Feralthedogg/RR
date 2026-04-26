@@ -20,6 +20,8 @@ and stay in the user docs flow.
 - [IR Model](ir-model.md): HIR and MIR structure, invariants, and ownership
 - [Tachyon Engine](optimization.md): optimizer stages, proof model, and
   pass-level behavior
+- [MIR SROA Design](sroa.md): planned aggregate scalar replacement for
+  `RecordLit` / `FieldGet` / `FieldSet`
 - [Runtime and Error Model](runtime-and-errors.md): emitted helpers,
   diagnostics, and runtime policy
 - [Testing and Quality Gates](testing.md): CI tiers, optimizer suites, soak

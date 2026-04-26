@@ -1063,6 +1063,11 @@ pub(super) fn optimize_emitted_r_pipeline_impl_with_profile(
         + secondary_helper_full_range_elapsed_ns
         + secondary_helper_named_copy_elapsed_ns;
     let step_started = Instant::now();
+    let out_lines = crate::compiler::pipeline::rewrite_static_record_scalarization_lines(out_lines);
+    let secondary_record_sroa_elapsed_ns = step_started.elapsed().as_nanos();
+    let secondary_helper_cleanup_elapsed_ns =
+        secondary_helper_cleanup_elapsed_ns + secondary_record_sroa_elapsed_ns;
+    let step_started = Instant::now();
     let out_lines = run_secondary_empty_else_finalize_bundle_ir(out_lines, preserve_all_defs);
     let secondary_finalize_bundle_elapsed_ns = step_started.elapsed().as_nanos();
     let step_started = Instant::now();

@@ -50,6 +50,7 @@ import RRProofs.VectorizeApplySubset
 import RRProofs.VectorizeRewriteSubset
 import RRProofs.VectorizeMirRewriteSubset
 import RRProofs.VectorizeValueRewriteSubset
+import RRProofs.SroaRecordReturnSubset
 import RRProofs.VectorizeOriginMemoSubset
 import RRProofs.VectorizeUseRewriteSubset
 import RRProofs.VectorizeDecisionSubset

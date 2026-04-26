@@ -1,5 +1,124 @@
 use super::*;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawRecordField {
+    name: String,
+    expr: String,
+}
+
+pub(crate) fn rewrite_static_record_scalarization_lines(mut lines: Vec<String>) -> Vec<String> {
+    if lines.is_empty() {
+        return lines;
+    }
+
+    for line in &mut lines {
+        *line = rewrite_inline_literal_record_field_accesses(line);
+    }
+
+    let existing_symbols = collect_raw_symbols(&lines);
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        let Some((lhs, rhs)) = parse_raw_assign_line(&lines[idx]) else {
+            idx += 1;
+            continue;
+        };
+        let lhs = lhs.to_string();
+        let Some(fields) = parse_raw_record_list_expr(rhs) else {
+            idx += 1;
+            continue;
+        };
+        if fields.is_empty()
+            || fields
+                .iter()
+                .any(|field| !raw_record_field_expr_is_sroa_safe(&field.expr))
+            || fields
+                .iter()
+                .any(|field| line_contains_symbol(&field.expr, &lhs))
+            || raw_line_is_within_loop_body(&lines, idx)
+        {
+            idx += 1;
+            continue;
+        }
+
+        let Some(function_end) = raw_function_end_for_line(&lines, idx) else {
+            idx += 1;
+            continue;
+        };
+
+        let field_temps = build_raw_record_field_temp_map(&lhs, &fields, &existing_symbols);
+        let mut used_fields = FxHashSet::default();
+        let mut rewrites = Vec::new();
+        let mut safe = true;
+
+        for use_idx in (idx + 1)..function_end {
+            let trimmed = lines[use_idx].trim();
+            if let Some((next_lhs, _)) = parse_raw_assign_line(trimmed)
+                && next_lhs == lhs
+            {
+                safe = false;
+                break;
+            }
+            if raw_line_assigns_to_record_field(trimmed, &lhs) {
+                safe = false;
+                break;
+            }
+            if !line_contains_symbol(trimmed, &lhs) {
+                continue;
+            }
+            let (rewritten, line_used_fields) =
+                rewrite_raw_record_field_accesses(&lines[use_idx], &lhs, &field_temps);
+            if line_contains_symbol(&rewritten, &lhs) {
+                safe = false;
+                break;
+            }
+            used_fields.extend(line_used_fields);
+            rewrites.push((use_idx, rewritten));
+        }
+
+        if !safe || used_fields.is_empty() {
+            idx += 1;
+            continue;
+        }
+
+        for (use_idx, rewritten) in rewrites {
+            lines[use_idx] = rewritten;
+        }
+
+        let indent = leading_indent(&lines[idx]).to_string();
+        let mut scalar_lines = Vec::new();
+        for field in &fields {
+            if !used_fields.contains(&field.name) {
+                continue;
+            }
+            let Some(temp) = field_temps.get(&field.name) else {
+                continue;
+            };
+            let rhs = rewrite_inline_literal_record_field_accesses(&field.expr);
+            scalar_lines.push(format!("{indent}{temp} <- {}", rhs.trim()));
+        }
+
+        if scalar_lines.is_empty() {
+            idx += 1;
+            continue;
+        }
+
+        lines.splice(idx..=idx, scalar_lines);
+        idx += 1;
+    }
+
+    lines
+}
+
+pub(crate) fn rewrite_static_record_scalarization_in_raw_emitted_r(output: &str) -> String {
+    let lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
+    let lines = rewrite_static_record_scalarization_lines(lines);
+    let mut out = lines.join("\n");
+    if output.ends_with('\n') || !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
 pub(crate) fn rewrite_immediate_single_use_named_scalar_exprs_in_raw_emitted_r(
     output: &str,
 ) -> String {
@@ -77,6 +196,396 @@ pub(crate) fn rewrite_immediate_single_use_named_scalar_exprs_in_raw_emitted_r(
         out.push('\n');
     }
     out
+}
+
+fn parse_raw_record_list_expr(rhs: &str) -> Option<Vec<RawRecordField>> {
+    let rhs = strip_redundant_outer_parens(rhs).trim();
+    let open = rhs.find("list(")? + "list".len();
+    if open != "list".len() {
+        return None;
+    }
+    let close = find_matching_call_close(rhs, open)?;
+    if close + 1 != rhs.len() {
+        return None;
+    }
+
+    let args = split_top_level_args(&rhs[open + 1..close])?;
+    let mut fields = Vec::with_capacity(args.len());
+    let mut seen = FxHashSet::default();
+    for arg in args {
+        let (name, expr) = split_raw_record_field_arg(&arg)?;
+        if !seen.insert(name.clone()) {
+            return None;
+        }
+        fields.push(RawRecordField { name, expr });
+    }
+    Some(fields)
+}
+
+fn split_raw_record_field_arg(arg: &str) -> Option<(String, String)> {
+    let mut depth = 0i32;
+    for (idx, ch) in arg.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '=' if depth == 0 => {
+                let name = arg[..idx].trim();
+                let expr = arg[idx + ch.len_utf8()..].trim();
+                if name.is_empty() || expr.is_empty() || !name.chars().all(is_symbol_char) {
+                    return None;
+                }
+                return Some((name.to_string(), expr.to_string()));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn raw_record_field_expr_is_sroa_safe(expr: &str) -> bool {
+    let expr = strip_redundant_outer_parens(expr);
+    if expr.contains("<-")
+        || expr.contains("function(")
+        || expr.contains("function (")
+        || expr.contains("tryCatch(")
+        || expr.contains("print(")
+        || expr.contains("cat(")
+        || expr.contains("message(")
+        || expr.contains("warning(")
+        || expr.contains("stop(")
+        || expr.contains("quit(")
+    {
+        return false;
+    }
+
+    raw_calls_are_sroa_safe(expr)
+}
+
+fn raw_calls_are_sroa_safe(expr: &str) -> bool {
+    let bytes = expr.as_bytes();
+    let mut idx = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\'' if !in_double => {
+                in_single = !in_single;
+                idx += 1;
+                continue;
+            }
+            b'"' if !in_single => {
+                in_double = !in_double;
+                idx += 1;
+                continue;
+            }
+            b'(' if !in_single && !in_double => {
+                let callee = raw_callee_before_open(expr, idx);
+                if let Some(callee) = callee
+                    && !raw_sroa_allowed_pure_call(callee)
+                {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    true
+}
+
+fn raw_callee_before_open(expr: &str, open: usize) -> Option<&str> {
+    let prefix = expr[..open].trim_end();
+    let end = prefix.len();
+    let mut start = end;
+    for (idx, ch) in prefix.char_indices().rev() {
+        if is_symbol_char(ch) {
+            start = idx;
+            continue;
+        }
+        break;
+    }
+    if start == end {
+        return None;
+    }
+    Some(&prefix[start..end])
+}
+
+fn raw_sroa_allowed_pure_call(callee: &str) -> bool {
+    matches!(
+        callee,
+        "list"
+            | "c"
+            | "integer"
+            | "numeric"
+            | "logical"
+            | "character"
+            | "rep.int"
+            | "seq_len"
+            | "abs"
+            | "sqrt"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "exp"
+            | "log"
+            | "min"
+            | "max"
+            | "sum"
+            | "mean"
+            | "pmin"
+            | "pmax"
+            | "is.na"
+            | "is.finite"
+    )
+}
+
+fn raw_function_end_for_line(lines: &[String], idx: usize) -> Option<usize> {
+    let function_start = (0..=idx)
+        .rev()
+        .find(|line_idx| parse_raw_function_header(lines[*line_idx].trim()).is_some())?;
+    let end = find_raw_block_end(lines, function_start)?;
+    (idx < end).then_some(end)
+}
+
+fn collect_raw_symbols(lines: &[String]) -> FxHashSet<String> {
+    let mut symbols = FxHashSet::default();
+    for line in lines {
+        symbols.extend(raw_expr_idents(line));
+    }
+    symbols
+}
+
+fn build_raw_record_field_temp_map(
+    lhs: &str,
+    fields: &[RawRecordField],
+    existing_symbols: &FxHashSet<String>,
+) -> FxHashMap<String, String> {
+    let mut temps = FxHashMap::default();
+    let mut reserved = existing_symbols.clone();
+    for field in fields {
+        let suffix = sanitize_raw_sroa_field_name(&field.name);
+        let seed = format!("{lhs}__rr_sroa_{suffix}");
+        let mut temp = seed.clone();
+        let mut index = 0usize;
+        while reserved.contains(&temp) {
+            index += 1;
+            temp = format!("{seed}_{index}");
+        }
+        reserved.insert(temp.clone());
+        temps.insert(field.name.clone(), temp);
+    }
+    temps
+}
+
+fn sanitize_raw_sroa_field_name(field: &str) -> String {
+    let mut out = String::with_capacity(field.len().max(1));
+    for ch in field.chars() {
+        if is_symbol_char(ch) {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "field".to_string()
+    } else {
+        out
+    }
+}
+
+fn leading_indent(line: &str) -> &str {
+    let end = line
+        .char_indices()
+        .find_map(|(idx, ch)| (!ch.is_whitespace()).then_some(idx))
+        .unwrap_or(line.len());
+    &line[..end]
+}
+
+fn rewrite_raw_record_field_accesses(
+    line: &str,
+    base: &str,
+    field_temps: &FxHashMap<String, String>,
+) -> (String, FxHashSet<String>) {
+    let mut out = String::with_capacity(line.len());
+    let mut used_fields = FxHashSet::default();
+    let mut idx = 0usize;
+    let bytes = line.as_bytes();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\'' if !in_double => {
+                in_single = !in_single;
+                out.push('\'');
+                idx += 1;
+                continue;
+            }
+            b'"' if !in_single => {
+                in_double = !in_double;
+                out.push('"');
+                idx += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        if !in_single
+            && !in_double
+            && let Some((field, end)) = parse_raw_record_field_access_at(line, idx, base)
+            && let Some(temp) = field_temps.get(&field)
+        {
+            out.push_str(temp);
+            used_fields.insert(field);
+            idx = end;
+            continue;
+        }
+
+        let Some(ch) = line[idx..].chars().next() else {
+            break;
+        };
+        out.push(ch);
+        idx += ch.len_utf8();
+    }
+
+    (out, used_fields)
+}
+
+fn raw_line_assigns_to_record_field(line: &str, base: &str) -> bool {
+    let Some((lhs, _)) = line.trim().split_once(" <- ") else {
+        return false;
+    };
+    let lhs = lhs.trim();
+    let Some((_, end)) = parse_raw_record_field_access_at(lhs, 0, base) else {
+        return false;
+    };
+    lhs[end..].trim().is_empty()
+}
+
+fn parse_raw_record_field_access_at(line: &str, idx: usize, base: &str) -> Option<(String, usize)> {
+    parse_direct_raw_record_field_access_at(line, idx, base)
+        .or_else(|| parse_parenthesized_raw_record_field_access_at(line, idx, base))
+}
+
+fn parse_direct_raw_record_field_access_at(
+    line: &str,
+    idx: usize,
+    base: &str,
+) -> Option<(String, usize)> {
+    if !line[idx..].starts_with(base) || !raw_symbol_boundary_before(line, idx) {
+        return None;
+    }
+    let suffix_start = idx + base.len();
+    let (field, suffix_len) = parse_raw_static_field_suffix(&line[suffix_start..])?;
+    Some((field, suffix_start + suffix_len))
+}
+
+fn parse_parenthesized_raw_record_field_access_at(
+    line: &str,
+    idx: usize,
+    base: &str,
+) -> Option<(String, usize)> {
+    if !line[idx..].starts_with('(') {
+        return None;
+    }
+    let mut cursor = idx;
+    let mut parens = 0usize;
+    while line[cursor..].starts_with('(') {
+        parens += 1;
+        cursor += 1;
+        cursor += raw_ascii_whitespace_prefix_len(&line[cursor..]);
+    }
+    if !line[cursor..].starts_with(base) || !raw_symbol_boundary_before(line, cursor) {
+        return None;
+    }
+    cursor += base.len();
+    cursor += raw_ascii_whitespace_prefix_len(&line[cursor..]);
+    for _ in 0..parens {
+        if !line[cursor..].starts_with(')') {
+            return None;
+        }
+        cursor += 1;
+        cursor += raw_ascii_whitespace_prefix_len(&line[cursor..]);
+    }
+    let (field, suffix_len) = parse_raw_static_field_suffix(&line[cursor..])?;
+    Some((field, cursor + suffix_len))
+}
+
+fn raw_symbol_boundary_before(line: &str, idx: usize) -> bool {
+    line[..idx]
+        .chars()
+        .next_back()
+        .is_none_or(|ch| !is_symbol_char(ch))
+}
+
+fn raw_ascii_whitespace_prefix_len(input: &str) -> usize {
+    input
+        .char_indices()
+        .find_map(|(idx, ch)| (!ch.is_ascii_whitespace()).then_some(idx))
+        .unwrap_or(input.len())
+}
+
+fn parse_raw_static_field_suffix(input: &str) -> Option<(String, usize)> {
+    let leading = raw_ascii_whitespace_prefix_len(input);
+    let rest = &input[leading..];
+    let rest = rest.strip_prefix("[[")?;
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let after_quote = &rest[quote.len_utf8()..];
+    let close_quote = after_quote.find(quote)?;
+    let field = &after_quote[..close_quote];
+    if field.is_empty() || !field.chars().all(is_symbol_char) {
+        return None;
+    }
+    let after_field = &after_quote[close_quote + quote.len_utf8()..];
+    let after_suffix = after_field.strip_prefix("]]")?;
+    let consumed = input.len() - after_suffix.len();
+    Some((field.to_string(), consumed))
+}
+
+fn rewrite_inline_literal_record_field_accesses(line: &str) -> String {
+    let mut rewritten = line.to_string();
+    let mut search_from = 0usize;
+    while search_from < rewritten.len() {
+        let Some(rel_start) = rewritten[search_from..].find("list(") else {
+            break;
+        };
+        let start = search_from + rel_start;
+        let open = start + "list".len();
+        let Some(close) = find_matching_call_close(&rewritten, open) else {
+            break;
+        };
+        let Some((field, suffix_len)) = parse_raw_static_field_suffix(&rewritten[close + 1..])
+        else {
+            search_from = start + "list(".len();
+            continue;
+        };
+        let Some(fields) = parse_raw_record_list_expr(&rewritten[start..=close]) else {
+            search_from = start + "list(".len();
+            continue;
+        };
+        if fields
+            .iter()
+            .any(|candidate| !raw_record_field_expr_is_sroa_safe(&candidate.expr))
+        {
+            search_from = start + "list(".len();
+            continue;
+        }
+        let Some(replacement) = fields
+            .iter()
+            .find(|candidate| candidate.name == field)
+            .map(|candidate| format!("({})", candidate.expr.trim()))
+        else {
+            search_from = close + 1;
+            continue;
+        };
+        let replace_end = close + 1 + suffix_len;
+        rewritten.replace_range(start..replace_end, &replacement);
+        search_from = start + replacement.len();
+    }
+    rewritten
 }
 
 pub(crate) fn rewrite_guard_only_named_scalar_exprs_in_raw_emitted_r(output: &str) -> String {

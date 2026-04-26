@@ -151,8 +151,9 @@ R S3/S4 method tables.
 Claim boundary: RR traits are a Rust-inspired static dispatch feature, not a
 full Rust trait system. The supported contract is that a resolvable trait call is
 checked before MIR lowering, rewritten to a concrete helper, and emitted as a
-direct R call. This removes R runtime trait lookup from supported monomorphic
-and monomorphized generic paths.
+direct R helper call or, in the standard optimized pipeline, a let-lifted inline
+R expression. This removes R runtime trait lookup from supported monomorphic and
+monomorphized generic paths.
 
 ```rust
 trait Physical {
@@ -173,11 +174,20 @@ fn main() {
 ```
 
 The `Trait.method(receiver, ...)` and `receiver.method(...)` call forms are
-resolved during lowering. The receiver must have an explicit source-level type
-hint, such as `let b: Body`. RR rewrites the call to the concrete impl function
-before MIR/codegen, so the emitted R does not perform dynamic trait lookup.
-RR also accepts UFCS-style `Trait::method(receiver, ...)`; it is equivalent to
+resolved during lowering. The receiver type must be statically visible, either
+from an explicit source-level type hint such as `let b: Body`, from a generic
+parameter bound, or from a straight-line expression whose trait method/operator
+return type is known. RR rewrites the call to the concrete impl function before
+MIR/codegen, so the emitted R does not perform dynamic trait lookup. RR also
+accepts UFCS-style `Trait::method(receiver, ...)`; it is equivalent to
 `Trait.method(receiver, ...)` in this static trait slice.
+
+For straight-line pure trait helpers, the standard optimized pipeline may inline
+the helper body into emitted R. When the helper returns record/list-shaped data,
+RR materializes nested helper calls into deterministic `.__rr_inline_expr_*`
+temporaries instead of duplicating the whole aggregate expression. This avoids
+both R function-call overhead and exponential emitted-AST growth in method
+chains.
 
 Receiver-method sugar is accepted only when RR can identify exactly one trait
 impl method for the receiver type. If multiple traits implemented for the same

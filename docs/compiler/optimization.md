@@ -125,6 +125,10 @@ later pattern-sensitive passes rely on.
 - TCO
 - de-SSA
 
+Planned structural work is tracked separately:
+
+- [MIR SROA Design](sroa.md), for record/list aggregate scalar replacement
+
 ### Vectorization and Reduction
 
 Implemented pattern families include:
@@ -181,6 +185,7 @@ CLI summary reports:
 
 - [Writing RR for Performance and Safety](../writing-rr.md)
 - [Compiler Pipeline](pipeline.md)
+- [MIR SROA Design](sroa.md)
 - [Compatibility and Limits](../compatibility.md)
 
 Use `RR_VECTORIZE_TRACE=1` to see per-loop matcher decisions.

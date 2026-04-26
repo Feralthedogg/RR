@@ -31,6 +31,8 @@ pub(crate) use helper_raw_rewrites::*;
 
 #[path = "pipeline/scalar_raw_rewrites.rs"]
 mod scalar_raw_rewrites;
+#[cfg(not(test))]
+pub(crate) use scalar_raw_rewrites::rewrite_static_record_scalarization_lines;
 #[cfg(test)]
 pub(crate) use scalar_raw_rewrites::*;
 
@@ -1400,14 +1402,24 @@ impl ProgramIR {
         if !all_fns.is_empty() {
             let mut leftovers: Vec<String> = all_fns.keys().cloned().collect();
             leftovers.sort();
-            return Err(InternalCompilerError::new(
-                Stage::Mir,
-                format!(
-                    "ProgramIR restore had unexpected functions: {}",
-                    leftovers.join(", ")
-                ),
-            )
-            .into_exception());
+            for name in leftovers {
+                let Some(fn_ir) = all_fns.remove(name.as_str()) else {
+                    return Err(InternalCompilerError::new(
+                        Stage::Mir,
+                        format!("ProgramIR restore missing late-bound function '{}'", name),
+                    )
+                    .into_exception());
+                };
+                let slot = self.fns.len();
+                self.fns.push(FnUnit {
+                    name: name.clone(),
+                    ir: Some(fn_ir),
+                    is_public: false,
+                    is_top_level: name.starts_with("Sym_top_"),
+                });
+                self.by_name.insert(name, slot);
+                self.emit_order.push(slot);
+            }
         }
         Ok(())
     }

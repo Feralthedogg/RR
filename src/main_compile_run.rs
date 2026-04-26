@@ -3,9 +3,9 @@ use RR::runtime::runner::Runner;
 use std::fs;
 
 use super::super::{
-    CliCompileRequest, CommandMode, compile_cli_source, compile_output_options,
-    file_name_is_main_rr, parse_command_opts, prepare_project_entry_source,
-    report_path_read_failure, resolve_command_input, write_compile_profile_artifact,
+    CliCompileRequest, CommandMode, compile_cli_source, compile_output_options, parse_command_opts,
+    prepare_project_entry_source, report_path_read_failure, resolve_command_input,
+    write_compile_profile_artifact,
 };
 
 pub(crate) fn cmd_run(args: &[String]) -> i32 {
@@ -32,16 +32,12 @@ pub(crate) fn cmd_run(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let input = if file_name_is_main_rr(&input_path) {
-        match prepare_project_entry_source(&input_path, &raw_input, "run") {
-            Ok(source) => source,
-            Err(err) => {
-                err.display(Some(&raw_input), Some(&input_path_str));
-                return 1;
-            }
+    let input = match prepare_project_entry_source(&input_path, &raw_input, "run") {
+        Ok(source) => source,
+        Err(err) => {
+            err.display(Some(&raw_input), Some(&input_path_str));
+            return 1;
         }
-    } else {
-        raw_input
     };
 
     let output_opts = compile_output_options(&opts, true);

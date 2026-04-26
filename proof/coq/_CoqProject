@@ -51,6 +51,7 @@ VectorizeApplySubset.v
 VectorizeRewriteSubset.v
 VectorizeMirRewriteSubset.v
 VectorizeValueRewriteSubset.v
+SroaRecordReturnSubset.v
 VectorizeOriginMemoSubset.v
 VectorizeUseRewriteSubset.v
 VectorizeDecisionSubset.v

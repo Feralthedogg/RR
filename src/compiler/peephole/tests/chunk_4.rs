@@ -134,6 +134,74 @@ Sym_1 <- function() \n\
 }
 
 #[test]
+fn simple_expression_helper_inliner_let_lifts_record_chain_bloat() {
+    let input = "\
+Sym_12 <- function(self, rhs) \n\
+{\n\
+  return(list(x = (self[[\"x\"]] + rhs[[\"x\"]]), y = (self[[\"y\"]] + rhs[[\"y\"]])))\n\
+}\n\
+Sym_16 <- function(self) \n\
+{\n\
+  return(list(x = (0.0 - self[[\"x\"]]), y = (0.0 - self[[\"y\"]])))\n\
+}\n\
+Sym_18 <- function(self, offset) \n\
+{\n\
+  return(Sym_12(self, offset))\n\
+}\n\
+Sym_20 <- function(self, factor) \n\
+{\n\
+  return(list(x = (self[[\"x\"]] * factor), y = (self[[\"y\"]] * factor)))\n\
+}\n\
+Sym_31 <- function(entity, velocity, time) \n\
+{\n\
+  moved <- Sym_12(entity, velocity)\n\
+  rebounded_vel <- Sym_16(velocity)\n\
+  return(Sym_20(Sym_18(moved, rebounded_vel), time))\n\
+}\n\
+Sym_29 <- function() \n\
+{\n\
+  initial_pos <- list(x = 10.0, y = 15.0)\n\
+  velocity <- list(x = 2.0, y = -3.0)\n\
+  final_state <- Sym_31(initial_pos, velocity, 1.5)\n\
+  return(final_state[[\"x\"]])\n\
+}\n";
+    let pure = FxHashSet::from_iter([
+        "Sym_12".to_string(),
+        "Sym_16".to_string(),
+        "Sym_18".to_string(),
+        "Sym_20".to_string(),
+        "Sym_31".to_string(),
+    ]);
+    let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
+        input,
+        true,
+        &pure,
+        &FxHashSet::default(),
+        false,
+    );
+
+    let max_line_len = out.lines().map(str::len).max().unwrap_or(0);
+    assert!(
+        max_line_len < 700,
+        "record helper chain inlining should not explode a single R line:\n{out}"
+    );
+    assert!(
+        out.contains(".__rr_inline_expr_0__rr_sroa_x <-")
+            && out.contains(".__rr_inline_expr_1__rr_sroa_x <-")
+            && out.contains(".__rr_inline_expr_2__rr_sroa_x <-"),
+        "bloat-sensitive aggregate helper calls should become scalarized inline temps:\n{out}"
+    );
+    assert!(
+        out.contains("final_state__rr_sroa_x <-") && out.contains("return(final_state__rr_sroa_x)"),
+        "outer record assignment should scalarize down to the projected field:\n{out}"
+    );
+    assert!(
+        !out.contains("<- list(") && !out.contains("final_state <- ((list("),
+        "record helper chain should not leave avoidable list allocations:\n{out}"
+    );
+}
+
+#[test]
 fn rewrites_metric_helper_return_call_inline() {
     let input = "\
 Sym_10 <- function(name, value) \n\

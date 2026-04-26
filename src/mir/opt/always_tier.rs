@@ -107,6 +107,13 @@ impl TachyonEngine {
             }
             Self::maybe_verify(fn_ir, "After AlwaysTier/LoopOpt");
 
+            let sroa_changed =
+                Self::timed_bool_pass(pass_timings, "sroa", || sroa::optimize(fn_ir));
+            if sroa_changed {
+                changed = true;
+            }
+            Self::maybe_verify(fn_ir, "After AlwaysTier/SROA");
+
             let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
             if dce_changed {
                 stats.dce_hits += 1;
