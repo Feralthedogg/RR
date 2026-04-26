@@ -259,4 +259,40 @@ theorem directProjection_inlineValue_preserved :
   apply rewriteDirectCallFieldToValue_preserves_eval
   simp [directProjectionEnv, evalSroaExpr]
 
+def lookupPositionalArg :
+    List VarName -> List VarName -> VarName -> Option VarName
+  | param :: params, arg :: args, target =>
+      if param = target then some arg else lookupPositionalArg params args target
+  | _, _, _ => none
+
+def lookupNamedOrPositionalArg :
+    List VarName -> List (Option VarName) -> List VarName -> VarName -> Option VarName
+  | param :: params, name :: names, arg :: args, target =>
+      match name with
+      | some explicit =>
+          if explicit = target then
+            some arg
+          else
+            lookupNamedOrPositionalArg params names args target
+      | none =>
+          if param = target then
+            some arg
+          else
+            lookupNamedOrPositionalArg params names args target
+  | _, _, _, _ => none
+
+theorem paramOrderNamedArgs_erased_forRecordArgSroa :
+    lookupNamedOrPositionalArg ["p"] [some "p"] ["point"] "p" =
+      lookupPositionalArg ["p"] ["point"] "p" := by
+  simp [lookupNamedOrPositionalArg, lookupPositionalArg]
+
+theorem paramOrderNamedArgs_erased_forRecordReturnSroa :
+    lookupNamedOrPositionalArg
+        ["x", "y"]
+        [some "x", some "y"]
+        ["arg_x", "arg_y"]
+        "y" =
+      lookupPositionalArg ["x", "y"] ["arg_x", "arg_y"] "y" := by
+  simp [lookupNamedOrPositionalArg, lookupPositionalArg]
+
 end RRProofs.SroaRecordReturnSubset

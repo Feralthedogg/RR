@@ -2230,15 +2230,13 @@ fn specialize_record_field_calls_in_caller(
 
     let mut changed = analysis_changed;
     for (call, callee_name, args, names) in call_sites {
-        if names.iter().any(Option::is_some) {
-            continue;
-        }
         let Some(callee) = all_fns.get(&callee_name) else {
             continue;
         };
         if callee.requires_conservative_optimization()
             || args.len() != callee.params.len()
             || callee.name == caller.name
+            || !call_arg_names_match_callee_order(callee, &names)
         {
             continue;
         }
@@ -2292,6 +2290,9 @@ fn specialize_record_return_fields_in_caller(
         let Some(callee) = all_fns.get(&record_use.callee) else {
             continue;
         };
+        if !call_arg_names_match_callee_order(callee, &record_use.names) {
+            continue;
+        }
         if record_use.alias_var.is_none()
             && rewrite_direct_record_return_field_use_with_inlined_value(
                 caller,
@@ -2457,6 +2458,14 @@ fn collect_record_return_field_uses(
     out
 }
 
+fn call_arg_names_match_callee_order(callee: &FnIR, names: &[Option<String>]) -> bool {
+    names.len() == callee.params.len()
+        && names.iter().enumerate().all(|(index, name)| {
+            name.as_ref()
+                .is_none_or(|name| callee.params.get(index) == Some(name))
+        })
+}
+
 fn scalarizable_return_alias_vars(
     caller: &FnIR,
     all_fns: &FxHashMap<String, FnIR>,
@@ -2576,9 +2585,7 @@ fn rewrite_direct_record_return_field_use_with_inlined_value(
     let Some(base_call) = record_use.base_call else {
         return false;
     };
-    if record_use.names.iter().any(Option::is_some)
-        || caller.values.get(record_use.field_get).is_none()
-    {
+    if caller.values.get(record_use.field_get).is_none() {
         return false;
     }
 
@@ -2707,9 +2714,6 @@ fn create_record_return_alias_inline_state(
     caller: &FnIR,
     record_use: &RecordReturnFieldUse,
 ) -> Option<RecordReturnAliasInlineState> {
-    if record_use.names.iter().any(Option::is_some) {
-        return None;
-    }
     let (block, instr_index) = find_record_return_alias_assignment(caller, record_use)?;
     Some(RecordReturnAliasInlineState {
         block,
@@ -3687,6 +3691,31 @@ mod tests {
         fn_ir.body_head = entry;
         let x = int_value(&mut fn_ir, 1);
         let y = int_value(&mut fn_ir, 2);
+        let record = record_xy(&mut fn_ir, x, y);
+        fn_ir.blocks[entry].term = Terminator::Return(Some(record));
+        fn_ir
+    }
+
+    fn make_xy_from_args_fn() -> FnIR {
+        let mut fn_ir = FnIR::new(
+            "make_xy_from_args".to_string(),
+            vec!["x".to_string(), "y".to_string()],
+        );
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+        let x = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let y = fn_ir.add_value(
+            ValueKind::Param { index: 1 },
+            Span::default(),
+            Facts::empty(),
+            Some("y".to_string()),
+        );
         let record = record_xy(&mut fn_ir, x, y);
         fn_ir.blocks[entry].term = Terminator::Return(Some(record));
         fn_ir
@@ -6139,6 +6168,107 @@ mod tests {
     }
 
     #[test]
+    fn sroa_specializes_param_order_named_record_field_call_argument() {
+        let mut caller = FnIR::new("caller".to_string(), vec![]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let x = int_value(&mut caller, 1);
+        let y = int_value(&mut caller, 2);
+        let record = record_xy(&mut caller, x, y);
+        caller.blocks[entry].instrs.push(Instr::Assign {
+            dst: "point".to_string(),
+            src: record,
+            span: Span::default(),
+        });
+        let load = caller.add_value(
+            ValueKind::Load {
+                var: "point".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("point".to_string()),
+        );
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "sum_xy".to_string(),
+                args: vec![load],
+                names: vec![Some("p".to_string())],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(call));
+
+        let mut all_fns = FxHashMap::default();
+        all_fns.insert("caller".to_string(), caller);
+        all_fns.insert("sum_xy".to_string(), sum_xy_fn());
+
+        assert!(specialize_record_field_calls(&mut all_fns));
+        let caller = all_fns.get("caller").expect("caller");
+        let ValueKind::Call {
+            callee,
+            args,
+            names,
+        } = &caller.values[call].kind
+        else {
+            panic!("named call should remain a direct call");
+        };
+        assert_ne!(callee, "sum_xy");
+        assert_eq!(args, &vec![x, y]);
+        assert_eq!(
+            names,
+            &vec![None, None],
+            "param-order-compatible names can be erased after scalarizing args"
+        );
+        assert!(
+            caller.blocks[entry].instrs.is_empty(),
+            "record alias should become dead once named call args are scalarized"
+        );
+        assert!(crate::mir::verify::verify_ir(caller).is_ok());
+    }
+
+    #[test]
+    fn sroa_keeps_reordered_named_record_field_call_argument() {
+        let mut caller = FnIR::new("caller".to_string(), vec![]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let x = int_value(&mut caller, 1);
+        let y = int_value(&mut caller, 2);
+        let record = record_xy(&mut caller, x, y);
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "sum_xy".to_string(),
+                args: vec![record],
+                names: vec![Some("other".to_string())],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(call));
+
+        let mut all_fns = FxHashMap::default();
+        all_fns.insert("caller".to_string(), caller);
+        all_fns.insert("sum_xy".to_string(), sum_xy_fn());
+
+        assert!(
+            !specialize_record_field_calls(&mut all_fns),
+            "non-param-order named calls must not be scalarized positionally"
+        );
+        let caller = all_fns.get("caller").expect("caller");
+        assert!(matches!(
+            &caller.values[call].kind,
+            ValueKind::Call { callee, args, names }
+                if callee == "sum_xy"
+                    && args == &vec![record]
+                    && names == &vec![Some("other".to_string())]
+        ));
+    }
+
+    #[test]
     fn sroa_does_not_specialize_record_call_when_param_escapes() {
         let mut callee = FnIR::new("escape_record".to_string(), vec!["p".to_string()]);
         let entry = callee.add_block();
@@ -6224,6 +6354,53 @@ mod tests {
         assert!(matches!(
             caller.blocks[entry].term,
             Terminator::Return(Some(ret)) if matches!(caller.values[ret].kind, ValueKind::Const(Lit::Int(1)))
+        ));
+        assert!(!all_fns.keys().any(|name| name.contains("__rr_sroa_ret_")));
+        assert!(crate::mir::verify::verify_ir(caller).is_ok());
+    }
+
+    #[test]
+    fn sroa_inlines_param_order_named_direct_record_return_field_call() {
+        let mut caller = FnIR::new("caller".to_string(), vec![]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let x = int_value(&mut caller, 11);
+        let y = int_value(&mut caller, 13);
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "make_xy_from_args".to_string(),
+                args: vec![x, y],
+                names: vec![Some("x".to_string()), Some("y".to_string())],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let get_y = caller.add_value(
+            ValueKind::FieldGet {
+                base: call,
+                field: "y".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(get_y));
+
+        let mut all_fns = FxHashMap::default();
+        all_fns.insert("caller".to_string(), caller);
+        all_fns.insert("make_xy_from_args".to_string(), make_xy_from_args_fn());
+
+        assert!(specialize_record_return_field_calls(&mut all_fns));
+        let caller = all_fns.get("caller").expect("caller");
+        assert!(matches!(
+            caller.values[get_y].kind,
+            ValueKind::Const(Lit::Null)
+        ));
+        assert!(matches!(
+            caller.blocks[entry].term,
+            Terminator::Return(Some(ret)) if ret == y
         ));
         assert!(!all_fns.keys().any(|name| name.contains("__rr_sroa_ret_")));
         assert!(crate::mir::verify::verify_ir(caller).is_ok());

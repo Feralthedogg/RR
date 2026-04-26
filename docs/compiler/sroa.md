@@ -14,8 +14,11 @@ snapshotted into hidden scalar temporaries at the alias assignment before the
 aggregate is split, so later reassignments cannot change the projected field
 value. Known RR callees can also be cloned into a reduced record-field
 specialization when a scalarized record argument is only used through static
-field projections, and known effect-free RR callees can be cloned into
-field-return specializations for static projections of record return values.
+field projections. This specialization accepts positional calls and
+param-order-compatible named calls, where any visible argument name matches the
+callee parameter at the same position. Known effect-free RR callees can also be
+cloned into field-return specializations for static projections of record
+return values under the same call-shape rule.
 Repeated projections of the same field through a unique local record-return
 alias share a single scalar temporary. Direct projections of simple
 single-return callees are also lowered to cloned scalar MIR values before helper
@@ -83,6 +86,7 @@ Excluded initially:
 - mutation-heavy aggregates whose aliasing is not proved
 - records passed to unknown user, package, or runtime calls without
   rematerialization
+- reordered or partially reflective named argument interop
 - arbitrary named list interop
 - ABI changes for returning multiple scalar fields directly
 
@@ -423,6 +427,8 @@ Required tests:
 - known RR call argument scalarizes through a fieldwise specialized callee
 - known effect-free RR record return scalarizes through a field-return
   specialized callee
+- param-order-compatible named RR calls scalarize, while reordered named calls
+  remain materialized
 - dynamic or opaque interop skips SROA
 - dataframe/list pattern matching behavior is unchanged
 
@@ -456,7 +462,9 @@ This is intentionally narrower than a full Rust/R object proof. The trusted
 boundary is the static RR `RecordLit` subset. The current Lean/Coq companion
 theorem family covers field projection replacement, alias-temp replacement,
 direct call-return field replacement, alias-field-to-scalar-value replacement,
-and the hidden `__rr_sroa_snap_*` snapshot-temp projection subset.
+the hidden `__rr_sroa_snap_*` snapshot-temp projection subset, and a reduced
+param-order named-argument erasure lemma for record-argument and record-return
+SROA call sites.
 
 ## Rollout
 

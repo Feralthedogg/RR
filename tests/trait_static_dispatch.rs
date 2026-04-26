@@ -928,6 +928,96 @@ print(main())
 }
 
 #[test]
+fn generic_trait_sroa_reduces_record_allocation_shape() {
+    let src = r#"
+trait Add {
+  fn add(self: Self, rhs: Self) -> Self
+}
+trait Neg {
+  fn neg(self: Self) -> Self
+}
+trait Transformable {
+  fn translate(self: Self, offset: Self) -> Self
+  fn scale(self: Self, factor: float) -> Self
+}
+
+impl Add for Vec2 {
+  fn add(self: Vec2, rhs: Vec2) -> Vec2 {
+    {x: self.x + rhs.x, y: self.y + rhs.y}
+  }
+}
+impl Neg for Vec2 {
+  fn neg(self: Vec2) -> Vec2 {
+    {x: 0.0 - self.x, y: 0.0 - self.y}
+  }
+}
+impl Transformable for Vec2 {
+  fn translate(self: Vec2, offset: Vec2) -> Vec2 {
+    self + offset
+  }
+  fn scale(self: Vec2, factor: float) -> Vec2 {
+    {x: self.x * factor, y: self.y * factor}
+  }
+}
+
+fn simulate_rebound<T>(entity: T, velocity: T, time: float) -> T
+  where T: Add + Neg + Transformable
+{
+  let moved = entity + velocity
+  let rebounded_vel = -velocity
+  moved.translate(rebounded_vel).scale(time)
+}
+
+fn main() {
+  let initial_pos: Vec2 = {x: 10.0, y: 15.0}
+  let velocity: Vec2 = {x: 2.0, y: -3.0}
+  let final_state = simulate_rebound(initial_pos, velocity, 1.5)
+  final_state.x + final_state.y
+}
+
+print(main())
+"#;
+
+    let (o0, _) = compile_with_config(
+        "generic_trait_sroa_shape_o0.rr",
+        src,
+        OptLevel::O0,
+        TypeConfig {
+            mode: TypeMode::Strict,
+            native_backend: NativeBackend::Off,
+        },
+    )
+    .expect("O0 trait chain should compile");
+    let (o2, _) = compile_with_config(
+        "generic_trait_sroa_shape_o2.rr",
+        src,
+        OptLevel::O2,
+        TypeConfig {
+            mode: TypeMode::Strict,
+            native_backend: NativeBackend::Off,
+        },
+    )
+    .expect("O2 trait chain should compile");
+
+    assert!(
+        o2.len() < o0.len(),
+        "optimized trait+SROA output should shrink the helper-heavy record chain: O0={} bytes, O2={} bytes\nO2 output:\n{o2}",
+        o0.len(),
+        o2.len()
+    );
+    assert!(
+        o2.contains("final_state__rr_sroa_x")
+            && o2.contains("final_state__rr_sroa_y")
+            && !o2.contains("list("),
+        "optimized trait chain should be scalar-temp shaped without record allocation in the hot path:\n{o2}"
+    );
+    assert!(
+        !o2.contains("$translate") && !o2.contains("$scale"),
+        "optimized trait chain must keep static dispatch before SROA shape check:\n{o2}"
+    );
+}
+
+#[test]
 fn generic_trait_bound_requires_concrete_impl_at_call_site() {
     let src = r#"
 trait Physical {

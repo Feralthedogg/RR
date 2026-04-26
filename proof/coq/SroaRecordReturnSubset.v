@@ -1,5 +1,8 @@
 From Stdlib Require Import String.
+From Stdlib Require Import List.
 From Stdlib Require Import ZArith.
+
+Import ListNotations.
 
 Open Scope string_scope.
 Open Scope Z_scope.
@@ -259,6 +262,55 @@ Lemma direct_projection_inline_value_preserved :
   eval_sroa_expr direct_projection_env direct_projection_expr.
 Proof.
   apply rewrite_direct_call_field_to_value_preserves_eval.
+  reflexivity.
+Qed.
+
+Fixpoint lookup_positional_arg
+    (params args : list var_name)
+    (target : var_name) : option var_name :=
+  match params, args with
+  | param :: params_tail, arg :: args_tail =>
+      if String.eqb param target
+      then Some arg
+      else lookup_positional_arg params_tail args_tail target
+  | _, _ => None
+  end.
+
+Fixpoint lookup_named_or_positional_arg
+    (params : list var_name)
+    (names : list (option var_name))
+    (args : list var_name)
+    (target : var_name) : option var_name :=
+  match params, names, args with
+  | param :: params_tail, name :: names_tail, arg :: args_tail =>
+      match name with
+      | Some explicit =>
+          if String.eqb explicit target
+          then Some arg
+          else lookup_named_or_positional_arg params_tail names_tail args_tail target
+      | None =>
+          if String.eqb param target
+          then Some arg
+          else lookup_named_or_positional_arg params_tail names_tail args_tail target
+      end
+  | _, _, _ => None
+  end.
+
+Lemma param_order_named_args_erased_for_record_arg_sroa :
+  lookup_named_or_positional_arg ["p"] [Some "p"] ["point"] "p" =
+  lookup_positional_arg ["p"] ["point"] "p".
+Proof.
+  reflexivity.
+Qed.
+
+Lemma param_order_named_args_erased_for_record_return_sroa :
+  lookup_named_or_positional_arg
+    ["x"; "y"]
+    [Some "x"; Some "y"]
+    ["arg_x"; "arg_y"]
+    "y" =
+  lookup_positional_arg ["x"; "y"] ["arg_x"; "arg_y"] "y".
+Proof.
   reflexivity.
 Qed.
 
