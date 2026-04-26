@@ -250,11 +250,10 @@ impl TachyonEngine {
             .saturating_add(call_like)
             .saturating_add(mem_like)
             .saturating_add(arith_like);
-        let hot_density_permille = if total_ir == 0 {
-            0
-        } else {
-            hot_ops.saturating_mul(1000) / total_ir
-        };
+        let hot_density_permille = hot_ops
+            .saturating_mul(1000)
+            .checked_div(total_ir)
+            .unwrap_or(0);
         let fn_bonus = fn_count.saturating_mul(32).min(1800);
         let avg_bonus = avg_ir.saturating_mul(2).min(3200);
         let density_bonus = hot_density_permille.saturating_mul(3).min(1400);
