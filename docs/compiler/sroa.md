@@ -576,6 +576,13 @@ callees. That path recursively follows known effect-free nested record-return
 calls, clones only the requested field expression into the caller, and removes
 the original record-return alias assignment. This removes the hot `Vec2`
 trait/operator helper boundary without introducing a public multi-return ABI.
+Alias field temps are introduced only when every direct projection or
+alias-load projection use is ordered after the record-return alias assignment
+in the same block. If a projection would be emitted before the alias temp is
+defined, SROA skips that alias-temp rewrite and falls back to direct field
+replacement or the scalar-return helper path. This keeps generated R free of
+hidden use-before-definition hazards while preserving the reduced inline path
+for straight-line alias consumers.
 This is still not a full multi-return ABI: non-cloneable field expressions,
 branching callees, and whole-record consumers still force the normal
 materialized record boundary or scalar-return helper fallback.
