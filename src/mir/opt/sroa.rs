@@ -677,6 +677,29 @@ fn unique_var_assignments(fn_ir: &FnIR) -> FxHashMap<String, ValueId> {
         .collect()
 }
 
+fn unique_var_assignment_instr(fn_ir: &FnIR, var: &str, src: ValueId) -> Option<(BlockId, usize)> {
+    let mut found = None;
+    for block in &fn_ir.blocks {
+        for (instr_index, instr) in block.instrs.iter().enumerate() {
+            let Instr::Assign {
+                dst,
+                src: assigned_src,
+                ..
+            } = instr
+            else {
+                continue;
+            };
+            if dst != var {
+                continue;
+            }
+            if *assigned_src != src || found.replace((block.id, instr_index)).is_some() {
+                return None;
+            }
+        }
+    }
+    found
+}
+
 #[derive(Debug, Clone)]
 struct RecordFieldSnapshotPlan {
     block: BlockId,
@@ -2586,10 +2609,14 @@ fn scalarizable_direct_return_call_alias_vars(
         if call_parts(caller, src).is_none() {
             continue;
         }
+        let Some((alias_block, alias_instr)) = unique_var_assignment_instr(caller, &var, src)
+        else {
+            continue;
+        };
         if !direct_call_uses_are_alias_and_field_gets(caller, uses, src, &var) {
             continue;
         }
-        if !alias_load_uses_are_field_gets(caller, uses, &var) {
+        if !alias_load_uses_are_field_gets(caller, uses, &var, alias_block, alias_instr) {
             continue;
         }
         out.insert(src, var);
@@ -2604,14 +2631,27 @@ fn direct_call_uses_are_alias_and_field_gets(
     call: ValueId,
     alias_var: &str,
 ) -> bool {
-    uses.get(&call).is_some_and(|call_uses| {
-        !call_uses.is_empty()
-            && call_uses.iter().all(|call_use| match call_use.user {
-                SroaUser::Value(user) => matches!(
+    let Some(call_uses) = uses.get(&call) else {
+        return false;
+    };
+    if call_uses.is_empty() {
+        return false;
+    }
+
+    let mut alias_assignment = None;
+    let mut direct_field_gets = Vec::new();
+    for call_use in call_uses {
+        match call_use.user {
+            SroaUser::Value(user)
+                if matches!(
                     &caller.values[user].kind,
                     ValueKind::FieldGet { base, .. } if *base == call
-                ),
-                SroaUser::Instr { block, instr } => caller
+                ) =>
+            {
+                direct_field_gets.push(user);
+            }
+            SroaUser::Instr { block, instr }
+                if caller
                     .blocks
                     .get(block)
                     .and_then(|block| block.instrs.get(instr))
@@ -2621,16 +2661,67 @@ fn direct_call_uses_are_alias_and_field_gets(
                             Instr::Assign { dst, src, .. }
                                 if dst == alias_var && *src == call
                         )
-                    }),
-                SroaUser::Terminator { .. } => false,
-            })
+                    }) =>
+            {
+                if alias_assignment.replace((block, instr)).is_some() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+
+    let Some((alias_block, alias_instr)) = alias_assignment else {
+        return false;
+    };
+    direct_field_gets.into_iter().all(|field_get| {
+        value_uses_occur_after_instr(
+            caller,
+            uses,
+            field_get,
+            alias_block,
+            alias_instr,
+            &mut FxHashSet::default(),
+        )
     })
+}
+
+fn value_uses_occur_after_instr(
+    caller: &FnIR,
+    uses: &FxHashMap<ValueId, Vec<SroaUse>>,
+    value: ValueId,
+    anchor_block: BlockId,
+    anchor_instr: usize,
+    seen: &mut FxHashSet<ValueId>,
+) -> bool {
+    if !seen.insert(value) {
+        return false;
+    }
+    let ok = uses.get(&value).is_some_and(|value_uses| {
+        !value_uses.is_empty()
+            && value_uses.iter().all(|value_use| match value_use.user {
+                SroaUser::Value(next) => value_uses_occur_after_instr(
+                    caller,
+                    uses,
+                    next,
+                    anchor_block,
+                    anchor_instr,
+                    seen,
+                ),
+                SroaUser::Instr { block, instr } => block == anchor_block && instr > anchor_instr,
+                SroaUser::Terminator { block } => block == anchor_block,
+            })
+    });
+    seen.remove(&value);
+    ok
 }
 
 fn alias_load_uses_are_field_gets(
     caller: &FnIR,
     uses: &FxHashMap<ValueId, Vec<SroaUse>>,
     alias_var: &str,
+    alias_block: BlockId,
+    alias_instr: usize,
 ) -> bool {
     caller
         .values
@@ -2643,11 +2734,23 @@ fn alias_load_uses_are_field_gets(
             uses.get(&load).is_some_and(|load_uses| {
                 !load_uses.is_empty()
                     && load_uses.iter().all(|load_use| match load_use.user {
-                        SroaUser::Value(user) => matches!(
-                            &caller.values[user].kind,
-                            ValueKind::FieldGet { base, .. } if base == &load
-                        ),
+                        SroaUser::Value(user)
+                            if matches!(
+                                &caller.values[user].kind,
+                                ValueKind::FieldGet { base, .. } if base == &load
+                            ) =>
+                        {
+                            value_uses_occur_after_instr(
+                                caller,
+                                uses,
+                                user,
+                                alias_block,
+                                alias_instr,
+                                &mut FxHashSet::default(),
+                            )
+                        }
                         SroaUser::Instr { .. } | SroaUser::Terminator { .. } => false,
+                        SroaUser::Value(_) => false,
                     })
             })
         })
@@ -2676,6 +2779,10 @@ fn scalarizable_return_alias_vars(
         if !all_fns.contains_key(&callee) || callee == caller.name {
             continue;
         }
+        let Some((alias_block, alias_instr)) = unique_var_assignment_instr(caller, &var, src)
+        else {
+            continue;
+        };
         let load_ids: Vec<_> = caller
             .values
             .iter()
@@ -2687,18 +2794,8 @@ fn scalarizable_return_alias_vars(
         if load_ids.is_empty() {
             continue;
         }
-        let all_load_uses_are_field_gets = load_ids.iter().all(|load| {
-            uses.get(load).is_some_and(|load_uses| {
-                !load_uses.is_empty()
-                    && load_uses.iter().all(|load_use| match load_use.user {
-                        SroaUser::Value(user) => matches!(
-                            &caller.values[user].kind,
-                            ValueKind::FieldGet { base, .. } if base == load
-                        ),
-                        SroaUser::Instr { .. } | SroaUser::Terminator { .. } => false,
-                    })
-            })
-        });
+        let all_load_uses_are_field_gets =
+            alias_load_uses_are_field_gets(caller, uses, &var, alias_block, alias_instr);
         if all_load_uses_are_field_gets {
             out.insert(var);
         }
@@ -7473,6 +7570,152 @@ mod tests {
                     if callee == "forward_scale_xy"))
         }));
         assert!(crate::mir::verify::verify_ir(caller).is_ok());
+    }
+
+    #[test]
+    fn sroa_does_not_insert_alias_temp_after_early_direct_projection_use() {
+        let mut caller = FnIR::new("caller".to_string(), vec![]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "make_xy".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("out".to_string()),
+        );
+        caller.set_call_semantics(call, CallSemantics::UserDefined);
+        let get_x = caller.add_value(
+            ValueKind::FieldGet {
+                base: call,
+                field: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].instrs.push(Instr::Assign {
+            dst: "first".to_string(),
+            src: get_x,
+            span: Span::default(),
+        });
+        caller.blocks[entry].instrs.push(Instr::Assign {
+            dst: "out".to_string(),
+            src: call,
+            span: Span::default(),
+        });
+        let first = caller.add_value(
+            ValueKind::Load {
+                var: "first".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("first".to_string()),
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(first));
+
+        let mut all_fns = FxHashMap::default();
+        all_fns.insert("caller".to_string(), caller);
+        all_fns.insert("make_xy".to_string(), make_xy_fn());
+
+        assert!(specialize_record_return_field_calls(&mut all_fns));
+        let caller = all_fns.get("caller").expect("caller");
+        assert!(
+            crate::mir::verify::verify_ir(caller).is_ok(),
+            "direct projection before the alias assignment must not be rewritten to a later temp"
+        );
+        assert!(matches!(
+            &caller.blocks[entry].instrs[0],
+            Instr::Assign { dst, src, .. }
+                if dst == "first"
+                    && matches!(caller.values[*src].kind, ValueKind::Const(Lit::Int(1)))
+        ));
+        assert!(
+            caller.blocks[entry].instrs.iter().all(|instr| {
+                !matches!(instr, Instr::Assign { dst, .. } if dst.contains("__rr_sroa_ret_"))
+            }),
+            "early direct projection should inline directly instead of depending on an alias temp"
+        );
+    }
+
+    #[test]
+    fn sroa_does_not_insert_alias_temp_after_early_alias_load_projection_use() {
+        let mut caller = FnIR::new("caller".to_string(), vec![]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "make_xy".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("out".to_string()),
+        );
+        caller.set_call_semantics(call, CallSemantics::UserDefined);
+        let load_out = caller.add_value(
+            ValueKind::Load {
+                var: "out".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("out".to_string()),
+        );
+        let get_x = caller.add_value(
+            ValueKind::FieldGet {
+                base: load_out,
+                field: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].instrs.push(Instr::Assign {
+            dst: "first".to_string(),
+            src: get_x,
+            span: Span::default(),
+        });
+        caller.blocks[entry].instrs.push(Instr::Assign {
+            dst: "out".to_string(),
+            src: call,
+            span: Span::default(),
+        });
+        let first = caller.add_value(
+            ValueKind::Load {
+                var: "first".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("first".to_string()),
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(first));
+
+        let mut all_fns = FxHashMap::default();
+        all_fns.insert("caller".to_string(), caller);
+        all_fns.insert("make_xy".to_string(), make_xy_fn());
+
+        assert!(
+            !specialize_record_return_field_calls(&mut all_fns),
+            "early alias-load projection is not safe for alias-temp scalarization"
+        );
+        let caller = all_fns.get("caller").expect("caller");
+        assert!(matches!(
+            caller.values[get_x].kind,
+            ValueKind::FieldGet { base, ref field }
+                if base == load_out && field == "x"
+        ));
+        assert!(
+            caller.blocks[entry].instrs.iter().all(|instr| {
+                !matches!(instr, Instr::Assign { dst, .. } if dst.contains("__rr_sroa_ret_"))
+            }),
+            "early alias-load projection should not depend on a later scalar temp"
+        );
     }
 
     #[test]
