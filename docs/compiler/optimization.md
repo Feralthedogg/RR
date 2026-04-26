@@ -130,9 +130,18 @@ later pattern-sensitive passes rely on.
 - TCO
 - de-SSA
 
-Planned structural work is tracked separately:
+Aggregate scalar replacement is tracked separately:
 
 - [MIR SROA Design](sroa.md), for record/list aggregate scalar replacement
+
+The current SROA gate is intentionally narrow but production-backed: optimized
+trait/operator record chains should lower through deterministic scalar temps,
+and unrelated vector stores must not disable scalarization for independent
+record candidates. The perf gate includes a trait/SROA compile-shape slice so
+future changes do not silently lose cross-call scalar field lowering, reintroduce
+record-return helper calls, or grow AST/output size in that hot path. This is
+not a general multi-return ABI: unsupported whole-record consumers still
+materialize records at the boundary.
 
 ### Vectorization and Reduction
 

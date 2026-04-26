@@ -24,8 +24,10 @@ alias share a single scalar temporary. Direct projections of simple
 single-return callees are also lowered to cloned scalar MIR values before helper
 generation. Unique local record-return aliases try a reduced inline field-temp
 lowering first, so multiple projected fields from a simple single-return callee
-can avoid separate scalar-return helper calls. The
-compiler also has a codegen-facing cleanup for let-lifted raw R `list(...)`
+can avoid separate scalar-return helper calls. That inline path can recursively
+follow known effect-free straight-line record-return helper calls, which removes
+the common trait/operator helper boundary without changing RR's public function
+ABI. The compiler also has a codegen-facing cleanup for let-lifted raw R `list(...)`
 temps whose later uses are only static `[[field]]` projections. Those temps are
 split into scalar hidden assignments after helper inlining, with concrete
 records still materialized at unsupported boundaries. The compiler may still
@@ -178,6 +180,9 @@ Supported consumers for the first implementation:
 - generic `Call` arguments, only by rematerializing the record before the call
 - `Intrinsic` arguments, only by rematerializing the record before the
   intrinsic boundary
+- `StoreIndex1D`, `StoreIndex2D`, and `StoreIndex3D` operands, only by
+  rematerializing scalarized record operands before the store while preserving
+  the store side effect
 - known RR `Call` arguments, by cloning the callee with fieldwise scalar
   parameters when the original parameter is used only through static
   `FieldGet` projections
@@ -198,15 +203,16 @@ Unsupported consumers must force skip or rematerialization:
 - intrinsic-internal aggregate scalarization; intrinsic arguments are
   rematerialized at the boundary unless a future intrinsic declares fieldwise
   aggregate support
-- `StoreIndex1D`, `StoreIndex2D`, `StoreIndex3D`
+- scalarizing through a store side effect itself; `StoreIndex*` is a
+  materialization boundary, not a projection/update consumer
 - named-argument call sites for record-argument specialization
 - callees where the record parameter escapes directly, is mutated, is passed to
   another call, or is used through dynamic/non-field operations
 - record-return specialization for effectful callees, recursive callees, missing
   fields, or whole-record return consumers
-- direct inline record-return lowering for named-argument calls or callees with
-  branching control flow, loads, nested calls, or other non-cloneable field
-  expressions
+- direct inline record-return lowering for reordered/named-argument calls,
+  branching control flow, loads, effectful nested calls, or other non-cloneable
+  field expressions
 - dynamic interop and opaque interop functions
 
 ## Escape And Rematerialization
@@ -412,21 +418,34 @@ creates temporary records after MIR SROA has already run. It intentionally skips
 whole-record calls, dynamic field names, reassignment, and side-effecting field
 expressions.
 
+Current MIR fallback boundary: `StoreIndex*` instructions are no longer a
+function-wide SROA blocker. They are treated as materialization boundaries for
+the specific operands they use. This lets an unrelated vector write coexist with
+local record scalarization, while a record value that is actually stored is
+rematerialized at that store instead of dropping the side effect or deleting the
+needed aggregate.
+
 ## Test Plan
 
 Required tests:
 
 - straight-line `Vec2` trait chain removes intermediate `list(...)`
   allocations
+- trait-specialized `Vec2` chains still scalarize when the same function
+  contains an unrelated vector `StoreIndex`
 - `FieldGet(RecordLit(...))` scalarizes without changing output
 - `FieldSet` functional update scalarizes only the changed field
 - branch join with same-shape records creates fieldwise phis
 - loop-carried record state creates fieldwise phis
 - return of a scalarized record rematerializes once
 - unknown call argument rematerializes before the call
+- `StoreIndex` operands that reference scalarized aggregate aliases
+  rematerialize at the store boundary
 - known RR call argument scalarizes through a fieldwise specialized callee
 - known effect-free RR record return scalarizes through a field-return
   specialized callee
+- simple straight-line record-return helper chains inline projected fields into
+  hidden scalar temps, including the trait/operator `Vec2` hot path
 - param-order-compatible named RR calls scalarize, while reordered named calls
   remain materialized
 - dynamic or opaque interop skips SROA
@@ -551,9 +570,15 @@ whose terminators return only that field's scalar value. Unique local aliases of
 pure record-return calls can be removed when every load of the alias is consumed
 only by static field projections. Repeated projections of the same alias field
 are let-bound to one hidden scalar temp, so `p.x + p.x` does not duplicate the
-same scalar-return call. This is not a full multi-return ABI: different field
-consumers may still become separate scalar-return calls, and whole-record
-consumers still force the normal materialized record boundary.
+same scalar-return call. Before falling back to scalar-return helper calls, the
+pass now tries a cross-call inline field-temp lowering for simple straight-line
+callees. That path recursively follows known effect-free nested record-return
+calls, clones only the requested field expression into the caller, and removes
+the original record-return alias assignment. This removes the hot `Vec2`
+trait/operator helper boundary without introducing a public multi-return ABI.
+This is still not a full multi-return ABI: non-cloneable field expressions,
+branching callees, and whole-record consumers still force the normal
+materialized record boundary or scalar-return helper fallback.
 
 Phase 7: Add reduced Lean/Rocq proof files and correspondence notes.
 
@@ -576,5 +601,8 @@ cheap straight-line SROA into the always tier.
 - Debug dumps and emitted line mapping may become less direct.
 - Existing raw R helper cleanup must not duplicate SROA work in a way that
   changes output shape.
+- Store writes are side effects. SROA may optimize around them only when the
+  touched operands are either unrelated to the aggregate candidate or explicitly
+  rematerialized before the store.
 
 The pass should prefer skipping to generating a questionable rewrite.

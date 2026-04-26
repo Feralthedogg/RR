@@ -948,12 +948,16 @@ fn tesseract_raw_o2_recovers_sym17_whole_range_replays_before_peephole() {
             && raw_code.contains("print(B[side_idx])"),
         "expected raw tesseract output to keep the current explicit wrap-index temporaries in the Morphogenesis update and probe paths"
     );
+    let raw_trait_probe_arg_is_bound_pair = raw_code.contains(
+        "probe_pair <- list(left = c(1.0, 2.0, 3.0, 4.0), right = c(4.0, 3.0, 2.0, 1.0))",
+    ) && raw_code
+        .contains("probe_energy <- Sym_313(probe_pair)");
+    let raw_trait_probe_arg_is_direct_pair = raw_code.contains(
+        "probe_energy <- Sym_313(list(left = c(1.0, 2.0, 3.0, 4.0), right = c(4.0, 3.0, 2.0, 1.0)))",
+    );
     assert!(
         raw_code.contains("probe_vec <- Sym_49(c(1.0, 2.0, 3.0, 4.0), c(4.0, 3.0, 2.0, 1.0))")
-            && raw_code.contains(
-                "probe_pair <- list(left = c(1.0, 2.0, 3.0, 4.0), right = c(4.0, 3.0, 2.0, 1.0))"
-            )
-            && raw_code.contains("probe_energy <- Sym_313(probe_pair)")
+            && (raw_trait_probe_arg_is_bound_pair || raw_trait_probe_arg_is_direct_pair)
             && raw_code.contains("Sym_316 <- function(self)")
             && raw_code.contains("return(Sym_51(self[[\"left\"]], self[[\"right\"]]))")
             && !raw_code.contains("FieldEnergy.energy")

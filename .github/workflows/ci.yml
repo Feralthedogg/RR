@@ -27,7 +27,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload Failure Bundle
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: process-gates-bundle
           path: .artifacts/ci/process-gates-bundle
@@ -164,7 +164,7 @@ jobs:
           - nightly
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -198,7 +198,7 @@ jobs:
 
       - name: Upload Failure Bundle
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rust-matrix-${{ matrix.channel }}-bundle
           path: .artifacts/ci/rust-matrix-${{ matrix.channel }}-bundle
@@ -217,7 +217,7 @@ jobs:
           - oldrel-1
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -250,7 +250,7 @@ jobs:
 
       - name: Upload Failure Bundle
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: r-runtime-matrix-${{ matrix.r-version }}-bundle
           path: .artifacts/ci/r-runtime-matrix-${{ matrix.r-version }}-bundle
@@ -269,7 +269,7 @@ jobs:
       RR_SEMANTIC_AUDIT_PROFILE: ${{ github.event_name == 'push' && 'scan-only' || 'light' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -308,7 +308,7 @@ jobs:
 
       - name: Upload Failure Bundle
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: semantic-audit-bundle
           path: .artifacts/ci/semantic-audit-bundle
@@ -323,7 +323,7 @@ jobs:
       RR_SUBSYSTEM_MATRIX_SKIP_CHECKS: ${{ github.event_name == 'push' && 'semantic_audit' || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -356,7 +356,7 @@ jobs:
 
       - name: Upload Failure Bundle
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: subsystem-matrix-bundle
           path: .artifacts/ci/subsystem-matrix-bundle
@@ -373,7 +373,7 @@ jobs:
       RUSTUP_TOOLCHAIN: nightly-2026-01-15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -414,7 +414,7 @@ jobs:
 
       - name: Upload Perf Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: perf-governance-report
           path: .artifacts/ci/perf-governance.json
@@ -422,7 +422,7 @@ jobs:
 
       - name: Upload Perf Delta Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: perf-delta-report
           path: |
@@ -442,7 +442,7 @@ jobs:
 
       - name: Upload Failure Bundle
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: nightly-stress-bundle
           path: .artifacts/ci/nightly-stress-bundle
@@ -472,7 +472,7 @@ jobs:
             artifact_dir: .artifacts/platform-build/macos-arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust (stable)
         if: runner.os != 'Windows'
@@ -663,7 +663,7 @@ jobs:
           cp "${{ matrix.binary_path }}" "${{ matrix.artifact_dir }}/"
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rr-${{ matrix.label }}-static-isl
           path: ${{ matrix.artifact_dir }}
@@ -677,7 +677,7 @@ jobs:
       - tier0
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -706,7 +706,7 @@ jobs:
       - tier0
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -743,7 +743,7 @@ jobs:
       RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -779,7 +779,7 @@ jobs:
       RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -816,7 +816,7 @@ jobs:
       RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS: "30000"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -861,7 +861,7 @@ jobs:
       RR_VERIFY_DUMP_DIR: .artifacts/ci/tier2-differential/${{ matrix.slice_name }}/verify-dumps
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -914,7 +914,7 @@ jobs:
 
       - name: Upload Tier 2 Differential Logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-tier2-differential-${{ matrix.slice_name }}-logs
           path: .artifacts/ci/tier2-differential/${{ matrix.slice_name }}
@@ -922,7 +922,7 @@ jobs:
 
       - name: Upload Differential Failure Bundles
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-tier2-differential-${{ matrix.slice_name }}-failures
           path: target/tests/random_differential_failures
@@ -930,7 +930,7 @@ jobs:
 
       - name: Upload Differential Triage Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-tier2-differential-${{ matrix.slice_name }}-triage
           path: .artifacts/differential-triage
@@ -938,7 +938,7 @@ jobs:
 
       - name: Upload Pass-Verify Failure Bundles
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-pass-verify-${{ matrix.slice_name }}-failures
           path: target/tests/pass_verify_failures
@@ -946,7 +946,7 @@ jobs:
 
       - name: Upload Pass-Verify Triage Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-pass-verify-${{ matrix.slice_name }}-triage
           path: .artifacts/pass-verify-triage
@@ -967,7 +967,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@master
@@ -1007,7 +1007,7 @@ jobs:
 
       - name: Upload Fuzz Smoke Logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-fuzz-smoke-logs
           path: .artifacts/ci/fuzz-smoke
@@ -1015,7 +1015,7 @@ jobs:
 
       - name: Upload Fuzz Crash Artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-fuzz-smoke-artifacts
           path: fuzz/artifacts
@@ -1023,7 +1023,7 @@ jobs:
 
       - name: Upload Fuzz Triage Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-fuzz-smoke-triage
           path: .artifacts/fuzz-triage

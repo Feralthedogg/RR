@@ -439,15 +439,22 @@ main()
     )
     .expect("compile");
 
+    let scalar_rebound_x = "(((10.0 + 2.0) + (0.0 - 2.0)) * 1.5)";
     assert!(
-        output.contains("__rr_sroa_x"),
-        "record chain should lower through scalar SROA temps:\n{output}"
+        output.contains("__rr_sroa_x") || output.contains(scalar_rebound_x),
+        "record chain should either use scalar SROA temps or fold to a scalar expression:\n{output}"
     );
     assert!(
-        !output.contains(".__rr_inline_expr_0 <- list(")
+        !output.contains("$translate")
+            && !output.contains("$scale")
+            && !output.contains("Sym_35(")
+            && !output.contains("[[\"x\"]]")
+            && !output.contains("[[\"y\"]]")
+            && !output.contains("list(")
+            && !output.contains(".__rr_inline_expr_0 <- list(")
             && !output.contains("final_state <- ((list(")
             && !output.contains("final_state <- (list("),
-        "hot trait record chain should not keep avoidable list temporaries:\n{output}"
+        "hot trait record chain should not keep dynamic dispatch, record allocation, or field projection:\n{output}"
     );
 }
 
@@ -892,9 +899,17 @@ print(main())
         max_line_len < 700,
         "trait method chain emission should avoid aggregate AST bloat:\n{output}"
     );
+    let scalar_rebound_x = "(((10.0 + 2.0) + (0.0 - 2.0)) * 1.5)";
     assert!(
-        output.contains(".__rr_inline_expr_"),
-        "optimized trait method chain should use let-lifted inline temps:\n{output}"
+        output.contains(".__rr_inline_expr_") || output.contains(scalar_rebound_x),
+        "optimized trait method chain should use let-lifted inline temps or fold to a scalar expression:\n{output}"
+    );
+    assert!(
+        !output.contains("list(")
+            && !output.contains("Sym_35(")
+            && !output.contains("[[\"x\"]]")
+            && !output.contains("[[\"y\"]]"),
+        "optimized trait method chain should avoid record allocation and field projection:\n{output}"
     );
 
     if let Some(rscript) = rscript {
@@ -1006,14 +1021,97 @@ print(main())
         o2.len()
     );
     assert!(
-        o2.contains("final_state__rr_sroa_x")
-            && o2.contains("final_state__rr_sroa_y")
-            && !o2.contains("list("),
-        "optimized trait chain should be scalar-temp shaped without record allocation in the hot path:\n{o2}"
+        o2.contains("(((10.0 + 2.0) + (0.0 - 2.0)) * 1.5)")
+            && o2.contains("(((15.0 + -3.0) + (0.0 - -3.0)) * 1.5)")
+            && !o2.contains("list(")
+            && !o2.contains("Sym_35("),
+        "optimized trait chain should fold through cross-call scalar fields without record allocation in the hot path:\n{o2}"
     );
     assert!(
         !o2.contains("$translate") && !o2.contains("$scale"),
         "optimized trait chain must keep static dispatch before SROA shape check:\n{o2}"
+    );
+}
+
+#[test]
+fn generic_trait_sroa_survives_unrelated_store_index_in_same_function() {
+    let src = r#"
+trait Add {
+  fn add(self: Self, rhs: Self) -> Self
+}
+trait Neg {
+  fn neg(self: Self) -> Self
+}
+trait Transformable {
+  fn translate(self: Self, offset: Self) -> Self
+  fn scale(self: Self, factor: float) -> Self
+}
+
+impl Add for Vec2 {
+  fn add(self: Vec2, rhs: Vec2) -> Vec2 {
+    {x: self.x + rhs.x, y: self.y + rhs.y}
+  }
+}
+impl Neg for Vec2 {
+  fn neg(self: Vec2) -> Vec2 {
+    {x: 0.0 - self.x, y: 0.0 - self.y}
+  }
+}
+impl Transformable for Vec2 {
+  fn translate(self: Vec2, offset: Vec2) -> Vec2 {
+    self + offset
+  }
+  fn scale(self: Vec2, factor: float) -> Vec2 {
+    {x: self.x * factor, y: self.y * factor}
+  }
+}
+
+fn simulate_rebound<T>(entity: T, velocity: T, time: float) -> T
+  where T: Add + Neg + Transformable
+{
+  let moved = entity + velocity
+  let rebounded_vel = -velocity
+  moved.translate(rebounded_vel).scale(time)
+}
+
+fn main() {
+  let scratch = c(0.0, 0.0)
+  let initial_pos: Vec2 = {x: 10.0, y: 15.0}
+  let velocity: Vec2 = {x: 2.0, y: -3.0}
+  let final_state = simulate_rebound(initial_pos, velocity, 1.5)
+  scratch[1.0] = final_state.x
+  final_state.y + scratch[1.0]
+}
+
+print(main())
+"#;
+
+    let (output, _) = compile_with_config(
+        "generic_trait_sroa_with_store_index.rr",
+        src,
+        OptLevel::O2,
+        TypeConfig {
+            mode: TypeMode::Strict,
+            native_backend: NativeBackend::Off,
+        },
+    )
+    .expect("StoreIndex in the same function should not disable trait-chain SROA");
+
+    assert!(
+        output.contains("final_state__rr_sroa_ret_x")
+            && output.contains("final_state__rr_sroa_ret_y")
+            && !output.contains("Sym_35("),
+        "trait record result should stay scalarized despite an unrelated vector store:\n{output}"
+    );
+    assert!(
+        !output.contains("FieldEnergy.energy")
+            && !output.contains("$translate")
+            && !output.contains("$scale"),
+        "trait dispatch must remain static before store-index/SROA shape checks:\n{output}"
+    );
+    assert!(
+        !output.contains("final_state <- list(") && !output.contains("final_state <- (list("),
+        "final_state should not be materialized as a list before field projection:\n{output}"
     );
 }
 

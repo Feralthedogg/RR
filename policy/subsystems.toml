@@ -199,6 +199,7 @@ paths = [
   "src/compiler/pipeline/phases/tachyon_runtime.rs",
   "src/compiler/peephole/",
   "tests/cases/optimizer/",
+  "tests/perf_regression_gate.rs",
   "tests/sccp_overflow_regression.rs",
   "tests/opt_level_equivalence.rs",
   "tests/numeric_property_differential.rs",

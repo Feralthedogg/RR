@@ -108,12 +108,23 @@ enum SroaMaterializationBoundaryKind {
     FieldSetBase,
     FieldSetValue,
     ConcreteBase,
+    StoreIndexOperand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SroaMaterializationBoundary {
     value: ValueId,
     kind: SroaMaterializationBoundaryKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoreIndexOperand {
+    Base,
+    Index,
+    Row,
+    Column,
+    Plane,
+    Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,7 +182,7 @@ pub(super) fn analyze_function(fn_ir: &FnIR) -> SroaAnalysis {
 }
 
 pub(super) fn optimize(fn_ir: &mut FnIR) -> bool {
-    if fn_ir.requires_conservative_optimization() || !is_control_flow_rewrite_candidate(fn_ir) {
+    if fn_ir.requires_conservative_optimization() {
         return false;
     }
 
@@ -218,21 +229,17 @@ fn optimize_once(fn_ir: &mut FnIR) -> bool {
     changed
 }
 
-fn is_control_flow_rewrite_candidate(fn_ir: &FnIR) -> bool {
-    for block in &fn_ir.blocks {
-        if block.instrs.iter().any(|instr| {
+fn contains_store_index_instr(fn_ir: &FnIR) -> bool {
+    fn_ir.blocks.iter().any(|block| {
+        block.instrs.iter().any(|instr| {
             matches!(
                 instr,
                 Instr::StoreIndex1D { .. }
                     | Instr::StoreIndex2D { .. }
                     | Instr::StoreIndex3D { .. }
             )
-        }) {
-            return false;
-        }
-    }
-
-    true
+        })
+    })
 }
 
 fn infer_rewrite_field_maps(fn_ir: &mut FnIR) -> FxHashMap<ValueId, SroaFieldMap> {
@@ -486,11 +493,42 @@ fn collect_materialization_boundaries(fn_ir: &FnIR) -> Vec<SroaMaterializationBo
 
     for block in &fn_ir.blocks {
         for instr in &block.instrs {
-            if let Instr::Eval { val, .. } = instr {
-                boundaries.push(SroaMaterializationBoundary {
-                    value: *val,
-                    kind: SroaMaterializationBoundaryKind::Eval,
-                });
+            match instr {
+                Instr::Assign { .. } => {}
+                Instr::Eval { val, .. } => {
+                    boundaries.push(SroaMaterializationBoundary {
+                        value: *val,
+                        kind: SroaMaterializationBoundaryKind::Eval,
+                    });
+                }
+                Instr::StoreIndex1D { base, idx, val, .. } => {
+                    for value in [*base, *idx, *val] {
+                        boundaries.push(SroaMaterializationBoundary {
+                            value,
+                            kind: SroaMaterializationBoundaryKind::StoreIndexOperand,
+                        });
+                    }
+                }
+                Instr::StoreIndex2D {
+                    base, r, c, val, ..
+                } => {
+                    for value in [*base, *r, *c, *val] {
+                        boundaries.push(SroaMaterializationBoundary {
+                            value,
+                            kind: SroaMaterializationBoundaryKind::StoreIndexOperand,
+                        });
+                    }
+                }
+                Instr::StoreIndex3D {
+                    base, i, j, k, val, ..
+                } => {
+                    for value in [*base, *i, *j, *k, *val] {
+                        boundaries.push(SroaMaterializationBoundary {
+                            value,
+                            kind: SroaMaterializationBoundaryKind::StoreIndexOperand,
+                        });
+                    }
+                }
             }
         }
     }
@@ -1145,6 +1183,27 @@ fn rematerialize_aggregate_boundaries(
         }
     }
 
+    let mut store_rewrites = Vec::new();
+    for block in &fn_ir.blocks {
+        for (instr_index, instr) in block.instrs.iter().enumerate() {
+            for (operand, value) in store_index_operands(instr) {
+                if should_rematerialize_boundary_value(fn_ir, field_maps, value) {
+                    store_rewrites.push((block.id, instr_index, operand, value));
+                }
+            }
+        }
+    }
+    for (block, instr_index, operand, value) in store_rewrites {
+        let Some(replacement) =
+            rematerialize_value(fn_ir, field_maps, &shapes, &mut materialized, value)
+        else {
+            continue;
+        };
+        if let Some(instr) = fn_ir.blocks[block].instrs.get_mut(instr_index) {
+            changed |= rewrite_store_index_operand(instr, operand, value, replacement);
+        }
+    }
+
     let return_rewrites: Vec<_> = fn_ir
         .blocks
         .iter()
@@ -1242,6 +1301,62 @@ fn rematerialize_aggregate_boundaries(
     }
 
     changed
+}
+
+fn store_index_operands(instr: &Instr) -> Vec<(StoreIndexOperand, ValueId)> {
+    match instr {
+        Instr::StoreIndex1D { base, idx, val, .. } => vec![
+            (StoreIndexOperand::Base, *base),
+            (StoreIndexOperand::Index, *idx),
+            (StoreIndexOperand::Value, *val),
+        ],
+        Instr::StoreIndex2D {
+            base, r, c, val, ..
+        } => vec![
+            (StoreIndexOperand::Base, *base),
+            (StoreIndexOperand::Row, *r),
+            (StoreIndexOperand::Column, *c),
+            (StoreIndexOperand::Value, *val),
+        ],
+        Instr::StoreIndex3D {
+            base, i, j, k, val, ..
+        } => vec![
+            (StoreIndexOperand::Base, *base),
+            (StoreIndexOperand::Plane, *i),
+            (StoreIndexOperand::Row, *j),
+            (StoreIndexOperand::Column, *k),
+            (StoreIndexOperand::Value, *val),
+        ],
+        Instr::Assign { .. } | Instr::Eval { .. } => Vec::new(),
+    }
+}
+
+fn rewrite_store_index_operand(
+    instr: &mut Instr,
+    operand: StoreIndexOperand,
+    old: ValueId,
+    replacement: ValueId,
+) -> bool {
+    let target = match (instr, operand) {
+        (Instr::StoreIndex1D { base, .. }, StoreIndexOperand::Base)
+        | (Instr::StoreIndex2D { base, .. }, StoreIndexOperand::Base)
+        | (Instr::StoreIndex3D { base, .. }, StoreIndexOperand::Base) => base,
+        (Instr::StoreIndex1D { idx, .. }, StoreIndexOperand::Index) => idx,
+        (Instr::StoreIndex2D { r, .. }, StoreIndexOperand::Row) => r,
+        (Instr::StoreIndex2D { c, .. }, StoreIndexOperand::Column) => c,
+        (Instr::StoreIndex3D { i, .. }, StoreIndexOperand::Plane) => i,
+        (Instr::StoreIndex3D { j, .. }, StoreIndexOperand::Row) => j,
+        (Instr::StoreIndex3D { k, .. }, StoreIndexOperand::Column) => k,
+        (Instr::StoreIndex1D { val, .. }, StoreIndexOperand::Value)
+        | (Instr::StoreIndex2D { val, .. }, StoreIndexOperand::Value)
+        | (Instr::StoreIndex3D { val, .. }, StoreIndexOperand::Value) => val,
+        _ => return false,
+    };
+    if *target != old {
+        return false;
+    }
+    *target = replacement;
+    true
 }
 
 fn rewrite_concrete_base_consumer(
@@ -2051,7 +2166,7 @@ fn add_store_uses(
             uses,
             *value,
             SroaUser::Instr { block, instr },
-            SroaUseKind::Reject,
+            SroaUseKind::Materialize,
         );
     }
 }
@@ -2109,7 +2224,6 @@ struct RecordReturnAliasCallKey {
 struct RecordReturnAliasInlineState {
     block: BlockId,
     next_insert_index: usize,
-    value_map: FxHashMap<ValueId, ValueId>,
     temp_by_field: FxHashMap<String, String>,
 }
 
@@ -2123,7 +2237,6 @@ struct RecordReturnDirectCallKey {
 
 #[derive(Debug, Default, Clone)]
 struct RecordReturnDirectInlineState {
-    value_map: FxHashMap<ValueId, ValueId>,
     replacement_by_field: FxHashMap<String, ValueId>,
 }
 
@@ -2201,7 +2314,7 @@ fn specialize_record_field_calls_in_caller(
     reserved_names: &mut FxHashSet<String>,
     generated_fns: &mut Vec<(String, FnIR)>,
 ) -> bool {
-    if caller.requires_conservative_optimization() || !is_control_flow_rewrite_candidate(caller) {
+    if caller.requires_conservative_optimization() {
         return false;
     }
 
@@ -2271,7 +2384,7 @@ fn specialize_record_return_fields_in_caller(
     specialized_names: &mut FxHashMap<(String, String), String>,
     pure_cache: &mut FxHashMap<String, bool>,
 ) -> bool {
-    if caller.requires_conservative_optimization() || !is_control_flow_rewrite_candidate(caller) {
+    if caller.requires_conservative_optimization() {
         return false;
     }
 
@@ -2409,6 +2522,7 @@ fn collect_record_return_field_uses(
     let unique_assignments = unique_var_assignments(caller);
     let uses = build_use_graph(caller);
     let scalarizable_alias_vars = scalarizable_return_alias_vars(caller, all_fns, &uses);
+    let direct_call_alias_vars = scalarizable_direct_return_call_alias_vars(caller, &uses);
     let mut out = Vec::new();
 
     for value in &caller.values {
@@ -2422,6 +2536,7 @@ fn collect_record_return_field_uses(
             && all_fns.contains_key(&callee)
             && callee != caller.name
         {
+            let alias_var = direct_call_alias_vars.get(base).cloned();
             out.push(RecordReturnFieldUse {
                 field_get: value.id,
                 base_call: Some(*base),
@@ -2429,7 +2544,7 @@ fn collect_record_return_field_uses(
                 callee,
                 args,
                 names,
-                alias_var: None,
+                alias_var,
             });
             continue;
         }
@@ -2458,6 +2573,84 @@ fn collect_record_return_field_uses(
     }
 
     out
+}
+
+fn scalarizable_direct_return_call_alias_vars(
+    caller: &FnIR,
+    uses: &FxHashMap<ValueId, Vec<SroaUse>>,
+) -> FxHashMap<ValueId, String> {
+    let unique_assignments = unique_var_assignments(caller);
+    let mut out = FxHashMap::default();
+
+    for (var, src) in unique_assignments {
+        if call_parts(caller, src).is_none() {
+            continue;
+        }
+        if !direct_call_uses_are_alias_and_field_gets(caller, uses, src, &var) {
+            continue;
+        }
+        if !alias_load_uses_are_field_gets(caller, uses, &var) {
+            continue;
+        }
+        out.insert(src, var);
+    }
+
+    out
+}
+
+fn direct_call_uses_are_alias_and_field_gets(
+    caller: &FnIR,
+    uses: &FxHashMap<ValueId, Vec<SroaUse>>,
+    call: ValueId,
+    alias_var: &str,
+) -> bool {
+    uses.get(&call).is_some_and(|call_uses| {
+        !call_uses.is_empty()
+            && call_uses.iter().all(|call_use| match call_use.user {
+                SroaUser::Value(user) => matches!(
+                    &caller.values[user].kind,
+                    ValueKind::FieldGet { base, .. } if *base == call
+                ),
+                SroaUser::Instr { block, instr } => caller
+                    .blocks
+                    .get(block)
+                    .and_then(|block| block.instrs.get(instr))
+                    .is_some_and(|instr| {
+                        matches!(
+                            instr,
+                            Instr::Assign { dst, src, .. }
+                                if dst == alias_var && *src == call
+                        )
+                    }),
+                SroaUser::Terminator { .. } => false,
+            })
+    })
+}
+
+fn alias_load_uses_are_field_gets(
+    caller: &FnIR,
+    uses: &FxHashMap<ValueId, Vec<SroaUse>>,
+    alias_var: &str,
+) -> bool {
+    caller
+        .values
+        .iter()
+        .filter_map(|value| match &value.kind {
+            ValueKind::Load { var } if var == alias_var => Some(value.id),
+            _ => None,
+        })
+        .all(|load| {
+            uses.get(&load).is_some_and(|load_uses| {
+                !load_uses.is_empty()
+                    && load_uses.iter().all(|load_use| match load_use.user {
+                        SroaUser::Value(user) => matches!(
+                            &caller.values[user].kind,
+                            ValueKind::FieldGet { base, .. } if base == &load
+                        ),
+                        SroaUser::Instr { .. } | SroaUser::Terminator { .. } => false,
+                    })
+            })
+        })
 }
 
 fn call_arg_names_match_callee_order(callee: &FnIR, names: &[Option<String>]) -> bool {
@@ -2531,7 +2724,7 @@ fn build_record_return_field_specialized_callee(
     new_name: &str,
     field: &str,
 ) -> Option<FnIR> {
-    if callee.requires_conservative_optimization() || !is_control_flow_rewrite_candidate(callee) {
+    if callee.requires_conservative_optimization() || contains_store_index_instr(callee) {
         return None;
     }
 
@@ -2608,17 +2801,20 @@ fn rewrite_direct_record_return_field_use_with_inlined_value(
                 return false;
             };
             let Some((scalarized, field_value)) =
-                scalarizable_single_record_return_field(callee, &record_use.field)
+                scalarizable_single_record_return_field(callee, all_fns, &record_use.field)
             else {
                 direct_inline_states.insert(key, state);
                 return false;
             };
+            let mut value_map = FxHashMap::default();
             let Some(cloned_value) = clone_scalarizable_callee_value(
                 caller,
                 &scalarized,
+                all_fns,
                 &record_use.args,
                 field_value,
-                &mut state.value_map,
+                &mut value_map,
+                &mut FxHashSet::default(),
             ) else {
                 direct_inline_states.insert(key, state);
                 return false;
@@ -2672,17 +2868,20 @@ fn rewrite_record_return_alias_field_use_with_inlined_temp(
         return false;
     };
     let Some((scalarized, field_value)) =
-        scalarizable_single_record_return_field(callee, &record_use.field)
+        scalarizable_single_record_return_field(callee, all_fns, &record_use.field)
     else {
         alias_inline_states.insert(key, state);
         return false;
     };
+    let mut value_map = FxHashMap::default();
     let Some(cloned_value) = clone_scalarizable_callee_value(
         caller,
         &scalarized,
+        all_fns,
         &record_use.args,
         field_value,
-        &mut state.value_map,
+        &mut value_map,
+        &mut FxHashSet::default(),
     ) else {
         alias_inline_states.insert(key, state);
         return false;
@@ -2720,35 +2919,153 @@ fn create_record_return_alias_inline_state(
     Some(RecordReturnAliasInlineState {
         block,
         next_insert_index: instr_index + 1,
-        value_map: FxHashMap::default(),
         temp_by_field: FxHashMap::default(),
     })
 }
 
-fn scalarizable_single_record_return_field(callee: &FnIR, field: &str) -> Option<(FnIR, ValueId)> {
-    if callee.requires_conservative_optimization()
-        || !is_control_flow_rewrite_candidate(callee)
-        || callee.blocks.len() != 1
-    {
+fn scalarizable_single_record_return_field(
+    callee: &FnIR,
+    all_fns: &FxHashMap<String, FnIR>,
+    field: &str,
+) -> Option<(FnIR, ValueId)> {
+    scalarizable_single_record_return_field_inner(callee, all_fns, field, &mut FxHashSet::default())
+}
+
+fn scalarizable_single_record_return_field_inner(
+    callee: &FnIR,
+    all_fns: &FxHashMap<String, FnIR>,
+    field: &str,
+    visiting: &mut FxHashSet<String>,
+) -> Option<(FnIR, ValueId)> {
+    if callee.requires_conservative_optimization() || contains_store_index_instr(callee) {
+        return None;
+    }
+    if !visiting.insert(callee.name.clone()) {
         return None;
     }
 
     let mut scalarized = callee.clone();
     let field_maps = infer_rewrite_field_maps(&mut scalarized);
-    let block = scalarized.blocks.get(scalarized.entry)?;
-    let Terminator::Return(Some(ret)) = block.term else {
-        return None;
+    let ret = match single_straight_line_return_value(&scalarized) {
+        Some(ret) => ret,
+        None => {
+            visiting.remove(&callee.name);
+            return None;
+        }
     };
-    let replacement = field_maps.get(&ret)?.get(field).copied()?;
+    let replacement = match scalarized_record_field_value(
+        &mut scalarized,
+        all_fns,
+        &field_maps,
+        ret,
+        field,
+        visiting,
+    ) {
+        Some(replacement) => replacement,
+        None => {
+            visiting.remove(&callee.name);
+            return None;
+        }
+    };
+    visiting.remove(&callee.name);
     Some((scalarized, replacement))
+}
+
+fn single_straight_line_return_value(fn_ir: &FnIR) -> Option<ValueId> {
+    let mut out = None;
+    for block in &fn_ir.blocks {
+        match block.term {
+            Terminator::Return(Some(value)) => {
+                if out.replace(value).is_some() {
+                    return None;
+                }
+            }
+            Terminator::Goto(_) | Terminator::Unreachable => {}
+            Terminator::Return(None) | Terminator::If { .. } => return None,
+        }
+    }
+    out
+}
+
+fn scalarized_record_field_value(
+    fn_ir: &mut FnIR,
+    all_fns: &FxHashMap<String, FnIR>,
+    field_maps: &FxHashMap<ValueId, SroaFieldMap>,
+    value: ValueId,
+    field: &str,
+    visiting: &mut FxHashSet<String>,
+) -> Option<ValueId> {
+    if let Some(replacement) = field_maps
+        .get(&value)
+        .and_then(|fields| fields.get(field))
+        .copied()
+    {
+        return Some(replacement);
+    }
+
+    scalarized_field_projection_from_value(fn_ir, all_fns, value, field, visiting)
+}
+
+fn scalarized_field_projection_from_value(
+    fn_ir: &mut FnIR,
+    all_fns: &FxHashMap<String, FnIR>,
+    value: ValueId,
+    field: &str,
+    visiting: &mut FxHashSet<String>,
+) -> Option<ValueId> {
+    let source = fn_ir.values.get(value)?.kind.clone();
+    match source {
+        ValueKind::RecordLit { fields } => fields
+            .into_iter()
+            .find_map(|(name, value)| (name == field).then_some(value)),
+        ValueKind::FieldSet {
+            base,
+            field: updated,
+            value: updated_value,
+        } => {
+            if updated == field {
+                Some(updated_value)
+            } else {
+                scalarized_field_projection_from_value(fn_ir, all_fns, base, field, visiting)
+            }
+        }
+        ValueKind::Call {
+            callee,
+            args,
+            names,
+        } => {
+            let target = all_fns.get(&callee)?;
+            if !call_arg_names_match_callee_order(target, &names) {
+                return None;
+            }
+            let mut pure_cache = FxHashMap::default();
+            if !function_is_effect_free(&callee, all_fns, &mut pure_cache) {
+                return None;
+            }
+            let (scalarized, field_value) =
+                scalarizable_single_record_return_field_inner(target, all_fns, field, visiting)?;
+            clone_scalarizable_callee_value(
+                fn_ir,
+                &scalarized,
+                all_fns,
+                &args,
+                field_value,
+                &mut FxHashMap::default(),
+                visiting,
+            )
+        }
+        _ => None,
+    }
 }
 
 fn clone_scalarizable_callee_value(
     caller: &mut FnIR,
     callee: &FnIR,
+    all_fns: &FxHashMap<String, FnIR>,
     args: &[ValueId],
     value: ValueId,
     value_map: &mut FxHashMap<ValueId, ValueId>,
+    visiting: &mut FxHashSet<String>,
 ) -> Option<ValueId> {
     if let Some(mapped) = value_map.get(&value).copied() {
         return Some(mapped);
@@ -2764,49 +3081,90 @@ fn clone_scalarizable_callee_value(
         }
         ValueKind::Binary { op, lhs, rhs } => ValueKind::Binary {
             op,
-            lhs: clone_scalarizable_callee_value(caller, callee, args, lhs, value_map)?,
-            rhs: clone_scalarizable_callee_value(caller, callee, args, rhs, value_map)?,
+            lhs: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, lhs, value_map, visiting,
+            )?,
+            rhs: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, rhs, value_map, visiting,
+            )?,
         },
         ValueKind::Unary { op, rhs } => ValueKind::Unary {
             op,
-            rhs: clone_scalarizable_callee_value(caller, callee, args, rhs, value_map)?,
+            rhs: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, rhs, value_map, visiting,
+            )?,
         },
         ValueKind::Len { base } => ValueKind::Len {
-            base: clone_scalarizable_callee_value(caller, callee, args, base, value_map)?,
+            base: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, base, value_map, visiting,
+            )?,
         },
         ValueKind::Indices { base } => ValueKind::Indices {
-            base: clone_scalarizable_callee_value(caller, callee, args, base, value_map)?,
+            base: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, base, value_map, visiting,
+            )?,
         },
         ValueKind::Range { start, end } => ValueKind::Range {
-            start: clone_scalarizable_callee_value(caller, callee, args, start, value_map)?,
-            end: clone_scalarizable_callee_value(caller, callee, args, end, value_map)?,
+            start: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, start, value_map, visiting,
+            )?,
+            end: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, end, value_map, visiting,
+            )?,
         },
         ValueKind::RecordLit { fields } => {
             let mut cloned_fields = Vec::with_capacity(fields.len());
             for (field, field_value) in fields {
                 cloned_fields.push((
                     field,
-                    clone_scalarizable_callee_value(caller, callee, args, field_value, value_map)?,
+                    clone_scalarizable_callee_value(
+                        caller,
+                        callee,
+                        all_fns,
+                        args,
+                        field_value,
+                        value_map,
+                        visiting,
+                    )?,
                 ));
             }
             ValueKind::RecordLit {
                 fields: cloned_fields,
             }
         }
-        ValueKind::FieldGet { base, field } => ValueKind::FieldGet {
-            base: clone_scalarizable_callee_value(caller, callee, args, base, value_map)?,
-            field,
-        },
+        ValueKind::FieldGet { base, field } => {
+            let cloned_base = clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, base, value_map, visiting,
+            )?;
+            if let Some(projected) = scalarized_field_projection_from_value(
+                caller,
+                all_fns,
+                cloned_base,
+                &field,
+                visiting,
+            ) {
+                value_map.insert(value, projected);
+                return Some(projected);
+            }
+            ValueKind::FieldGet {
+                base: cloned_base,
+                field,
+            }
+        }
         ValueKind::FieldSet { base, field, value } => ValueKind::FieldSet {
-            base: clone_scalarizable_callee_value(caller, callee, args, base, value_map)?,
+            base: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, base, value_map, visiting,
+            )?,
             field,
-            value: clone_scalarizable_callee_value(caller, callee, args, value, value_map)?,
+            value: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, value, value_map, visiting,
+            )?,
         },
         ValueKind::Intrinsic { op, args: inputs } => {
             let mut cloned_args = Vec::with_capacity(inputs.len());
             for input in inputs {
                 cloned_args.push(clone_scalarizable_callee_value(
-                    caller, callee, args, input, value_map,
+                    caller, callee, all_fns, args, input, value_map, visiting,
                 )?);
             }
             ValueKind::Intrinsic {
@@ -2820,30 +3178,70 @@ fn clone_scalarizable_callee_value(
             is_safe,
             is_na_safe,
         } => ValueKind::Index1D {
-            base: clone_scalarizable_callee_value(caller, callee, args, base, value_map)?,
-            idx: clone_scalarizable_callee_value(caller, callee, args, idx, value_map)?,
+            base: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, base, value_map, visiting,
+            )?,
+            idx: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, idx, value_map, visiting,
+            )?,
             is_safe,
             is_na_safe,
         },
         ValueKind::Index2D { base, r, c } => ValueKind::Index2D {
-            base: clone_scalarizable_callee_value(caller, callee, args, base, value_map)?,
-            r: clone_scalarizable_callee_value(caller, callee, args, r, value_map)?,
-            c: clone_scalarizable_callee_value(caller, callee, args, c, value_map)?,
+            base: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, base, value_map, visiting,
+            )?,
+            r: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, r, value_map, visiting,
+            )?,
+            c: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, c, value_map, visiting,
+            )?,
         },
         ValueKind::Index3D { base, i, j, k } => ValueKind::Index3D {
-            base: clone_scalarizable_callee_value(caller, callee, args, base, value_map)?,
-            i: clone_scalarizable_callee_value(caller, callee, args, i, value_map)?,
-            j: clone_scalarizable_callee_value(caller, callee, args, j, value_map)?,
-            k: clone_scalarizable_callee_value(caller, callee, args, k, value_map)?,
+            base: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, base, value_map, visiting,
+            )?,
+            i: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, i, value_map, visiting,
+            )?,
+            j: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, j, value_map, visiting,
+            )?,
+            k: clone_scalarizable_callee_value(
+                caller, callee, all_fns, args, k, value_map, visiting,
+            )?,
         },
+        ValueKind::Call {
+            callee: call_callee,
+            args: inputs,
+            names,
+        } => {
+            let mut cloned_args = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                cloned_args.push(clone_scalarizable_callee_value(
+                    caller, callee, all_fns, args, input, value_map, visiting,
+                )?);
+            }
+            ValueKind::Call {
+                callee: call_callee,
+                args: cloned_args,
+                names,
+            }
+        }
         ValueKind::RSymbol { name } => ValueKind::RSymbol { name },
-        ValueKind::Phi { .. } | ValueKind::Call { .. } | ValueKind::Load { .. } => return None,
+        ValueKind::Phi { .. } | ValueKind::Load { .. } => return None,
     };
 
     let cloned = caller.add_value(cloned_kind, source.span, source.facts, None);
     caller.values[cloned].value_ty = source.value_ty;
     caller.values[cloned].value_term = source.value_term;
     caller.values[cloned].escape = source.escape;
+    if let ValueKind::Call { callee, .. } = &caller.values[cloned].kind
+        && all_fns.contains_key(callee)
+    {
+        caller.set_call_semantics(cloned, CallSemantics::UserDefined);
+    }
     value_map.insert(value, cloned);
     Some(cloned)
 }
@@ -3723,6 +4121,88 @@ mod tests {
         fn_ir
     }
 
+    fn scale_xy_fn() -> FnIR {
+        let mut fn_ir = FnIR::new(
+            "scale_xy".to_string(),
+            vec!["p".to_string(), "factor".to_string()],
+        );
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+        let p = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("p".to_string()),
+        );
+        let factor = fn_ir.add_value(
+            ValueKind::Param { index: 1 },
+            Span::default(),
+            Facts::empty(),
+            Some("factor".to_string()),
+        );
+        let x = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: p,
+                field: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let y = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: p,
+                field: "y".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let scaled_x = binary_value(&mut fn_ir, BinOp::Mul, x, factor);
+        let scaled_y = binary_value(&mut fn_ir, BinOp::Mul, y, factor);
+        let record = record_xy(&mut fn_ir, scaled_x, scaled_y);
+        fn_ir.blocks[entry].term = Terminator::Return(Some(record));
+        fn_ir
+    }
+
+    fn forward_scale_xy_fn() -> FnIR {
+        let mut fn_ir = FnIR::new(
+            "forward_scale_xy".to_string(),
+            vec!["p".to_string(), "factor".to_string()],
+        );
+        let entry = fn_ir.add_block();
+        let body = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = body;
+        let p = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("p".to_string()),
+        );
+        let factor = fn_ir.add_value(
+            ValueKind::Param { index: 1 },
+            Span::default(),
+            Facts::empty(),
+            Some("factor".to_string()),
+        );
+        let call = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "scale_xy".to_string(),
+                args: vec![p, factor],
+                names: vec![None, None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.set_call_semantics(call, CallSemantics::UserDefined);
+        fn_ir.blocks[entry].term = Terminator::Goto(body);
+        fn_ir.blocks[body].term = Terminator::Return(Some(call));
+        fn_ir
+    }
+
     fn branch_make_xy_fn() -> FnIR {
         let mut fn_ir = FnIR::new("branch_make_xy".to_string(), vec![]);
         let entry = fn_ir.add_block();
@@ -3995,6 +4475,61 @@ mod tests {
     }
 
     #[test]
+    fn sroa_scalarizes_record_in_function_with_unrelated_store_index() {
+        let mut fn_ir = FnIR::new("sroa_store_test".to_string(), vec!["xs".to_string()]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let xs = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("xs".to_string()),
+        );
+        let idx = int_value(&mut fn_ir, 1);
+        let stored = int_value(&mut fn_ir, 99);
+        fn_ir.blocks[entry].instrs.push(Instr::StoreIndex1D {
+            base: xs,
+            idx,
+            val: stored,
+            is_safe: false,
+            is_na_safe: false,
+            is_vector: false,
+            span: Span::default(),
+        });
+
+        let x = int_value(&mut fn_ir, 1);
+        let y = int_value(&mut fn_ir, 2);
+        let record = record_xy(&mut fn_ir, x, y);
+        let get_x = fn_ir.add_value(
+            ValueKind::FieldGet {
+                base: record,
+                field: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        fn_ir.blocks[entry].term = Terminator::Return(Some(get_x));
+
+        assert!(
+            optimize(&mut fn_ir),
+            "unrelated StoreIndex should not block local record SROA"
+        );
+        assert!(matches!(
+            fn_ir.blocks[entry].term,
+            Terminator::Return(Some(ret)) if ret == x
+        ));
+        assert!(matches!(
+            fn_ir.blocks[entry].instrs.as_slice(),
+            [Instr::StoreIndex1D { base, idx: got_idx, val, .. }]
+                if *base == xs && *got_idx == idx && *val == stored
+        ));
+        assert!(crate::mir::verify::verify_ir(&fn_ir).is_ok());
+    }
+
+    #[test]
     fn sroa_rematerializes_returned_alias_and_removes_dead_assignment() {
         let mut fn_ir = test_fn();
         let x = int_value(&mut fn_ir, 1);
@@ -4032,6 +4567,73 @@ mod tests {
         assert!(
             matches!(fn_ir.values[load].kind, ValueKind::Const(Lit::Null)),
             "dead return alias load should be neutralized with its assignment"
+        );
+        assert!(crate::mir::verify::verify_ir(&fn_ir).is_ok());
+    }
+
+    #[test]
+    fn sroa_rematerializes_store_index_alias_value_and_removes_dead_assignment() {
+        let mut fn_ir = FnIR::new("sroa_store_value_test".to_string(), vec!["xs".to_string()]);
+        let entry = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let xs = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("xs".to_string()),
+        );
+        let idx = int_value(&mut fn_ir, 1);
+        let done = int_value(&mut fn_ir, 0);
+        let x = int_value(&mut fn_ir, 1);
+        let y = int_value(&mut fn_ir, 2);
+        let record = record_xy(&mut fn_ir, x, y);
+        fn_ir.blocks[entry].instrs.push(Instr::Assign {
+            dst: "point".to_string(),
+            src: record,
+            span: Span::default(),
+        });
+        let load = fn_ir.add_value(
+            ValueKind::Load {
+                var: "point".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("point".to_string()),
+        );
+        fn_ir.blocks[entry].instrs.push(Instr::StoreIndex1D {
+            base: xs,
+            idx,
+            val: load,
+            is_safe: false,
+            is_na_safe: false,
+            is_vector: false,
+            span: Span::default(),
+        });
+        fn_ir.blocks[entry].term = Terminator::Return(Some(done));
+
+        assert!(
+            optimize(&mut fn_ir),
+            "StoreIndex aggregate operands should rematerialize instead of blocking SROA"
+        );
+        assert_eq!(
+            fn_ir.blocks[entry].instrs.len(),
+            1,
+            "dead aggregate alias assignment should be removed after store rematerialization"
+        );
+        let Instr::StoreIndex1D { val, .. } = &fn_ir.blocks[entry].instrs[0] else {
+            panic!("store instruction should remain after aggregate rematerialization");
+        };
+        assert_ne!(*val, load);
+        assert!(matches!(
+            &fn_ir.values[*val].kind,
+            ValueKind::RecordLit { fields }
+                if fields == &vec![("x".to_string(), x), ("y".to_string(), y)]
+        ));
+        assert!(
+            matches!(fn_ir.values[load].kind, ValueKind::Const(Lit::Null)),
+            "dead store alias load should be neutralized with its assignment"
         );
         assert!(crate::mir::verify::verify_ir(&fn_ir).is_ok());
     }
@@ -6762,6 +7364,114 @@ mod tests {
             )
         }));
         assert!(!all_fns.keys().any(|name| name.contains("__rr_sroa_ret_")));
+        assert!(crate::mir::verify::verify_ir(caller).is_ok());
+    }
+
+    #[test]
+    fn sroa_inlines_direct_aliased_nested_record_return_fields() {
+        let mut caller = FnIR::new("caller".to_string(), vec!["scratch".to_string()]);
+        let entry = caller.add_block();
+        caller.entry = entry;
+        caller.body_head = entry;
+        let scratch = caller.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("scratch".to_string()),
+        );
+        let idx = int_value(&mut caller, 1);
+        let x = int_value(&mut caller, 10);
+        let y = int_value(&mut caller, 15);
+        let factor = int_value(&mut caller, 3);
+        let point = record_xy(&mut caller, x, y);
+        let call = caller.add_value(
+            ValueKind::Call {
+                callee: "forward_scale_xy".to_string(),
+                args: vec![point, factor],
+                names: vec![None, None],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("out".to_string()),
+        );
+        caller.set_call_semantics(call, CallSemantics::UserDefined);
+        caller.blocks[entry].instrs.push(Instr::Assign {
+            dst: "out".to_string(),
+            src: call,
+            span: Span::default(),
+        });
+        let get_x = caller.add_value(
+            ValueKind::FieldGet {
+                base: call,
+                field: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].instrs.push(Instr::StoreIndex1D {
+            base: scratch,
+            idx,
+            val: get_x,
+            is_safe: false,
+            is_na_safe: false,
+            is_vector: false,
+            span: Span::default(),
+        });
+        let get_y = caller.add_value(
+            ValueKind::FieldGet {
+                base: call,
+                field: "y".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        caller.blocks[entry].term = Terminator::Return(Some(get_y));
+
+        let mut all_fns = FxHashMap::default();
+        all_fns.insert("caller".to_string(), caller);
+        all_fns.insert("forward_scale_xy".to_string(), forward_scale_xy_fn());
+        all_fns.insert("scale_xy".to_string(), scale_xy_fn());
+
+        assert!(specialize_record_return_field_calls(&mut all_fns));
+        let caller = all_fns.get("caller").expect("caller");
+        assert!(
+            caller.blocks[entry]
+                .instrs
+                .iter()
+                .all(|instr| !matches!(instr, Instr::Assign { dst, .. } if dst == "out")),
+            "record-return alias assignment should be removed once fields are scalar temps"
+        );
+        assert!(caller.blocks[entry].instrs.iter().any(|instr| {
+            matches!(instr, Instr::Assign { dst, src, .. }
+                if dst.contains("__rr_sroa_ret_x")
+                    && matches!(caller.values[*src].kind, ValueKind::Binary { op: BinOp::Mul, .. }))
+        }));
+        assert!(caller.blocks[entry].instrs.iter().any(|instr| {
+            matches!(instr, Instr::Assign { dst, src, .. }
+                if dst.contains("__rr_sroa_ret_y")
+                    && matches!(caller.values[*src].kind, ValueKind::Binary { op: BinOp::Mul, .. }))
+        }));
+        assert!(
+            caller.blocks[entry].instrs.iter().any(|instr| {
+                matches!(instr, Instr::StoreIndex1D { val, .. }
+                    if matches!(caller.values[*val].kind, ValueKind::Load { ref var }
+                        if var.contains("__rr_sroa_ret_x")))
+            }),
+            "StoreIndex should consume the scalarized x temp, not the record-return call"
+        );
+        assert!(matches!(
+            caller.blocks[entry].term,
+            Terminator::Return(Some(ret))
+                if matches!(caller.values[ret].kind, ValueKind::Load { ref var }
+                    if var.contains("__rr_sroa_ret_y"))
+        ));
+        assert!(!caller.blocks[entry].instrs.iter().any(|instr| {
+            matches!(instr, Instr::Assign { src, .. }
+                if matches!(&caller.values[*src].kind, ValueKind::Call { callee, .. }
+                    if callee == "forward_scale_xy"))
+        }));
         assert!(crate::mir::verify::verify_ir(caller).is_ok());
     }
 
