@@ -887,7 +887,6 @@ my @clippy_allow_args = (
     '-A', 'clippy::ptr_arg',
     '-A', 'clippy::unnecessary_sort_by',
     '-A', 'clippy::while_let_loop',
-    '-A', 'clippy::manual_checked_ops',
     '-A', 'clippy::question_mark',
 );
 

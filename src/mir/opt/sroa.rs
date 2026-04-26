@@ -11,8 +11,10 @@ pub(super) struct SroaAnalysis {
 
 impl SroaAnalysis {
     pub(super) fn counts(&self) -> SroaAnalysisCounts {
-        let mut counts = SroaAnalysisCounts::default();
-        counts.candidates = self.candidates.len();
+        let mut counts = SroaAnalysisCounts {
+            candidates: self.candidates.len(),
+            ..SroaAnalysisCounts::default()
+        };
         for candidate in &self.candidates {
             match candidate.source {
                 SroaCandidateSource::RecordLit => counts.record_lits += 1,
