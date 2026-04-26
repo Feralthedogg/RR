@@ -85,6 +85,11 @@ literal helper cleanup later in the same emitted line.
 
 Tachyon uses a tiered budget model.
 
+The adaptive budget planner treats empty/no-MIR programs as zero-density
+programs. Their hot-operation density contributes `0` to the budget score, so
+`-O2` can still emit a stable helper-only artifact without dividing by an empty
+IR total.
+
 ### Tier A: Always
 
 Run low-cost, safe canonical passes on every eligible function.

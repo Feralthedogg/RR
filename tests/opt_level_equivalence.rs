@@ -1,6 +1,8 @@
 mod common;
 
-use common::{compile_rr, normalize, rscript_available, rscript_path, run_rscript};
+use common::{
+    compile_rr, normalize, rscript_available, rscript_path, run_compile_case, run_rscript,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -184,4 +186,31 @@ print(swapn(7))
             );
         }
     }
+}
+
+#[test]
+fn o2_empty_program_budget_density_uses_zero_fallback() {
+    let (ok, stdout, stderr) = run_compile_case(
+        "opt_level_equivalence",
+        "",
+        "empty_budget_case.rr",
+        "-O2",
+        &[("RR_MAX_FULL_OPT_IR", "300")],
+    );
+    assert!(
+        ok,
+        "empty program compile failed\nstdout:\n{}\nstderr:\n{}",
+        stdout, stderr
+    );
+    let log = format!("{}\n{}", stdout, stderr);
+    assert!(
+        log.contains("Synthesized 0 MIR functions"),
+        "empty program should exercise the no-MIR optimizer path:\n{}",
+        log
+    );
+    assert!(
+        log.contains("Budget: IR 0/"),
+        "empty program should keep a zero IR budget numerator:\n{}",
+        log
+    );
 }
