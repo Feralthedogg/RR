@@ -151,6 +151,7 @@ pub fn build_mir(src: &str) -> Option<FxHashMap<String, FnIR>> {
                 where_bounds: Vec::new(),
                 has_varargs: false,
                 ret_ty: None,
+                ret_ty_inferred: false,
                 body: rr::hir::def::HirBlock {
                     stmts: top_level_stmts,
                     span: rr::utils::Span::default(),

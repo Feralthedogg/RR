@@ -548,6 +548,9 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p "${{ matrix.artifact_dir }}"
+          cp Cargo.toml Cargo.toml.distbak
+          trap 'mv Cargo.toml.distbak Cargo.toml' EXIT
+          perl -0pi -e 's/members = \["\.", "fuzz"\]/members = ["."]/g' Cargo.toml
           "$HOME/.cargo/bin/dist" build \
             -t "${{ matrix.dist_target }}" \
             --artifacts=local \
@@ -731,6 +734,8 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
 
       - name: Install Static ISL Dependencies
         run: |
@@ -804,6 +809,8 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
 
       - name: Install Static ISL Dependencies
         run: |
@@ -849,6 +856,8 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
 
       - name: Install Static ISL Dependencies
         run: |

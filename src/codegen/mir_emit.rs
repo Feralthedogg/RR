@@ -9,7 +9,7 @@ use rustc_hash::FxHashSet;
 
 #[path = "mir_emit/emitter_state.rs"]
 mod emitter_state;
-pub(crate) use self::emitter_state::*;
+pub use self::emitter_state::*;
 #[path = "mir_emit/function_emit.rs"]
 mod function_emit;
 #[path = "mir_emit/post_emit_rewrite_hooks.rs"]

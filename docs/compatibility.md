@@ -52,6 +52,9 @@ while the other packages in this line are the main direct call/interop surface.
 - RR 2.0's stable Rust library API is limited to `compiler`, `error`, `pkg`,
   `runtime`, and `Span`; HIR, MIR, syntax, type-checking, and codegen internals
   are private implementation details.
+- The crate-level `fuzz-internals` feature is reserved for the in-tree fuzz
+  harness so CI can exercise parser, HIR, MIR, type-checking, and codegen stages
+  directly without widening the default stable Rust API.
 - Source-visible RR function and variable names are preserved where possible in
   emitted R. Generated helper names and layout are internal and may change.
 - R-style source forms are first-class:

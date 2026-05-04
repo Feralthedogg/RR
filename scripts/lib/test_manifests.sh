@@ -98,6 +98,7 @@ RR_TIER0_FAST_TESTS=(
   type_solver_nested_generic
   lowering_pipe_try_match
   compiler_hardcode_guard
+  fuzz_internal_feature_contract
   compiler_parallel_defaults
   compiler_parallel_determinism
   compiler_parallel_equivalence

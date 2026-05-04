@@ -14,4 +14,4 @@ mod runtime_validation;
 pub(crate) use self::runtime_validation::*;
 #[path = "semantics/program_validation.rs"]
 mod program_validation;
-pub(crate) use self::program_validation::*;
+pub use self::program_validation::*;

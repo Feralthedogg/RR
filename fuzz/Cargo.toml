@@ -13,6 +13,7 @@ rustc-hash = "2"
 
 [dependencies.RR]
 path = ".."
+features = ["fuzz-internals"]
 
 [[bin]]
 name = "parser"
