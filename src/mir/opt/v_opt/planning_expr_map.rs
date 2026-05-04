@@ -1,12 +1,19 @@
 //! Expr-map and scatter-plan matchers.
-
 use super::*;
+
+#[path = "planning_expr_map/cube_slice.rs"]
+mod cube_slice;
+
+pub(crate) use self::cube_slice::{CubeSliceIndexInfo, match_cube_slice_index_info};
 
 pub(crate) fn match_expr_map_3d(
     fn_ir: &FnIR,
     lp: &LoopInfo,
     user_call_whitelist: &FxHashSet<String>,
 ) -> Option<VectorPlan> {
+    if loop_has_inner_branch(fn_ir, lp) {
+        return None;
+    }
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
     let start = iv.init_val;
@@ -17,7 +24,10 @@ pub(crate) fn match_expr_map_3d(
         for instr in &fn_ir.blocks[bid].instrs {
             match instr {
                 Instr::Assign { .. } => {}
-                Instr::Eval { .. } | Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. } => {
+                Instr::Eval { .. }
+                | Instr::StoreIndex1D { .. }
+                | Instr::StoreIndex2D { .. }
+                | Instr::UnsafeRBlock { .. } => {
                     return None;
                 }
                 Instr::StoreIndex3D {
@@ -32,7 +42,13 @@ pub(crate) fn match_expr_map_3d(
                         continue;
                     };
                     let expr = resolve_load_alias_value(fn_ir, *val);
-                    if !is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false) {
+                    if !is_vectorizable_expr(
+                        fn_ir,
+                        expr,
+                        iv_phi,
+                        lp,
+                        crate::mir::opt::v_opt::analysis::RELAXED_VECTOR_EXPR_POLICY,
+                    ) {
                         continue;
                     }
                     if expr_has_non_vector_safe_call_in_vector_context(
@@ -166,7 +182,13 @@ pub(crate) fn validate_expr_map_rhs(
 ) -> bool {
     let expr_iv_dependent = expr_has_iv_dependency(fn_ir, expr, iv_phi);
     let expr_ok = if expr_iv_dependent {
-        is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false)
+        is_vectorizable_expr(
+            fn_ir,
+            expr,
+            iv_phi,
+            lp,
+            crate::mir::opt::v_opt::analysis::RELAXED_VECTOR_EXPR_POLICY,
+        )
     } else {
         is_loop_invariant_scalar_expr(fn_ir, expr, iv_phi, user_call_whitelist)
     };
@@ -346,6 +368,9 @@ pub(crate) fn match_scatter_expr_map(
     lp: &LoopInfo,
     user_call_whitelist: &FxHashSet<String>,
 ) -> Option<VectorPlan> {
+    if loop_has_inner_branch(fn_ir, lp) {
+        return None;
+    }
     let trace_enabled = vectorize_trace_enabled();
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
@@ -364,7 +389,9 @@ pub(crate) fn match_scatter_expr_map(
                     }
                     return None;
                 }
-                Instr::StoreIndex2D { .. } | Instr::StoreIndex3D { .. } => {
+                Instr::StoreIndex2D { .. }
+                | Instr::StoreIndex3D { .. }
+                | Instr::UnsafeRBlock { .. } => {
                     if trace_enabled {
                         eprintln!(
                             "   [vec-scatter] {} reject: saw multi-dimensional store in loop body",
@@ -452,9 +479,19 @@ pub(crate) fn match_scatter_expr_map(
         }
         return None;
     }
-    if !is_vectorizable_expr(fn_ir, idx, iv_phi, lp, true, false)
-        || !is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false)
-    {
+    if !is_vectorizable_expr(
+        fn_ir,
+        idx,
+        iv_phi,
+        lp,
+        crate::mir::opt::v_opt::analysis::RELAXED_VECTOR_EXPR_POLICY,
+    ) || !is_vectorizable_expr(
+        fn_ir,
+        expr,
+        iv_phi,
+        lp,
+        crate::mir::opt::v_opt::analysis::RELAXED_VECTOR_EXPR_POLICY,
+    ) {
         if trace_enabled {
             eprintln!(
                 "   [vec-scatter] {} reject: idx/expr not vectorizable (idx={:?} expr={:?})",
@@ -528,6 +565,9 @@ pub(crate) fn match_scatter_expr_map_3d(
     lp: &LoopInfo,
     user_call_whitelist: &FxHashSet<String>,
 ) -> Option<VectorPlan> {
+    if loop_has_inner_branch(fn_ir, lp) {
+        return None;
+    }
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
     let trace_enabled = vectorize_trace_enabled();
@@ -554,7 +594,10 @@ pub(crate) fn match_scatter_expr_map_3d(
         for instr in &fn_ir.blocks[bid].instrs {
             match instr {
                 Instr::Assign { .. } => {}
-                Instr::Eval { .. } | Instr::StoreIndex1D { .. } | Instr::StoreIndex2D { .. } => {
+                Instr::Eval { .. }
+                | Instr::StoreIndex1D { .. }
+                | Instr::StoreIndex2D { .. }
+                | Instr::UnsafeRBlock { .. } => {
                     return None;
                 }
                 Instr::StoreIndex3D {
@@ -645,10 +688,22 @@ pub(crate) fn match_scatter_expr_map_3d(
         || !idx_reads
             .iter()
             .all(|idx| expr_has_iv_dependency(fn_ir, *idx, iv_phi))
-        || !idx_reads
-            .iter()
-            .all(|idx| is_vectorizable_expr(fn_ir, *idx, iv_phi, lp, true, false))
-        || !is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false)
+        || !idx_reads.iter().all(|idx| {
+            is_vectorizable_expr(
+                fn_ir,
+                *idx,
+                iv_phi,
+                lp,
+                crate::mir::opt::v_opt::analysis::RELAXED_VECTOR_EXPR_POLICY,
+            )
+        })
+        || !is_vectorizable_expr(
+            fn_ir,
+            expr,
+            iv_phi,
+            lp,
+            crate::mir::opt::v_opt::analysis::RELAXED_VECTOR_EXPR_POLICY,
+        )
     {
         return None;
     }
@@ -715,6 +770,9 @@ pub(crate) fn match_cube_slice_expr_map(
     lp: &LoopInfo,
     user_call_whitelist: &FxHashSet<String>,
 ) -> Option<VectorPlan> {
+    if loop_has_inner_branch(fn_ir, lp) {
+        return None;
+    }
     let iv = lp.iv.as_ref()?;
     let iv_phi = iv.phi_val;
     let start = iv.init_val;
@@ -735,7 +793,9 @@ pub(crate) fn match_cube_slice_expr_map(
                     }
                     return None;
                 }
-                Instr::StoreIndex2D { .. } | Instr::StoreIndex3D { .. } => {
+                Instr::StoreIndex2D { .. }
+                | Instr::StoreIndex3D { .. }
+                | Instr::UnsafeRBlock { .. } => {
                     if trace_enabled {
                         eprintln!(
                             "   [vec-cube-slice] {} reject: saw multi-dimensional store in loop body",
@@ -773,7 +833,13 @@ pub(crate) fn match_cube_slice_expr_map(
 
     let expr_iv_dependent = expr_has_iv_dependency(fn_ir, expr, iv_phi);
     let expr_ok = if expr_iv_dependent {
-        is_vectorizable_expr(fn_ir, expr, iv_phi, lp, true, false)
+        is_vectorizable_expr(
+            fn_ir,
+            expr,
+            iv_phi,
+            lp,
+            crate::mir::opt::v_opt::analysis::RELAXED_VECTOR_EXPR_POLICY,
+        )
     } else {
         is_loop_invariant_scalar_expr(fn_ir, expr, iv_phi, user_call_whitelist)
     };
@@ -824,124 +890,5 @@ pub(crate) fn match_cube_slice_expr_map(
         start,
         end,
         shadow_vars,
-    })
-}
-
-pub(crate) struct CubeSliceIndexInfo {
-    face: ValueId,
-    row: ValueId,
-    size: ValueId,
-    ctx: Option<ValueId>,
-}
-
-pub(crate) fn match_cube_slice_index_info(
-    fn_ir: &FnIR,
-    lp: &LoopInfo,
-    user_call_whitelist: &FxHashSet<String>,
-    idx: ValueId,
-    iv_phi: ValueId,
-) -> Option<CubeSliceIndexInfo> {
-    let trace_enabled = vectorize_trace_enabled();
-    let idx_root = resolve_match_alias_value(fn_ir, idx);
-    let ValueKind::Call {
-        callee,
-        args,
-        names,
-    } = &fn_ir.values[idx_root].kind
-    else {
-        if trace_enabled {
-            eprintln!(
-                "   [vec-cube-slice] {} reject: store index is not call ({:?})",
-                fn_ir.name, fn_ir.values[idx_root].kind
-            );
-        }
-        return None;
-    };
-    if callee != "rr_idx_cube_vec_i" || (args.len() != 4 && args.len() != 5) {
-        if trace_enabled {
-            eprintln!(
-                "   [vec-cube-slice] {} reject: index call shape mismatch (callee={}, arity={})",
-                fn_ir.name,
-                callee,
-                args.len()
-            );
-        }
-        return None;
-    }
-    if names.iter().any(|n| n.is_some()) {
-        if trace_enabled {
-            eprintln!(
-                "   [vec-cube-slice] {} reject: named args in rr_idx_cube_vec_i",
-                fn_ir.name
-            );
-        }
-        return None;
-    }
-
-    let y_arg = args[2];
-    let y_ok = is_iv_equivalent(fn_ir, y_arg, iv_phi)
-        || is_origin_var_iv_alias_in_loop(fn_ir, lp, y_arg, iv_phi)
-        || is_floor_like_iv_expr(
-            fn_ir,
-            y_arg,
-            iv_phi,
-            &mut FxHashSet::default(),
-            &mut FxHashSet::default(),
-            0,
-        );
-    if !y_ok {
-        if trace_enabled {
-            eprintln!(
-                "   [vec-cube-slice] {} reject: y arg is not IV-equivalent (iv={:?}, iv_origin={:?}, y={:?}, y_origin={:?})",
-                fn_ir.name,
-                fn_ir.values[iv_phi].kind,
-                induction_origin_var(fn_ir, iv_phi),
-                fn_ir.values[y_arg].kind,
-                fn_ir.values[canonical_value(fn_ir, y_arg)].origin_var
-            );
-        }
-        return None;
-    }
-
-    for arg in [args[0], args[1], args[3]] {
-        if expr_has_iv_dependency(fn_ir, arg, iv_phi)
-            || !is_loop_invariant_scalar_expr(fn_ir, arg, iv_phi, user_call_whitelist)
-        {
-            if trace_enabled {
-                eprintln!(
-                    "   [vec-cube-slice] {} reject: non-invariant cube arg ({:?}) dep={}",
-                    fn_ir.name,
-                    fn_ir.values[arg].kind,
-                    expr_has_iv_dependency(fn_ir, arg, iv_phi)
-                );
-            }
-            return None;
-        }
-    }
-    let ctx = if args.len() == 5 {
-        let arg = args[4];
-        if expr_has_iv_dependency(fn_ir, arg, iv_phi)
-            || !is_loop_invariant_scalar_expr(fn_ir, arg, iv_phi, user_call_whitelist)
-        {
-            if trace_enabled {
-                eprintln!(
-                    "   [vec-cube-slice] {} reject: non-invariant cube ctx arg ({:?}) dep={}",
-                    fn_ir.name,
-                    fn_ir.values[arg].kind,
-                    expr_has_iv_dependency(fn_ir, arg, iv_phi)
-                );
-            }
-            return None;
-        }
-        Some(arg)
-    } else {
-        None
-    };
-
-    Some(CubeSliceIndexInfo {
-        face: args[0],
-        row: args[1],
-        size: args[3],
-        ctx,
     })
 }

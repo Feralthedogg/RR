@@ -1,955 +1,138 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn datasets_package_loads_refine_known_dataframe_shapes() {
+pub(crate) fn datasets_package_loads_refine_known_dataframe_shapes() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
     fn_ir.entry = b0;
     fn_ir.body_head = b0;
 
-    let iris = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::iris".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let mtcars = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::mtcars".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let airquality = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::airquality".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let tooth_growth = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::ToothGrowth".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let co2 = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::CO2".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let us_arrests = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::USArrests".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let cars = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::cars".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let pressure = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::pressure".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let faithful = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::faithful".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let women = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::women".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let bod = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::BOD".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let attitude = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::attitude".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let plant_growth = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::PlantGrowth".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let insect_sprays = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::InsectSprays".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let sleep = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::sleep".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let orange = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::Orange".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let rock = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::rock".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let trees = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::trees".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let esoph = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::esoph".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let stackloss = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::stackloss".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let warpbreaks = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::warpbreaks".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let quakes = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::quakes".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let life_cycle_savings = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::LifeCycleSavings".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let chick_weight = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::ChickWeight".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let dnase = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::DNase".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let formaldehyde = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::Formaldehyde".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let indometh = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::Indometh".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let loblolly = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::Loblolly".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let puromycin = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::Puromycin".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let us_judge_ratings = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::USJudgeRatings".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let anscombe = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::anscombe".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let attenu = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::attenu".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let chickwts = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::chickwts".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let infert = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::infert".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let longley = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::longley".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let morley = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::morley".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let npk = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::npk".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let swiss = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::swiss".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let species_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Species".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let mpg_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("mpg".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let wind_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Wind".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let supp_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("supp".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let uptake_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("uptake".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let murder_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Murder".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let speed_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("speed".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let pressure_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("pressure".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let eruptions_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("eruptions".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let weight_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("weight".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let demand_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("demand".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let rating_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("rating".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let group_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("group".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let count_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("count".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let extra_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("extra".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let tree_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Tree".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let area_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("area".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let girth_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Girth".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let agegp_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("agegp".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let stack_loss_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("stack.loss".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let wool_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("wool".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let mag_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("mag".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let sr_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("sr".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let chick_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Chick".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let run_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Run".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let carb_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("carb".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let subject_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Subject".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let seed_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Seed".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let rate_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("rate".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let cont_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("CONT".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let x1_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("x1".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let station_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("station".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let feed_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("feed".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let education_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("education".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let year_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Year".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let morley_speed_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Speed".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let yield_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("yield".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let fertility_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Fertility".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let species = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![iris, species_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let mpg = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![mtcars, mpg_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let wind = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![airquality, wind_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let supp = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![tooth_growth, supp_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let uptake = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![co2, uptake_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let murder = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![us_arrests, murder_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let speed = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![cars, speed_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let pressure_col = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![pressure, pressure_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let eruptions = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![faithful, eruptions_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let weight = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![women, weight_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let demand = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![bod, demand_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let rating = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![attitude, rating_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let pg_group = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![plant_growth, group_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let spray_count = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![insect_sprays, count_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let sleep_extra = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![sleep, extra_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let orange_tree = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![orange, tree_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let rock_area = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![rock, area_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let tree_girth = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![trees, girth_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let esoph_agegp = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![esoph, agegp_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let stack_loss = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![stackloss, stack_loss_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let warpbreaks_wool = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![warpbreaks, wool_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let quake_mag = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![quakes, mag_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let savings_sr = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![life_cycle_savings, sr_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let chick_weight_chick = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![chick_weight, chick_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let dnase_run = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![dnase, run_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let formaldehyde_carb = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![formaldehyde, carb_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let indometh_subject = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![indometh, subject_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let loblolly_seed = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![loblolly, seed_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let puromycin_rate = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![puromycin, rate_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let judge_cont = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![us_judge_ratings, cont_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let anscombe_x1 = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![anscombe, x1_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let attenu_station = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![attenu, station_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let chickwts_feed = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![chickwts, feed_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let infert_education = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![infert, education_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let longley_year = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![longley, year_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let morley_speed = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![morley, morley_speed_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let npk_yield = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![npk, yield_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let swiss_fertility = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![swiss, fertility_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let iris_names = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "names".to_string(),
-            args: vec![iris],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let mtcars_colnames = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "colnames".to_string(),
-            args: vec![mtcars],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let co2_colnames = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "colnames".to_string(),
-            args: vec![co2],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
+    let iris = add_load(&mut fn_ir, "datasets::iris");
+    let mtcars = add_load(&mut fn_ir, "datasets::mtcars");
+    let airquality = add_load(&mut fn_ir, "datasets::airquality");
+    let tooth_growth = add_load(&mut fn_ir, "datasets::ToothGrowth");
+    let co2 = add_load(&mut fn_ir, "datasets::CO2");
+    let us_arrests = add_load(&mut fn_ir, "datasets::USArrests");
+    let cars = add_load(&mut fn_ir, "datasets::cars");
+    let pressure = add_load(&mut fn_ir, "datasets::pressure");
+    let faithful = add_load(&mut fn_ir, "datasets::faithful");
+    let women = add_load(&mut fn_ir, "datasets::women");
+    let bod = add_load(&mut fn_ir, "datasets::BOD");
+    let attitude = add_load(&mut fn_ir, "datasets::attitude");
+    let plant_growth = add_load(&mut fn_ir, "datasets::PlantGrowth");
+    let insect_sprays = add_load(&mut fn_ir, "datasets::InsectSprays");
+    let sleep = add_load(&mut fn_ir, "datasets::sleep");
+    let orange = add_load(&mut fn_ir, "datasets::Orange");
+    let rock = add_load(&mut fn_ir, "datasets::rock");
+    let trees = add_load(&mut fn_ir, "datasets::trees");
+    let esoph = add_load(&mut fn_ir, "datasets::esoph");
+    let stackloss = add_load(&mut fn_ir, "datasets::stackloss");
+    let warpbreaks = add_load(&mut fn_ir, "datasets::warpbreaks");
+    let quakes = add_load(&mut fn_ir, "datasets::quakes");
+    let life_cycle_savings = add_load(&mut fn_ir, "datasets::LifeCycleSavings");
+    let chick_weight = add_load(&mut fn_ir, "datasets::ChickWeight");
+    let dnase = add_load(&mut fn_ir, "datasets::DNase");
+    let formaldehyde = add_load(&mut fn_ir, "datasets::Formaldehyde");
+    let indometh = add_load(&mut fn_ir, "datasets::Indometh");
+    let loblolly = add_load(&mut fn_ir, "datasets::Loblolly");
+    let puromycin = add_load(&mut fn_ir, "datasets::Puromycin");
+    let us_judge_ratings = add_load(&mut fn_ir, "datasets::USJudgeRatings");
+    let anscombe = add_load(&mut fn_ir, "datasets::anscombe");
+    let attenu = add_load(&mut fn_ir, "datasets::attenu");
+    let chickwts = add_load(&mut fn_ir, "datasets::chickwts");
+    let infert = add_load(&mut fn_ir, "datasets::infert");
+    let longley = add_load(&mut fn_ir, "datasets::longley");
+    let morley = add_load(&mut fn_ir, "datasets::morley");
+    let npk = add_load(&mut fn_ir, "datasets::npk");
+    let swiss = add_load(&mut fn_ir, "datasets::swiss");
+    let species_name = add_str(&mut fn_ir, "Species");
+    let mpg_name = add_str(&mut fn_ir, "mpg");
+    let wind_name = add_str(&mut fn_ir, "Wind");
+    let supp_name = add_str(&mut fn_ir, "supp");
+    let uptake_name = add_str(&mut fn_ir, "uptake");
+    let murder_name = add_str(&mut fn_ir, "Murder");
+    let speed_name = add_str(&mut fn_ir, "speed");
+    let pressure_name = add_str(&mut fn_ir, "pressure");
+    let eruptions_name = add_str(&mut fn_ir, "eruptions");
+    let weight_name = add_str(&mut fn_ir, "weight");
+    let demand_name = add_str(&mut fn_ir, "demand");
+    let rating_name = add_str(&mut fn_ir, "rating");
+    let group_name = add_str(&mut fn_ir, "group");
+    let count_name = add_str(&mut fn_ir, "count");
+    let extra_name = add_str(&mut fn_ir, "extra");
+    let tree_name = add_str(&mut fn_ir, "Tree");
+    let area_name = add_str(&mut fn_ir, "area");
+    let girth_name = add_str(&mut fn_ir, "Girth");
+    let agegp_name = add_str(&mut fn_ir, "agegp");
+    let stack_loss_name = add_str(&mut fn_ir, "stack.loss");
+    let wool_name = add_str(&mut fn_ir, "wool");
+    let mag_name = add_str(&mut fn_ir, "mag");
+    let sr_name = add_str(&mut fn_ir, "sr");
+    let chick_name = add_str(&mut fn_ir, "Chick");
+    let run_name = add_str(&mut fn_ir, "Run");
+    let carb_name = add_str(&mut fn_ir, "carb");
+    let subject_name = add_str(&mut fn_ir, "Subject");
+    let seed_name = add_str(&mut fn_ir, "Seed");
+    let rate_name = add_str(&mut fn_ir, "rate");
+    let cont_name = add_str(&mut fn_ir, "CONT");
+    let x1_name = add_str(&mut fn_ir, "x1");
+    let station_name = add_str(&mut fn_ir, "station");
+    let feed_name = add_str(&mut fn_ir, "feed");
+    let education_name = add_str(&mut fn_ir, "education");
+    let year_name = add_str(&mut fn_ir, "Year");
+    let morley_speed_name = add_str(&mut fn_ir, "Speed");
+    let yield_name = add_str(&mut fn_ir, "yield");
+    let fertility_name = add_str(&mut fn_ir, "Fertility");
+    let species = add_call(&mut fn_ir, "rr_field_get", vec![iris, species_name]);
+    let mpg = add_call(&mut fn_ir, "rr_field_get", vec![mtcars, mpg_name]);
+    let wind = add_call(&mut fn_ir, "rr_field_get", vec![airquality, wind_name]);
+    let supp = add_call(&mut fn_ir, "rr_field_get", vec![tooth_growth, supp_name]);
+    let uptake = add_call(&mut fn_ir, "rr_field_get", vec![co2, uptake_name]);
+    let murder = add_call(&mut fn_ir, "rr_field_get", vec![us_arrests, murder_name]);
+    let speed = add_call(&mut fn_ir, "rr_field_get", vec![cars, speed_name]);
+    let pressure_col = add_call(&mut fn_ir, "rr_field_get", vec![pressure, pressure_name]);
+    let eruptions = add_call(&mut fn_ir, "rr_field_get", vec![faithful, eruptions_name]);
+    let weight = add_call(&mut fn_ir, "rr_field_get", vec![women, weight_name]);
+    let demand = add_call(&mut fn_ir, "rr_field_get", vec![bod, demand_name]);
+    let rating = add_call(&mut fn_ir, "rr_field_get", vec![attitude, rating_name]);
+    let pg_group = add_call(&mut fn_ir, "rr_field_get", vec![plant_growth, group_name]);
+    let spray_count = add_call(&mut fn_ir, "rr_field_get", vec![insect_sprays, count_name]);
+    let sleep_extra = add_call(&mut fn_ir, "rr_field_get", vec![sleep, extra_name]);
+    let orange_tree = add_call(&mut fn_ir, "rr_field_get", vec![orange, tree_name]);
+    let rock_area = add_call(&mut fn_ir, "rr_field_get", vec![rock, area_name]);
+    let tree_girth = add_call(&mut fn_ir, "rr_field_get", vec![trees, girth_name]);
+    let esoph_agegp = add_call(&mut fn_ir, "rr_field_get", vec![esoph, agegp_name]);
+    let stack_loss = add_call(&mut fn_ir, "rr_field_get", vec![stackloss, stack_loss_name]);
+    let warpbreaks_wool = add_call(&mut fn_ir, "rr_field_get", vec![warpbreaks, wool_name]);
+    let quake_mag = add_call(&mut fn_ir, "rr_field_get", vec![quakes, mag_name]);
+    let savings_sr = add_call(
+        &mut fn_ir,
+        "rr_field_get",
+        vec![life_cycle_savings, sr_name],
+    );
+    let chick_weight_chick = add_call(&mut fn_ir, "rr_field_get", vec![chick_weight, chick_name]);
+    let dnase_run = add_call(&mut fn_ir, "rr_field_get", vec![dnase, run_name]);
+    let formaldehyde_carb = add_call(&mut fn_ir, "rr_field_get", vec![formaldehyde, carb_name]);
+    let indometh_subject = add_call(&mut fn_ir, "rr_field_get", vec![indometh, subject_name]);
+    let loblolly_seed = add_call(&mut fn_ir, "rr_field_get", vec![loblolly, seed_name]);
+    let puromycin_rate = add_call(&mut fn_ir, "rr_field_get", vec![puromycin, rate_name]);
+    let judge_cont = add_call(
+        &mut fn_ir,
+        "rr_field_get",
+        vec![us_judge_ratings, cont_name],
+    );
+    let anscombe_x1 = add_call(&mut fn_ir, "rr_field_get", vec![anscombe, x1_name]);
+    let attenu_station = add_call(&mut fn_ir, "rr_field_get", vec![attenu, station_name]);
+    let chickwts_feed = add_call(&mut fn_ir, "rr_field_get", vec![chickwts, feed_name]);
+    let infert_education = add_call(&mut fn_ir, "rr_field_get", vec![infert, education_name]);
+    let longley_year = add_call(&mut fn_ir, "rr_field_get", vec![longley, year_name]);
+    let morley_speed = add_call(&mut fn_ir, "rr_field_get", vec![morley, morley_speed_name]);
+    let npk_yield = add_call(&mut fn_ir, "rr_field_get", vec![npk, yield_name]);
+    let swiss_fertility = add_call(&mut fn_ir, "rr_field_get", vec![swiss, fertility_name]);
+    let iris_names = add_call(&mut fn_ir, "names", vec![iris]);
+    let mtcars_colnames = add_call(&mut fn_ir, "colnames", vec![mtcars]);
+    let co2_colnames = add_call(&mut fn_ir, "colnames", vec![co2]);
     fn_ir.blocks[b0].term = Terminator::Return(Some(mpg));
 
     let mut all = FxHashMap::default();
@@ -1174,132 +357,27 @@ fn datasets_package_loads_refine_known_dataframe_shapes() {
 }
 
 #[test]
-fn datasets_package_matrix_loads_preserve_known_matrix_dims() {
+pub(crate) fn datasets_package_matrix_loads_preserve_known_matrix_dims() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
     fn_ir.entry = b0;
     fn_ir.body_head = b0;
 
-    let volcano = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::volcano".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let state_x77 = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::state.x77".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let us_personal_expenditure = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::USPersonalExpenditure".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let world_phones = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::WorldPhones".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let eu_stock_markets = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::EuStockMarkets".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let va_deaths = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::VADeaths".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
+    let volcano = add_load(&mut fn_ir, "datasets::volcano");
+    let state_x77 = add_load(&mut fn_ir, "datasets::state.x77");
+    let us_personal_expenditure = add_load(&mut fn_ir, "datasets::USPersonalExpenditure");
+    let world_phones = add_load(&mut fn_ir, "datasets::WorldPhones");
+    let eu_stock_markets = add_load(&mut fn_ir, "datasets::EuStockMarkets");
+    let va_deaths = add_load(&mut fn_ir, "datasets::VADeaths");
 
-    let volcano_rows = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "nrow".to_string(),
-            args: vec![volcano],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let volcano_cols = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "ncol".to_string(),
-            args: vec![volcano],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let state_cols = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "ncol".to_string(),
-            args: vec![state_x77],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let expenditure_rows = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "nrow".to_string(),
-            args: vec![us_personal_expenditure],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let world_phones_cols = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "ncol".to_string(),
-            args: vec![world_phones],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let stock_rows = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "nrow".to_string(),
-            args: vec![eu_stock_markets],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let va_deaths_cols = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "ncol".to_string(),
-            args: vec![va_deaths],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
+    let volcano_rows = add_call(&mut fn_ir, "nrow", vec![volcano]);
+    let volcano_cols = add_call(&mut fn_ir, "ncol", vec![volcano]);
+    let state_cols = add_call(&mut fn_ir, "ncol", vec![state_x77]);
+    let expenditure_rows = add_call(&mut fn_ir, "nrow", vec![us_personal_expenditure]);
+    let world_phones_cols = add_call(&mut fn_ir, "ncol", vec![world_phones]);
+    let stock_rows = add_call(&mut fn_ir, "nrow", vec![eu_stock_markets]);
+    let va_deaths_cols = add_call(&mut fn_ir, "ncol", vec![va_deaths]);
     fn_ir.blocks[b0].term = Terminator::Return(Some(volcano_rows));
 
     let mut all = FxHashMap::default();
@@ -1361,317 +439,51 @@ fn datasets_package_matrix_loads_preserve_known_matrix_dims() {
 }
 
 #[test]
-fn datasets_package_vector_loads_refine_known_vector_shapes() {
+pub(crate) fn datasets_package_vector_loads_refine_known_vector_shapes() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
     fn_ir.entry = b0;
     fn_ir.body_head = b0;
 
-    let air_passengers = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::AirPassengers".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let johnson_johnson = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::JohnsonJohnson".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let nile = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::Nile".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let lynx = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::lynx".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let nottem = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::nottem".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let sunspot_year = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::sunspot.year".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let precip = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::precip".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let islands = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::islands".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let state_area = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::state.area".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let state_abb = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::state.abb".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let state_name = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::state.name".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let state_region = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::state.region".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let state_division = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::state.division".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let euro = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::euro".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let stack_loss_series = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::stack.loss".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let sunspot_m2014 = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::sunspot.m2014".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let sunspot_month = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::sunspot.month".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let lake_huron = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::LakeHuron".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let lh = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::lh".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let presidents = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::presidents".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let airmiles = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::airmiles".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let austres = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::austres".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let co2_series = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::co2".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let discoveries = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::discoveries".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let fdeaths = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::fdeaths".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let ldeaths = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::ldeaths".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let mdeaths = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::mdeaths".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let nhtemp = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::nhtemp".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let sunspots = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::sunspots".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let treering = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::treering".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let uspop = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::uspop".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let rivers = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::rivers".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let uk_driver_deaths = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::UKDriverDeaths".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let ukgas = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::UKgas".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let us_acc_deaths = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::USAccDeaths".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let wwwusage = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::WWWusage".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let eurodist = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::eurodist".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let uscities_d = fn_ir.add_value(
-        ValueKind::Load {
-            var: "datasets::UScitiesD".to_string(),
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
+    let air_passengers = add_load(&mut fn_ir, "datasets::AirPassengers");
+    let johnson_johnson = add_load(&mut fn_ir, "datasets::JohnsonJohnson");
+    let nile = add_load(&mut fn_ir, "datasets::Nile");
+    let lynx = add_load(&mut fn_ir, "datasets::lynx");
+    let nottem = add_load(&mut fn_ir, "datasets::nottem");
+    let sunspot_year = add_load(&mut fn_ir, "datasets::sunspot.year");
+    let precip = add_load(&mut fn_ir, "datasets::precip");
+    let islands = add_load(&mut fn_ir, "datasets::islands");
+    let state_area = add_load(&mut fn_ir, "datasets::state.area");
+    let state_abb = add_load(&mut fn_ir, "datasets::state.abb");
+    let state_name = add_load(&mut fn_ir, "datasets::state.name");
+    let state_region = add_load(&mut fn_ir, "datasets::state.region");
+    let state_division = add_load(&mut fn_ir, "datasets::state.division");
+    let euro = add_load(&mut fn_ir, "datasets::euro");
+    let stack_loss_series = add_load(&mut fn_ir, "datasets::stack.loss");
+    let sunspot_m2014 = add_load(&mut fn_ir, "datasets::sunspot.m2014");
+    let sunspot_month = add_load(&mut fn_ir, "datasets::sunspot.month");
+    let lake_huron = add_load(&mut fn_ir, "datasets::LakeHuron");
+    let lh = add_load(&mut fn_ir, "datasets::lh");
+    let presidents = add_load(&mut fn_ir, "datasets::presidents");
+    let airmiles = add_load(&mut fn_ir, "datasets::airmiles");
+    let austres = add_load(&mut fn_ir, "datasets::austres");
+    let co2_series = add_load(&mut fn_ir, "datasets::co2");
+    let discoveries = add_load(&mut fn_ir, "datasets::discoveries");
+    let fdeaths = add_load(&mut fn_ir, "datasets::fdeaths");
+    let ldeaths = add_load(&mut fn_ir, "datasets::ldeaths");
+    let mdeaths = add_load(&mut fn_ir, "datasets::mdeaths");
+    let nhtemp = add_load(&mut fn_ir, "datasets::nhtemp");
+    let sunspots = add_load(&mut fn_ir, "datasets::sunspots");
+    let treering = add_load(&mut fn_ir, "datasets::treering");
+    let uspop = add_load(&mut fn_ir, "datasets::uspop");
+    let rivers = add_load(&mut fn_ir, "datasets::rivers");
+    let uk_driver_deaths = add_load(&mut fn_ir, "datasets::UKDriverDeaths");
+    let ukgas = add_load(&mut fn_ir, "datasets::UKgas");
+    let us_acc_deaths = add_load(&mut fn_ir, "datasets::USAccDeaths");
+    let wwwusage = add_load(&mut fn_ir, "datasets::WWWusage");
+    let eurodist = add_load(&mut fn_ir, "datasets::eurodist");
+    let uscities_d = add_load(&mut fn_ir, "datasets::UScitiesD");
     fn_ir.blocks[b0].term = Terminator::Return(Some(air_passengers));
 
     let mut all = FxHashMap::default();

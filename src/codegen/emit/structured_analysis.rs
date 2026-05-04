@@ -1,7 +1,7 @@
 use super::*;
 
 impl RBackend {
-    pub(super) fn try_emit_full_range_conditional_loop_sequence(
+    pub(crate) fn try_emit_full_range_conditional_loop_sequence(
         &mut self,
         items: &[StructuredBlock],
         fn_ir: &FnIR,
@@ -93,7 +93,7 @@ impl RBackend {
         Some(2)
     }
 
-    pub(super) fn extract_full_range_loop_guard(
+    pub(crate) fn extract_full_range_loop_guard(
         &self,
         cond: usize,
         expected_idx_var: &str,
@@ -123,7 +123,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn extract_loop_index_var(
+    pub(crate) fn extract_loop_index_var(
         &self,
         value_id: usize,
         values: &[Value],
@@ -139,7 +139,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn extract_conditional_loop_shape(
+    pub(crate) fn extract_conditional_loop_shape(
         &self,
         body: &StructuredBlock,
     ) -> Option<(usize, usize, usize, usize)> {
@@ -163,7 +163,7 @@ impl RBackend {
         Some((*cond, then_bb, else_bb, *incr_bb))
     }
 
-    pub(super) fn single_basic_block(&self, node: &StructuredBlock) -> Option<usize> {
+    pub(crate) fn single_basic_block(&self, node: &StructuredBlock) -> Option<usize> {
         match node {
             StructuredBlock::BasicBlock(bb) => Some(*bb),
             StructuredBlock::Sequence(items) if items.len() == 1 => {
@@ -173,7 +173,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn extract_conditional_loop_store(
+    pub(crate) fn extract_conditional_loop_store(
         &self,
         bb: usize,
         idx_var: &str,
@@ -205,7 +205,7 @@ impl RBackend {
         Some((dest_var, *val))
     }
 
-    pub(super) fn value_matches_loop_index(
+    pub(crate) fn value_matches_loop_index(
         &self,
         value_id: usize,
         idx_var: &str,
@@ -224,7 +224,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn loop_increment_matches(&self, bb: usize, idx_var: &str, fn_ir: &FnIR) -> bool {
+    pub(crate) fn loop_increment_matches(&self, bb: usize, idx_var: &str, fn_ir: &FnIR) -> bool {
         let block = &fn_ir.blocks[bb];
         let [Instr::Assign { dst, src, .. }] = block.instrs.as_slice() else {
             return false;
@@ -255,7 +255,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn known_small_positive_scalar(
+    pub(crate) fn known_small_positive_scalar(
         &self,
         value_id: usize,
         values: &[Value],
@@ -282,7 +282,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn extract_scalar_loop_index_context_from_init_bb(
+    pub(crate) fn extract_scalar_loop_index_context_from_init_bb(
         &self,
         init_bb: usize,
         cond: usize,
@@ -330,7 +330,7 @@ impl RBackend {
         })
     }
 
-    pub(super) fn extract_scalar_loop_index_context_from_live_binding(
+    pub(crate) fn extract_scalar_loop_index_context_from_live_binding(
         &self,
         cond: usize,
         fn_ir: &FnIR,
@@ -366,7 +366,7 @@ impl RBackend {
         })
     }
 
-    pub(super) fn generated_loop_index_var_from_header(
+    pub(crate) fn generated_loop_index_var_from_header(
         &self,
         header: usize,
         fn_ir: &FnIR,
@@ -374,7 +374,7 @@ impl RBackend {
         self.generated_loop_var_from_block(header, fn_ir)
     }
 
-    pub(super) fn generated_loop_var_from_block(&self, bb: usize, fn_ir: &FnIR) -> Option<String> {
+    pub(crate) fn generated_loop_var_from_block(&self, bb: usize, fn_ir: &FnIR) -> Option<String> {
         fn_ir
             .blocks
             .get(bb)?
@@ -388,7 +388,7 @@ impl RBackend {
             })
     }
 
-    pub(super) fn loop_index_offset(
+    pub(crate) fn loop_index_offset(
         &self,
         value_id: usize,
         ctx: &ActiveScalarLoopIndex,
@@ -433,7 +433,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn loop_context_allows_offset(ctx: &ActiveScalarLoopIndex, offset: i64) -> bool {
+    pub(crate) fn loop_context_allows_offset(ctx: &ActiveScalarLoopIndex, offset: i64) -> bool {
         if ctx.start_min.saturating_add(offset) < 1 {
             return false;
         }
@@ -443,7 +443,7 @@ impl RBackend {
         matches!(ctx.cmp, ScalarLoopCmp::Lt) && offset <= 1
     }
 
-    pub(super) fn rendered_loop_index_offset(
+    pub(crate) fn rendered_loop_index_offset(
         expr: &str,
         ctx: &ActiveScalarLoopIndex,
     ) -> Option<i64> {
@@ -468,7 +468,7 @@ impl RBackend {
         None
     }
 
-    pub(super) fn resolve_full_range_loop_expr(
+    pub(crate) fn resolve_full_range_loop_expr(
         &self,
         val_id: usize,
         idx_var: &str,
@@ -608,7 +608,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn structured_uses_var(
+    pub(crate) fn structured_uses_var(
         &self,
         node: &StructuredBlock,
         fn_ir: &FnIR,
@@ -706,6 +706,7 @@ impl RBackend {
                             &mut FxHashSet::default(),
                         )
                     }
+                    Instr::UnsafeRBlock { .. } => true,
                 }) || match block.term {
                     Terminator::If { cond, .. } => {
                         self.value_mentions_var(cond, &fn_ir.values, var, &mut FxHashSet::default())
@@ -738,7 +739,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn value_mentions_var(
+    pub(crate) fn value_mentions_var(
         &self,
         value_id: usize,
         values: &[Value],

@@ -3,7 +3,6 @@ use super::affine::{AffineExpr, AffineSymbol};
 use super::cost::{estimate_fission_benefit, estimate_schedule_cost};
 use super::dependence_backend::{DependenceResult, DependenceState};
 use super::schedule::{PolyBackendUsed, SchedulePlan, SchedulePlanKind, ScheduleRelation};
-use crate::mir::ValueId;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,16 +88,21 @@ fn fission_mode_from_env() -> FissionMode {
     }
 }
 
-fn statement_base_sets(stmt: &super::PolyStmt) -> (BTreeSet<ValueId>, BTreeSet<ValueId>) {
+fn statement_base_sets(stmt: &super::PolyStmt) -> (BTreeSet<String>, BTreeSet<String>) {
     let mut reads = BTreeSet::new();
     let mut writes = BTreeSet::new();
     for access in &stmt.accesses {
+        let key = if access.memref.name.is_empty() {
+            format!("v{}", access.memref.base)
+        } else {
+            access.memref.name.clone()
+        };
         match access.kind {
             super::access::AccessKind::Read => {
-                reads.insert(access.memref.base);
+                reads.insert(key);
             }
             super::access::AccessKind::Write => {
-                writes.insert(access.memref.base);
+                writes.insert(key);
             }
         }
     }
@@ -899,7 +903,7 @@ mod tests {
                 statement_id: 1,
                 kind: crate::mir::opt::poly::access::AccessKind::Read,
                 memref: crate::mir::opt::poly::access::MemRef {
-                    base: 2,
+                    base: 20,
                     name: "v2".to_string(),
                     rank: 1,
                     layout: crate::mir::opt::poly::access::MemoryLayout::Dense1D,

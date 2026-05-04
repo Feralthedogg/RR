@@ -1,10 +1,10 @@
 mod common;
 
-use RR::compiler::{
+use common::unique_dir;
+use rr::compiler::{
     CompileMode, CompileOutputOptions, OptLevel, compile_with_configs_with_options,
     default_parallel_config, default_type_config,
 };
-use common::unique_dir;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;

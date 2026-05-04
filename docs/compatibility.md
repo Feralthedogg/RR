@@ -47,6 +47,13 @@ while the other packages in this line are the main direct call/interop surface.
 - RR compiles to plain `.R` and executes through `Rscript`.
 - Runtime guard helpers enforce scalar condition/index contracts with source-aware diagnostics.
 - Strict declaration is the default language mode.
+- RR 2.0 treats `src/main.rr` as the managed project entry; root-level
+  `main.rr` is accepted only when passed explicitly as a file path.
+- RR 2.0's stable Rust library API is limited to `compiler`, `error`, `pkg`,
+  `runtime`, and `Span`; HIR, MIR, syntax, type-checking, and codegen internals
+  are private implementation details.
+- Source-visible RR function and variable names are preserved where possible in
+  emitted R. Generated helper names and layout are internal and may change.
 - R-style source forms are first-class:
   - `<-`
   - `function(...)`

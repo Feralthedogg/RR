@@ -1,11 +1,12 @@
 use super::{
     FxHashMap, IDENT_PATTERN, assign_re, compile_regex,
     has_one_based_full_range_index_alias_read_candidates, is_control_flow_boundary, plain_ident_re,
+    rewrite_index1_read_vec_calls,
 };
-use regex::{Captures, Regex};
+use regex::Regex;
 use std::sync::OnceLock;
 
-fn shifted_minus_one_temp_re() -> Option<&'static Regex> {
+pub(crate) fn shifted_minus_one_temp_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(format!(
@@ -16,14 +17,14 @@ fn shifted_minus_one_temp_re() -> Option<&'static Regex> {
     .as_ref()
 }
 
-fn shifted_minus_one_temp_name(rhs: &str) -> Option<String> {
+pub(crate) fn shifted_minus_one_temp_name(rhs: &str) -> Option<String> {
     let caps = shifted_minus_one_temp_re().and_then(|re| re.captures(rhs.trim()))?;
     let a = caps.name("a").map(|m| m.as_str()).unwrap_or("").trim();
     let b = caps.name("b").map(|m| m.as_str()).unwrap_or("").trim();
     (a == b).then(|| a.to_string())
 }
 
-fn doubled_temp_re() -> Option<&'static Regex> {
+pub(crate) fn doubled_temp_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(format!(
@@ -34,18 +35,18 @@ fn doubled_temp_re() -> Option<&'static Regex> {
     .as_ref()
 }
 
-fn doubled_temp_name(rhs: &str) -> Option<String> {
+pub(crate) fn doubled_temp_name(rhs: &str) -> Option<String> {
     let caps = doubled_temp_re().and_then(|re| re.captures(rhs.trim()))?;
     let a = caps.name("a").map(|m| m.as_str()).unwrap_or("").trim();
     let b = caps.name("b").map(|m| m.as_str()).unwrap_or("").trim();
     (a == b).then(|| a.to_string())
 }
 
-fn compact_expr_local(expr: &str) -> String {
+pub(crate) fn compact_expr_local(expr: &str) -> String {
     expr.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-fn expr_is_one_based_full_range_alias_local(expr: &str) -> bool {
+pub(crate) fn expr_is_one_based_full_range_alias_local(expr: &str) -> bool {
     let expr = compact_expr_local(expr);
     let starts = ["1L", "1", "1.0", "1.0L"];
     starts.iter().any(|start_expr| {
@@ -54,13 +55,13 @@ fn expr_is_one_based_full_range_alias_local(expr: &str) -> bool {
     })
 }
 
-fn minus_one_named_re() -> Option<&'static Regex> {
+pub(crate) fn minus_one_named_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| compile_regex(r"^\((?P<inner>.+)\s-\s1L?\)$".to_string()))
         .as_ref()
 }
 
-fn collect_temp_minus_one_pairs(lines: &[String]) -> Vec<(String, String)> {
+pub(crate) fn collect_temp_minus_one_pairs(lines: &[String]) -> Vec<(String, String)> {
     let Some(assign_re) = assign_re() else {
         return Vec::new();
     };
@@ -97,7 +98,7 @@ fn collect_temp_minus_one_pairs(lines: &[String]) -> Vec<(String, String)> {
         .collect()
 }
 
-fn apply_temp_minus_one_scaled_to_named_scalar_text(
+pub(crate) fn apply_temp_minus_one_scaled_to_named_scalar_text(
     text: &str,
     temp_minus_one_pairs: &[(String, String)],
 ) -> String {
@@ -115,15 +116,14 @@ fn apply_temp_minus_one_scaled_to_named_scalar_text(
     rewritten
 }
 
-pub(super) fn run_secondary_exact_local_scalar_bundle(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_secondary_exact_local_scalar_bundle(lines: Vec<String>) -> Vec<String> {
     let has_one_based_index_alias_reads =
         has_one_based_full_range_index_alias_read_candidates(&lines);
-    if !lines.iter().any(|line| line.contains(".__rr_cse_"))
-        || !lines.iter().any(|line| line.contains("- 1"))
+    if (!lines.iter().any(|line| line.contains(".__rr_cse_"))
+        || !lines.iter().any(|line| line.contains("- 1")))
+        && !has_one_based_index_alias_reads
     {
-        if !has_one_based_index_alias_reads {
-            return lines;
-        }
+        return lines;
     }
 
     let temp_minus_one_pairs = collect_temp_minus_one_pairs(&lines);
@@ -143,27 +143,15 @@ pub(super) fn run_secondary_exact_local_scalar_bundle(lines: Vec<String>) -> Vec
     let mut base_to_named = FxHashMap::<String, String>::default();
     let mut doubled_to_named = FxHashMap::<String, String>::default();
     let mut whole_range_index_aliases = FxHashMap::<String, String>::default();
-    let read_vec_re = if needs_one_based_index_alias_reads {
-        compile_regex(format!(
-            r"rr_index1_read_vec(?:_floor)?\((?P<base>{}),\s*(?P<idx>{}|rr_index_vec_floor\([^\)]*\)|[^,\)]*:[^\)]*)\)",
-            IDENT_PATTERN, IDENT_PATTERN
-        ))
-    } else {
-        None
-    };
-
-    for idx in 0..out.len() {
-        let original_line = out[idx].clone();
+    for line in &mut out {
+        let original_line = line.clone();
         let trimmed = original_line.trim().to_string();
-        if trimmed.contains("<- function") {
-            base_to_named.clear();
-            doubled_to_named.clear();
-            whole_range_index_aliases.clear();
-        } else if is_control_flow_boundary(&trimmed)
-            && trimmed != "}"
-            && !trimmed.starts_with("if ")
-            && !trimmed.starts_with("else")
-            && !trimmed.starts_with("} else")
+        if trimmed.contains("<- function")
+            || (is_control_flow_boundary(&trimmed)
+                && trimmed != "}"
+                && !trimmed.starts_with("if ")
+                && !trimmed.starts_with("else")
+                && !trimmed.starts_with("} else"))
         {
             base_to_named.clear();
             doubled_to_named.clear();
@@ -182,7 +170,7 @@ pub(super) fn run_secondary_exact_local_scalar_bundle(lines: Vec<String>) -> Vec
 
         let Some(caps) = assign_re.captures(&trimmed) else {
             if rewritten_line != original_line {
-                out[idx] = rewritten_line;
+                *line = rewritten_line;
             }
             continue;
         };
@@ -191,43 +179,18 @@ pub(super) fn run_secondary_exact_local_scalar_bundle(lines: Vec<String>) -> Vec
         let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
         let mut rewritten_rhs = rhs.to_string();
 
-        if needs_one_based_index_alias_reads
-            && rewritten_rhs.contains("rr_index1_read_vec")
-            && let Some(re) = read_vec_re.as_ref()
-        {
-            rewritten_rhs = re
-                .replace_all(&rewritten_rhs, |caps: &Captures<'_>| {
-                    let idx_expr = caps.name("idx").map(|m| m.as_str()).unwrap_or("").trim();
-                    if expr_is_one_based_full_range_alias_local(idx_expr) {
-                        caps.name("base")
-                            .map(|m| m.as_str())
-                            .unwrap_or("")
-                            .to_string()
-                    } else {
-                        caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string()
-                    }
-                })
-                .to_string();
+        if needs_one_based_index_alias_reads && rewritten_rhs.contains("rr_index1_read_vec") {
+            rewritten_rhs = rewrite_index1_read_vec_calls(&rewritten_rhs, |base, idx_expr| {
+                expr_is_one_based_full_range_alias_local(idx_expr).then(|| base.to_string())
+            });
             for (alias, alias_rhs) in &whole_range_index_aliases {
                 if !expr_is_one_based_full_range_alias_local(alias_rhs) {
                     continue;
                 }
-                let pattern = format!(
-                    r"rr_index1_read_vec(?:_floor)?\((?P<base>{}),\s*{}\s*\)",
-                    IDENT_PATTERN,
-                    regex::escape(alias),
-                );
-                let Some(alias_re) = compile_regex(pattern) else {
-                    continue;
-                };
-                rewritten_rhs = alias_re
-                    .replace_all(&rewritten_rhs, |caps: &Captures<'_>| {
-                        caps.name("base")
-                            .map(|m| m.as_str())
-                            .unwrap_or("")
-                            .to_string()
-                    })
-                    .to_string();
+                let alias_compact = compact_expr_local(alias);
+                rewritten_rhs = rewrite_index1_read_vec_calls(&rewritten_rhs, |base, idx_expr| {
+                    (compact_expr_local(idx_expr) == alias_compact).then(|| base.to_string())
+                });
             }
             if rewritten_rhs != rhs {
                 rewritten_rhs = rewritten_rhs.replace("rr_ifelse_strict(", "ifelse(");
@@ -275,14 +238,14 @@ pub(super) fn run_secondary_exact_local_scalar_bundle(lines: Vec<String>) -> Vec
         }
 
         if rewritten_line != original_line {
-            out[idx] = rewritten_line;
+            *line = rewritten_line;
         }
     }
 
     out
 }
 
-pub(super) fn rewrite_shifted_square_scalar_reuse(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_shifted_square_scalar_reuse(lines: Vec<String>) -> Vec<String> {
     if !lines.iter().any(|line| line.contains(".__rr_cse_"))
         || !lines.iter().any(|line| line.contains("- 1"))
         || !lines.iter().any(|line| line.contains("* ("))

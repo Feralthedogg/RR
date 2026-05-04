@@ -1,14 +1,25 @@
-#![allow(dead_code)]
-#![allow(non_snake_case)]
+//! RR compiler library.
+//!
+//! RR 2.0 keeps the stable library-facing surface intentionally small:
+//! `compiler`, `error`, `pkg`, `runtime`, and `Span`.
+//!
+//! Frontend lowering, MIR, code generation, syntax, and type-checking internals
+//! are private implementation details. Add a narrow re-export through one of the
+//! stable modules when external tooling needs a durable API.
 
-pub mod codegen;
+// Pass catalogs and regression-only hooks are intentionally callable even when
+// a given build profile does not route through every helper.
+#![expect(dead_code, reason = "compiler pass catalog keeps optional hooks")]
+mod codegen;
 pub mod compiler;
-pub mod diagnostic;
+mod diagnostic;
 pub mod error;
-pub mod hir;
-pub mod mir;
+mod hir;
+mod mir;
 pub mod pkg;
 pub mod runtime;
-pub mod syntax;
-pub mod typeck;
-pub mod utils;
+mod syntax;
+mod typeck;
+mod utils;
+
+pub use utils::Span;

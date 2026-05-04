@@ -1,4 +1,4 @@
-fn enclosing_branch_start_local(lines: &[String], idx: usize) -> Option<usize> {
+pub(crate) fn enclosing_branch_start_local(lines: &[String], idx: usize) -> Option<usize> {
     let mut depth = 0usize;
     for prev_idx in (0..idx).rev() {
         let trimmed = lines[prev_idx].trim();
@@ -20,7 +20,7 @@ fn enclosing_branch_start_local(lines: &[String], idx: usize) -> Option<usize> {
     None
 }
 
-fn find_block_end_local(lines: &[String], start_idx: usize) -> Option<usize> {
+pub(crate) fn find_block_end_local(lines: &[String], start_idx: usize) -> Option<usize> {
     let mut depth = 0isize;
     let mut saw_open = false;
     for (idx, line) in lines.iter().enumerate().skip(start_idx) {
@@ -41,7 +41,7 @@ fn find_block_end_local(lines: &[String], start_idx: usize) -> Option<usize> {
     None
 }
 
-fn raw_is_loop_open_boundary_local(trimmed: &str) -> bool {
+pub(crate) fn raw_is_loop_open_boundary_local(trimmed: &str) -> bool {
     trimmed == "repeat {"
         || trimmed.starts_with("while ")
         || trimmed.starts_with("while(")
@@ -49,7 +49,7 @@ fn raw_is_loop_open_boundary_local(trimmed: &str) -> bool {
         || trimmed.starts_with("for(")
 }
 
-fn is_control_flow_boundary_local(trimmed: &str) -> bool {
+pub(crate) fn is_control_flow_boundary_local(trimmed: &str) -> bool {
     let is_single_line_guard =
         trimmed.starts_with("if ") && (trimmed.ends_with(" break") || trimmed.ends_with(" next"));
     trimmed == "{"
@@ -65,7 +65,7 @@ fn is_control_flow_boundary_local(trimmed: &str) -> bool {
         || trimmed == "next"
 }
 
-fn raw_line_is_within_loop_body_local(lines: &[String], idx: usize) -> bool {
+pub(crate) fn raw_line_is_within_loop_body_local(lines: &[String], idx: usize) -> bool {
     (0..idx).rev().any(|start_idx| {
         if !raw_is_loop_open_boundary_local(lines[start_idx].trim()) {
             return false;

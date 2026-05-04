@@ -185,10 +185,8 @@ pub fn analyze_ranges(fn_ir: &FnIR) -> Vec<RangeFacts> {
         // Propagate to successors
         let block = &fn_ir.blocks[bid];
         match &block.term {
-            Terminator::Goto(target) => {
-                if bb_facts[*target].join(&current_facts) {
-                    worklist.push_back(*target);
-                }
+            Terminator::Goto(target) if bb_facts[*target].join(&current_facts) => {
+                worklist.push_back(*target);
             }
             Terminator::If {
                 cond,
@@ -259,6 +257,7 @@ pub fn transfer_instr(instr: &Instr, values: &[Value], facts: &mut RangeFacts) {
             ensure_value_range(*k, values, facts);
             ensure_value_range(*val, values, facts);
         }
+        Instr::UnsafeRBlock { .. } => {}
     }
 }
 

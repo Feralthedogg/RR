@@ -12,13 +12,13 @@ mod tree;
 mod verify;
 
 use crate::mir::FnIR;
-use crate::mir::opt::loop_analysis::LoopAnalyzer;
+use crate::mir::opt::loop_analysis::{LoopAnalyzer, LoopInfo};
 use std::cmp::Reverse;
 
 use backend::make_backend_from_env;
 use codegen::lower_schedule_tree;
 pub(crate) use codegen_generic::is_generated_loop_iv_name as is_generated_poly_loop_var_name;
-use cost::estimate_schedule_cost;
+use cost::{estimate_schedule_cost, r_backend_code_size_reject_reason};
 use dependence_backend::{DependenceState, make_dependence_backend};
 use schedule::SchedulePlanKind;
 pub use scop::{LoopDimension, PolyStmt, PolyStmtKind, ScopExtractionFailure, ScopRegion};
@@ -58,7 +58,7 @@ pub struct PolyStats {
 }
 
 impl PolyStats {
-    fn record_reject(&mut self, reason: ScopExtractionFailure) {
+    pub(crate) fn record_reject(&mut self, reason: ScopExtractionFailure) {
         match reason {
             ScopExtractionFailure::UnsupportedCfgShape
             | ScopExtractionFailure::MissingInductionVar
@@ -70,7 +70,7 @@ impl PolyStats {
         }
     }
 
-    fn record_schedule_attempt(&mut self, kind: SchedulePlanKind) {
+    pub(crate) fn record_schedule_attempt(&mut self, kind: SchedulePlanKind) {
         match kind {
             SchedulePlanKind::Identity => self.schedule_attempted_identity += 1,
             SchedulePlanKind::Interchange => self.schedule_attempted_interchange += 1,
@@ -82,7 +82,7 @@ impl PolyStats {
         }
     }
 
-    fn record_schedule_applied(&mut self, kind: SchedulePlanKind) {
+    pub(crate) fn record_schedule_applied(&mut self, kind: SchedulePlanKind) {
         match kind {
             SchedulePlanKind::Identity => self.schedule_applied_identity += 1,
             SchedulePlanKind::Interchange => self.schedule_applied_interchange += 1,
@@ -95,7 +95,7 @@ impl PolyStats {
     }
 }
 
-fn env_flag_enabled(key: &str) -> bool {
+pub(crate) fn env_flag_enabled(key: &str) -> bool {
     std::env::var(key).ok().is_some_and(|value| {
         matches!(
             value.trim().to_ascii_lowercase().as_str(),
@@ -104,22 +104,22 @@ fn env_flag_enabled(key: &str) -> bool {
     })
 }
 
-fn compiled_with_isl() -> bool {
+pub(crate) fn compiled_with_isl() -> bool {
     option_env!("RR_HAS_ISL") == Some("1")
 }
 
-fn poly_setting_from_env() -> Option<String> {
+pub(crate) fn poly_setting_from_env() -> Option<String> {
     std::env::var("RR_POLY_ENABLE").ok()
 }
 
-fn poly_auto_mode_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
+pub(crate) fn poly_auto_mode_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
     matches!(
         raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
         None | Some("auto")
     ) && build_has_isl
 }
 
-fn poly_enabled_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
+pub(crate) fn poly_enabled_from_setting(raw: Option<&str>, build_has_isl: bool) -> bool {
     match raw
         .map(|value| value.trim().to_ascii_lowercase())
         .as_deref()
@@ -135,7 +135,7 @@ pub fn poly_enabled() -> bool {
     poly_enabled_from_setting(poly_setting_from_env().as_deref(), compiled_with_isl())
 }
 
-fn poly_auto_mode_enabled() -> bool {
+pub(crate) fn poly_auto_mode_enabled() -> bool {
     poly_auto_mode_from_setting(poly_setting_from_env().as_deref(), compiled_with_isl())
 }
 
@@ -143,7 +143,7 @@ pub fn poly_trace_enabled() -> bool {
     poly_enabled() && env_flag_enabled("RR_POLY_TRACE")
 }
 
-fn env_auto_mode(key: &str) -> bool {
+pub(crate) fn env_auto_mode(key: &str) -> bool {
     match std::env::var(key)
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
@@ -161,11 +161,18 @@ pub fn analyze_with_stats(fn_ir: &FnIR) -> PolyStats {
     analyze_loops(fn_ir).0
 }
 
-pub fn run_hidden_poly_cli(args: &[String]) -> Option<i32> {
-    isl::run_materialize_helper_from_cli(args)
+pub fn optimize_with_stats(fn_ir: &mut FnIR) -> PolyStats {
+    optimize_with_stats_inner(fn_ir, None)
 }
 
-pub fn optimize_with_stats(fn_ir: &mut FnIR) -> PolyStats {
+pub fn optimize_with_stats_with_loop_info(fn_ir: &mut FnIR, loops: &[LoopInfo]) -> PolyStats {
+    optimize_with_stats_inner(fn_ir, Some(loops))
+}
+
+pub(crate) fn optimize_with_stats_inner(
+    fn_ir: &mut FnIR,
+    initial_loops: Option<&[LoopInfo]>,
+) -> PolyStats {
     if !poly_enabled() {
         return PolyStats::default();
     }
@@ -175,7 +182,10 @@ pub fn optimize_with_stats(fn_ir: &mut FnIR) -> PolyStats {
     while changed && iterations < 8 {
         changed = false;
         iterations += 1;
-        let (iter_stats, loops) = analyze_loops(fn_ir);
+        let (iter_stats, loops) = match initial_loops {
+            Some(loops) if iterations == 1 => analyze_loop_slice(fn_ir, loops),
+            _ => analyze_loops(fn_ir),
+        };
         stats.loops_seen += iter_stats.loops_seen;
         stats.scops_detected += iter_stats.scops_detected;
         stats.rejected_cfg_shape += iter_stats.rejected_cfg_shape;
@@ -214,6 +224,15 @@ pub fn optimize_with_stats(fn_ir: &mut FnIR) -> PolyStats {
             let deps = dep_backend.analyze(fn_ir, &scop);
             let schedule_tree = backend.build_schedule_tree(&scop, &deps);
             let schedule = schedule_tree.to_primary_plan();
+            if let Some(reason) = r_backend_code_size_reject_reason(&scop, &schedule) {
+                if poly_trace_enabled() {
+                    eprintln!(
+                        "   [poly] {} loop header={} latch={} skip schedule={:?}: {}",
+                        fn_ir.name, lp.header, lp.latch, schedule.kind, reason,
+                    );
+                }
+                continue;
+            }
             if let Some(root) = dump_root_from_env() {
                 let cert = build_certificate(
                     fn_ir,
@@ -236,9 +255,16 @@ pub fn optimize_with_stats(fn_ir: &mut FnIR) -> PolyStats {
     stats
 }
 
-fn analyze_loops(fn_ir: &FnIR) -> (PolyStats, Vec<crate::mir::opt::loop_analysis::LoopInfo>) {
+pub(crate) fn analyze_loops(
+    fn_ir: &FnIR,
+) -> (PolyStats, Vec<crate::mir::opt::loop_analysis::LoopInfo>) {
+    let loops = LoopAnalyzer::new(fn_ir).find_loops();
+    analyze_loop_slice(fn_ir, &loops)
+}
+
+pub(crate) fn analyze_loop_slice(fn_ir: &FnIR, loops: &[LoopInfo]) -> (PolyStats, Vec<LoopInfo>) {
     let mut stats = PolyStats::default();
-    let mut loops = LoopAnalyzer::new(fn_ir).find_loops();
+    let mut loops = loops.to_vec();
     loops.sort_by_key(|lp| (Reverse(lp.body.len()), lp.header));
     stats.loops_seen = loops.len();
 

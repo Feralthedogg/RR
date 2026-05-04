@@ -1,3 +1,4 @@
+use super::*;
 pub(crate) fn vector_apply_site(fn_ir: &FnIR, lp: &LoopInfo) -> Option<VectorApplySite> {
     let preds = build_pred_map(fn_ir);
     let outer_preds: Vec<BlockId> = preds

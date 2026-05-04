@@ -9,68 +9,73 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
+#[path = "facts/collection.rs"]
+pub(crate) mod collection;
+
+use self::collection::collect_function_facts;
+
 #[derive(Debug, Clone, Default)]
-pub(in super::super) struct FunctionLineFacts {
-    pub(super) line_idx: usize,
-    pub(super) indent: usize,
-    pub(super) region_end: usize,
-    pub(super) inline_region_end: usize,
-    pub(super) next_non_empty_line: Option<usize>,
-    pub(super) in_loop_body: bool,
-    pub(super) is_assign: bool,
-    pub(super) is_control_boundary: bool,
-    pub(super) lhs: Option<String>,
-    pub(super) rhs: Option<String>,
-    pub(super) idents: Vec<String>,
+pub(crate) struct FunctionLineFacts {
+    pub(crate) line_idx: usize,
+    pub(crate) indent: usize,
+    pub(crate) region_end: usize,
+    pub(crate) inline_region_end: usize,
+    pub(crate) next_non_empty_line: Option<usize>,
+    pub(crate) in_loop_body: bool,
+    pub(crate) is_assign: bool,
+    pub(crate) is_control_boundary: bool,
+    pub(crate) lhs: Option<String>,
+    pub(crate) rhs: Option<String>,
+    pub(crate) idents: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub(in super::super) struct ExactReuseCandidate {
-    pub(super) line_idx: usize,
-    pub(super) indent: usize,
-    pub(super) region_end: usize,
-    pub(super) lhs: String,
-    pub(super) rhs: String,
-    pub(super) idents: Vec<String>,
+pub(crate) struct ExactReuseCandidate {
+    pub(crate) line_idx: usize,
+    pub(crate) indent: usize,
+    pub(crate) region_end: usize,
+    pub(crate) lhs: String,
+    pub(crate) rhs: String,
+    pub(crate) idents: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub(in super::super) struct ArgAliasDef {
-    pub(super) line_idx: usize,
-    pub(super) alias: String,
-    pub(super) target: String,
+pub(crate) struct ArgAliasDef {
+    pub(crate) line_idx: usize,
+    pub(crate) alias: String,
+    pub(crate) target: String,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(in super::super) struct ExactReuseCandidateSets {
-    pub(super) call_assign_candidates: Vec<ExactReuseCandidate>,
-    pub(super) exact_expr_candidates: Vec<ExactReuseCandidate>,
-    pub(super) pure_rebind_candidates: Vec<ExactReuseCandidate>,
+pub(crate) struct ExactReuseCandidateSets {
+    pub(crate) call_assign_candidates: Vec<ExactReuseCandidate>,
+    pub(crate) exact_expr_candidates: Vec<ExactReuseCandidate>,
+    pub(crate) pure_rebind_candidates: Vec<ExactReuseCandidate>,
 }
 
 #[derive(Debug, Clone)]
-pub(in super::super) struct FunctionFacts {
-    pub(super) function: IndexedFunction,
-    pub(super) line_facts: Vec<FunctionLineFacts>,
-    pub(super) defs: FxHashMap<String, Vec<usize>>,
-    pub(super) uses: FxHashMap<String, Vec<usize>>,
-    pub(super) helper_call_lines: Vec<usize>,
-    pub(super) param_set: FxHashSet<String>,
-    pub(super) mutated_arg_aliases: FxHashSet<String>,
-    pub(super) prologue_arg_alias_defs: Vec<ArgAliasDef>,
-    pub(super) non_prologue_assigned_idents: FxHashSet<String>,
-    pub(super) stored_bases: FxHashSet<String>,
-    pub(super) mentioned_arg_aliases: FxHashSet<String>,
-    pub(super) exact_reuse_candidates: ExactReuseCandidateSets,
+pub(crate) struct FunctionFacts {
+    pub(crate) function: IndexedFunction,
+    pub(crate) line_facts: Vec<FunctionLineFacts>,
+    pub(crate) defs: FxHashMap<String, Vec<usize>>,
+    pub(crate) uses: FxHashMap<String, Vec<usize>>,
+    pub(crate) helper_call_lines: Vec<usize>,
+    pub(crate) param_set: FxHashSet<String>,
+    pub(crate) mutated_arg_aliases: FxHashSet<String>,
+    pub(crate) prologue_arg_alias_defs: Vec<ArgAliasDef>,
+    pub(crate) non_prologue_assigned_idents: FxHashSet<String>,
+    pub(crate) stored_bases: FxHashSet<String>,
+    pub(crate) mentioned_arg_aliases: FxHashSet<String>,
+    pub(crate) exact_reuse_candidates: ExactReuseCandidateSets,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(in super::super) struct PeepholeAnalysisCache {
-    signature: Option<u64>,
-    function_facts: Vec<FunctionFacts>,
+pub(crate) struct PeepholeAnalysisCache {
+    pub(crate) signature: Option<u64>,
+    pub(crate) function_facts: Vec<FunctionFacts>,
 }
 
-fn lines_signature(lines: &[String]) -> u64 {
+pub(crate) fn lines_signature(lines: &[String]) -> u64 {
     let mut hasher = DefaultHasher::new();
     for line in lines {
         line.hash(&mut hasher);
@@ -78,226 +83,7 @@ fn lines_signature(lines: &[String]) -> u64 {
     hasher.finish()
 }
 
-fn collect_function_facts(lines: &[String]) -> Vec<FunctionFacts> {
-    let Some(assign_re) = assign_re() else {
-        return Vec::new();
-    };
-    let plain_ident_re = plain_ident_re();
-    build_function_text_index(lines, parse_function_header)
-        .into_iter()
-        .map(|function| {
-            let mut line_facts =
-                Vec::with_capacity(function.end.saturating_sub(function.start) + 1);
-            let mut defs = FxHashMap::<String, Vec<usize>>::default();
-            let mut uses = FxHashMap::<String, Vec<usize>>::default();
-            let mut helper_call_lines = Vec::<usize>::new();
-            let mut prologue_arg_alias_defs = Vec::<ArgAliasDef>::new();
-            let mut non_prologue_assigned_idents = FxHashSet::<String>::default();
-            let mut stored_bases = FxHashSet::<String>::default();
-            let mut mentioned_arg_aliases = FxHashSet::<String>::default();
-            let mut exact_reuse_candidates = ExactReuseCandidateSets::default();
-            let mut in_prologue_arg_aliases = true;
-            let mut block_stack: Vec<bool> = Vec::new();
-            let param_set: FxHashSet<String> = function.params.iter().cloned().collect();
-            let mutated_arg_aliases =
-                collect_mutated_arg_aliases_in_lines(lines, function.start, function.end);
-            for line_idx in function.start..=function.end {
-                let line = &lines[line_idx];
-                let trimmed = line.trim();
-                let indent = line.len() - line.trim_start().len();
-                let mut facts = FunctionLineFacts {
-                    line_idx,
-                    indent,
-                    region_end: next_straight_line_region_end(lines, &function, line_idx, indent),
-                    inline_region_end: function.end + 1,
-                    next_non_empty_line: None,
-                    in_loop_body: block_stack.iter().any(|is_loop| *is_loop),
-                    is_assign: false,
-                    is_control_boundary: is_control_flow_boundary(trimmed),
-                    lhs: None,
-                    rhs: None,
-                    idents: Vec::new(),
-                };
-                if line_idx > function.start
-                    && !line.contains("<- function")
-                    && line.contains("Sym_")
-                    && line.contains('(')
-                {
-                    helper_call_lines.push(line_idx);
-                }
-                if let Some(caps) = assign_re.captures(trimmed) {
-                    let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
-                    let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
-                    let idents = expr_idents(rhs);
-                    facts.is_assign = true;
-                    facts.lhs = Some(lhs.to_string());
-                    facts.rhs = Some(rhs.to_string());
-                    facts.idents = idents.clone();
-                    defs.entry(lhs.to_string()).or_default().push(line_idx);
-                    for ident in &idents {
-                        uses.entry(ident.clone()).or_default().push(line_idx);
-                        if ident.starts_with(".arg_") {
-                            mentioned_arg_aliases.insert(ident.clone());
-                        }
-                    }
-                    let is_prologue_alias_def = line_idx >= function.body_start
-                        && in_prologue_arg_aliases
-                        && lhs.starts_with(".arg_")
-                        && plain_ident_re.is_some_and(|re| re.is_match(rhs));
-                    if is_prologue_alias_def {
-                        prologue_arg_alias_defs.push(ArgAliasDef {
-                            line_idx,
-                            alias: lhs.to_string(),
-                            target: rhs.to_string(),
-                        });
-                    } else if line_idx >= function.body_start
-                        && !trimmed.is_empty()
-                        && trimmed != "{"
-                    {
-                        in_prologue_arg_aliases = false;
-                        non_prologue_assigned_idents.insert(lhs.to_string());
-                    }
-                    let region_end = facts.region_end;
-                    if line_idx >= function.body_start
-                        && line_idx < function.end
-                        && plain_ident_re.is_some_and(|re| re.is_match(lhs))
-                        && !lhs.starts_with(".arg_")
-                        && !lhs.starts_with(".__rr_cse_")
-                    {
-                        let candidate = ExactReuseCandidate {
-                            line_idx,
-                            indent,
-                            region_end,
-                            lhs: lhs.to_string(),
-                            rhs: rhs.to_string(),
-                            idents,
-                        };
-                        if rhs.contains('(') {
-                            exact_reuse_candidates
-                                .call_assign_candidates
-                                .push(candidate.clone());
-                            exact_reuse_candidates
-                                .pure_rebind_candidates
-                                .push(candidate);
-                        } else if is_literal_field_read_expr(rhs) {
-                            exact_reuse_candidates
-                                .pure_rebind_candidates
-                                .push(candidate);
-                        }
-                    }
-                    if line_idx >= function.body_start
-                        && line_idx < function.end
-                        && plain_ident_re.is_some_and(|re| re.is_match(lhs))
-                        && expr_is_exact_reusable_scalar(rhs)
-                    {
-                        exact_reuse_candidates
-                            .exact_expr_candidates
-                            .push(ExactReuseCandidate {
-                                line_idx,
-                                indent,
-                                region_end,
-                                lhs: lhs.to_string(),
-                                rhs: rhs.to_string(),
-                                idents: expr_idents(rhs),
-                            });
-                    }
-                } else {
-                    facts.idents = expr_idents(trimmed);
-                    for ident in &facts.idents {
-                        uses.entry(ident.clone()).or_default().push(line_idx);
-                        if ident.starts_with(".arg_") {
-                            mentioned_arg_aliases.insert(ident.clone());
-                        }
-                    }
-                    if line_idx >= function.body_start && !trimmed.is_empty() && trimmed != "{" {
-                        in_prologue_arg_aliases = false;
-                    }
-                }
-                if let Some(caps) = indexed_store_base_re().and_then(|re| re.captures(trimmed)) {
-                    let base = caps.name("base").map(|m| m.as_str()).unwrap_or("").trim();
-                    stored_bases.insert(base.to_string());
-                }
-                if trimmed == "} else {" {
-                    let _ = block_stack.pop();
-                    block_stack.push(false);
-                } else {
-                    let (opens, closes) = count_unquoted_braces(trimmed);
-                    for _ in 0..closes {
-                        let _ = block_stack.pop();
-                    }
-                    let loop_open = is_loop_open_boundary(trimmed);
-                    for open_idx in 0..opens {
-                        block_stack.push(loop_open && open_idx == 0);
-                    }
-                }
-                line_facts.push(facts);
-            }
-            populate_inline_region_ends(lines, &function, &mut line_facts);
-            FunctionFacts {
-                function,
-                line_facts,
-                defs,
-                uses,
-                helper_call_lines,
-                param_set,
-                mutated_arg_aliases,
-                prologue_arg_alias_defs,
-                non_prologue_assigned_idents,
-                stored_bases,
-                mentioned_arg_aliases,
-                exact_reuse_candidates,
-            }
-        })
-        .collect()
-}
-
-fn populate_inline_region_ends(
-    lines: &[String],
-    function: &IndexedFunction,
-    line_facts: &mut [FunctionLineFacts],
-) {
-    let mut next_boundary = function.end + 1;
-    let mut next_non_empty_line = None;
-    for fact in line_facts.iter_mut().rev() {
-        fact.inline_region_end = next_boundary;
-        fact.next_non_empty_line = next_non_empty_line;
-        let trimmed = lines[fact.line_idx].trim();
-        if !trimmed.is_empty() {
-            next_non_empty_line = Some(fact.line_idx);
-        }
-        if !trimmed.is_empty()
-            && (lines[fact.line_idx].contains("<- function")
-                || fact.is_control_boundary
-                || trimmed == "}")
-        {
-            next_boundary = fact.line_idx;
-        }
-    }
-}
-
-fn next_straight_line_region_end(
-    lines: &[String],
-    function: &IndexedFunction,
-    start_idx: usize,
-    indent: usize,
-) -> usize {
-    for line_idx in start_idx + 1..=function.end {
-        let line = &lines[line_idx];
-        let trimmed = line.trim();
-        let next_indent = line.len() - line.trim_start().len();
-        if line.contains("<- function")
-            || trimmed == "repeat {"
-            || trimmed.starts_with("while")
-            || trimmed.starts_with("for")
-            || (!trimmed.is_empty() && next_indent < indent)
-        {
-            return line_idx;
-        }
-    }
-    function.end + 1
-}
-
-fn parse_function_header(line: &str) -> Option<(String, Vec<String>)> {
+pub(crate) fn parse_function_header(line: &str) -> Option<(String, Vec<String>)> {
     let trimmed = line.trim();
     let (name, rest) = trimmed.split_once("<- function(")?;
     let args_inner = rest.split_once(')')?.0.trim();
@@ -312,7 +98,7 @@ fn parse_function_header(line: &str) -> Option<(String, Vec<String>)> {
     Some((name.trim().to_string(), params))
 }
 
-fn literal_field_read_expr_re() -> Option<&'static Regex> {
+pub(crate) fn literal_field_read_expr_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(format!(
@@ -323,11 +109,11 @@ fn literal_field_read_expr_re() -> Option<&'static Regex> {
     .as_ref()
 }
 
-fn is_literal_field_read_expr(rhs: &str) -> bool {
+pub(crate) fn is_literal_field_read_expr(rhs: &str) -> bool {
     literal_field_read_expr_re().is_some_and(|re| re.is_match(rhs.trim()))
 }
 
-pub(in super::super) fn cached_function_facts<'a>(
+pub(crate) fn cached_function_facts<'a>(
     cache: &'a mut PeepholeAnalysisCache,
     lines: &[String],
 ) -> &'a [FunctionFacts] {
@@ -339,7 +125,7 @@ pub(in super::super) fn cached_function_facts<'a>(
     &cache.function_facts
 }
 
-pub(in super::super) fn helper_call_candidate_lines(
+pub(crate) fn helper_call_candidate_lines(
     cache: &mut PeepholeAnalysisCache,
     lines: &[String],
 ) -> Vec<usize> {
@@ -367,7 +153,7 @@ pub(in super::super) fn helper_call_candidate_lines(
     out
 }
 
-pub(in super::super) fn next_def_after(
+pub(crate) fn next_def_after(
     facts: &FunctionFacts,
     symbol: &str,
     after_line: usize,
@@ -381,7 +167,7 @@ pub(in super::super) fn next_def_after(
     })
 }
 
-pub(in super::super) fn first_use_after(
+pub(crate) fn first_use_after(
     facts: &FunctionFacts,
     symbol: &str,
     after_line: usize,
@@ -392,7 +178,7 @@ pub(in super::super) fn first_use_after(
         .copied()
 }
 
-pub(in super::super) fn uses_in_region<'a>(
+pub(crate) fn uses_in_region<'a>(
     facts: &'a FunctionFacts,
     symbol: &str,
     after_line: usize,
@@ -406,7 +192,7 @@ pub(in super::super) fn uses_in_region<'a>(
     &uses[start..end]
 }
 
-fn function_facts_for_line<'a>(
+pub(crate) fn function_facts_for_line<'a>(
     cache: &'a mut PeepholeAnalysisCache,
     lines: &[String],
     line_idx: usize,
@@ -416,7 +202,7 @@ fn function_facts_for_line<'a>(
         .find(|facts| line_idx >= facts.function.start && line_idx <= facts.function.end)
 }
 
-pub(in super::super) fn next_def_after_in_facts(
+pub(crate) fn next_def_after_in_facts(
     facts: &[FunctionFacts],
     line_idx: usize,
     symbol: &str,
@@ -428,7 +214,7 @@ pub(in super::super) fn next_def_after_in_facts(
     next_def_after(function_facts, symbol, line_idx, region_end)
 }
 
-pub(in super::super) fn next_def_after_cached(
+pub(crate) fn next_def_after_cached(
     cache: &mut PeepholeAnalysisCache,
     lines: &[String],
     line_idx: usize,
@@ -439,7 +225,7 @@ pub(in super::super) fn next_def_after_cached(
     next_def_after(facts, symbol, line_idx, region_end)
 }
 
-pub(in super::super) fn first_use_after_cached(
+pub(crate) fn first_use_after_cached(
     cache: &mut PeepholeAnalysisCache,
     lines: &[String],
     line_idx: usize,
@@ -450,7 +236,7 @@ pub(in super::super) fn first_use_after_cached(
     first_use_after(facts, symbol, line_idx, region_end)
 }
 
-pub(super) fn read_vec_re() -> Option<&'static Regex> {
+pub(crate) fn read_vec_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(format!(
@@ -461,7 +247,7 @@ pub(super) fn read_vec_re() -> Option<&'static Regex> {
     .as_ref()
 }
 
-pub(super) fn normalize_expr(expr: &str, scalar_consts: &FxHashMap<String, String>) -> String {
+pub(crate) fn normalize_expr(expr: &str, scalar_consts: &FxHashMap<String, String>) -> String {
     let trimmed = expr.trim();
     scalar_consts
         .get(trimmed)
@@ -469,7 +255,7 @@ pub(super) fn normalize_expr(expr: &str, scalar_consts: &FxHashMap<String, Strin
         .unwrap_or_else(|| trimmed.to_string())
 }
 
-fn is_expr_builtin_name(name: &str) -> bool {
+pub(crate) fn is_expr_builtin_name(name: &str) -> bool {
     matches!(
         name,
         "abs"
@@ -496,7 +282,7 @@ fn is_expr_builtin_name(name: &str) -> bool {
     )
 }
 
-pub(super) fn expr_proven_no_na(
+pub(crate) fn expr_proven_no_na(
     expr: &str,
     no_na_vars: &FxHashSet<String>,
     scalar_consts: &FxHashMap<String, String>,
@@ -561,7 +347,7 @@ pub(super) fn expr_proven_no_na(
         .all(|ident| no_na_vars.contains(&ident) || scalar_consts.contains_key(&ident))
 }
 
-pub(super) fn expr_is_logical_comparison(
+pub(crate) fn expr_is_logical_comparison(
     expr: &str,
     no_na_vars: &FxHashSet<String>,
     scalar_consts: &FxHashMap<String, String>,
@@ -573,7 +359,7 @@ pub(super) fn expr_is_logical_comparison(
     has_logical_shape && expr_proven_no_na(expr, no_na_vars, scalar_consts)
 }
 
-pub(super) fn rewrite_strict_ifelse_expr(
+pub(crate) fn rewrite_strict_ifelse_expr(
     expr: &str,
     no_na_vars: &FxHashSet<String>,
     scalar_consts: &FxHashMap<String, String>,
@@ -593,7 +379,7 @@ pub(super) fn rewrite_strict_ifelse_expr(
     expr.to_string()
 }
 
-pub(super) fn helper_heavy_runtime_auto_args(args: &str) -> bool {
+pub(crate) fn helper_heavy_runtime_auto_args(args: &str) -> bool {
     [
         "rr_gather(",
         "rr_array3_gather_values(",
@@ -609,7 +395,7 @@ pub(super) fn helper_heavy_runtime_auto_args(args: &str) -> bool {
     .any(|needle| args.contains(needle))
 }
 
-pub(super) fn helper_heavy_runtime_auto_args_with_temps(
+pub(crate) fn helper_heavy_runtime_auto_args_with_temps(
     args: &str,
     helper_heavy_vars: &FxHashSet<String>,
 ) -> bool {
@@ -619,14 +405,14 @@ pub(super) fn helper_heavy_runtime_auto_args_with_temps(
             .any(|ident| helper_heavy_vars.contains(&ident))
 }
 
-pub(super) fn is_one(expr: &str, scalar_consts: &FxHashMap<String, String>) -> bool {
+pub(crate) fn is_one(expr: &str, scalar_consts: &FxHashMap<String, String>) -> bool {
     matches!(
         normalize_expr(expr, scalar_consts).as_str(),
         "1" | "1L" | "1.0"
     )
 }
 
-pub(super) fn infer_len_from_expr(
+pub(crate) fn infer_len_from_expr(
     expr: &str,
     vector_lens: &FxHashMap<String, String>,
     scalar_consts: &FxHashMap<String, String>,
@@ -674,7 +460,7 @@ pub(super) fn infer_len_from_expr(
     out
 }
 
-pub(super) fn rewrite_known_length_calls(
+pub(crate) fn rewrite_known_length_calls(
     expr: &str,
     vector_lens: &FxHashMap<String, String>,
 ) -> String {
@@ -691,7 +477,7 @@ pub(super) fn rewrite_known_length_calls(
     .to_string()
 }
 
-pub(super) fn identity_index_end_expr(
+pub(crate) fn identity_index_end_expr(
     idx: &str,
     identity_indices: &FxHashMap<String, String>,
     scalar_consts: &FxHashMap<String, String>,
@@ -718,7 +504,7 @@ pub(super) fn identity_index_end_expr(
     None
 }
 
-pub(super) fn clear_linear_facts(
+pub(crate) fn clear_linear_facts(
     scalar_consts: &mut FxHashMap<String, String>,
     vector_lens: &mut FxHashMap<String, String>,
     identity_indices: &mut FxHashMap<String, String>,
@@ -734,7 +520,7 @@ pub(super) fn clear_linear_facts(
     helper_heavy_vars.clear();
 }
 
-pub(super) fn clear_loop_boundary_facts(
+pub(crate) fn clear_loop_boundary_facts(
     identity_indices: &mut FxHashMap<String, String>,
     aliases: &mut FxHashMap<String, String>,
     no_na_vars: &mut FxHashSet<String>,
@@ -746,7 +532,7 @@ pub(super) fn clear_loop_boundary_facts(
     helper_heavy_vars.clear();
 }
 
-pub(super) fn is_control_flow_boundary(line: &str) -> bool {
+pub(crate) fn is_control_flow_boundary(line: &str) -> bool {
     let trimmed = line.trim();
     let is_single_line_guard =
         trimmed.starts_with("if ") && (trimmed.ends_with(" break") || trimmed.ends_with(" next"));
@@ -763,7 +549,7 @@ pub(super) fn is_control_flow_boundary(line: &str) -> bool {
         || trimmed == "next"
 }
 
-pub(super) fn is_dead_parenthesized_eval_line(line: &str) -> bool {
+pub(crate) fn is_dead_parenthesized_eval_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty()
         || trimmed.contains("<-")
@@ -778,7 +564,7 @@ pub(super) fn is_dead_parenthesized_eval_line(line: &str) -> bool {
     trimmed.starts_with('(') && trimmed.ends_with(')')
 }
 
-pub(super) fn is_dead_plain_ident_eval_line(line: &str) -> bool {
+pub(crate) fn is_dead_plain_ident_eval_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty()
         || trimmed.contains("<-")
@@ -793,7 +579,7 @@ pub(super) fn is_dead_plain_ident_eval_line(line: &str) -> bool {
     plain_ident_re().is_some_and(|re| re.is_match(trimmed))
 }
 
-fn collect_mutated_arg_aliases_iter<'a>(
+pub(crate) fn collect_mutated_arg_aliases_iter<'a>(
     lines: impl IntoIterator<Item = &'a str>,
 ) -> FxHashSet<String> {
     let mut out = FxHashSet::default();
@@ -827,11 +613,11 @@ fn collect_mutated_arg_aliases_iter<'a>(
     out
 }
 
-pub(super) fn collect_mutated_arg_aliases(code: &str) -> FxHashSet<String> {
+pub(crate) fn collect_mutated_arg_aliases(code: &str) -> FxHashSet<String> {
     collect_mutated_arg_aliases_iter(code.lines())
 }
 
-pub(super) fn collect_mutated_arg_aliases_in_lines(
+pub(crate) fn collect_mutated_arg_aliases_in_lines(
     lines: &[String],
     start: usize,
     end_inclusive: usize,

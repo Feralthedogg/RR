@@ -87,6 +87,11 @@ sub read_commit_subjects {
     return [grep { defined && length } @subjects];
 }
 
+sub is_github_merge_subject {
+    my ($subject) = @_;
+    return ($subject // q{}) =~ /^Merge pull request #\d+ from \S+$/;
+}
+
 sub parse_sections {
     my ($body) = @_;
     my %sections;
@@ -127,6 +132,7 @@ my %allowed = map { $_ => 1 } (@{$policy->{meta}{allowed_commit_prefixes} // []}
 my @errors;
 my $subject_re = qr/^([a-z0-9][a-z0-9_-]*):\s+\S/;
 for my $subject (@{$subjects}) {
+    next if is_github_merge_subject($subject);
     if ($subject !~ $subject_re) {
         push @errors, "commit subject must look like 'subsystem: summary' -> $subject";
         next;

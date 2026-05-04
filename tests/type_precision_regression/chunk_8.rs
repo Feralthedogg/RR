@@ -1,13 +1,14 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn parallel_two_digit_tail_package_calls_have_direct_types() {
+pub(crate) fn parallel_two_digit_tail_package_calls_have_direct_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["cluster".to_string(), "tasks".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
     fn_ir.param_term_hints[0] = TypeTerm::List(Box::new(TypeTerm::Any));
     fn_ir.param_term_hints[1] = TypeTerm::Vector(Box::new(TypeTerm::Double));
 
@@ -28,7 +29,7 @@ fn parallel_two_digit_tail_package_calls_have_direct_types() {
         None,
     );
 
-    let mut add_call = |callee: &str, args: Vec<RR::mir::ValueId>| {
+    let mut add_call = |callee: &str, args: Vec<rr::compiler::internal::mir::ValueId>| {
         let arg_len = args.len();
         fn_ir.add_value(
             ValueKind::Call {
@@ -129,9 +130,9 @@ fn parallel_two_digit_tail_package_calls_have_direct_types() {
 }
 
 #[test]
-fn stats4_meta_exports_have_direct_types() {
+pub(crate) fn stats4_meta_exports_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["fit".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::List(Box::new(TypeTerm::Any));
 
     let b0 = fn_ir.add_block();
@@ -197,9 +198,10 @@ fn stats4_meta_exports_have_direct_types() {
 }
 
 #[test]
-fn tools_tail_package_calls_have_direct_types() {
+pub(crate) fn tools_tail_package_calls_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["path".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Char;
 
     let b0 = fn_ir.add_block();
@@ -213,19 +215,25 @@ fn tools_tail_package_calls_have_direct_types() {
         None,
     );
     let title = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("title".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "title".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let sweave_path = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("sample.tex".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "sample.tex".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let engine_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("utils::Sweave".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "utils::Sweave".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,

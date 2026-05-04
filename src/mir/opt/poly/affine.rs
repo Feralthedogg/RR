@@ -203,6 +203,28 @@ fn canonicalize_trivial_phi(fn_ir: &FnIR, mut value: ValueId) -> ValueId {
 }
 
 pub fn try_lift_affine_expr(fn_ir: &FnIR, root: ValueId, lp: &LoopInfo) -> Option<AffineExpr> {
+    fn integral_const_value(fn_ir: &FnIR, value: ValueId) -> Option<i64> {
+        match &fn_ir.values[value].kind {
+            ValueKind::Const(Lit::Int(n)) => Some(*n),
+            ValueKind::Const(Lit::Float(f)) if f.is_finite() && f.fract() == 0.0 => Some(*f as i64),
+            _ => None,
+        }
+    }
+
+    fn origin_symbol_expr(fn_ir: &FnIR, lp: &LoopInfo, origin: &str) -> Option<AffineExpr> {
+        if loop_iv_name(fn_ir, lp).as_deref() == Some(origin) {
+            Some(AffineExpr::symbol(AffineSymbol::LoopIv(origin.to_string())))
+        } else if let Some(param) = canonical_param_name(fn_ir, origin) {
+            Some(AffineExpr::symbol(AffineSymbol::Param(param)))
+        } else if !var_is_written_in_loop(fn_ir, lp, origin) {
+            Some(AffineExpr::symbol(AffineSymbol::Invariant(
+                origin.to_string(),
+            )))
+        } else {
+            None
+        }
+    }
+
     fn rec(
         fn_ir: &FnIR,
         root: ValueId,
@@ -309,12 +331,8 @@ pub fn try_lift_affine_expr(fn_ir: &FnIR, root: ValueId, lp: &LoopInfo) -> Optio
                     AffineExpr::symbol(AffineSymbol::Param(name))
                 }
                 ValueKind::Load { var } => {
-                    if loop_iv_name(fn_ir, lp).as_deref() == Some(var.as_str()) {
-                        AffineExpr::symbol(AffineSymbol::LoopIv(var.clone()))
-                    } else if let Some(param) = canonical_param_name(fn_ir, var) {
-                        AffineExpr::symbol(AffineSymbol::Param(param))
-                    } else if !var_is_written_in_loop(fn_ir, lp, var) {
-                        AffineExpr::symbol(AffineSymbol::Invariant(var.clone()))
+                    if let Some(expr) = origin_symbol_expr(fn_ir, lp, var) {
+                        expr
                     } else if let Some(expr) = lift_loop_local_var(fn_ir, lp, var, seen, seen_vars)
                     {
                         expr
@@ -334,18 +352,10 @@ pub fn try_lift_affine_expr(fn_ir: &FnIR, root: ValueId, lp: &LoopInfo) -> Optio
                 }
                 ValueKind::Phi { args } if args.is_empty() => {
                     let origin = fn_ir.values[root].origin_var.clone()?;
-                    if loop_iv_name(fn_ir, lp).as_deref() == Some(origin.as_str()) {
-                        AffineExpr::symbol(AffineSymbol::LoopIv(origin))
-                    } else if let Some(param) = canonical_param_name(fn_ir, &origin) {
-                        AffineExpr::symbol(AffineSymbol::Param(param))
-                    } else if !var_is_written_in_loop(fn_ir, lp, &origin) {
-                        AffineExpr::symbol(AffineSymbol::Invariant(origin))
-                    } else if let Some(expr) =
-                        lift_loop_local_var(fn_ir, lp, &origin, seen, seen_vars)
-                    {
+                    if let Some(expr) = origin_symbol_expr(fn_ir, lp, &origin) {
                         expr
                     } else {
-                        return None;
+                        lift_loop_local_var(fn_ir, lp, &origin, seen, seen_vars)?
                     }
                 }
                 ValueKind::Phi { args } => {
@@ -376,13 +386,7 @@ pub fn try_lift_affine_expr(fn_ir: &FnIR, root: ValueId, lp: &LoopInfo) -> Optio
                     if saw_arg {
                         lifted?
                     } else if let Some(origin) = fn_ir.values[root].origin_var.clone() {
-                        if let Some(param) = canonical_param_name(fn_ir, &origin) {
-                            AffineExpr::symbol(AffineSymbol::Param(param))
-                        } else if !var_is_written_in_loop(fn_ir, lp, &origin) {
-                            AffineExpr::symbol(AffineSymbol::Invariant(origin))
-                        } else {
-                            return None;
-                        }
+                        origin_symbol_expr(fn_ir, lp, &origin)?
                     } else {
                         return None;
                     }
@@ -409,25 +413,9 @@ pub fn try_lift_affine_expr(fn_ir: &FnIR, root: ValueId, lp: &LoopInfo) -> Optio
                         out
                     }
                     crate::syntax::ast::BinOp::Mul => {
-                        if let Some(scale) = match &fn_ir.values[*lhs].kind {
-                            ValueKind::Const(Lit::Int(n)) => Some(*n),
-                            ValueKind::Const(Lit::Float(f))
-                                if f.is_finite() && f.fract() == 0.0 =>
-                            {
-                                Some(*f as i64)
-                            }
-                            _ => None,
-                        } {
+                        if let Some(scale) = integral_const_value(fn_ir, *lhs) {
                             rec(fn_ir, *rhs, lp, seen, seen_vars)?.scaled(scale)
-                        } else if let Some(scale) = match &fn_ir.values[*rhs].kind {
-                            ValueKind::Const(Lit::Int(n)) => Some(*n),
-                            ValueKind::Const(Lit::Float(f))
-                                if f.is_finite() && f.fract() == 0.0 =>
-                            {
-                                Some(*f as i64)
-                            }
-                            _ => None,
-                        } {
+                        } else if let Some(scale) = integral_const_value(fn_ir, *rhs) {
                             rec(fn_ir, *lhs, lp, seen, seen_vars)?.scaled(scale)
                         } else {
                             return None;

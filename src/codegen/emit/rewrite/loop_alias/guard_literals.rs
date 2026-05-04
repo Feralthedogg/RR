@@ -1,4 +1,5 @@
-pub(super) fn rewrite_guard_scalar_literals(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_guard_scalar_literals(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;
@@ -78,7 +79,7 @@ pub(super) fn rewrite_guard_scalar_literals(output: &mut String) {
     *output = rewritten;
 }
 
-pub(super) fn rewrite_loop_guard_scalar_literals(output: &mut String) {
+pub(crate) fn rewrite_loop_guard_scalar_literals(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

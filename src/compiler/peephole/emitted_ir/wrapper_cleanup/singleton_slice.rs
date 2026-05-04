@@ -1,4 +1,5 @@
-fn scalar_rhs_from_singleton_rest_ir(rest: &str) -> Option<String> {
+use super::*;
+pub(crate) fn scalar_rhs_from_singleton_rest_ir(rest: &str) -> Option<String> {
     let trimmed = rest.trim();
     if let Some(inner) = trimmed
         .strip_prefix("rep.int(")
@@ -14,7 +15,7 @@ fn scalar_rhs_from_singleton_rest_ir(rest: &str) -> Option<String> {
     .then_some(trimmed.to_string())
 }
 
-fn collapse_singleton_assign_slice_scalar_stmt_text_ir(text: &str) -> Option<String> {
+pub(crate) fn collapse_singleton_assign_slice_scalar_stmt_text_ir(text: &str) -> Option<String> {
     let trimmed = text.trim();
     let caps = assign_re().and_then(|re| re.captures(trimmed))?;
     let indent = caps.name("indent").map(|m| m.as_str()).unwrap_or("");
@@ -50,16 +51,14 @@ fn collapse_singleton_assign_slice_scalar_stmt_text_ir(text: &str) -> Option<Str
     ))
 }
 
-fn has_singleton_assign_slice_scalar_edit_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_singleton_assign_slice_scalar_edit_candidates_ir(lines: &[String]) -> bool {
     lines.iter().any(|line| {
         line.contains("rr_assign_slice(")
             && collapse_singleton_assign_slice_scalar_stmt_text_ir(line).is_some()
     })
 }
 
-pub(in super::super) fn collapse_singleton_assign_slice_scalar_edits_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn collapse_singleton_assign_slice_scalar_edits_ir(lines: Vec<String>) -> Vec<String> {
     if !has_singleton_assign_slice_scalar_edit_candidates_ir(&lines) {
         return lines;
     }
@@ -68,7 +67,7 @@ pub(in super::super) fn collapse_singleton_assign_slice_scalar_edits_ir(
     program.into_lines()
 }
 
-fn apply_collapse_singleton_assign_slice_scalar_edits_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_collapse_singleton_assign_slice_scalar_edits_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         match item {
             EmittedItem::Raw(line) => {

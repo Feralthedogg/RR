@@ -1,4 +1,5 @@
-fn strip_outer_parens_local(expr: &str) -> &str {
+use super::*;
+pub(crate) fn strip_outer_parens_local(expr: &str) -> &str {
     let mut expr = expr.trim();
     loop {
         if !(expr.starts_with('(') && expr.ends_with(')')) {
@@ -27,7 +28,7 @@ fn strip_outer_parens_local(expr: &str) -> &str {
     expr
 }
 
-fn is_inlineable_scalar_index_rhs_local(rhs: &str) -> bool {
+pub(crate) fn is_inlineable_scalar_index_rhs_local(rhs: &str) -> bool {
     let trimmed = strip_outer_parens_local(rhs);
     let Some(open) = trimmed.find('[') else {
         return false;
@@ -57,10 +58,25 @@ fn is_inlineable_scalar_index_rhs_local(rhs: &str) -> bool {
     base.chars().all(RBackend::is_symbol_char)
 }
 
-fn straight_line_region_end_local(lines: &[String], start_idx: usize) -> usize {
-    for line_idx in start_idx + 1..lines.len() {
-        let trimmed = lines[line_idx].trim();
-        if lines[line_idx].contains("<- function")
+pub(crate) fn indexed_store_base_local(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let (lhs, _) = trimmed.split_once(" <- ")?;
+    let lhs = lhs.trim();
+    let open = lhs.find('[')?;
+    let base = lhs[..open].trim();
+    if base.is_empty() || !base.chars().all(RBackend::is_symbol_char) {
+        return None;
+    }
+    Some(base)
+}
+
+pub(crate) fn straight_line_region_end_local(lines: &[String], start_idx: usize) -> usize {
+    for (line_idx, line) in lines.iter().enumerate().skip(start_idx + 1) {
+        let trimmed = line.trim();
+        if line.contains("<- function")
             || (!trimmed.is_empty() && is_control_flow_boundary_local(trimmed))
         {
             return line_idx;
@@ -69,14 +85,14 @@ fn straight_line_region_end_local(lines: &[String], start_idx: usize) -> usize {
     lines.len()
 }
 
-fn is_branch_hoistable_named_scalar_rhs_local(rhs: &str) -> bool {
+pub(crate) fn is_branch_hoistable_named_scalar_rhs_local(rhs: &str) -> bool {
     let rhs = strip_outer_parens_local(rhs);
     is_inlineable_scalar_index_rhs_local(rhs)
         || rhs.starts_with("rr_wrap_index_vec_i(")
         || rhs.starts_with("rr_idx_cube_vec_i(")
 }
 
-fn raw_expr_idents_local(expr: &str) -> Vec<String> {
+pub(crate) fn raw_expr_idents_local(expr: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut start = None;
     for (idx, ch) in expr.char_indices() {

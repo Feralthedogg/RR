@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use RR::hir::def::{HirItem, HirStmt, ModuleId, Ty};
-use RR::hir::lower::Lowerer;
-use RR::syntax::parse::Parser;
+use rr::compiler::internal::hir::def::{HirItem, HirStmt, ModuleId, Ty};
+use rr::compiler::internal::hir::lower::Lowerer;
+use rr::compiler::internal::syntax::parse::Parser;
 
 fn rscript_path() -> Option<String> {
     if let Ok(path) = std::env::var("RRSCRIPT")
@@ -165,17 +165,21 @@ fn main(n) {
     let (iter, body) = for_stmt.expect("for stmt");
 
     match iter {
-        RR::hir::def::HirForIter::Range {
+        rr::compiler::internal::hir::def::HirForIter::Range {
             start,
             end,
             inclusive,
             ..
         } => {
             assert!(*inclusive, "for-range must stay inclusive");
-            assert!(matches!(start, RR::hir::def::HirExpr::Lit(_)));
+            assert!(matches!(
+                start,
+                rr::compiler::internal::hir::def::HirExpr::Lit(_)
+            ));
             assert!(matches!(
                 end,
-                RR::hir::def::HirExpr::Local(_) | RR::hir::def::HirExpr::Global(..)
+                rr::compiler::internal::hir::def::HirExpr::Local(_)
+                    | rr::compiler::internal::hir::def::HirExpr::Global(..)
             ));
         }
         _ => panic!("expected canonical range iterator"),
@@ -188,8 +192,8 @@ fn main(n) {
     let value = assign_stmt.expect("compound assignment lowered to assign");
     assert!(matches!(
         value,
-        RR::hir::def::HirExpr::Binary {
-            op: RR::hir::def::HirBinOp::Add,
+        rr::compiler::internal::hir::def::HirExpr::Binary {
+            op: rr::compiler::internal::hir::def::HirBinOp::Add,
             ..
         }
     ));
@@ -226,20 +230,20 @@ fn main() {
     for stmt in &main_fn.body.stmts {
         if let HirStmt::Assign { target, value, .. } = stmt {
             match target {
-                RR::hir::def::HirLValue::Index { .. } => {
+                rr::compiler::internal::hir::def::HirLValue::Index { .. } => {
                     saw_index_assign = matches!(
                         value,
-                        RR::hir::def::HirExpr::Binary {
-                            op: RR::hir::def::HirBinOp::Add,
+                        rr::compiler::internal::hir::def::HirExpr::Binary {
+                            op: rr::compiler::internal::hir::def::HirBinOp::Add,
                             ..
                         }
                     );
                 }
-                RR::hir::def::HirLValue::Field { .. } => {
+                rr::compiler::internal::hir::def::HirLValue::Field { .. } => {
                     saw_field_assign = matches!(
                         value,
-                        RR::hir::def::HirExpr::Binary {
-                            op: RR::hir::def::HirBinOp::Sub,
+                        rr::compiler::internal::hir::def::HirExpr::Binary {
+                            op: rr::compiler::internal::hir::def::HirBinOp::Sub,
                             ..
                         }
                     );

@@ -55,7 +55,9 @@ impl Runner {
             .map(|p| p.to_string())
             .or_else(|| env::var("RRSCRIPT").ok().filter(|v| !v.trim().is_empty()))
             .unwrap_or_else(|| "Rscript".to_string());
-        let output = match Command::new(&rscript)
+        // The runner intentionally executes the CLI/env-selected Rscript path,
+        // passes only the generated file, and reports OS failures as diagnostics.
+        let output = match Command::new(&rscript /* audit: allow */)
             .arg("--vanilla")
             .arg(&gen_path)
             .output()

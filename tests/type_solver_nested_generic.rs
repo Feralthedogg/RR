@@ -1,9 +1,10 @@
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::error::RRCode;
-use RR::mir::{FnIR, Terminator, ValueKind};
-use RR::typeck::solver::{TypeConfig, analyze_program};
-use RR::typeck::{NativeBackend, TypeMode, TypeTerm};
-use RR::{mir::Facts, utils::Span};
+use rr::Span;
+use rr::compiler::internal::mir::Facts;
+use rr::compiler::internal::mir::{FnIR, Terminator, ValueKind};
+use rr::compiler::internal::typeck::solver::{TypeConfig, analyze_program};
+use rr::compiler::internal::typeck::{NativeBackend, TypeMode, TypeTerm};
+use rr::compiler::{OptLevel, compile_with_config};
+use rr::error::RRCode;
 use rustc_hash::FxHashMap;
 
 #[test]
@@ -23,7 +24,7 @@ fn mir_index_over_list_box_preserves_box_term() {
         None,
     );
     let idx = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(1)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -124,7 +125,7 @@ fn outer(y: list<box<float>>) -> int {
         "nested_generic_match.rr",
         src,
         OptLevel::O1,
-        RR::typeck::TypeConfig {
+        rr::compiler::internal::typeck::TypeConfig {
             mode: TypeMode::Strict,
             native_backend: NativeBackend::Off,
         },

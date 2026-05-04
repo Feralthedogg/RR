@@ -42,6 +42,78 @@ fn build_perf_program() -> String {
     src
 }
 
+fn build_trait_sroa_perf_program() -> String {
+    let mut src = String::from(
+        r#"
+trait Add {
+  fn add(self: Self, rhs: Self) -> Self
+}
+trait Neg {
+  fn neg(self: Self) -> Self
+}
+trait Transformable {
+  fn translate(self: Self, offset: Self) -> Self
+  fn scale(self: Self, factor: float) -> Self
+}
+
+impl Add for Vec2 {
+  fn add(self: Vec2, rhs: Vec2) -> Vec2 {
+    {x: self.x + rhs.x, y: self.y + rhs.y}
+  }
+}
+impl Neg for Vec2 {
+  fn neg(self: Vec2) -> Vec2 {
+    {x: 0.0 - self.x, y: 0.0 - self.y}
+  }
+}
+impl Transformable for Vec2 {
+  fn translate(self: Vec2, offset: Vec2) -> Vec2 {
+    self + offset
+  }
+  fn scale(self: Vec2, factor: float) -> Vec2 {
+    {x: self.x * factor, y: self.y * factor}
+  }
+}
+
+fn simulate_rebound<T>(entity: T, velocity: T, time: float) -> T
+  where T: Add + Neg + Transformable
+{
+  let moved = entity + velocity
+  let rebounded_vel = -velocity
+  moved.translate(rebounded_vel).scale(time)
+}
+
+fn main() {
+  let scratch = seq_len(8L)
+  let acc = 0.0
+"#,
+    );
+
+    for i in 0..24 {
+        src.push_str(&format!(
+            r#"
+  let p{i}: Vec2 = {{x: {x}.0, y: {y}.0}}
+  let v{i}: Vec2 = {{x: 2.0, y: -3.0}}
+  let r{i} = simulate_rebound(p{i}, v{i}, 1.5)
+  scratch[1L] = r{i}.x
+  acc = acc + r{i}.y + scratch[1L]
+"#,
+            x = 10 + i,
+            y = 15 + i
+        ));
+    }
+
+    src.push_str(
+        r#"
+  print(acc)
+}
+
+main()
+"#,
+    );
+    src
+}
+
 fn compile_elapsed_ms(rr_bin: &PathBuf, input: &PathBuf, output: &PathBuf, level: &str) -> u128 {
     let start = Instant::now();
     let status = Command::new(rr_bin)
@@ -99,5 +171,65 @@ fn compile_time_regression_gate() {
         o2_ms,
         o2_vs_o1_limit,
         ratio_limit
+    );
+}
+
+#[test]
+fn trait_sroa_compile_shape_regression_gate() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("perf_regression_gate");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "trait_sroa");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let rr_path = proj_dir.join("trait_sroa_perf.rr");
+    let out_o2 = proj_dir.join("trait_sroa_o2.R");
+    fs::write(&rr_path, build_trait_sroa_perf_program()).expect("failed to write trait SROA case");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let o2_ms = compile_elapsed_ms(&rr_bin, &rr_path, &out_o2, "-O2");
+    let output = fs::read_to_string(&out_o2).expect("failed to read trait SROA output");
+
+    let budget_ms: u128 = env::var("RR_PERF_TRAIT_SROA_MS")
+        .ok()
+        .and_then(|v| v.parse::<u128>().ok())
+        .unwrap_or(45_000);
+    assert!(
+        o2_ms <= budget_ms,
+        "trait/SROA compile-time budget exceeded: O2={}ms > budget={}ms (set RR_PERF_TRAIT_SROA_MS to tune)",
+        o2_ms,
+        budget_ms
+    );
+
+    let list_count = output.matches("list(").count();
+    let sroa_temp_count = output.matches("__rr_sroa_").count();
+    let max_output_bytes = 24 * 1024;
+    assert!(
+        output.len() <= max_output_bytes,
+        "trait/SROA output shape grew unexpectedly: bytes={} > max={max_output_bytes}\n{output}",
+        output.len()
+    );
+    assert_eq!(
+        list_count, 0,
+        "trait/SROA cross-call scalarization should remove hot-path record allocations; list_count={list_count}\n{output}"
+    );
+    assert!(
+        sroa_temp_count >= 8,
+        "trait/SROA benchmark should expose helper-local scalar replacement temps; sroa_temp_count={sroa_temp_count}\n{output}"
+    );
+    assert!(
+        !output.contains("$translate") && !output.contains("$scale"),
+        "trait/SROA benchmark must keep static dispatch in optimized output:\n{output}"
+    );
+    assert!(
+        output.contains("r0__rr_sroa_ret_x")
+            && output.contains("r0__rr_sroa_ret_y")
+            && !output.contains("Sym_35(")
+            && !output.contains("[[\"x\"]]")
+            && !output.contains("[[\"y\"]]"),
+        "trait/SROA benchmark should inline scalarized record-return fields across the helper boundary:\n{output}"
     );
 }

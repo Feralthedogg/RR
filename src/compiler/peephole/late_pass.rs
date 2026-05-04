@@ -8,13 +8,13 @@ use regex::{Captures, Regex};
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone)]
-pub(super) struct PureCallBinding {
-    pub(super) expr: String,
-    pub(super) var: String,
-    pub(super) deps: FxHashSet<String>,
+pub(crate) struct PureCallBinding {
+    pub(crate) expr: String,
+    pub(crate) var: String,
+    pub(crate) deps: FxHashSet<String>,
 }
 
-pub(super) fn extract_pure_call_binding(
+pub(crate) fn extract_pure_call_binding(
     lhs: &str,
     rhs: &str,
     pure_user_calls: &FxHashSet<String>,
@@ -39,7 +39,7 @@ pub(super) fn extract_pure_call_binding(
     })
 }
 
-pub(super) fn rewrite_pure_call_reuse(expr: &str, bindings: &[PureCallBinding]) -> String {
+pub(crate) fn rewrite_pure_call_reuse(expr: &str, bindings: &[PureCallBinding]) -> String {
     let mut out = expr.to_string();
     for binding in bindings {
         if out.contains(&binding.expr) {
@@ -49,7 +49,7 @@ pub(super) fn rewrite_pure_call_reuse(expr: &str, bindings: &[PureCallBinding]) 
     out
 }
 
-pub(super) fn rewrite_return_expr_line(
+pub(crate) fn rewrite_return_expr_line(
     line: &str,
     last_rhs_for_var: &FxHashMap<String, String>,
 ) -> String {
@@ -72,7 +72,7 @@ pub(super) fn rewrite_return_expr_line(
     format!("{indent}return({var})")
 }
 
-pub(super) fn written_base_var(lhs: &str) -> Option<&str> {
+pub(crate) fn written_base_var(lhs: &str) -> Option<&str> {
     let lhs = lhs.trim();
     if let Some((base, _)) = lhs.split_once('[') {
         let base = base.trim();
@@ -88,7 +88,7 @@ pub(super) fn written_base_var(lhs: &str) -> Option<&str> {
     }
 }
 
-pub(super) fn maybe_expand_fresh_alias_rhs(
+pub(crate) fn maybe_expand_fresh_alias_rhs(
     rhs: &str,
     fresh_expr_for_var: &FxHashMap<String, String>,
 ) -> Option<String> {
@@ -99,7 +99,75 @@ pub(super) fn maybe_expand_fresh_alias_rhs(
     fresh_expr_for_var.get(ident).cloned()
 }
 
-pub(super) fn collapse_common_if_else_tail_assignments(lines: Vec<String>) -> Vec<String> {
+#[derive(Debug)]
+pub(crate) struct SharedTailAssignment {
+    pub(crate) then_idx: usize,
+    pub(crate) else_idx: usize,
+    pub(crate) text: String,
+}
+
+pub(crate) fn collect_common_if_else_tail_assignments(
+    lines: &[String],
+    if_idx: usize,
+    else_idx: usize,
+    end_idx: usize,
+) -> Vec<SharedTailAssignment> {
+    let mut then_idx = else_idx;
+    let mut else_tail_idx = end_idx;
+    let mut shared = Vec::new();
+
+    while let Some((cur_then_idx, then_assign)) = last_non_empty_assign_before(lines, then_idx) {
+        let Some((cur_else_idx, else_assign)) = last_non_empty_assign_before(lines, else_tail_idx)
+        else {
+            break;
+        };
+        if cur_then_idx <= if_idx
+            || cur_else_idx <= else_idx
+            || then_assign.trim() != else_assign.trim()
+        {
+            break;
+        }
+        let Some(caps) = assign_re().and_then(|re| re.captures(then_assign.trim())) else {
+            break;
+        };
+        let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
+        if !plain_ident_re().is_some_and(|re| re.is_match(lhs)) {
+            break;
+        }
+        shared.push(SharedTailAssignment {
+            then_idx: cur_then_idx,
+            else_idx: cur_else_idx,
+            text: then_assign.trim().to_string(),
+        });
+        then_idx = cur_then_idx;
+        else_tail_idx = cur_else_idx;
+    }
+
+    shared.reverse();
+    shared
+}
+
+pub(crate) fn move_shared_tail_assignments_after_if(
+    lines: &mut Vec<String>,
+    end_idx: usize,
+    shared: &[SharedTailAssignment],
+) -> usize {
+    let indent_len = shared[0].text.len() - shared[0].text.trim_start().len();
+    let indent = " ".repeat(indent_len);
+    for item in shared {
+        lines[item.then_idx].clear();
+        lines[item.else_idx].clear();
+    }
+
+    let mut insert_at = end_idx + 1;
+    for item in shared {
+        lines.insert(insert_at, format!("{indent}{}", item.text));
+        insert_at += 1;
+    }
+    insert_at
+}
+
+pub(crate) fn collapse_common_if_else_tail_assignments(lines: Vec<String>) -> Vec<String> {
     let mut out = lines;
     let mut i = 0usize;
     while i < out.len() {
@@ -112,62 +180,21 @@ pub(super) fn collapse_common_if_else_tail_assignments(lines: Vec<String>) -> Ve
             i += 1;
             continue;
         };
-        let mut then_idx = else_idx;
-        let mut else_tail_idx = end_idx;
-        let mut shared = Vec::<(usize, usize, String)>::new();
-        loop {
-            let Some((cur_then_idx, then_assign)) = last_non_empty_assign_before(&out, then_idx)
-            else {
-                break;
-            };
-            let Some((cur_else_idx, else_assign)) =
-                last_non_empty_assign_before(&out, else_tail_idx)
-            else {
-                break;
-            };
-            if cur_then_idx <= i || cur_else_idx <= else_idx {
-                break;
-            }
-            if then_assign.trim() != else_assign.trim() {
-                break;
-            }
-            let Some(caps) = assign_re().and_then(|re| re.captures(then_assign.trim())) else {
-                break;
-            };
-            let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("").trim();
-            if !plain_ident_re().is_some_and(|re| re.is_match(lhs)) {
-                break;
-            }
-            shared.push((cur_then_idx, cur_else_idx, then_assign.trim().to_string()));
-            then_idx = cur_then_idx;
-            else_tail_idx = cur_else_idx;
-        }
+        let shared = collect_common_if_else_tail_assignments(&out, i, else_idx, end_idx);
         if shared.is_empty() {
             i = end_idx + 1;
             continue;
         }
-        shared.reverse();
-        let indent_len = shared[0].2.len() - shared[0].2.trim_start().len();
-        let indent = " ".repeat(indent_len);
-        for (then_assign_idx, else_assign_idx, _) in &shared {
-            out[*then_assign_idx].clear();
-            out[*else_assign_idx].clear();
-        }
-        let mut insert_at = end_idx + 1;
-        for (_, _, assign) in &shared {
-            out.insert(insert_at, format!("{indent}{assign}"));
-            insert_at += 1;
-        }
-        i = insert_at;
+        i = move_shared_tail_assignments_after_if(&mut out, end_idx, &shared);
     }
     out
 }
 
-pub(super) fn collapse_identical_if_else_tail_assignments_late(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn collapse_identical_if_else_tail_assignments_late(lines: Vec<String>) -> Vec<String> {
     collapse_identical_if_else_tail_assignments_late_ir(lines)
 }
 
-pub(super) fn rewrite_safe_loop_index_write_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_safe_loop_index_write_calls(lines: Vec<String>) -> Vec<String> {
     let mut out = lines;
     let mut repeat_idx = 0usize;
     while repeat_idx < out.len() {
@@ -237,13 +264,14 @@ pub(super) fn rewrite_safe_loop_index_write_calls(lines: Vec<String>) -> Vec<Str
     out
 }
 
-pub(super) fn rewrite_safe_loop_neighbor_read_calls(lines: Vec<String>) -> Vec<String> {
-    fn rewrite_loop_read_expr(
-        expr: &str,
-        iter_var: &str,
-        allow_prev: bool,
-        allow_next: bool,
-    ) -> String {
+pub(crate) fn rewrite_safe_loop_neighbor_read_calls(lines: Vec<String>) -> Vec<String> {
+    #[derive(Clone, Copy)]
+    struct NeighborReadPolicy {
+        pub(crate) allow_prev: bool,
+        pub(crate) allow_next: bool,
+    }
+
+    fn rewrite_loop_read_expr(expr: &str, iter_var: &str, policy: NeighborReadPolicy) -> String {
         let mut out = expr.to_string();
         let iter_esc = regex::escape(iter_var);
         let ctx = r#"(?:"index"|'index')"#;
@@ -261,7 +289,7 @@ pub(super) fn rewrite_safe_loop_neighbor_read_calls(lines: Vec<String>) -> Vec<S
                 .to_string();
         }
 
-        if allow_prev {
+        if policy.allow_prev {
             let prev_pat = format!(
                 r#"rr_index1_read\((?P<base>{}),\s*\(\s*{}\s*-\s*1(?:L|\.0+)?\s*\)\s*,\s*{}\)"#,
                 IDENT_PATTERN, iter_esc, ctx
@@ -276,7 +304,7 @@ pub(super) fn rewrite_safe_loop_neighbor_read_calls(lines: Vec<String>) -> Vec<S
             }
         }
 
-        if allow_next {
+        if policy.allow_next {
             let next_pat = format!(
                 r#"rr_index1_read\((?P<base>{}),\s*\(\s*{}\s*\+\s*1(?:L|\.0+)?\s*\)\s*,\s*{}\)"#,
                 IDENT_PATTERN, iter_esc, ctx
@@ -350,15 +378,19 @@ pub(super) fn rewrite_safe_loop_neighbor_read_calls(lines: Vec<String>) -> Vec<S
 
         let allow_prev = start_value.is_some_and(|value| value >= 2);
         let allow_next = op == "<";
+        let policy = NeighborReadPolicy {
+            allow_prev,
+            allow_next,
+        };
         for line in out.iter_mut().take(loop_end).skip(guard_idx + 1) {
-            *line = rewrite_loop_read_expr(line, &iter_var, allow_prev, allow_next);
+            *line = rewrite_loop_read_expr(line, &iter_var, policy);
         }
         repeat_idx = next_repeat + 1;
     }
     out
 }
 
-fn is_branch_open_boundary(line: &str) -> bool {
+pub(crate) fn is_branch_open_boundary(line: &str) -> bool {
     let trimmed = line.trim();
     let is_single_line_guard =
         trimmed.starts_with("if ") && (trimmed.ends_with(" break") || trimmed.ends_with(" next"));
@@ -368,12 +400,12 @@ fn is_branch_open_boundary(line: &str) -> bool {
         || trimmed.starts_with("} else")
 }
 
-pub(super) fn is_loop_open_boundary(line: &str) -> bool {
+pub(crate) fn is_loop_open_boundary(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed == "repeat {" || trimmed.starts_with("while") || trimmed.starts_with("for")
 }
 
-pub(super) fn line_is_within_loop_body(lines: &[String], idx: usize) -> bool {
+pub(crate) fn line_is_within_loop_body(lines: &[String], idx: usize) -> bool {
     (0..idx).rev().any(|start_idx| {
         if !is_loop_open_boundary(lines[start_idx].trim()) {
             return false;
@@ -382,14 +414,14 @@ pub(super) fn line_is_within_loop_body(lines: &[String], idx: usize) -> bool {
     })
 }
 
-pub(super) fn strip_redundant_identical_pure_rebinds(
+pub(crate) fn strip_redundant_identical_pure_rebinds(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
     strip_redundant_identical_pure_rebinds_ir(lines, pure_user_calls)
 }
 
-pub(super) fn strip_redundant_identical_pure_rebinds_with_cache(
+pub(crate) fn strip_redundant_identical_pure_rebinds_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     _cache: &mut PeepholeAnalysisCache,
@@ -397,7 +429,7 @@ pub(super) fn strip_redundant_identical_pure_rebinds_with_cache(
     strip_redundant_identical_pure_rebinds_ir(lines, pure_user_calls)
 }
 
-fn find_if_else_bounds(lines: &[String], if_idx: usize) -> Option<(usize, usize)> {
+pub(crate) fn find_if_else_bounds(lines: &[String], if_idx: usize) -> Option<(usize, usize)> {
     let mut depth = 1usize;
     let mut else_idx = None;
     for (idx, line) in lines.iter().enumerate().skip(if_idx + 1) {
@@ -420,7 +452,10 @@ fn find_if_else_bounds(lines: &[String], if_idx: usize) -> Option<(usize, usize)
     None
 }
 
-fn last_non_empty_assign_before(lines: &[String], end_exclusive: usize) -> Option<(usize, &str)> {
+pub(crate) fn last_non_empty_assign_before(
+    lines: &[String],
+    end_exclusive: usize,
+) -> Option<(usize, &str)> {
     for idx in (0..end_exclusive).rev() {
         let trimmed = lines[idx].trim();
         if trimmed.is_empty() {
@@ -433,7 +468,7 @@ fn last_non_empty_assign_before(lines: &[String], end_exclusive: usize) -> Optio
     None
 }
 
-pub(super) fn expr_is_fresh_allocation_like(
+pub(crate) fn expr_is_fresh_allocation_like(
     expr: &str,
     fresh_user_calls: &FxHashSet<String>,
 ) -> bool {
@@ -458,7 +493,7 @@ pub(super) fn expr_is_fresh_allocation_like(
     FRESH_BUILTINS.contains(&callee) || fresh_user_calls.contains(callee)
 }
 
-pub(super) fn expr_has_only_pure_calls(expr: &str, pure_user_calls: &FxHashSet<String>) -> bool {
+pub(crate) fn expr_has_only_pure_calls(expr: &str, pure_user_calls: &FxHashSet<String>) -> bool {
     const PURE_CALLS: &[&str] = &[
         "abs",
         "sqrt",
@@ -539,7 +574,7 @@ pub(super) fn expr_has_only_pure_calls(expr: &str, pure_user_calls: &FxHashSet<S
     })
 }
 
-pub(super) fn find_matching_block_end(lines: &[String], start_idx: usize) -> Option<usize> {
+pub(crate) fn find_matching_block_end(lines: &[String], start_idx: usize) -> Option<usize> {
     let mut depth = 0usize;
     for (idx, line) in lines.iter().enumerate().skip(start_idx) {
         let (opens, closes) = count_unquoted_braces(line);
@@ -554,13 +589,13 @@ pub(super) fn find_matching_block_end(lines: &[String], start_idx: usize) -> Opt
     None
 }
 
-fn sym_ref_re() -> Option<&'static Regex> {
+pub(crate) fn sym_ref_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| compile_regex(r"\b(?P<name>Sym_[A-Za-z0-9_]+)\b".to_string()))
         .as_ref()
 }
 
-pub(super) fn unquoted_sym_refs(line: &str) -> Vec<String> {
+pub(crate) fn unquoted_sym_refs(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let Some(re) = sym_ref_re() else {
         return out;
@@ -581,6 +616,6 @@ pub(super) fn unquoted_sym_refs(line: &str) -> Vec<String> {
     out
 }
 
-pub(super) fn strip_unreachable_sym_helpers(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn strip_unreachable_sym_helpers(lines: Vec<String>) -> Vec<String> {
     strip_unreachable_sym_helpers_ir(lines)
 }

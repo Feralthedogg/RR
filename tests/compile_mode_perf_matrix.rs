@@ -1,13 +1,12 @@
 mod common;
 
-use RR::compiler::{
-    CompileMode, CompileOutputOptions, CompileProfile, CompilerParallelConfig,
-    CompilerParallelMode, IncrementalCompileOutput, IncrementalOptions, IncrementalSession,
-    OptLevel,
-    compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile,
-    default_compiler_parallel_config, default_parallel_config, default_type_config,
-};
 use common::unique_dir;
+use rr::compiler::{
+    CompileMode, CompileOutputOptions, CompileProfile, CompilerParallelConfig,
+    CompilerParallelMode, IncrementalCompileOutput, IncrementalCompileRequest, IncrementalOptions,
+    IncrementalSession, OptLevel, compile_incremental_request, default_compiler_parallel_config,
+    default_parallel_config, default_type_config,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
@@ -318,25 +317,24 @@ fn invoke_incremental_compile(
 ) -> (IncrementalCompileOutput, ProfileSample) {
     let mut profile = CompileProfile::default();
     let started = Instant::now();
-    let output =
-        compile_with_configs_incremental_with_output_options_and_compiler_parallel_and_profile(
-            entry_path,
-            entry_input,
-            OptLevel::O1,
-            default_type_config(),
-            default_parallel_config(),
-            config_compiler_parallel(config),
-            options,
-            output_opts_for_mode(config_compile_mode(config)),
-            session,
-            Some(&mut profile),
+    let output = compile_incremental_request(IncrementalCompileRequest {
+        entry_path,
+        entry_input,
+        opt_level: OptLevel::O1,
+        type_cfg: default_type_config(),
+        parallel_cfg: default_parallel_config(),
+        compiler_parallel_cfg: config_compiler_parallel(config),
+        options,
+        output_options: output_opts_for_mode(config_compile_mode(config)),
+        session,
+        profile: Some(&mut profile),
+    })
+    .unwrap_or_else(|err| {
+        panic!(
+            "incremental compile failed for {} [{}]: {err:?}",
+            entry_path, config.label
         )
-        .unwrap_or_else(|err| {
-            panic!(
-                "incremental compile failed for {} [{}]: {err:?}",
-                entry_path, config.label
-            )
-        });
+    });
     let wall_ms = started.elapsed().as_millis();
     (output, profile_sample_from_profile(&profile, wall_ms))
 }

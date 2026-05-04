@@ -1,6 +1,8 @@
 mod common;
 
-use common::{compile_rr, normalize, rscript_available, rscript_path, run_rscript};
+use common::{
+    compile_rr, normalize, rscript_available, rscript_path, run_compile_case, run_rscript,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -129,49 +131,47 @@ print(swapn(7))
         let o0 = out_dir.join(format!("{}_o0.R", name));
         let o1 = out_dir.join(format!("{}_o1.R", name));
         let o2 = out_dir.join(format!("{}_o2.R", name));
+        let o3 = out_dir.join(format!("{}_o3.R", name));
+        let oz = out_dir.join(format!("{}_oz.R", name));
 
         compile_rr(&rr_bin, &rr_path, &o0, "-O0");
         compile_rr(&rr_bin, &rr_path, &o1, "-O1");
         compile_rr(&rr_bin, &rr_path, &o2, "-O2");
+        compile_rr(&rr_bin, &rr_path, &o3, "-O3");
+        compile_rr(&rr_bin, &rr_path, &oz, "-Oz");
 
         let base = run_rscript(&rscript, &o0);
         let run_o1 = run_rscript(&rscript, &o1);
         let run_o2 = run_rscript(&rscript, &o2);
+        let run_o3 = run_rscript(&rscript, &o3);
+        let run_oz = run_rscript(&rscript, &oz);
 
-        assert_eq!(
-            base.status, run_o1.status,
-            "status mismatch in case {} between O0 and O1",
-            name
-        );
-        assert_eq!(
-            base.status, run_o2.status,
-            "status mismatch in case {} between O0 and O2",
-            name
-        );
-        assert_eq!(
-            normalize(&base.stdout),
-            normalize(&run_o1.stdout),
-            "stdout mismatch in case {} between O0 and O1",
-            name
-        );
-        assert_eq!(
-            normalize(&base.stdout),
-            normalize(&run_o2.stdout),
-            "stdout mismatch in case {} between O0 and O2",
-            name
-        );
-        assert_eq!(
-            normalize(&base.stderr),
-            normalize(&run_o1.stderr),
-            "stderr mismatch in case {} between O0 and O1",
-            name
-        );
-        assert_eq!(
-            normalize(&base.stderr),
-            normalize(&run_o2.stderr),
-            "stderr mismatch in case {} between O0 and O2",
-            name
-        );
+        for (opt, run) in [
+            ("O1", &run_o1),
+            ("O2", &run_o2),
+            ("O3", &run_o3),
+            ("Oz", &run_oz),
+        ] {
+            assert_eq!(
+                base.status, run.status,
+                "status mismatch in case {} between O0 and {}",
+                name, opt
+            );
+            assert_eq!(
+                normalize(&base.stdout),
+                normalize(&run.stdout),
+                "stdout mismatch in case {} between O0 and {}",
+                name,
+                opt
+            );
+            assert_eq!(
+                normalize(&base.stderr),
+                normalize(&run.stderr),
+                "stderr mismatch in case {} between O0 and {}",
+                name,
+                opt
+            );
+        }
 
         // Semantic anchor for the known swap-sensitive case.
         if name == "branch_and_swap" {
@@ -184,4 +184,31 @@ print(swapn(7))
             );
         }
     }
+}
+
+#[test]
+fn o2_empty_program_budget_density_uses_zero_fallback() {
+    let (ok, stdout, stderr) = run_compile_case(
+        "opt_level_equivalence",
+        "",
+        "empty_budget_case.rr",
+        "-O2",
+        &[("RR_MAX_FULL_OPT_IR", "300"), ("RR_VERBOSE_LOG", "1")],
+    );
+    assert!(
+        ok,
+        "empty program compile failed\nstdout:\n{}\nstderr:\n{}",
+        stdout, stderr
+    );
+    let log = format!("{}\n{}", stdout, stderr);
+    assert!(
+        log.contains("Synthesized 0 MIR functions"),
+        "empty program should exercise the no-MIR optimizer path:\n{}",
+        log
+    );
+    assert!(
+        log.contains("Budget: IR 0/"),
+        "empty program should keep a zero IR budget numerator:\n{}",
+        log
+    );
 }

@@ -1,10 +1,12 @@
 # RR Package Manager Design
 
-Status: proposed
+Status: implemented surface plus design notes
 
-This document defines a package-manager design for RR that keeps the current
-compiler model intact where possible, but adds a Go-like module and install
-workflow for real projects.
+This document records RR's package-manager design and the current implemented
+surface. RR now has project scaffolding, install/remove, module graph helpers,
+registry publishing/search/admin commands, and package-aware build integration.
+The remaining sections keep the design intent visible for future resolver and
+cache work.
 
 The design is intentionally biased toward:
 
@@ -13,21 +15,21 @@ The design is intentionally biased toward:
 - Go-style module paths and version selection
 - deterministic, cache-friendly builds
 - cargo-like project scaffolding for managed projects
-- backward compatibility for RR's existing file-import workflows
+- compatibility for RR's existing explicit file-import workflows
 
 ## Why RR Needs This
 
-Today RR already has two useful pieces:
+RR started with two useful pieces:
 
 - project execution centered on a single entry file
 - file-based imports such as `import "./helper.rr"`
 
 Those are enough for local code reuse, but not enough for dependency
-distribution. A real package manager needs four things RR does not have yet:
+distribution. The package manager adds four pieces around that compiler core:
 
 1. a project manifest
 2. a dependency graph and version solver
-3. a shared module cache
+3. a shared module cache or registry-backed source
 4. a package import resolver that can map import strings to installed code
 
 The good news is that RR's current compiler structure is already close to what
@@ -57,17 +59,15 @@ That means the cleanest design is not "build a separate package tool". It is
 - Make builds reproducible with a lock file and checksums.
 - Make offline rebuilds possible from a local cache or vendored sources.
 
-## Non-Goals For V1
+## Non-Goals For The First Stable Surface
 
-- a public central registry
-- package publishing
 - GitLab/Bitbucket/source-host abstraction
 - SAT-style version ranges
 - package-level sandbox execution during install
 - automatic code generation hooks in dependencies
 
-V1 should solve the common path: create a project, install from GitHub, import
-the package, build deterministically.
+The first stable surface should solve the common path: create a project, install
+or resolve a dependency, import the package, and build deterministically.
 
 ## User-Facing CLI
 
@@ -137,8 +137,8 @@ For managed projects, `RR init` should create:
 - `src/main.rr` by default, or `src/lib.rr` with `--lib`
 - `.gitignore` that ignores `Build/`
 
-Legacy RR projects with root-level `main.rr` should remain runnable, but new
-scaffolding should be cargo-like rather than root-file based.
+RR 2.0 managed project commands resolve `src/main.rr`; legacy root-level
+`main.rr` files remain runnable only when passed explicitly as file paths.
 
 #### `RR install`
 
@@ -568,7 +568,7 @@ RR should not treat package install as a separate universe. `run`, `build`, and
 
 ### Project Root Detection
 
-Current RR resolves projects mostly through `main.rr`.
+Current RR resolves managed projects through `rr.mod` and `src/main.rr`.
 
 With package management:
 
@@ -577,10 +577,10 @@ With package management:
 3. for managed projects, resolve:
    - `src/main.rr` for runnable binaries
    - `src/lib.rr` for library-only packages
-4. if not found, preserve legacy behavior and treat a directory containing
-   root-level `main.rr` as a valid RR project anyway
+4. if not found, require the caller to pass a `.rr` file explicitly
 
-This keeps old projects working while enabling new ones.
+This keeps the project model unambiguous while preserving explicit single-file
+compilation for older projects.
 
 ### Build Pipeline Placement
 
@@ -620,41 +620,40 @@ module root, not the Rust workspace root.
 
 Watch output should also move into `Build/watch/` instead of `.rr-watch/`.
 
-## Proposed Internal Modules
+## Current Internal Modules
 
-Add a new package-management layer under `src/pkg/`:
+The package-management layer lives under `src/pkg/`:
 
 ```text
 src/pkg/
   mod.rs
+  env.rs
+  git.rs
   manifest.rs
-  lockfile.rs
-  version.rs
-  cache.rs
-  github.rs
-  resolver.rs
-  rewrite.rs
-  vendor.rs
+  project.rs
+  registry.rs
+  registry/
+    primitives.rs
+    publishing.rs
+    query_reports.rs
+    signing.rs
+    trust_policy.rs
+  types.rs
+  util.rs
 ```
 
 Responsibilities:
 
 - `manifest.rs`
   - parse and write `rr.mod`
-- `lockfile.rs`
-  - parse and write `rr.lock`
-- `version.rs`
-  - semver and pseudo-version ordering
-- `cache.rs`
-  - package-home paths, checksums, unpacking
-- `github.rs`
-  - GitHub URL normalization and fetch logic
-- `resolver.rs`
-  - graph construction and MVS resolution
-- `rewrite.rs`
-  - import-path to cached-file rewriting
-- `vendor.rs`
-  - vendor tree generation and loading
+- `project.rs`
+  - scaffold and locate managed projects
+- `env.rs`, `git.rs`, and `util.rs`
+  - environment, source-control, and path helpers
+- `types.rs`
+  - package metadata and graph data types
+- `registry.rs` and `registry/*`
+  - local/remote registry storage, signing, trust policy, publishing, and query reports
 
 ### Existing Code That Will Need Integration
 
@@ -699,13 +698,14 @@ looked for package directory: vector/
 help: run `RR install github.com/acme/math@latest` or check the import path
 ```
 
-## Backward Compatibility Rules
+## Compatibility Rules
 
-- legacy projects with only `main.rr` and relative imports must continue to
-  work
-- managed projects should prefer `src/main.rr` and `src/lib.rr`
-- `RR run .`, `RR build .`, and `RR watch .` must still fall back to root
-  `main.rr` for legacy projects
+- managed projects use `src/main.rr` for runnable binaries and `src/lib.rr` for
+  libraries
+- root-level `main.rr` remains valid only when passed explicitly as a `.rr`
+  file path
+- `RR run .`, `RR build .`, and `RR watch .` must not silently reinterpret a
+  root-level `main.rr` as the managed project entry
 - local file imports are never reinterpreted as package imports
 - existing R package interop syntax such as `import r "graphics"` is unaffected
 

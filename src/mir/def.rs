@@ -226,6 +226,13 @@ pub enum Instr {
         val: ValueId,
         span: Span,
     },
+    // Raw R escape hatch. Read/write blocks are opaque; read-only blocks remain
+    // effectful barriers but do not invalidate RR locals.
+    UnsafeRBlock {
+        code: String,
+        read_only: bool,
+        span: Span,
+    },
 }
 
 // Proof correspondence:

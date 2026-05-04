@@ -1,16 +1,16 @@
 use super::*;
 
 #[allow(dead_code)]
-pub(super) struct EmittedROptimizationConfig<'a> {
-    pub(super) direct_builtin_call_map: bool,
-    pub(super) pure_user_calls: &'a FxHashSet<String>,
-    pub(super) fresh_user_calls: &'a FxHashSet<String>,
-    pub(super) reusable_pure_user_calls: &'a FxHashSet<String>,
-    pub(super) preserve_all_defs: bool,
+pub(crate) struct EmittedROptimizationConfig<'a> {
+    pub(crate) direct_builtin_call_map: bool,
+    pub(crate) pure_user_calls: &'a FxHashSet<String>,
+    pub(crate) fresh_user_calls: &'a FxHashSet<String>,
+    pub(crate) reusable_pure_user_calls: &'a FxHashSet<String>,
+    pub(crate) preserve_all_defs: bool,
 }
 
 #[allow(dead_code)]
-pub(super) fn run_initial_emitted_r_rewrite_pass(
+pub(crate) fn run_initial_emitted_r_rewrite_pass(
     code: &str,
     cfg: &EmittedROptimizationConfig<'_>,
 ) -> Vec<String> {
@@ -353,14 +353,14 @@ pub(super) fn run_initial_emitted_r_rewrite_pass(
 }
 
 #[allow(dead_code)]
-pub(super) fn run_post_linear_peephole_passes(
+pub(crate) fn run_post_linear_peephole_passes(
     out_lines: Vec<String>,
     _cfg: &EmittedROptimizationConfig<'_>,
 ) -> (Vec<String>, Vec<u32>) {
     (out_lines, Vec::new())
 }
 
-pub(super) fn compose_line_maps(first: &[u32], second: &[u32]) -> Vec<u32> {
+pub(crate) fn compose_line_maps(first: &[u32], second: &[u32]) -> Vec<u32> {
     first
         .iter()
         .map(|line| {
@@ -373,7 +373,7 @@ pub(super) fn compose_line_maps(first: &[u32], second: &[u32]) -> Vec<u32> {
         .collect()
 }
 
-pub(super) fn run_exact_expr_cleanup_rounds(
+pub(crate) fn run_exact_expr_cleanup_rounds(
     mut lines: Vec<String>,
     max_rounds: usize,
 ) -> Vec<String> {

@@ -1,4 +1,5 @@
-fn is_identical_pure_rebind_candidate_ir(
+use super::*;
+pub(crate) fn is_identical_pure_rebind_candidate_ir(
     lhs: &str,
     rhs: &str,
     pure_user_calls: &FxHashSet<String>,
@@ -13,7 +14,7 @@ fn is_identical_pure_rebind_candidate_ir(
         && (is_pure_call || is_literal_field_read)
 }
 
-pub(in super::super) fn strip_redundant_identical_pure_rebinds_ir(
+pub(crate) fn strip_redundant_identical_pure_rebinds_ir(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
@@ -25,7 +26,7 @@ pub(in super::super) fn strip_redundant_identical_pure_rebinds_ir(
     program.into_lines()
 }
 
-fn apply_strip_redundant_identical_pure_rebinds_ir(
+pub(crate) fn apply_strip_redundant_identical_pure_rebinds_ir(
     program: &mut EmittedProgram,
     pure_user_calls: &FxHashSet<String>,
 ) {
@@ -34,7 +35,7 @@ fn apply_strip_redundant_identical_pure_rebinds_ir(
             continue;
         };
         let mut removable = vec![false; function.body.len()];
-        for idx in 0..function.body.len() {
+        for (idx, removable_slot) in removable.iter_mut().enumerate().take(function.body.len()) {
             let EmittedStmtKind::Assign { lhs, rhs } = &function.body[idx].kind else {
                 continue;
             };
@@ -76,9 +77,7 @@ fn apply_strip_redundant_identical_pure_rebinds_ir(
                     | EmittedStmtKind::ForOpen
                     | EmittedStmtKind::WhileOpen
                     | EmittedStmtKind::OtherOpen => {
-                        if depth > 0 {
-                            depth -= 1;
-                        }
+                        depth = depth.saturating_sub(1);
                         continue;
                     }
                     EmittedStmtKind::Assign {
@@ -108,15 +107,14 @@ fn apply_strip_redundant_identical_pure_rebinds_ir(
                             .and_then(|caps| {
                                 caps.name("base").map(|m| m.as_str().trim().to_string())
                             })
+                            && (base == *lhs || deps.contains(&base))
                         {
-                            if base == *lhs || deps.contains(&base) {
-                                break;
-                            }
+                            break;
                         }
                     }
                 }
             }
-            removable[idx] = found;
+            *removable_slot = found;
         }
         function.body = function
             .body

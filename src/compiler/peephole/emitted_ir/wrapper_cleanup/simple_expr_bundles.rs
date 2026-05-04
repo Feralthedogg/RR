@@ -1,4 +1,5 @@
-pub(in super::super) fn run_simple_expr_pre_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
+use super::*;
+pub(crate) fn run_simple_expr_pre_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
     let needs_singleton = has_singleton_assign_slice_scalar_edit_candidates_ir(&lines);
     let needs_clamp = has_trivial_scalar_clamp_wrapper_candidates_ir(&lines);
     if !needs_singleton && !needs_clamp {
@@ -14,11 +15,17 @@ pub(in super::super) fn run_simple_expr_pre_cleanup_bundle_ir(lines: Vec<String>
     program.into_lines()
 }
 
-pub(in super::super) fn run_simple_expr_cleanup_bundle_ir(
+#[derive(Clone, Copy)]
+pub(crate) struct SimpleExprCleanupConfig<'a> {
+    pub(crate) allowed_helpers: Option<&'a FxHashSet<String>>,
+    pub(crate) rewrite_full_range_alias_reads: bool,
+    pub(crate) size_controlled: bool,
+}
+
+pub(crate) fn run_simple_expr_cleanup_bundle_ir(
     mut lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
-    allowed_helpers: Option<&FxHashSet<String>>,
-    rewrite_full_range_alias_reads: bool,
+    config: SimpleExprCleanupConfig<'_>,
 ) -> Vec<String> {
     lines = rewrite_index_access_patterns(lines);
     let needs_arg_alias_cleanup = has_arg_alias_cleanup_candidates_ir(&lines);
@@ -29,7 +36,7 @@ pub(in super::super) fn run_simple_expr_cleanup_bundle_ir(
     let needs_literal_field_get = has_literal_field_get_candidates_ir(&lines);
     let needs_literal_named_list = has_literal_named_list_candidates_ir(&lines);
     let needs_helper_param_trim = has_unused_helper_param_candidates_ir(&lines);
-    let needs_full_range_alias_reads = rewrite_full_range_alias_reads
+    let needs_full_range_alias_reads = config.rewrite_full_range_alias_reads
         && has_one_based_full_range_index_alias_read_candidates(&lines);
     if !needs_arg_alias_cleanup
         && !needs_singleton
@@ -146,7 +153,8 @@ pub(in super::super) fn run_simple_expr_cleanup_bundle_ir(
             &mut program,
             &helpers,
             &helper_names,
-            allowed_helpers,
+            config.allowed_helpers,
+            config.size_controlled,
         );
     }
     if needs_tail {

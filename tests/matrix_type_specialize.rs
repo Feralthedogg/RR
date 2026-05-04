@@ -1,5 +1,5 @@
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, compile_with_config};
 
 #[test]
 fn o2_matrix_numeric_ops_can_emit_intrinsic_helpers() {

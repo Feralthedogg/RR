@@ -1,4 +1,5 @@
-fn has_assignment_to_one_before_local(lines: &[String], idx: usize, var: &str) -> bool {
+use super::*;
+pub(crate) fn has_assignment_to_one_before_local(lines: &[String], idx: usize, var: &str) -> bool {
     (0..idx).rev().any(|i| {
         parse_local_assign_line(&lines[i]).is_some_and(|(lhs, rhs)| {
             lhs == var && literal_one_re_local().is_some_and(|re| re.is_match(rhs))
@@ -6,7 +7,7 @@ fn has_assignment_to_one_before_local(lines: &[String], idx: usize, var: &str) -
     })
 }
 
-fn function_has_matching_exprmap_whole_assign_local(
+pub(crate) fn function_has_matching_exprmap_whole_assign_local(
     lines: &[String],
     dest_var: &str,
     end_expr: &str,
@@ -58,7 +59,7 @@ fn function_has_matching_exprmap_whole_assign_local(
     false
 }
 
-fn function_has_non_empty_repeat_whole_assign_local(
+pub(crate) fn function_has_non_empty_repeat_whole_assign_local(
     lines: &[String],
     dest_var: &str,
     end_expr: &str,

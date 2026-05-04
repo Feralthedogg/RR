@@ -157,6 +157,24 @@ RR does not treat these as interchangeable. If a failure can be proven before
 execution, the intended behavior is a compile-time diagnostic rather than a
 deferred runtime failure.
 
+## Static Trait And Field Diagnostics
+
+Receiver-method trait calls and record/dataframe field access share the same
+surface syntax shape: `value.name`. The compiler keeps those diagnostic paths
+separate.
+
+- If `value.name(...)` names a known trait method but the receiver has no
+  statically known trait-dispatch target, lowering reports a trait-method
+  diagnostic. The message asks for a receiver type hint, a matching
+  `where T: Trait` bound, or explicit `Trait.method(receiver, ...)` syntax.
+- If `value.name` is an actual field access and the record/dataframe type hint
+  does not contain `name`, strict type checking reports `unknown field`.
+- Field diagnostics must not expose internal solver wording when the user
+  action is to fix the field name or type hint.
+
+This keeps missing type hints from surfacing as unrelated record/dataframe field
+errors.
+
 ## Multi-Error Reporting
 
 RR may aggregate multiple findings into a single report:

@@ -1,7 +1,7 @@
-use super::common::*;
+use super::*;
 
 #[test]
-fn strips_arg_aliases_in_trivial_return_wrappers() {
+pub(crate) fn strips_arg_aliases_in_trivial_return_wrappers() {
     let input = "\
 Sym_17 <- function(n, val) \n\
 {\n\
@@ -46,7 +46,7 @@ Sym_186 <- function(px, py, pf, u, v, dt, N) \n\
 }
 
 #[test]
-fn collapses_trivial_copy_wrapper_and_rewrites_calls() {
+pub(crate) fn collapses_trivial_copy_wrapper_and_rewrites_calls() {
     let input = "\
 Sym_12 <- function(xs) \n\
 {\n\
@@ -72,7 +72,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn collapses_passthrough_wrapper_with_dead_length_setup() {
+pub(crate) fn collapses_passthrough_wrapper_with_dead_length_setup() {
     let input = "\
 Sym_10 <- function(xs) \n\
 {\n\
@@ -97,7 +97,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn rewrites_simple_expression_helper_chain_calls() {
+pub(crate) fn rewrites_simple_expression_helper_chain_calls() {
     let input = "\
 Sym_39 <- function(xs) \n\
 {\n\
@@ -117,10 +117,9 @@ Sym_1 <- function() \n\
     let pure = FxHashSet::from_iter(["Sym_39".to_string(), "Sym_12".to_string()]);
     let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
         input,
-        true,
         &pure,
         &FxHashSet::default(),
-        false,
+        PeepholeOptions::new(true),
     );
     assert!(
         out.contains("sum(z)") || out.contains("mean(z)") || out.contains("sum(seq_len(8))"),
@@ -134,7 +133,74 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn rewrites_metric_helper_return_call_inline() {
+pub(crate) fn simple_expression_helper_inliner_let_lifts_record_chain_bloat() {
+    let input = "\
+Sym_12 <- function(self, rhs) \n\
+{\n\
+  return(list(x = (self[[\"x\"]] + rhs[[\"x\"]]), y = (self[[\"y\"]] + rhs[[\"y\"]])))\n\
+}\n\
+Sym_16 <- function(self) \n\
+{\n\
+  return(list(x = (0.0 - self[[\"x\"]]), y = (0.0 - self[[\"y\"]])))\n\
+}\n\
+Sym_18 <- function(self, offset) \n\
+{\n\
+  return(Sym_12(self, offset))\n\
+}\n\
+Sym_20 <- function(self, factor) \n\
+{\n\
+  return(list(x = (self[[\"x\"]] * factor), y = (self[[\"y\"]] * factor)))\n\
+}\n\
+Sym_31 <- function(entity, velocity, time) \n\
+{\n\
+  moved <- Sym_12(entity, velocity)\n\
+  rebounded_vel <- Sym_16(velocity)\n\
+  return(Sym_20(Sym_18(moved, rebounded_vel), time))\n\
+}\n\
+Sym_29 <- function() \n\
+{\n\
+  initial_pos <- list(x = 10.0, y = 15.0)\n\
+  velocity <- list(x = 2.0, y = -3.0)\n\
+  final_state <- Sym_31(initial_pos, velocity, 1.5)\n\
+  return(final_state[[\"x\"]])\n\
+}\n";
+    let pure = FxHashSet::from_iter([
+        "Sym_12".to_string(),
+        "Sym_16".to_string(),
+        "Sym_18".to_string(),
+        "Sym_20".to_string(),
+        "Sym_31".to_string(),
+    ]);
+    let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
+        input,
+        &pure,
+        &FxHashSet::default(),
+        PeepholeOptions::new(true),
+    );
+
+    let max_line_len = out.lines().map(str::len).max().unwrap_or(0);
+    assert!(
+        max_line_len < 700,
+        "record helper chain inlining should not explode a single R line:\n{out}"
+    );
+    assert!(
+        out.contains(".__rr_inline_expr_0__rr_sroa_x <-")
+            && out.contains(".__rr_inline_expr_1__rr_sroa_x <-")
+            && out.contains(".__rr_inline_expr_2__rr_sroa_x <-"),
+        "bloat-sensitive aggregate helper calls should become scalarized inline temps:\n{out}"
+    );
+    assert!(
+        out.contains("final_state__rr_sroa_x <-") && out.contains("return(final_state__rr_sroa_x)"),
+        "outer record assignment should scalarize down to the projected field:\n{out}"
+    );
+    assert!(
+        !out.contains("<- list(") && !out.contains("final_state <- ((list("),
+        "record helper chain should not leave avoidable list allocations:\n{out}"
+    );
+}
+
+#[test]
+pub(crate) fn rewrites_metric_helper_return_call_inline() {
     let input = "\
 Sym_10 <- function(name, value) \n\
 {\n\
@@ -168,7 +234,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn collapses_trivial_clamp_wrapper_and_rewrites_calls() {
+pub(crate) fn collapses_trivial_clamp_wrapper_and_rewrites_calls() {
     let input = "\
 Sym_20 <- function(x, lo, hi) \n\
 {\n\
@@ -189,10 +255,9 @@ Sym_1 <- function() \n\
     let pure = FxHashSet::from_iter(["Sym_20".to_string()]);
     let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
         input,
-        true,
         &pure,
         &FxHashSet::default(),
-        false,
+        PeepholeOptions::new(true),
     );
     assert!(
         out.contains("return((pmin(pmax(next_a_cell, 0), 1)))")
@@ -202,7 +267,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn collapses_trivial_unit_index_wrapper_and_rewrites_calls() {
+pub(crate) fn collapses_trivial_unit_index_wrapper_and_rewrites_calls() {
     let input = "\
 Sym_14 <- function(u, n) \n\
 {\n\
@@ -222,10 +287,9 @@ Sym_1 <- function() \n\
     let pure = FxHashSet::from_iter(["Sym_14".to_string()]);
     let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
         input,
-        true,
         &pure,
         &FxHashSet::default(),
-        false,
+        PeepholeOptions::new(true),
     );
     assert!(
         out.contains("return((pmin(pmax((1 + floor((draw * n))), 1), n)))")
@@ -236,7 +300,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn collapses_trivial_dot_product_wrapper_and_rewrites_calls() {
+pub(crate) fn collapses_trivial_dot_product_wrapper_and_rewrites_calls() {
     let input = "\
 Sym_117 <- function(a, b, n) \n\
 {\n\
@@ -257,10 +321,9 @@ Sym_1 <- function() \n\
     let pure = FxHashSet::from_iter([String::from("Sym_117")]);
     let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
         input,
-        true,
         &pure,
         &FxHashSet::default(),
-        false,
+        PeepholeOptions::new(true),
     );
     assert!(
         out.contains("return((sum((r[seq_len(size)] * Ap[seq_len(size)]))))")
@@ -271,7 +334,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn collapses_contextual_full_range_gather_replay_to_direct_gather() {
+pub(crate) fn collapses_contextual_full_range_gather_replay_to_direct_gather() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -292,8 +355,54 @@ Sym_1 <- function() \n\
     );
 }
 
+pub(crate) fn line_parens_balanced(line: &str) -> bool {
+    let mut depth = 0i32;
+    for ch in line.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
 #[test]
-fn collapses_inlined_copy_vec_sequence_to_direct_alias_and_swap() {
+pub(crate) fn full_range_read_elision_keeps_balanced_nested_end_expr_after_helper_inline() {
+    let input = "\
+Sym_210 <- function(field, w, h) \n\
+{\n\
+  return(((rr_gather(field, rr_wrap_index_vec_i(1.0, 1.0, w, h)) * 0.2) - rr_index1_read_vec(field, rr_index_vec_floor(1.0:(w * h)))))\n\
+}\n\
+Sym_222 <- function(A, W, H) \n\
+{\n\
+  lapA <- Sym_210(A, W, H)\n\
+  return(lapA)\n\
+}\n";
+    let pure = FxHashSet::from_iter(["Sym_210".to_string()]);
+    let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
+        input,
+        &pure,
+        &FxHashSet::default(),
+        PeepholeOptions::new(true),
+    );
+    assert!(
+        !out.contains("rr_index1_read_vec(A, rr_index_vec_floor(1.0:(W * H)))"),
+        "{out}"
+    );
+    assert!(
+        out.lines().all(line_parens_balanced),
+        "unbalanced optimized R:\n{out}"
+    );
+}
+
+#[test]
+pub(crate) fn collapses_inlined_copy_vec_sequence_to_direct_alias_and_swap() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -317,7 +426,7 @@ next\n\
 }
 
 #[test]
-fn collapses_copy_vec_sequence_after_named_copy_alias_cleanup() {
+pub(crate) fn collapses_copy_vec_sequence_after_named_copy_alias_cleanup() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -344,7 +453,7 @@ next\n\
 }
 
 #[test]
-fn strips_unreachable_sym_helpers_after_call_rewrite() {
+pub(crate) fn strips_unreachable_sym_helpers_after_call_rewrite() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -379,7 +488,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn keeps_sym_top_entrypoint_reachable_closure() {
+pub(crate) fn keeps_sym_top_entrypoint_reachable_closure() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -416,7 +525,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn keeps_helper_only_sym_defs_when_synthesized_entrypoint_is_null() {
+pub(crate) fn keeps_helper_only_sym_defs_when_synthesized_entrypoint_is_null() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -438,7 +547,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn preserve_all_defs_keeps_unreachable_sym_helpers() {
+pub(crate) fn preserve_all_defs_keeps_unreachable_sym_helpers() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -456,17 +565,16 @@ Sym_99 <- function() \n\
 Sym_top_0()\n";
     let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
         input,
-        true,
         &FxHashSet::default(),
         &FxHashSet::default(),
-        true,
+        PeepholeOptions::new(true).preserving_all_defs(true),
     );
     assert!(out.contains("Sym_99 <- function"));
     assert!(out.contains("print(\"DROP\")"));
 }
 
 #[test]
-fn keeps_typed_parallel_impl_helper_referenced_as_symbol_argument() {
+pub(crate) fn keeps_typed_parallel_impl_helper_referenced_as_symbol_argument() {
     let input = "\
 Sym_49__typed_impl <- function(a, b) \n\
 {\n\
@@ -487,7 +595,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn reuses_exact_parallel_typed_vec_call_binding_inside_nested_pure_expr() {
+pub(crate) fn reuses_exact_parallel_typed_vec_call_binding_inside_nested_pure_expr() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -516,7 +624,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn drops_unreachable_typed_parallel_wrapper_when_only_string_name_remains() {
+pub(crate) fn drops_unreachable_typed_parallel_wrapper_when_only_string_name_remains() {
     let input = "\
 Sym_49__typed_impl <- function(a, b) \n\
 {\n\
@@ -541,7 +649,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn removes_redundant_identical_rr_field_get_rebind_after_loop() {
+pub(crate) fn removes_redundant_identical_rr_field_get_rebind_after_loop() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -569,7 +677,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn strips_unused_trailing_helper_param_and_updates_callsites() {
+pub(crate) fn strips_unused_trailing_helper_param_and_updates_callsites() {
     let input = "\
 Sym_186 <- function(px, py, pf, u, v, dt, N, total_grid) \n\
 {\n\
@@ -602,7 +710,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn strips_unused_middle_helper_params_and_updates_callsites() {
+pub(crate) fn strips_unused_middle_helper_params_and_updates_callsites() {
     let input = "\
 Sym_287 <- function(temp, q_v, q_c, q_r, q_i, q_s, q_g, size) \n\
 {\n\

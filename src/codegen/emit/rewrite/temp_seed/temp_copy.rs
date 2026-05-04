@@ -1,4 +1,5 @@
-pub(super) fn rewrite_temp_uses_after_named_copy(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_temp_uses_after_named_copy(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;
@@ -40,8 +41,7 @@ pub(super) fn rewrite_temp_uses_after_named_copy(output: &mut String) {
                 })
                 .unwrap_or(fn_end + 1);
             let region_end = next_temp_def.min(next_lhs_def);
-            for line_no in (idx + 1)..region_end {
-                let line = &mut lines[line_no];
+            for line in lines.iter_mut().take(region_end).skip(idx + 1) {
                 let trimmed = line.trim();
                 if trimmed.is_empty() || count_symbol_occurrences_local(trimmed, &temp) == 0 {
                     continue;

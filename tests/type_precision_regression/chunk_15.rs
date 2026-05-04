@@ -1,14 +1,15 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn base_direct_serialization_helpers_have_builtin_types() {
+pub(crate) fn base_direct_serialization_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["path".to_string(), "raws".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Char;
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[1] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[1] = TypeTerm::Vector(Box::new(TypeTerm::Any));
 
     let b0 = fn_ir.add_block();
@@ -133,9 +134,10 @@ fn base_direct_serialization_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_path_file_helpers_have_builtin_types() {
+pub(crate) fn base_direct_path_file_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["paths".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();
@@ -395,9 +397,10 @@ fn base_direct_path_file_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_environment_namespace_helpers_have_builtin_types() {
+pub(crate) fn base_direct_environment_namespace_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["pkg".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Char;
 
     let b0 = fn_ir.add_block();

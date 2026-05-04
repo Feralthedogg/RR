@@ -1,4 +1,5 @@
-fn find_matching_call_close(output: &str, open_idx: usize) -> Option<usize> {
+use super::*;
+pub(crate) fn find_matching_call_close(output: &str, open_idx: usize) -> Option<usize> {
     let mut depth = 0i32;
     let mut in_single = false;
     let mut in_double = false;
@@ -23,13 +24,13 @@ fn find_matching_call_close(output: &str, open_idx: usize) -> Option<usize> {
     None
 }
 
-fn find_next_call(output: &str, search_start: usize, callee: &str) -> Option<usize> {
+pub(crate) fn find_next_call(output: &str, search_start: usize, callee: &str) -> Option<usize> {
     output[search_start..]
         .find(&format!("{callee}("))
         .map(|offset| search_start + offset)
 }
 
-fn split_top_level_args_local(expr: &str) -> Option<Vec<String>> {
+pub(crate) fn split_top_level_args_local(expr: &str) -> Option<Vec<String>> {
     let mut args = Vec::new();
     let mut depth = 0i32;
     let mut start = 0usize;
@@ -51,7 +52,7 @@ fn split_top_level_args_local(expr: &str) -> Option<Vec<String>> {
     Some(args)
 }
 
-fn parse_top_level_call_local(rhs: &str) -> Option<(String, Vec<String>)> {
+pub(crate) fn parse_top_level_call_local(rhs: &str) -> Option<(String, Vec<String>)> {
     let rhs = strip_outer_parens_local(rhs).trim();
     let open = rhs.find('(')?;
     let close = find_matching_call_close(rhs, open)?;

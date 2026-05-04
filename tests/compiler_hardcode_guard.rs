@@ -53,12 +53,24 @@ fn slash_relative(path: &Path, base: &Path) -> String {
         .join("/")
 }
 
+fn pipeline_salt_source(compiler_root: &Path) -> String {
+    let mut source = read(&compiler_root.join("pipeline.rs"));
+    let pipeline_root = compiler_root.join("pipeline");
+    if pipeline_root.is_dir() {
+        for path in rust_files_under(&pipeline_root) {
+            source.push('\n');
+            source.push_str(&read(&path));
+        }
+    }
+    source
+}
+
 #[test]
 fn split_raw_rewrite_modules_are_part_of_compile_cache_salt() {
     let root = repo_root();
     let compiler_root = root.join("src").join("compiler");
     let codegen_emit_root = root.join("src").join("codegen").join("emit");
-    let pipeline = read(&compiler_root.join("pipeline.rs"));
+    let pipeline = pipeline_salt_source(&compiler_root);
 
     let mut missing = Vec::new();
 
@@ -76,10 +88,32 @@ fn split_raw_rewrite_modules_are_part_of_compile_cache_salt() {
     emitted_ir_paths.extend(rust_files_under(
         &compiler_root.join("peephole").join("emitted_ir"),
     ));
+    emitted_ir_paths.push(compiler_root.join("peephole").join("stage_catalog.rs"));
     for path in emitted_ir_paths {
         let needle = slash_relative(&path, &compiler_root);
         if !pipeline.contains(&needle) {
             missing.push(needle);
+        }
+    }
+
+    let raw_emit_root = compiler_root
+        .join("pipeline")
+        .join("phases")
+        .join("source_emit")
+        .join("raw_emit");
+    let mut raw_emit_paths = vec![
+        compiler_root
+            .join("pipeline")
+            .join("phases")
+            .join("source_emit")
+            .join("raw_emit.rs"),
+    ];
+    raw_emit_paths.extend(rust_files_under(&raw_emit_root));
+    for path in raw_emit_paths {
+        let compiler_relative = slash_relative(&path, &compiler_root);
+        let pipeline_relative = slash_relative(&path, &compiler_root.join("pipeline"));
+        if !pipeline.contains(&compiler_relative) && !pipeline.contains(&pipeline_relative) {
+            missing.push(compiler_relative);
         }
     }
 

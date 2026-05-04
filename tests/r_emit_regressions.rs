@@ -1,10 +1,10 @@
 mod common;
 
-use RR::compiler::{
+use common::{normalize, rscript_available, rscript_path, run_rscript, unique_dir};
+use rr::compiler::{
     CompileOutputOptions, OptLevel, compile_with_configs_with_options, default_parallel_config,
     default_type_config,
 };
-use common::{normalize, rscript_available, rscript_path, run_rscript, unique_dir};
 use std::fs;
 use std::path::PathBuf;
 
@@ -24,12 +24,116 @@ fn compile_helper_only(tag: &str, src: &str) -> String {
     .0
 }
 
+fn compile_helper_only_preserve_defs(tag: &str, src: &str) -> String {
+    compile_with_configs_with_options(
+        tag,
+        src,
+        OptLevel::O2,
+        default_type_config(),
+        default_parallel_config(),
+        CompileOutputOptions {
+            inject_runtime: false,
+            preserve_all_defs: true,
+            ..Default::default()
+        },
+    )
+    .expect("compile should succeed")
+    .0
+}
+
 fn strip_trailing_null(stdout: &str) -> String {
     let normalized = normalize(stdout);
     normalized
         .strip_suffix("NULL\n")
         .map(str::to_string)
         .unwrap_or(normalized)
+}
+
+#[test]
+fn emitted_r_preserves_safe_source_function_names() {
+    let src = r#"
+fn helper_name(input_value, scale) {
+  let adjusted_value = input_value + scale
+  print(adjusted_value)
+  adjusted_value
+}
+
+export fn compute_total(seed_value) {
+  let local_total = helper_name(seed_value, 2)
+  local_total
+}
+
+compute_total(40)
+"#;
+
+    let code = compile_helper_only_preserve_defs("preserve_function_names.rr", src);
+    assert!(
+        code.contains("helper_name <- function(input_value, scale)"),
+        "expected helper function to keep its source name:\n{code}"
+    );
+    assert!(
+        code.contains("compute_total <- function(seed_value)"),
+        "expected exported function to keep its source name:\n{code}"
+    );
+    assert!(
+        code.contains("local_total <- helper_name(seed_value, 2L)")
+            || code.contains("return((helper_name(40L, 2L)))"),
+        "expected user-function call sites to use the source name:\n{code}"
+    );
+    assert!(
+        !code.contains("Sym_1 <- function(input_value, scale)")
+            && !code.contains("Sym_6 <- function(seed_value)"),
+        "safe source functions should not be emitted under generated Sym_* names:\n{code}"
+    );
+}
+
+#[test]
+fn emitted_r_keeps_generated_name_for_builtin_shadowing_function() {
+    let src = r#"
+fn floor(x) {
+  x + 1
+}
+
+floor(4)
+"#;
+
+    let code = compile_helper_only_preserve_defs("preserve_names_builtin_shadow.rr", src);
+    assert!(
+        !code.contains("floor <- function(x)"),
+        "builtin-shadowing functions should not replace the base R binding:\n{code}"
+    );
+    assert!(
+        code.contains("<- function(x)"),
+        "expected the function definition to remain emitted under a generated safe name:\n{code}"
+    );
+}
+
+#[test]
+fn emitted_r_restores_readonly_arg_alias_names_after_unsafe_read_blocks() {
+    let src = r#"
+export fn inspect_value(x) {
+  unsafe r(read) {
+    print(x)
+  }
+  x + 1
+}
+
+inspect_value(4)
+"#;
+
+    let code = compile_helper_only_preserve_defs("preserve_readonly_arg_alias.rr", src);
+    assert!(
+        code.contains("inspect_value <- function(x)"),
+        "expected function to keep its source name:\n{code}"
+    );
+    assert!(
+        !code.contains(".arg_x"),
+        "read-only parameter alias should be restored to the source variable name:\n{code}"
+    );
+    assert!(
+        code.contains("print(x)") && code.contains("return((x + 1L))"),
+        "expected unsafe-read body and later expression to use the source variable name:\n{code}"
+    );
 }
 
 #[test]

@@ -1,4 +1,5 @@
-fn expr_is_trivial_passthrough_setup_rhs_ir(rhs: &str) -> bool {
+use super::*;
+pub(crate) fn expr_is_trivial_passthrough_setup_rhs_ir(rhs: &str) -> bool {
     let rhs = rhs.trim();
     plain_ident_re().is_some_and(|re| re.is_match(rhs))
         || scalar_lit_re().is_some_and(|re| re.is_match(rhs))
@@ -9,7 +10,7 @@ fn expr_is_trivial_passthrough_setup_rhs_ir(rhs: &str) -> bool {
             .is_some_and(|inner| plain_ident_re().is_some_and(|re| re.is_match(inner.trim())))
 }
 
-fn apply_strip_arg_aliases_in_trivial_return_wrappers_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_strip_arg_aliases_in_trivial_return_wrappers_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -35,15 +36,11 @@ fn apply_strip_arg_aliases_in_trivial_return_wrappers_ir(program: &mut EmittedPr
             match &stmt.kind {
                 EmittedStmtKind::Blank | EmittedStmtKind::BlockClose => continue,
                 EmittedStmtKind::OtherOpen if stmt.text.trim() == "{" => continue,
-                EmittedStmtKind::Assign { lhs, rhs } => {
+                EmittedStmtKind::Assign { lhs, rhs }
                     if lhs.starts_with(".arg_")
-                        && plain_ident_re().is_some_and(|re| re.is_match(rhs))
-                    {
-                        aliases.insert(lhs.clone(), rhs.clone());
-                    } else {
-                        trivial = false;
-                        break;
-                    }
+                        && plain_ident_re().is_some_and(|re| re.is_match(rhs)) =>
+                {
+                    aliases.insert(lhs.clone(), rhs.clone());
                 }
                 _ => {
                     trivial = false;
@@ -68,9 +65,7 @@ fn apply_strip_arg_aliases_in_trivial_return_wrappers_ir(program: &mut EmittedPr
     }
 }
 
-pub(in super::super) fn strip_arg_aliases_in_trivial_return_wrappers_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn strip_arg_aliases_in_trivial_return_wrappers_ir(lines: Vec<String>) -> Vec<String> {
     if !has_arg_alias_cleanup_candidates_ir(&lines) {
         return lines;
     }
@@ -79,7 +74,7 @@ pub(in super::super) fn strip_arg_aliases_in_trivial_return_wrappers_ir(
     program.into_lines()
 }
 
-fn apply_collapse_trivial_passthrough_return_wrappers_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_collapse_trivial_passthrough_return_wrappers_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -140,9 +135,7 @@ fn apply_collapse_trivial_passthrough_return_wrappers_ir(program: &mut EmittedPr
     }
 }
 
-pub(in super::super) fn collapse_trivial_passthrough_return_wrappers_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn collapse_trivial_passthrough_return_wrappers_ir(lines: Vec<String>) -> Vec<String> {
     if !has_passthrough_return_wrapper_candidates_ir(&lines) {
         return lines;
     }
@@ -151,7 +144,7 @@ pub(in super::super) fn collapse_trivial_passthrough_return_wrappers_ir(
     program.into_lines()
 }
 
-pub(in super::super) fn run_return_wrapper_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_return_wrapper_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
     if !has_arg_return_wrapper_candidates_ir(&lines)
         && !has_passthrough_return_wrapper_candidates_ir(&lines)
         && !has_trivial_dot_product_wrapper_candidates_ir(&lines)
@@ -165,7 +158,7 @@ pub(in super::super) fn run_return_wrapper_cleanup_bundle_ir(lines: Vec<String>)
     program.into_lines()
 }
 
-fn has_arg_return_wrapper_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_arg_return_wrapper_candidates_ir(lines: &[String]) -> bool {
     build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .any(|func| {
@@ -202,7 +195,7 @@ fn has_arg_return_wrapper_candidates_ir(lines: &[String]) -> bool {
         })
 }
 
-fn has_passthrough_return_wrapper_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_passthrough_return_wrapper_candidates_ir(lines: &[String]) -> bool {
     build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .any(|func| {
@@ -238,7 +231,7 @@ fn has_passthrough_return_wrapper_candidates_ir(lines: &[String]) -> bool {
         })
 }
 
-fn has_trivial_dot_product_wrapper_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_trivial_dot_product_wrapper_candidates_ir(lines: &[String]) -> bool {
     build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .any(|func| {

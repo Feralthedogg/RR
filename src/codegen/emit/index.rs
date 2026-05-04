@@ -1,11 +1,22 @@
 use super::*;
 
-pub(super) fn resolve_index1d_expr(
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IndexReadSafety {
+    pub(crate) bounds_safe: bool,
+    pub(crate) na_safe: bool,
+}
+
+impl IndexReadSafety {
+    pub(crate) fn can_use_direct_index(self) -> bool {
+        self.bounds_safe && self.na_safe
+    }
+}
+
+pub(crate) fn resolve_index1d_expr(
     this: &RBackend,
     base: usize,
     idx: usize,
-    is_safe: bool,
-    is_na_safe: bool,
+    safety: IndexReadSafety,
     values: &[Value],
     params: &[String],
 ) -> String {
@@ -22,14 +33,14 @@ pub(super) fn resolve_index1d_expr(
         return b;
     }
     let i = this.resolve_preferred_plain_symbol_expr(idx, values, params);
-    if (is_safe && is_na_safe) || this.can_elide_index_expr(idx, values, params) {
+    if safety.can_use_direct_index() || this.can_elide_index_expr(idx, values, params) {
         format!("{}[{}]", b, i)
     } else {
         format!("rr_index1_read({}, {}, \"index\")", b, i)
     }
 }
 
-pub(super) fn resolve_index2d_expr(
+pub(crate) fn resolve_index2d_expr(
     this: &RBackend,
     base: usize,
     r: usize,
@@ -53,7 +64,7 @@ pub(super) fn resolve_index2d_expr(
     format!("{}[{}, {}]", b, r_idx, c_idx)
 }
 
-pub(super) fn resolve_index3d_expr(
+pub(crate) fn resolve_index3d_expr(
     this: &RBackend,
     base: usize,
     i: usize,
@@ -84,17 +95,16 @@ pub(super) fn resolve_index3d_expr(
     format!("{}[{}, {}, {}]", b, i_idx, j_idx, k_idx)
 }
 
-pub(super) fn resolve_cond(
+pub(crate) fn resolve_cond(
     this: &RBackend,
     cond: usize,
     values: &[Value],
     params: &[String],
+    param_term_hints: &[TypeTerm],
+    param_hint_spans: &[Option<Span>],
 ) -> String {
     let c = this.resolve_preferred_plain_symbol_expr(cond, values, params);
-    let typed_bool_scalar = matches!(values[cond].value_term, TypeTerm::Logical)
-        && values[cond].value_ty.shape == ShapeTy::Scalar;
-    if values[cond].value_ty.is_logical_scalar_non_na()
-        || typed_bool_scalar
+    if logical_condition_is_statically_safe(this, cond, values, param_term_hints, param_hint_spans)
         || comparison_is_scalar_non_na(this, cond, values)
     {
         c
@@ -103,7 +113,43 @@ pub(super) fn resolve_cond(
     }
 }
 
-pub(super) fn comparison_is_scalar_non_na(this: &RBackend, cond: usize, values: &[Value]) -> bool {
+pub(crate) fn logical_condition_is_statically_safe(
+    this: &RBackend,
+    cond: usize,
+    values: &[Value],
+    param_term_hints: &[TypeTerm],
+    param_hint_spans: &[Option<Span>],
+) -> bool {
+    if !values[cond].value_ty.is_logical_scalar_non_na() {
+        return false;
+    }
+    if let Some(index) = condition_param_index(this, cond, values, &mut FxHashSet::default()) {
+        return param_hint_spans.get(index).is_some_and(Option::is_some)
+            && matches!(param_term_hints.get(index), Some(TypeTerm::Logical));
+    }
+    matches!(values[cond].value_term, TypeTerm::Logical)
+}
+
+pub(crate) fn condition_param_index(
+    this: &RBackend,
+    value_id: usize,
+    values: &[Value],
+    seen: &mut FxHashSet<usize>,
+) -> Option<usize> {
+    if !seen.insert(value_id) {
+        return None;
+    }
+    match &values[value_id].kind {
+        ValueKind::Param { index } => Some(*index),
+        ValueKind::Load { var } => this
+            .resolve_bound_value_id(var)
+            .and_then(|bound_id| condition_param_index(this, bound_id, values, seen)),
+        ValueKind::Unary { rhs, .. } => condition_param_index(this, *rhs, values, seen),
+        _ => None,
+    }
+}
+
+pub(crate) fn comparison_is_scalar_non_na(this: &RBackend, cond: usize, values: &[Value]) -> bool {
     let ValueKind::Binary { op, lhs, rhs } = values[cond].kind else {
         return false;
     };
@@ -116,12 +162,12 @@ pub(super) fn comparison_is_scalar_non_na(this: &RBackend, cond: usize, values: 
     value_is_scalar_non_na(this, lhs, values) && value_is_scalar_non_na(this, rhs, values)
 }
 
-pub(super) fn value_is_scalar_non_na(this: &RBackend, value_id: usize, values: &[Value]) -> bool {
+pub(crate) fn value_is_scalar_non_na(this: &RBackend, value_id: usize, values: &[Value]) -> bool {
     let mut seen = FxHashSet::default();
     value_is_scalar_non_na_impl(this, value_id, values, &mut seen)
 }
 
-pub(super) fn value_is_scalar_non_na_impl(
+pub(crate) fn value_is_scalar_non_na_impl(
     this: &RBackend,
     value_id: usize,
     values: &[Value],
@@ -182,12 +228,12 @@ pub(super) fn value_is_scalar_non_na_impl(
     }
 }
 
-pub(super) fn value_is_proven_non_zero(this: &RBackend, value_id: usize, values: &[Value]) -> bool {
+pub(crate) fn value_is_proven_non_zero(this: &RBackend, value_id: usize, values: &[Value]) -> bool {
     let mut seen = FxHashSet::default();
     value_is_proven_non_zero_impl(this, value_id, values, &mut seen)
 }
 
-pub(super) fn value_is_proven_non_zero_impl(
+pub(crate) fn value_is_proven_non_zero_impl(
     this: &RBackend,
     value_id: usize,
     values: &[Value],
@@ -219,7 +265,7 @@ pub(super) fn value_is_proven_non_zero_impl(
     }
 }
 
-pub(super) fn can_elide_identity_floor_call(
+pub(crate) fn can_elide_identity_floor_call(
     callee: &str,
     args: &[usize],
     names: &[Option<String>],
@@ -244,7 +290,7 @@ pub(super) fn can_elide_identity_floor_call(
         .unwrap_or(false)
 }
 
-pub(super) fn floor_index_read_components(
+pub(crate) fn floor_index_read_components(
     callee: &str,
     args: &[usize],
     names: &[Option<String>],
@@ -282,7 +328,7 @@ pub(super) fn floor_index_read_components(
     }
 }
 
-pub(super) fn can_elide_index_wrapper(idx: usize, values: &[Value]) -> bool {
+pub(crate) fn can_elide_index_wrapper(idx: usize, values: &[Value]) -> bool {
     let Some(v) = values.get(idx) else {
         return false;
     };

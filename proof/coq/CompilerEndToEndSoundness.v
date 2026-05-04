@@ -1,9 +1,9 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.MirSemanticsLite.
-Require Import RRProofs.ProgramApiWrapperSoundness.
-Require Import RRProofs.ProgramOptPlanSoundness.
-Require Import RRProofs.ProgramPhasePipelineSoundness.
-Require Import RRProofs.PhasePlanSoundness.
+Require Import MirInvariantBundle.
+Require Import MirSemanticsLite.
+Require Import ProgramApiWrapperSoundness.
+Require Import ProgramOptPlanSoundness.
+Require Import ProgramPhasePipelineSoundness.
+Require Import PhasePlanSoundness.
 From Stdlib Require Import ZArith Bool Lia.
 Open Scope Z_scope.
 Open Scope bool_scope.

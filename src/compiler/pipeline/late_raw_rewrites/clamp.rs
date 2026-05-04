@@ -327,10 +327,10 @@ pub(crate) fn collapse_gray_scott_clamp_pair_in_raw_emitted_r(output: &str) -> S
     out
 }
 
-fn raw_zero_like_assign(lhs: &str, rhs: &str, target: &str) -> bool {
+pub(crate) fn raw_zero_like_assign(lhs: &str, rhs: &str, target: &str) -> bool {
     lhs == target && matches!(rhs, "0" | "0.0" | "0L" | "0.0L")
 }
 
-fn raw_one_like_assign(lhs: &str, rhs: &str, target: &str) -> bool {
+pub(crate) fn raw_one_like_assign(lhs: &str, rhs: &str, target: &str) -> bool {
     lhs == target && matches!(rhs, "1" | "1.0" | "1L" | "1.0L")
 }

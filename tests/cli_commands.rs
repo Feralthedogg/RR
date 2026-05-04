@@ -22,7 +22,7 @@ fn main() {
 }
 main()
 "#;
-    fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
+    fs::write(proj_dir.join("src").join("main.rr"), main_src).expect("failed to write src/main.rr");
     fs::write(
         proj_dir.join("src").join("util.rr"),
         r#"
@@ -46,8 +46,8 @@ fn helper(x) {
     assert!(status.success(), "rr build failed");
 
     assert!(
-        out_dir.join("main.R").exists(),
-        "expected build/main.R to be generated"
+        out_dir.join("src").join("main.R").exists(),
+        "expected build/src/main.R to be generated"
     );
     assert!(
         !out_dir.join("src").join("util.R").exists(),
@@ -61,7 +61,7 @@ fn build_command_accepts_compiler_parallel_flags() {
     let sandbox_root = root.join("target").join("tests").join("cli_build");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "compiler_parallel");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    fs::create_dir_all(proj_dir.join("src")).expect("failed to create project dirs");
 
     let main_src = r#"
 fn square(x) {
@@ -73,7 +73,7 @@ fn main() {
 }
 main()
 "#;
-    fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
+    fs::write(proj_dir.join("src").join("main.rr"), main_src).expect("failed to write src/main.rr");
 
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let out_dir = proj_dir.join("build");
@@ -100,8 +100,110 @@ main()
         "rr build with compiler parallel flags failed"
     );
     assert!(
-        out_dir.join("main.R").is_file(),
-        "expected build/main.R to be generated"
+        out_dir.join("src").join("main.R").is_file(),
+        "expected build/src/main.R to be generated"
+    );
+}
+
+#[test]
+fn build_command_single_entry_file_appends_main_call() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_build");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "single_entry_file");
+    fs::create_dir_all(proj_dir.join("src")).expect("failed to create project dirs");
+
+    let rr_path = proj_dir.join("entry.rr");
+    fs::write(
+        &rr_path,
+        r#"
+fn main() {
+  print(456L)
+}
+"#,
+    )
+    .expect("failed to write entry.rr");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let out_dir = proj_dir.join("build");
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&rr_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O0")
+        .arg("--no-incremental")
+        .status()
+        .expect("failed to run rr build on explicit entry file");
+    assert!(status.success(), "rr build explicit entry file failed");
+
+    let generated_path = out_dir.join("entry.R");
+    let generated = fs::read_to_string(&generated_path).expect("failed to read generated entry.R");
+    assert!(
+        generated.contains("# --- RR synthesized entrypoints") && generated.contains("Sym_top_0()"),
+        "expected explicit entry-file build to synthesize main() call in {}\n{}",
+        generated_path.display(),
+        generated
+    );
+}
+
+#[test]
+fn build_command_sroa_trace_reports_record_candidates() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_build");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "sroa_trace");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let rr_path = proj_dir.join("main.rr");
+    fs::write(
+        &rr_path,
+        r#"
+fn main() {
+  let point = { x: 1L, y: 2L }
+  point.x = 4L
+  print(point.x + point.y)
+}
+main()
+"#,
+    )
+    .expect("failed to write main.rr");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let out_dir = proj_dir.join("build");
+    let output = Command::new(&rr_bin)
+        .env("RR_SROA_TRACE", "1")
+        .arg("build")
+        .arg(&rr_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("-O1")
+        .arg("--no-incremental")
+        .output()
+        .expect("failed to run rr build with SROA trace");
+    assert!(
+        output.status.success(),
+        "rr build with SROA trace failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("[sroa-cand]") && stderr.contains("record="),
+        "expected SROA candidate trace in stderr:\n{}",
+        stderr
+    );
+
+    let generated_path = out_dir.join("main.R");
+    let generated = fs::read_to_string(&generated_path).expect("failed to read generated main.R");
+    assert!(
+        generated.contains("return(print(6L))")
+            && !generated.contains("point <- list(")
+            && !generated.contains("rr_field_set("),
+        "expected straight-line SROA to remove temporary record and field-set allocation in {}\n{}",
+        generated_path.display(),
+        generated
     );
 }
 
@@ -251,7 +353,7 @@ fn new_command_dot_uses_current_directory_name_as_module_path() {
 }
 
 #[test]
-fn run_command_finds_main_rr_from_dot() {
+fn run_command_finds_src_main_rr_from_dot() {
     let rscript = match rscript_path() {
         Some(p) if rscript_available(&p) => p,
         _ => {
@@ -264,14 +366,14 @@ fn run_command_finds_main_rr_from_dot() {
     let sandbox_root = root.join("target").join("tests").join("cli_run");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "proj");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    fs::create_dir_all(proj_dir.join("src")).expect("failed to create project dirs");
 
     let main_src = r#"
 fn main() {
   print(123)
 }
 "#;
-    fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
+    fs::write(proj_dir.join("src").join("main.rr"), main_src).expect("failed to write src/main.rr");
 
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     let output = Command::new(&rr_bin)
@@ -291,8 +393,64 @@ fn main() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("[1] 123"),
-        "expected runtime output from main.rr, got:\n{}",
+        "expected runtime output from src/main.rr, got:\n{}",
         stdout
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_command_accepts_explicit_non_main_entry_file() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("cli_run");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "explicit_entry_file");
+    fs::create_dir_all(proj_dir.join("src")).expect("failed to create project dirs");
+
+    let rr_path = proj_dir.join("entry.rr");
+    fs::write(
+        &rr_path,
+        r#"
+fn main() {
+  print(456L)
+}
+"#,
+    )
+    .expect("failed to write entry.rr");
+
+    let fake_rscript = proj_dir.join("fake_rscript.sh");
+    fs::write(
+        &fake_rscript,
+        "#!/bin/sh\nif ! grep -q 'Sym_top_0()' \"$2\"; then\n  echo 'missing synthesized entrypoint' >&2\n  exit 7\nfi\nprintf '[1] 456\\n'\nexit 0\n",
+    )
+    .expect("failed to write fake Rscript");
+    let mut perms = fs::metadata(&fake_rscript)
+        .expect("failed to stat fake Rscript")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fake_rscript, perms).expect("failed to chmod fake Rscript");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let output = Command::new(&rr_bin)
+        .current_dir(&proj_dir)
+        .arg("run")
+        .arg(&rr_path)
+        .arg("-O0")
+        .arg("--no-incremental")
+        .env("RRSCRIPT", &fake_rscript)
+        .output()
+        .expect("failed to run rr run explicit entry file");
+
+    assert!(
+        output.status.success(),
+        "rr run explicit entry file failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("[1] 456"),
+        "expected fake Rscript output, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
     );
 }
 
@@ -499,7 +657,7 @@ fn run_command_uses_rscript_env_override() {
     let sandbox_root = root.join("target").join("tests").join("cli_run");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "rscript_override");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    fs::create_dir_all(proj_dir.join("src")).expect("failed to create project dirs");
 
     let main_src = r#"
 fn main() {
@@ -507,7 +665,7 @@ fn main() {
 }
 main()
 "#;
-    fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
+    fs::write(proj_dir.join("src").join("main.rr"), main_src).expect("failed to write src/main.rr");
 
     let fake_rscript = proj_dir.join("fake_rscript.sh");
     fs::write(&fake_rscript, "#!/bin/sh\nprintf '[1] 777\\n'\nexit 0\n")
@@ -549,7 +707,7 @@ fn run_keep_r_preserves_generated_artifact_on_success() {
     let sandbox_root = root.join("target").join("tests").join("cli_run");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "keep_r_success");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    fs::create_dir_all(proj_dir.join("src")).expect("failed to create project dirs");
 
     let main_src = r#"
 fn main() {
@@ -557,7 +715,7 @@ fn main() {
 }
 main()
 "#;
-    fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
+    fs::write(proj_dir.join("src").join("main.rr"), main_src).expect("failed to write src/main.rr");
 
     let fake_rscript = proj_dir.join("fake_rscript.sh");
     fs::write(&fake_rscript, "#!/bin/sh\nprintf '[1] 888\\n'\nexit 0\n")
@@ -598,7 +756,7 @@ main()
         stderr
     );
     assert!(
-        proj_dir.join("main.gen.R").exists(),
+        proj_dir.join("src").join("main.gen.R").exists(),
         "expected generated artifact to be preserved by --keep-r"
     );
 }
@@ -610,7 +768,7 @@ fn run_keep_r_accepts_compiler_parallel_flags() {
     let sandbox_root = root.join("target").join("tests").join("cli_run");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "compiler_parallel");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    fs::create_dir_all(proj_dir.join("src")).expect("failed to create project dirs");
 
     let main_src = r#"
 fn square(x) {
@@ -622,7 +780,7 @@ fn main() {
 }
 main()
 "#;
-    fs::write(proj_dir.join("main.rr"), main_src).expect("failed to write main.rr");
+    fs::write(proj_dir.join("src").join("main.rr"), main_src).expect("failed to write src/main.rr");
 
     let fake_rscript = proj_dir.join("fake_rscript.sh");
     fs::write(&fake_rscript, "#!/bin/sh\nprintf '[1] 999\\n'\nexit 0\n")
@@ -666,7 +824,7 @@ main()
         String::from_utf8_lossy(&output.stdout)
     );
     assert!(
-        proj_dir.join("main.gen.R").exists(),
+        proj_dir.join("src").join("main.gen.R").exists(),
         "expected generated artifact to be preserved by --keep-r"
     );
 }
@@ -689,6 +847,33 @@ fn version_flag_prints_crate_version() {
         stdout.trim(),
         format!("RR Tachyon v{}", env!("CARGO_PKG_VERSION"))
     );
+}
+
+#[test]
+fn compile_subcommands_accept_help_flags() {
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    for command in ["build", "run", "watch"] {
+        for help_flag in ["--help", "-h", "help"] {
+            let output = Command::new(&rr_bin)
+                .arg(command)
+                .arg(help_flag)
+                .output()
+                .expect("failed to run rr subcommand help");
+            assert!(
+                output.status.success(),
+                "rr {command} {help_flag} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("RR build [dir|file.rr] [options]")
+                    && stderr.contains("RR run [entry.rr|dir|.] [options]")
+                    && stderr.contains("RR watch [entry.rr|dir|.] [options]"),
+                "expected compile usage for rr {command} {help_flag}, got:\n{}",
+                stderr
+            );
+        }
+    }
 }
 
 #[test]

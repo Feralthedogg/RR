@@ -1,3 +1,4 @@
+use super::*;
 #[derive(Debug)]
 pub enum VerifyError {
     BadValue(ValueId),

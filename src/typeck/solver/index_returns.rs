@@ -1,4 +1,5 @@
-fn value_base_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+use super::*;
+pub(crate) fn value_base_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
     fn rec(fn_ir: &FnIR, vid: ValueId, seen: &mut FxHashSet<ValueId>) -> Option<String> {
         if !seen.insert(vid) {
             return None;
@@ -29,7 +30,7 @@ fn value_base_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
     rec(fn_ir, vid, &mut FxHashSet::default())
 }
 
-fn is_floor_like_single_positional_call(
+pub(crate) fn is_floor_like_single_positional_call(
     callee: &str,
     args: &[ValueId],
     names: &[Option<String>],
@@ -39,7 +40,7 @@ fn is_floor_like_single_positional_call(
         && names.first().map(|name| name.is_none()).unwrap_or(true)
 }
 
-fn param_slot_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
+pub(crate) fn param_slot_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
     fn resolve_var_alias_slot(
         fn_ir: &FnIR,
         var: &str,
@@ -116,7 +117,7 @@ fn param_slot_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
     )
 }
 
-fn collect_index_vector_param_slots(fn_ir: &FnIR) -> FxHashSet<usize> {
+pub(crate) fn collect_index_vector_param_slots(fn_ir: &FnIR) -> FxHashSet<usize> {
     let mut slots = FxHashSet::default();
     for v in &fn_ir.values {
         let ValueKind::Call {
@@ -165,24 +166,26 @@ fn collect_index_vector_param_slots(fn_ir: &FnIR) -> FxHashSet<usize> {
     slots
 }
 
-fn collect_index_vector_param_slots_by_function(
+pub(crate) fn collect_index_vector_param_slots_by_function(
     all_fns: &FxHashMap<String, FnIR>,
 ) -> FxHashMap<String, FxHashSet<usize>> {
     index_demands::collect_index_vector_param_slots_by_function(all_fns)
 }
 
-fn collect_scalar_index_return_demands(all_fns: &FxHashMap<String, FnIR>) -> FxHashSet<String> {
+pub(crate) fn collect_scalar_index_return_demands(
+    all_fns: &FxHashMap<String, FnIR>,
+) -> FxHashSet<String> {
     index_demands::collect_scalar_index_return_demands(all_fns)
 }
 
-fn collect_vector_index_return_demands(
+pub(crate) fn collect_vector_index_return_demands(
     all_fns: &FxHashMap<String, FnIR>,
     index_param_slots: &FxHashMap<String, FxHashSet<usize>>,
 ) -> FxHashSet<String> {
     index_demands::collect_vector_index_return_demands(all_fns, index_param_slots)
 }
 
-fn can_apply_index_return_override(
+pub(crate) fn can_apply_index_return_override(
     all_fns: &FxHashMap<String, FnIR>,
     fname: &str,
     demanded_shape: ShapeTy,
@@ -191,15 +194,15 @@ fn can_apply_index_return_override(
     index_demands::can_apply_index_return_override(all_fns, fname, demanded_shape, demanded_term)
 }
 
-fn coerce_index_scalar_return(ty: TypeState) -> TypeState {
+pub(crate) fn coerce_index_scalar_return(ty: TypeState) -> TypeState {
     index_demands::coerce_index_scalar_return(ty)
 }
 
-fn coerce_index_vector_return(ty: TypeState) -> TypeState {
+pub(crate) fn coerce_index_vector_return(ty: TypeState) -> TypeState {
     index_demands::coerce_index_vector_return(ty)
 }
 
-fn apply_index_return_demands(
+pub(crate) fn apply_index_return_demands(
     all_fns: &FxHashMap<String, FnIR>,
     fn_ret: &mut FxHashMap<String, TypeState>,
     fn_ret_term: &mut FxHashMap<String, TypeTerm>,

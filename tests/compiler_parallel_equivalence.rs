@@ -1,9 +1,9 @@
-use RR::compiler::{
+use rr::compiler::{
     CompileOutputOptions, CompilerParallelConfig, CompilerParallelMode, OptLevel,
     compile_with_configs_with_options_and_compiler_parallel, default_parallel_config,
     default_type_config,
 };
-use RR::error::RRException;
+use rr::error::RRException;
 
 fn serial_compiler_parallel_cfg() -> CompilerParallelConfig {
     CompilerParallelConfig {
@@ -27,7 +27,13 @@ fn compile_equivalence_fixture(
     source: &str,
     compiler_parallel_cfg: CompilerParallelConfig,
     output_opts: CompileOutputOptions,
-) -> Result<(String, Vec<RR::codegen::mir_emit::MapEntry>), RRException> {
+) -> Result<
+    (
+        String,
+        Vec<rr::compiler::internal::codegen::mir_emit::MapEntry>,
+    ),
+    RRException,
+> {
     compile_with_configs_with_options_and_compiler_parallel(
         entry_path,
         source,

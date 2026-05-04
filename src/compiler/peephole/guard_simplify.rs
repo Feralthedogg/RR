@@ -3,7 +3,7 @@ use regex::{Captures, Regex};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::OnceLock;
 
-fn same_var_is_na_or_not_finite_re() -> Option<&'static Regex> {
+pub(crate) fn same_var_is_na_or_not_finite_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(
@@ -14,7 +14,7 @@ fn same_var_is_na_or_not_finite_re() -> Option<&'static Regex> {
     .as_ref()
 }
 
-fn wrapped_not_finite_cond_re() -> Option<&'static Regex> {
+pub(crate) fn wrapped_not_finite_cond_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(r"\(\((?P<inner>!\(is\.finite\([A-Za-z_][A-Za-z0-9_]*\)\))\)\)".to_string())
@@ -22,7 +22,7 @@ fn wrapped_not_finite_cond_re() -> Option<&'static Regex> {
     .as_ref()
 }
 
-fn not_finite_or_zero_guard_re() -> Option<&'static Regex> {
+pub(crate) fn not_finite_or_zero_guard_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(
@@ -32,9 +32,7 @@ fn not_finite_or_zero_guard_re() -> Option<&'static Regex> {
     .as_ref()
 }
 
-pub(in super::super) fn simplify_same_var_is_na_or_not_finite_guards(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn simplify_same_var_is_na_or_not_finite_guards(lines: Vec<String>) -> Vec<String> {
     let Some(re) = same_var_is_na_or_not_finite_re() else {
         return lines;
     };
@@ -57,7 +55,7 @@ pub(in super::super) fn simplify_same_var_is_na_or_not_finite_guards(
         .collect()
 }
 
-pub(in super::super) fn simplify_wrapped_not_finite_parens(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn simplify_wrapped_not_finite_parens(lines: Vec<String>) -> Vec<String> {
     let Some(re) = wrapped_not_finite_cond_re() else {
         return lines;
     };
@@ -73,9 +71,7 @@ pub(in super::super) fn simplify_wrapped_not_finite_parens(lines: Vec<String>) -
         .collect()
 }
 
-pub(in super::super) fn simplify_not_finite_or_zero_guard_parens(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn simplify_not_finite_or_zero_guard_parens(lines: Vec<String>) -> Vec<String> {
     let Some(re) = not_finite_or_zero_guard_re() else {
         return lines;
     };
@@ -99,7 +95,7 @@ pub(in super::super) fn simplify_not_finite_or_zero_guard_parens(
         .collect()
 }
 
-pub(in super::super) fn rewrite_guard_truthy_line(
+pub(crate) fn rewrite_guard_truthy_line(
     line: &str,
     no_na_vars: &FxHashSet<String>,
     scalar_consts: &FxHashMap<String, String>,
@@ -127,7 +123,7 @@ pub(in super::super) fn rewrite_guard_truthy_line(
     format!("{indent}if (!({cond})) break")
 }
 
-pub(in super::super) fn rewrite_if_truthy_line(
+pub(crate) fn rewrite_if_truthy_line(
     line: &str,
     no_na_vars: &FxHashSet<String>,
     scalar_consts: &FxHashMap<String, String>,

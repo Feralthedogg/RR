@@ -19,13 +19,17 @@ impl MirLoopOptimizer {
     }
 
     pub fn optimize_with_count(&self, fn_ir: &mut FnIR) -> usize {
-        let mut count = 0usize;
         let loops = LoopAnalyzer::new(fn_ir).find_loops();
+        self.optimize_with_loop_info(fn_ir, &loops)
+    }
+
+    pub fn optimize_with_loop_info(&self, fn_ir: &mut FnIR, loops: &[LoopInfo]) -> usize {
+        let mut count = 0usize;
         for lp in loops {
-            if self.canonicalize_loop(fn_ir, &lp) {
+            if self.canonicalize_loop(fn_ir, lp) {
                 count += 1;
             }
-            if self.vectorize_loop(fn_ir, &lp) {
+            if self.vectorize_loop(fn_ir, lp) {
                 count += 1;
             }
         }
@@ -320,6 +324,7 @@ impl MirLoopOptimizer {
                 out.push(*k);
                 out.push(*val);
             }
+            Instr::UnsafeRBlock { .. } => {}
         }
     }
 

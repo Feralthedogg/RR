@@ -1,4 +1,5 @@
-pub(super) fn rewrite_hoisted_loop_counter_aliases(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_hoisted_loop_counter_aliases(output: &mut String) {
     fn extract_loop_counter_step(rhs: &str) -> Option<String> {
         let rhs = strip_outer_parens_local(rhs).trim();
         let caps = compile_regex(r"^([A-Za-z_][A-Za-z0-9_\.]*)\s*\+\s*(1L?|1\.0)$".to_string())?
@@ -49,8 +50,8 @@ pub(super) fn rewrite_hoisted_loop_counter_aliases(output: &mut String) {
 
             let mut use_lines = Vec::new();
             let mut valid = true;
-            for later_idx in (idx + 1)..=fn_end {
-                let trimmed = lines[later_idx].trim();
+            for (later_idx, line) in lines.iter().enumerate().take(fn_end + 1).skip(idx + 1) {
+                let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;
                 }

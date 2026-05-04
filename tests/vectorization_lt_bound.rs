@@ -95,6 +95,7 @@ print(lt_bound_map(6))
     assert!(
         (o1_code.contains("rr_assign_slice(")
             && o1_code.contains("y <- rr_assign_slice(y, i, (length(x) + -1L),"))
+            || o1_code.contains("y <- rr_assign_slice(y, i, (n + -1L),")
             || (o1_code.contains("rr_assign_slice(seq_len(6L), 1L, (6L + -1L),")
                 && o1_code.contains(
                     "rr_index1_read_vec(seq_len(6L), rr_index_vec_floor(1L:(6L + -1L)))"

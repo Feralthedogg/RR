@@ -1,4 +1,5 @@
-pub(super) fn rewrite_literal_named_list_calls(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_literal_named_list_calls(output: &mut String) {
     if !output.contains("rr_named_list(") {
         return;
     }
@@ -10,10 +11,7 @@ pub(super) fn rewrite_literal_named_list_calls(output: &mut String) {
         }
         let mut rewritten = line.to_string();
         let mut search_start = 0usize;
-        loop {
-            let Some(start) = find_next_call(&rewritten, search_start, "rr_named_list") else {
-                break;
-            };
+        while let Some(start) = find_next_call(&rewritten, search_start, "rr_named_list") {
             let call_start = start + "rr_named_list".len();
             let Some(call_end) = find_matching_call_close(&rewritten, call_start) else {
                 break;

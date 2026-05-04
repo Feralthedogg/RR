@@ -1,9 +1,9 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn ggplot2_tail_helpers_have_direct_types() {
+pub(crate) fn ggplot2_tail_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["arg".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Any;
 
     let b0 = fn_ir.add_block();
@@ -59,13 +59,15 @@ fn ggplot2_tail_helpers_have_direct_types() {
 }
 
 #[test]
-fn grid_package_calls_have_direct_object_and_null_types() {
+pub(crate) fn grid_package_calls_have_direct_object_and_null_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["outfile".to_string(), "label".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Char;
     fn_ir.param_term_hints[1] = TypeTerm::Char;
 
@@ -86,13 +88,15 @@ fn grid_package_calls_have_direct_object_and_null_types() {
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let npc = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("npc".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "npc".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -118,7 +122,7 @@ fn grid_package_calls_have_direct_object_and_null_types() {
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -148,7 +152,9 @@ fn grid_package_calls_have_direct_object_and_null_types() {
         None,
     );
     let rrvp = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("rrvp".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "rrvp".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -484,7 +490,7 @@ fn grid_package_calls_have_direct_object_and_null_types() {
         None,
     );
     let zero = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(0)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -683,14 +689,17 @@ fn grid_package_calls_have_direct_object_and_null_types() {
 
     assert_eq!(
         out.values[unit_obj].value_ty,
-        RR::typeck::TypeState::unknown()
+        rr::compiler::internal::typeck::TypeState::unknown()
     );
     assert_eq!(out.values[unit_obj].value_term, TypeTerm::Any);
-    assert_eq!(out.values[width].value_ty, RR::typeck::TypeState::unknown());
+    assert_eq!(
+        out.values[width].value_ty,
+        rr::compiler::internal::typeck::TypeState::unknown()
+    );
     assert_eq!(out.values[width].value_term, TypeTerm::Any);
     assert_eq!(
         out.values[height].value_ty,
-        RR::typeck::TypeState::unknown()
+        rr::compiler::internal::typeck::TypeState::unknown()
     );
     assert_eq!(out.values[height].value_term, TypeTerm::Any);
 
@@ -759,7 +768,10 @@ fn grid_package_calls_have_direct_object_and_null_types() {
         draw_polyline,
         draw_raster,
     ] {
-        assert_eq!(out.values[vid].value_ty, RR::typeck::TypeState::null());
+        assert_eq!(
+            out.values[vid].value_ty,
+            rr::compiler::internal::typeck::TypeState::null()
+        );
         assert_eq!(out.values[vid].value_term, TypeTerm::Null);
     }
 
@@ -769,13 +781,14 @@ fn grid_package_calls_have_direct_object_and_null_types() {
 }
 
 #[test]
-fn ggplot2_package_calls_have_direct_object_and_save_types() {
+pub(crate) fn ggplot2_package_calls_have_direct_object_and_save_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["df".to_string(), "outfile".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::matrix(PrimTy::Any, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Any, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::DataFrameNamed(vec![
         (
             "x".to_string(),

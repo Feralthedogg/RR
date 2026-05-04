@@ -1,7 +1,8 @@
-use super::common::*;
+use super::*;
 
 #[test]
-fn raw_emitted_immediate_single_use_named_scalar_exprs_do_not_inline_into_guard_only_use() {
+pub(crate) fn raw_emitted_immediate_single_use_named_scalar_exprs_do_not_inline_into_guard_only_use()
+ {
     let input = [
         "Sym_123 <- function(rs_old, p_Ap, x, p) ",
         "{",
@@ -23,7 +24,7 @@ fn raw_emitted_immediate_single_use_named_scalar_exprs_do_not_inline_into_guard_
 }
 
 #[test]
-fn raw_emitted_named_scalar_exprs_do_not_inline_inside_repeat_loop() {
+pub(crate) fn raw_emitted_named_scalar_exprs_do_not_inline_inside_repeat_loop() {
     let input = [
         "Sym_1 <- function() ",
         "{",
@@ -46,7 +47,7 @@ fn raw_emitted_named_scalar_exprs_do_not_inline_inside_repeat_loop() {
 }
 
 #[test]
-fn raw_emitted_guard_only_named_scalar_exprs_inline_into_next_guard() {
+pub(crate) fn raw_emitted_guard_only_named_scalar_exprs_inline_into_next_guard() {
     let input = [
         "Sym_222 <- function(x, y, cx, cy, r) ",
         "{",
@@ -72,7 +73,7 @@ fn raw_emitted_guard_only_named_scalar_exprs_inline_into_next_guard() {
 }
 
 #[test]
-fn raw_emitted_guard_only_named_scalar_exprs_do_not_inline_when_used_later() {
+pub(crate) fn raw_emitted_guard_only_named_scalar_exprs_do_not_inline_when_used_later() {
     let input = [
         "Sym_123 <- function(rs_old, p_Ap, x, p) ",
         "{",
@@ -94,7 +95,7 @@ fn raw_emitted_guard_only_named_scalar_exprs_do_not_inline_when_used_later() {
 }
 
 #[test]
-fn raw_emitted_immediate_single_use_named_scalar_exprs_inline_floor_index_alias() {
+pub(crate) fn raw_emitted_immediate_single_use_named_scalar_exprs_inline_floor_index_alias() {
     let input = [
         "Sym_186 <- function(gx, gy, f, N) ",
         "{",
@@ -118,7 +119,7 @@ fn raw_emitted_immediate_single_use_named_scalar_exprs_inline_floor_index_alias(
 }
 
 #[test]
-fn raw_emitted_guard_only_scalar_literals_inline_into_guard() {
+pub(crate) fn raw_emitted_guard_only_scalar_literals_inline_into_guard() {
     let input = [
         "Sym_186 <- function() ",
         "{",
@@ -137,7 +138,7 @@ fn raw_emitted_guard_only_scalar_literals_inline_into_guard() {
 }
 
 #[test]
-fn raw_emitted_loop_guard_scalar_literals_inline_through_repeat_header() {
+pub(crate) fn raw_emitted_loop_guard_scalar_literals_inline_through_repeat_header() {
     let input = [
         "Sym_186 <- function() ",
         "{",
@@ -162,7 +163,7 @@ fn raw_emitted_loop_guard_scalar_literals_inline_through_repeat_header() {
 }
 
 #[test]
-fn raw_emitted_loop_guard_scalar_literals_do_not_inline_induction_seed() {
+pub(crate) fn raw_emitted_loop_guard_scalar_literals_do_not_inline_induction_seed() {
     let input = [
         "Sym_123 <- function() ",
         "{",
@@ -187,7 +188,7 @@ fn raw_emitted_loop_guard_scalar_literals_do_not_inline_induction_seed() {
 }
 
 #[test]
-fn raw_emitted_loop_guard_scalar_literals_skip_rr_marked_induction_seed() {
+pub(crate) fn raw_emitted_loop_guard_scalar_literals_skip_rr_marked_induction_seed() {
     let input = [
         "Sym_1 <- function(n) ",
         "{",
@@ -218,7 +219,7 @@ fn raw_emitted_loop_guard_scalar_literals_skip_rr_marked_induction_seed() {
 }
 
 #[test]
-fn raw_emitted_guard_only_named_scalar_exprs_skip_self_referential_increment() {
+pub(crate) fn raw_emitted_guard_only_named_scalar_exprs_skip_self_referential_increment() {
     let input = [
         "Sym_1 <- function() ",
         "{",
@@ -240,7 +241,7 @@ fn raw_emitted_guard_only_named_scalar_exprs_skip_self_referential_increment() {
 }
 
 #[test]
-fn raw_emitted_restores_missing_lt_guard_counter_update() {
+pub(crate) fn raw_emitted_restores_missing_lt_guard_counter_update() {
     let input = [
         "Sym_1 <- function(n) ",
         "{",
@@ -266,7 +267,7 @@ fn raw_emitted_restores_missing_lt_guard_counter_update() {
 }
 
 #[test]
-fn raw_emitted_unused_middle_helper_params_trim_and_update_callsites() {
+pub(crate) fn raw_emitted_unused_middle_helper_params_trim_and_update_callsites() {
     let input = [
         "Sym_287 <- function(temp, q_v, q_c, q_r, q_i, q_s, q_g, size) ",
         "{",
@@ -309,7 +310,7 @@ fn raw_emitted_unused_middle_helper_params_trim_and_update_callsites() {
 }
 
 #[test]
-fn raw_emitted_helper_params_are_kept_when_helper_escapes_as_value() {
+pub(crate) fn raw_emitted_helper_params_are_kept_when_helper_escapes_as_value() {
     let input = [
         "Sym_1 <- function(obj) ",
         "{",
@@ -335,7 +336,7 @@ fn raw_emitted_helper_params_are_kept_when_helper_escapes_as_value() {
 }
 
 #[test]
-fn raw_emitted_terminal_repeat_nexts_prune_without_touching_inner_if_nexts() {
+pub(crate) fn raw_emitted_terminal_repeat_nexts_prune_without_touching_inner_if_nexts() {
     let input = [
         "Sym_83 <- function() ",
         "{",
@@ -358,7 +359,7 @@ fn raw_emitted_terminal_repeat_nexts_prune_without_touching_inner_if_nexts() {
 }
 
 #[test]
-fn raw_emitted_same_var_is_na_or_not_finite_guards_simplify() {
+pub(crate) fn raw_emitted_same_var_is_na_or_not_finite_guards_simplify() {
     let input = [
         "Sym_123 <- function() ",
         "{",
@@ -385,7 +386,7 @@ fn raw_emitted_same_var_is_na_or_not_finite_guards_simplify() {
 }
 
 #[test]
-fn raw_emitted_not_finite_or_zero_guard_parens_simplify() {
+pub(crate) fn raw_emitted_not_finite_or_zero_guard_parens_simplify() {
     let input = [
         "Sym_123 <- function() ",
         "{",
@@ -410,7 +411,7 @@ fn raw_emitted_not_finite_or_zero_guard_parens_simplify() {
 }
 
 #[test]
-fn raw_emitted_wrapped_not_finite_parens_simplify() {
+pub(crate) fn raw_emitted_wrapped_not_finite_parens_simplify() {
     let input = [
         "Sym_123 <- function() ",
         "{",
@@ -429,7 +430,7 @@ fn raw_emitted_wrapped_not_finite_parens_simplify() {
 }
 
 #[test]
-fn raw_emitted_nested_else_if_blocks_collapse() {
+pub(crate) fn raw_emitted_nested_else_if_blocks_collapse() {
     let input = [
         "Sym_60 <- function(f, x, size) ",
         "{",
@@ -463,7 +464,7 @@ fn raw_emitted_nested_else_if_blocks_collapse() {
 }
 
 #[test]
-fn raw_emitted_unused_arg_aliases_strip_after_dead_scalar_alias_prune() {
+pub(crate) fn raw_emitted_unused_arg_aliases_strip_after_dead_scalar_alias_prune() {
     let input = [
         "Sym_287 <- function(q_r, q_i, i) ",
         "{",
@@ -488,7 +489,7 @@ fn raw_emitted_unused_arg_aliases_strip_after_dead_scalar_alias_prune() {
 }
 
 #[test]
-fn raw_emitted_dead_simple_scalar_alias_and_literal_assignments_prune() {
+pub(crate) fn raw_emitted_dead_simple_scalar_alias_and_literal_assignments_prune() {
     let input = [
         "Sym_287 <- function(size) ",
         "{",
@@ -511,7 +512,7 @@ fn raw_emitted_dead_simple_scalar_alias_and_literal_assignments_prune() {
 }
 
 #[test]
-fn raw_emitted_dead_licm_scalar_expr_assignments_prune() {
+pub(crate) fn raw_emitted_dead_licm_scalar_expr_assignments_prune() {
     let input = [
         "Sym_83 <- function(x) ",
         "{",
@@ -530,7 +531,7 @@ fn raw_emitted_dead_licm_scalar_expr_assignments_prune() {
 }
 
 #[test]
-fn raw_emitted_dead_pure_scalar_expr_assignments_prune() {
+pub(crate) fn raw_emitted_dead_pure_scalar_expr_assignments_prune() {
     let input = [
         "Sym_287 <- function(temp, size) ",
         "{",
@@ -559,7 +560,7 @@ fn raw_emitted_dead_pure_scalar_expr_assignments_prune() {
 }
 
 #[test]
-fn raw_emitted_dead_pure_scalar_expr_assignments_keep_loop_induction_updates() {
+pub(crate) fn raw_emitted_dead_pure_scalar_expr_assignments_keep_loop_induction_updates() {
     let input = [
         "Sym_117 <- function(a, b, n) ",
         "{",
@@ -584,7 +585,7 @@ fn raw_emitted_dead_pure_scalar_expr_assignments_keep_loop_induction_updates() {
 }
 
 #[test]
-fn raw_emitted_two_use_named_scalar_exprs_inline_into_adjacent_assignments() {
+pub(crate) fn raw_emitted_two_use_named_scalar_exprs_inline_into_adjacent_assignments() {
     let input = [
         "Sym_210 <- function(A, B, lapA, lapB, DA, DB, f, k, dt, i) ",
         "{",

@@ -3,16 +3,16 @@ use super::{
 };
 
 #[derive(Debug, Clone)]
-pub(super) struct IndexedFunction {
-    pub(super) start: usize,
-    pub(super) end: usize,
-    pub(super) body_start: usize,
-    pub(super) return_idx: Option<usize>,
-    pub(super) name: Option<String>,
-    pub(super) params: Vec<String>,
+pub(crate) struct IndexedFunction {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) body_start: usize,
+    pub(crate) return_idx: Option<usize>,
+    pub(crate) name: Option<String>,
+    pub(crate) params: Vec<String>,
 }
 
-pub(super) fn build_function_text_index(
+pub(crate) fn build_function_text_index(
     lines: &[String],
     parse_header: impl Fn(&str) -> Option<(String, Vec<String>)>,
 ) -> Vec<IndexedFunction> {
@@ -44,7 +44,7 @@ pub(super) fn build_function_text_index(
     out
 }
 
-pub(super) fn collect_prologue_arg_aliases(
+pub(crate) fn collect_prologue_arg_aliases(
     lines: &[String],
     idx: usize,
 ) -> FxHashMap<String, String> {
@@ -76,6 +76,6 @@ pub(super) fn collect_prologue_arg_aliases(
     aliases
 }
 
-pub(super) fn previous_non_empty_line(lines: &[String], idx: usize) -> Option<usize> {
+pub(crate) fn previous_non_empty_line(lines: &[String], idx: usize) -> Option<usize> {
     (0..idx).rev().find(|i| !lines[*i].trim().is_empty())
 }

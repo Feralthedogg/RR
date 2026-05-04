@@ -1,4 +1,5 @@
-fn has_trivial_scalar_clamp_wrapper_candidates_ir(lines: &[String]) -> bool {
+use super::*;
+pub(crate) fn has_trivial_scalar_clamp_wrapper_candidates_ir(lines: &[String]) -> bool {
     build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .any(|func| {
@@ -21,7 +22,7 @@ fn has_trivial_scalar_clamp_wrapper_candidates_ir(lines: &[String]) -> bool {
         })
 }
 
-fn apply_collapse_trivial_scalar_clamp_wrappers_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_collapse_trivial_scalar_clamp_wrappers_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;

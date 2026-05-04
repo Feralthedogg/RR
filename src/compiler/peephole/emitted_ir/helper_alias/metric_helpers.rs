@@ -1,4 +1,5 @@
-fn collect_metric_helpers_ir(lines: &[String]) -> FxHashMap<String, MetricHelperIr> {
+use super::*;
+pub(crate) fn collect_metric_helpers_ir(lines: &[String]) -> FxHashMap<String, MetricHelperIr> {
     let mut out = FxHashMap::default();
     for func in build_function_text_index(lines, parse_function_header_ir) {
         let Some(fn_name) = func.name.as_ref() else {
@@ -52,7 +53,7 @@ fn collect_metric_helpers_ir(lines: &[String]) -> FxHashMap<String, MetricHelper
     out
 }
 
-fn collect_metric_helpers_from_program_ir(
+pub(crate) fn collect_metric_helpers_from_program_ir(
     program: &EmittedProgram,
 ) -> FxHashMap<String, MetricHelperIr> {
     let mut out = FxHashMap::default();
@@ -109,7 +110,7 @@ fn collect_metric_helpers_from_program_ir(
     out
 }
 
-pub(in super::super) fn rewrite_metric_helper_return_calls_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_metric_helper_return_calls_ir(lines: Vec<String>) -> Vec<String> {
     if !has_metric_helper_candidates_ir(&lines) {
         return lines;
     }
@@ -123,9 +124,7 @@ pub(in super::super) fn rewrite_metric_helper_return_calls_ir(lines: Vec<String>
     program.into_lines()
 }
 
-pub(in super::super) fn rewrite_metric_helper_statement_calls_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn rewrite_metric_helper_statement_calls_ir(lines: Vec<String>) -> Vec<String> {
     if !has_metric_helper_candidates_ir(&lines) {
         return lines;
     }
@@ -139,7 +138,7 @@ pub(in super::super) fn rewrite_metric_helper_statement_calls_ir(
     program.into_lines()
 }
 
-fn apply_rewrite_metric_helper_return_calls_ir(
+pub(crate) fn apply_rewrite_metric_helper_return_calls_ir(
     program: &mut EmittedProgram,
     helpers: &FxHashMap<String, MetricHelperIr>,
     temp_counter: &mut usize,
@@ -200,7 +199,7 @@ fn apply_rewrite_metric_helper_return_calls_ir(
     }
 }
 
-fn apply_rewrite_metric_helper_statement_calls_ir(
+pub(crate) fn apply_rewrite_metric_helper_statement_calls_ir(
     program: &mut EmittedProgram,
     helpers: &FxHashMap<String, MetricHelperIr>,
     temp_counter: &mut usize,

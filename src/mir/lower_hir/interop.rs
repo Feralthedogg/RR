@@ -1,29 +1,30 @@
+use super::*;
 impl<'a> MirLowerer<'a> {
-    fn is_dynamic_fallback_builtin(name: &str) -> bool {
+    pub(crate) fn is_dynamic_fallback_builtin(name: &str) -> bool {
         crate::mir::semantics::call_model::is_dynamic_fallback_builtin(name)
     }
 
-    fn is_namespaced_r_call(name: &str) -> bool {
+    pub(crate) fn is_namespaced_r_call(name: &str) -> bool {
         crate::mir::semantics::call_model::is_namespaced_r_call(name)
     }
 
-    fn is_tidy_data_mask_call(name: &str) -> bool {
+    pub(crate) fn is_tidy_data_mask_call(name: &str) -> bool {
         crate::mir::semantics::call_model::is_tidy_data_mask_call(name)
     }
 
-    fn is_tidy_helper_call(name: &str) -> bool {
+    pub(crate) fn is_tidy_helper_call(name: &str) -> bool {
         crate::mir::semantics::call_model::is_tidy_helper_call(name)
     }
 
-    fn is_supported_package_call(name: &str) -> bool {
+    pub(crate) fn is_supported_package_call(name: &str) -> bool {
         crate::mir::semantics::call_model::is_supported_package_call(name)
     }
 
-    fn is_supported_tidy_helper_call(name: &str) -> bool {
+    pub(crate) fn is_supported_tidy_helper_call(name: &str) -> bool {
         crate::mir::semantics::call_model::is_supported_tidy_helper_call(name)
     }
 
-    fn should_lower_as_tidy_symbol(name: &str) -> bool {
+    pub(crate) fn should_lower_as_tidy_symbol(name: &str) -> bool {
         !name.starts_with("rr_")
             && !Self::is_namespaced_r_call(name)
             && !Self::is_dynamic_fallback_builtin(name)
@@ -108,7 +109,7 @@ impl<'a> MirLowerer<'a> {
             )
     }
 
-    fn hybrid_interop_reason(name: &str) -> InteropReason {
+    pub(crate) fn hybrid_interop_reason(name: &str) -> InteropReason {
         let (why, suggestion) = match name {
             "library" | "require" => (
                 "package attachment mutates the runtime search path and cannot be proven stable at compile-time",
@@ -152,7 +153,7 @@ impl<'a> MirLowerer<'a> {
         )
     }
 
-    fn opaque_package_reason(name: &str) -> InteropReason {
+    pub(crate) fn opaque_package_reason(name: &str) -> InteropReason {
         InteropReason::new(
             InteropTier::Opaque,
             InteropReasonKind::PackageCall,
@@ -164,7 +165,7 @@ impl<'a> MirLowerer<'a> {
         )
     }
 
-    fn opaque_tidy_helper_reason(name: &str) -> InteropReason {
+    pub(crate) fn opaque_tidy_helper_reason(name: &str) -> InteropReason {
         InteropReason::new(
             InteropTier::Opaque,
             InteropReasonKind::TidyHelper,

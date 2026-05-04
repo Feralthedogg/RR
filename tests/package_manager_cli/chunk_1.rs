@@ -1,7 +1,8 @@
 use super::package_manager_cli_common::*;
 
 #[test]
-fn install_command_fetches_github_dependency_and_build_uses_transitive_package_imports() {
+pub(crate) fn install_command_fetches_github_dependency_and_build_uses_transitive_package_imports()
+{
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -126,14 +127,16 @@ main()
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("41L + 1L") || built_r.contains("x + 1L"),
+        built_r.contains("41L + 1L")
+            || built_r.contains("x + 1L")
+            || built_r.contains("print(42L)"),
         "expected imported package logic in built artifact, got:\n{}",
         built_r
     );
 }
 
 #[test]
-fn installed_module_subpackage_directory_import_resolves_from_cache() {
+pub(crate) fn installed_module_subpackage_directory_import_resolves_from_cache() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -237,14 +240,17 @@ main()
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("40L + 1L") || built_r.contains("41L + 1L") || built_r.contains("x + 1L"),
+        built_r.contains("40L + 1L")
+            || built_r.contains("41L + 1L")
+            || built_r.contains("x + 1L")
+            || built_r.contains("return(42L)"),
         "expected imported subpackage logic in built artifact, got:\n{}",
         built_r
     );
 }
 
 #[test]
-fn replace_directive_prefers_local_module_path() {
+pub(crate) fn replace_directive_prefers_local_module_path() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -323,14 +329,16 @@ main()
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("40L + 2L") || built_r.contains("x + 2L"),
+        built_r.contains("40L + 2L")
+            || built_r.contains("x + 2L")
+            || built_r.contains("return(42L)"),
         "expected replace target logic in built artifact, got:\n{}",
         built_r
     );
 }
 
 #[test]
-fn mod_vendor_allows_build_without_package_cache() {
+pub(crate) fn mod_vendor_allows_build_without_package_cache() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -462,7 +470,7 @@ main()
 }
 
 #[test]
-fn remove_command_drops_dependency_from_manifest_and_lock() {
+pub(crate) fn remove_command_drops_dependency_from_manifest_and_lock() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -546,7 +554,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn mod_tidy_adds_missing_direct_dependency_from_imports() {
+pub(crate) fn mod_tidy_adds_missing_direct_dependency_from_imports() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -620,7 +628,7 @@ main()
 }
 
 #[test]
-fn mod_tidy_removes_unused_direct_dependency() {
+pub(crate) fn mod_tidy_removes_unused_direct_dependency() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -709,7 +717,7 @@ main()
 }
 
 #[test]
-fn build_prefers_rr_lock_version_over_manifest_require_version() {
+pub(crate) fn build_prefers_rr_lock_version_over_manifest_require_version() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")

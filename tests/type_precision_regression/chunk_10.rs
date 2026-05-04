@@ -1,14 +1,16 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn utils_tail_helpers_have_direct_types() {
+pub(crate) fn utils_tail_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["xs".to_string(), "mat".to_string(), "path".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::matrix(PrimTy::Int, false);
-    fn_ir.param_ty_hints[2] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[1] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Int, false);
+    fn_ir.param_ty_hints[2] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[1] = TypeTerm::Matrix(Box::new(TypeTerm::Int));
     fn_ir.param_term_hints[2] = TypeTerm::Char;
@@ -36,7 +38,7 @@ fn utils_tail_helpers_have_direct_types() {
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(1)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -309,9 +311,9 @@ fn utils_tail_helpers_have_direct_types() {
 }
 
 #[test]
-fn utils_structure_helpers_have_direct_types() {
+pub(crate) fn utils_structure_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["obj".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::List(Box::new(TypeTerm::Any));
 
     let b0 = fn_ir.add_block();
@@ -325,7 +327,7 @@ fn utils_structure_helpers_have_direct_types() {
         None,
     );
     let logical = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Bool(true)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Bool(true)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -476,9 +478,9 @@ fn utils_structure_helpers_have_direct_types() {
 }
 
 #[test]
-fn utils_parse_helpers_have_direct_types() {
+pub(crate) fn utils_parse_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["obj".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Any;
 
     let b0 = fn_ir.add_block();
@@ -492,19 +494,23 @@ fn utils_parse_helpers_have_direct_types() {
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(1)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("lm".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "lm".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let ns = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("stats".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "stats".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,

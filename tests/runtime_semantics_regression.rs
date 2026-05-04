@@ -1,10 +1,10 @@
 mod common;
 
-use RR::compiler::{
+use common::{compile_rr, normalize, rscript_available, rscript_path, run_rscript};
+use rr::compiler::{
     CompileOutputOptions, OptLevel, ParallelBackend, ParallelConfig, ParallelMode,
     compile_with_configs_with_options, default_type_config,
 };
-use common::{compile_rr, normalize, rscript_available, rscript_path, run_rscript};
 use std::fs;
 use std::path::PathBuf;
 

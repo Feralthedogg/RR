@@ -2,8 +2,8 @@
 
 mod common;
 
-use RR::syntax::parse::Parser;
 use libfuzzer_sys::{Corpus, fuzz_target};
+use rr::syntax::parse::Parser;
 
 fn parse_one(src: &str) {
     let mut parser = Parser::new(src);

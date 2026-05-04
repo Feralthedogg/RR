@@ -1,9 +1,9 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn utils_hash_helpers_have_direct_types() {
+pub(crate) fn utils_hash_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["obj".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Any;
 
     let b0 = fn_ir.add_block();
@@ -17,13 +17,15 @@ fn utils_hash_helpers_have_direct_types() {
         None,
     );
     let key = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("a".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "a".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let built = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str(
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
             "R 4.5.0; ; 2025-01-01; unix".to_string(),
         )),
         Span::dummy(),
@@ -185,9 +187,10 @@ fn utils_hash_helpers_have_direct_types() {
 }
 
 #[test]
-fn utils_archive_helpers_have_direct_types() {
+pub(crate) fn utils_archive_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["path".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Char;
 
     let b0 = fn_ir.add_block();
@@ -201,13 +204,15 @@ fn utils_archive_helpers_have_direct_types() {
         None,
     );
     let bool_true = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Bool(true)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Bool(true)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let web = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("web".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "web".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -332,9 +337,10 @@ fn utils_archive_helpers_have_direct_types() {
 }
 
 #[test]
-fn utils_interactive_helpers_have_direct_types() {
+pub(crate) fn utils_interactive_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["arg".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Char;
 
     let b0 = fn_ir.add_block();

@@ -49,8 +49,13 @@ print(kernel(4.5))
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     common::compile_rr(&rr_bin, &rr_src, &out_o0, "-O0");
 
-    let (ok_o2, stdout_o2, stderr_o2) =
-        common::run_compile_case("gvn_pure_calls", source, "case.rr", "-O2", &[]);
+    let (ok_o2, stdout_o2, stderr_o2) = common::run_compile_case(
+        "gvn_pure_calls",
+        source,
+        "case.rr",
+        "-O2",
+        &[("RR_VERBOSE_LOG", "1")],
+    );
     assert!(
         ok_o2,
         "O2 compile failed\nstdout:\n{stdout_o2}\nstderr:\n{stderr_o2}"
@@ -117,8 +122,13 @@ print(kernel(field, n_l, n_r, 4.0))
     let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
     common::compile_rr(&rr_bin, &rr_src, &out_o0, "-O0");
 
-    let (ok_o2, stdout_o2, stderr_o2) =
-        common::run_compile_case("gvn_vector_helper_calls", source, "case.rr", "-O2", &[]);
+    let (ok_o2, stdout_o2, stderr_o2) = common::run_compile_case(
+        "gvn_vector_helper_calls",
+        source,
+        "case.rr",
+        "-O2",
+        &[("RR_VERBOSE_LOG", "1")],
+    );
     assert!(
         ok_o2,
         "O2 compile failed\nstdout:\n{stdout_o2}\nstderr:\n{stderr_o2}"

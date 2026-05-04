@@ -1,4 +1,5 @@
-fn is_loop_header_forwarder_pred(
+use super::*;
+pub(crate) fn is_loop_header_forwarder_pred(
     fn_ir: &FnIR,
     preds: &[Vec<BlockId>],
     reachable: &FxHashSet<BlockId>,
@@ -37,7 +38,7 @@ pub fn verify_emittable_ir(fn_ir: &FnIR) -> Result<(), VerifyError> {
     Ok(())
 }
 
-fn check_val(fn_ir: &FnIR, vid: ValueId) -> Result<(), VerifyError> {
+pub(crate) fn check_val(fn_ir: &FnIR, vid: ValueId) -> Result<(), VerifyError> {
     if vid >= fn_ir.values.len() {
         Err(VerifyError::BadValue(vid))
     } else {
@@ -45,7 +46,7 @@ fn check_val(fn_ir: &FnIR, vid: ValueId) -> Result<(), VerifyError> {
     }
 }
 
-fn check_blk(fn_ir: &FnIR, bid: BlockId) -> Result<(), VerifyError> {
+pub(crate) fn check_blk(fn_ir: &FnIR, bid: BlockId) -> Result<(), VerifyError> {
     if bid >= fn_ir.blocks.len() {
         Err(VerifyError::BadBlock(bid))
     } else {
@@ -53,7 +54,7 @@ fn check_blk(fn_ir: &FnIR, bid: BlockId) -> Result<(), VerifyError> {
     }
 }
 
-fn param_runtime_var_name(fn_ir: &FnIR, index: usize) -> Option<VarId> {
+pub(crate) fn param_runtime_var_name(fn_ir: &FnIR, index: usize) -> Option<VarId> {
     for v in &fn_ir.values {
         if let ValueKind::Param { index: i } = v.kind
             && i == index
@@ -67,7 +68,7 @@ fn param_runtime_var_name(fn_ir: &FnIR, index: usize) -> Option<VarId> {
     fn_ir.params.get(index).cloned()
 }
 
-fn fn_is_self_recursive(fn_ir: &FnIR) -> bool {
+pub(crate) fn fn_is_self_recursive(fn_ir: &FnIR) -> bool {
     fn_ir.values.iter().any(|value| {
         matches!(
             &value.kind,
@@ -76,7 +77,7 @@ fn fn_is_self_recursive(fn_ir: &FnIR) -> bool {
     })
 }
 
-fn value_has_direct_self_reference(vid: ValueId, kind: &ValueKind) -> bool {
+pub(crate) fn value_has_direct_self_reference(vid: ValueId, kind: &ValueKind) -> bool {
     match kind {
         ValueKind::Const(_)
         | ValueKind::Param { .. }
@@ -98,7 +99,7 @@ fn value_has_direct_self_reference(vid: ValueId, kind: &ValueKind) -> bool {
     }
 }
 
-fn block_reaches(fn_ir: &FnIR, start: BlockId, target: BlockId) -> bool {
+pub(crate) fn block_reaches(fn_ir: &FnIR, start: BlockId, target: BlockId) -> bool {
     if start == target {
         return true;
     }
@@ -125,7 +126,7 @@ fn block_reaches(fn_ir: &FnIR, start: BlockId, target: BlockId) -> bool {
     false
 }
 
-fn detect_non_phi_value_cycle(fn_ir: &FnIR) -> Option<ValueId> {
+pub(crate) fn detect_non_phi_value_cycle(fn_ir: &FnIR) -> Option<ValueId> {
     fn visit(fn_ir: &FnIR, vid: ValueId, colors: &mut [u8]) -> Option<ValueId> {
         if matches!(fn_ir.values[vid].kind, ValueKind::Phi { .. }) {
             colors[vid] = 2;
@@ -162,7 +163,7 @@ fn detect_non_phi_value_cycle(fn_ir: &FnIR) -> Option<ValueId> {
     None
 }
 
-fn non_phi_dependencies(kind: &ValueKind) -> Vec<ValueId> {
+pub(crate) fn non_phi_dependencies(kind: &ValueKind) -> Vec<ValueId> {
     // Proof correspondence:
     // `VerifyIrChildDepsSubset` fixes the reduced non-`Phi` child-edge
     // extraction shape for unary wrappers, binary/range pairs, `Call` /
@@ -190,7 +191,7 @@ fn non_phi_dependencies(kind: &ValueKind) -> Vec<ValueId> {
     }
 }
 
-fn depends_on_phi_in_block_except(
+pub(crate) fn depends_on_phi_in_block_except(
     fn_ir: &FnIR,
     root: ValueId,
     phi_block: BlockId,
@@ -231,7 +232,7 @@ fn depends_on_phi_in_block_except(
     false
 }
 
-fn infer_phi_owner_block(fn_ir: &FnIR, args: &[(ValueId, BlockId)]) -> Option<BlockId> {
+pub(crate) fn infer_phi_owner_block(fn_ir: &FnIR, args: &[(ValueId, BlockId)]) -> Option<BlockId> {
     // Proof correspondence:
     // `VerifyIrStructLite` fixes the reduced owner/join discipline,
     // `VerifyIrValueEnvSubset` models the predecessor-selected value

@@ -1,29 +1,30 @@
+use super::*;
 
 #[derive(Debug, Clone)]
-pub(in super::super) struct EmittedProgram {
-    items: Vec<EmittedItem>,
+pub(crate) struct EmittedProgram {
+    pub(crate) items: Vec<EmittedItem>,
 }
 
 #[derive(Debug, Clone)]
-enum EmittedItem {
+pub(crate) enum EmittedItem {
     Raw(String),
     Function(EmittedFunction),
 }
 
 #[derive(Debug, Clone)]
-struct EmittedFunction {
-    header: String,
-    body: Vec<EmittedStmt>,
+pub(crate) struct EmittedFunction {
+    pub(crate) header: String,
+    pub(crate) body: Vec<EmittedStmt>,
 }
 
 #[derive(Debug, Clone)]
-struct EmittedStmt {
-    text: String,
-    kind: EmittedStmtKind,
+pub(crate) struct EmittedStmt {
+    pub(crate) text: String,
+    pub(crate) kind: EmittedStmtKind,
 }
 
 #[derive(Debug, Clone)]
-enum EmittedStmtKind {
+pub(crate) enum EmittedStmtKind {
     Blank,
     Assign { lhs: String, rhs: String },
     IfOpen,
@@ -40,78 +41,38 @@ enum EmittedStmtKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BlockKind {
+pub(crate) enum BlockKind {
     Repeat,
     Other,
 }
 
 impl EmittedStmt {
-    fn parse(line: &str) -> Self {
-        let trimmed = line.trim();
-        let kind = if trimmed.is_empty() {
-            EmittedStmtKind::Blank
-        } else if let Some(caps) = assign_re().and_then(|re| re.captures(trimmed)) {
-            let lhs = caps
-                .name("lhs")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            let rhs = caps
-                .name("rhs")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            EmittedStmtKind::Assign { lhs, rhs }
-        } else if trimmed == "} else {" {
-            EmittedStmtKind::ElseOpen
-        } else if trimmed == "repeat {" {
-            EmittedStmtKind::RepeatOpen
-        } else if trimmed.starts_with("if ") && trimmed.ends_with('{') {
-            EmittedStmtKind::IfOpen
-        } else if let Some((iter_var, end_expr)) = parse_for_seq_len_header(trimmed) {
-            EmittedStmtKind::ForSeqLen { iter_var, end_expr }
-        } else if trimmed.starts_with("for ") && trimmed.ends_with('{') {
-            EmittedStmtKind::ForOpen
-        } else if trimmed.starts_with("while ") && trimmed.ends_with('{') {
-            EmittedStmtKind::WhileOpen
-        } else if trimmed == "{" || (trimmed.ends_with('{') && !trimmed.starts_with("function")) {
-            EmittedStmtKind::OtherOpen
-        } else if trimmed == "}" {
-            EmittedStmtKind::BlockClose
-        } else if trimmed == "next" {
-            EmittedStmtKind::Next
-        } else if trimmed.starts_with("return(") && trimmed.ends_with(')') {
-            EmittedStmtKind::Return
-        } else {
-            EmittedStmtKind::Other
-        };
+    pub(crate) fn parse(line: &str) -> Self {
         Self {
             text: line.to_string(),
-            kind,
+            kind: parse_emitted_stmt_kind(line.trim()),
         }
     }
 
-    fn block_close_with_indent(indent: &str) -> Self {
+    pub(crate) fn block_close_with_indent(indent: &str) -> Self {
         Self {
             text: format!("{indent}}}"),
             kind: EmittedStmtKind::BlockClose,
         }
     }
 
-    fn render(&self) -> String {
+    pub(crate) fn render(&self) -> String {
         self.text.clone()
     }
 
-    fn indent(&self) -> String {
+    pub(crate) fn indent(&self) -> String {
         self.text
             .chars()
             .take_while(|ch| ch.is_ascii_whitespace())
             .collect()
     }
 
-    fn mentions_ident(&self, ident: &str) -> bool {
+    pub(crate) fn mentions_ident(&self, ident: &str) -> bool {
         match &self.kind {
             EmittedStmtKind::Assign { lhs, rhs } => {
                 lhs == ident || expr_idents(rhs).iter().any(|cand| cand == ident)
@@ -123,24 +84,71 @@ impl EmittedStmt {
         }
     }
 
-    fn assign_parts(&self) -> Option<(&str, &str)> {
+    pub(crate) fn assign_parts(&self) -> Option<(&str, &str)> {
         match &self.kind {
             EmittedStmtKind::Assign { lhs, rhs } => Some((lhs.as_str(), rhs.as_str())),
             _ => None,
         }
     }
 
-    fn replace_text(&mut self, new_text: String) {
+    pub(crate) fn replace_text(&mut self, new_text: String) {
         *self = EmittedStmt::parse(&new_text);
     }
 
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         *self = EmittedStmt::parse("");
     }
 }
 
+pub(crate) fn parse_emitted_assign_kind(trimmed: &str) -> Option<EmittedStmtKind> {
+    let caps = assign_re().and_then(|re| re.captures(trimmed))?;
+    let lhs = caps
+        .name("lhs")
+        .map(|m| m.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let rhs = caps
+        .name("rhs")
+        .map(|m| m.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    Some(EmittedStmtKind::Assign { lhs, rhs })
+}
+
+pub(crate) fn parse_emitted_stmt_kind(trimmed: &str) -> EmittedStmtKind {
+    if trimmed.is_empty() {
+        EmittedStmtKind::Blank
+    } else if let Some(kind) = parse_emitted_assign_kind(trimmed) {
+        kind
+    } else if trimmed == "} else {" {
+        EmittedStmtKind::ElseOpen
+    } else if trimmed == "repeat {" {
+        EmittedStmtKind::RepeatOpen
+    } else if trimmed.starts_with("if ") && trimmed.ends_with('{') {
+        EmittedStmtKind::IfOpen
+    } else if let Some((iter_var, end_expr)) = parse_for_seq_len_header(trimmed) {
+        EmittedStmtKind::ForSeqLen { iter_var, end_expr }
+    } else if trimmed.starts_with("for ") && trimmed.ends_with('{') {
+        EmittedStmtKind::ForOpen
+    } else if trimmed.starts_with("while ") && trimmed.ends_with('{') {
+        EmittedStmtKind::WhileOpen
+    } else if trimmed == "{" || (trimmed.ends_with('{') && !trimmed.starts_with("function")) {
+        EmittedStmtKind::OtherOpen
+    } else if trimmed == "}" {
+        EmittedStmtKind::BlockClose
+    } else if trimmed == "next" {
+        EmittedStmtKind::Next
+    } else if trimmed.starts_with("return(") && trimmed.ends_with(')') {
+        EmittedStmtKind::Return
+    } else {
+        EmittedStmtKind::Other
+    }
+}
+
 impl EmittedProgram {
-    fn parse(lines: &[String]) -> Self {
+    pub(crate) fn parse(lines: &[String]) -> Self {
         let functions = build_function_text_index(lines, |_| None);
         let mut items = Vec::new();
         let mut line_idx = 0usize;
@@ -166,7 +174,7 @@ impl EmittedProgram {
         Self { items }
     }
 
-    fn into_lines(self) -> Vec<String> {
+    pub(crate) fn into_lines(self) -> Vec<String> {
         let mut out = Vec::new();
         for item in self.items {
             match item {
@@ -181,7 +189,7 @@ impl EmittedProgram {
     }
 }
 
-fn parse_for_seq_len_header(trimmed: &str) -> Option<(String, String)> {
+pub(crate) fn parse_for_seq_len_header(trimmed: &str) -> Option<(String, String)> {
     let inner = trimmed.strip_prefix("for (")?.strip_suffix(") {")?;
     let (iter_var, rest) = inner.split_once(" in seq_len(")?;
     let end_expr = rest.strip_suffix(')')?;
@@ -189,27 +197,27 @@ fn parse_for_seq_len_header(trimmed: &str) -> Option<(String, String)> {
 }
 
 #[derive(Debug, Clone)]
-struct HelperTrimIr {
-    original_len: usize,
-    kept_indices: Vec<usize>,
-    kept_params: Vec<String>,
+pub(crate) struct HelperTrimIr {
+    pub(crate) original_len: usize,
+    pub(crate) kept_indices: Vec<usize>,
+    pub(crate) kept_params: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-struct SimpleExprHelperIr {
-    params: Vec<String>,
-    expr: String,
+pub(crate) struct SimpleExprHelperIr {
+    pub(crate) params: Vec<String>,
+    pub(crate) expr: String,
 }
 
 #[derive(Debug, Clone)]
-struct MetricHelperIr {
-    name_param: String,
-    value_param: String,
-    pre_name_lines: Vec<String>,
-    pre_value_lines: Vec<String>,
+pub(crate) struct MetricHelperIr {
+    pub(crate) name_param: String,
+    pub(crate) value_param: String,
+    pub(crate) pre_name_lines: Vec<String>,
+    pub(crate) pre_value_lines: Vec<String>,
 }
 
-fn parse_function_header_ir(line: &str) -> Option<(String, Vec<String>)> {
+pub(crate) fn parse_function_header_ir(line: &str) -> Option<(String, Vec<String>)> {
     let trimmed = line.trim();
     let (name, rest) = trimmed.split_once("<- function(")?;
     let args_inner = rest.split_once(')')?.0.trim();
@@ -224,7 +232,9 @@ fn parse_function_header_ir(line: &str) -> Option<(String, Vec<String>)> {
     Some((name.trim().to_string(), params))
 }
 
-fn collect_prologue_arg_alias_defs_ir(body: &[EmittedStmt]) -> Vec<(usize, String, String)> {
+pub(crate) fn collect_prologue_arg_alias_defs_ir(
+    body: &[EmittedStmt],
+) -> Vec<(usize, String, String)> {
     let mut out = Vec::new();
     let mut in_prologue = true;
     for (idx, stmt) in body.iter().enumerate() {
@@ -246,7 +256,7 @@ fn collect_prologue_arg_alias_defs_ir(body: &[EmittedStmt]) -> Vec<(usize, Strin
     out
 }
 
-fn has_arg_alias_cleanup_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_arg_alias_cleanup_candidates_ir(lines: &[String]) -> bool {
     build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .any(|func| {
@@ -258,7 +268,7 @@ fn has_arg_alias_cleanup_candidates_ir(lines: &[String]) -> bool {
         })
 }
 
-fn collect_mutated_arg_aliases_ir(body: &[EmittedStmt]) -> FxHashSet<String> {
+pub(crate) fn collect_mutated_arg_aliases_ir(body: &[EmittedStmt]) -> FxHashSet<String> {
     let mut out = FxHashSet::default();
     for stmt in body {
         match &stmt.kind {
@@ -282,7 +292,7 @@ fn collect_mutated_arg_aliases_ir(body: &[EmittedStmt]) -> FxHashSet<String> {
     out
 }
 
-fn collect_post_prologue_assignment_facts_ir(
+pub(crate) fn collect_post_prologue_assignment_facts_ir(
     body: &[EmittedStmt],
 ) -> (FxHashSet<String>, FxHashSet<String>, FxHashSet<String>) {
     let mut assigned = FxHashSet::default();
@@ -319,7 +329,7 @@ fn collect_post_prologue_assignment_facts_ir(
     (assigned, stored_bases, mentioned_arg_aliases)
 }
 
-fn is_cse_add_chain_rhs(rhs: &str) -> bool {
+pub(crate) fn is_cse_add_chain_rhs(rhs: &str) -> bool {
     let trimmed = rhs.trim();
     let inner = trimmed
         .strip_prefix('(')
@@ -329,7 +339,7 @@ fn is_cse_add_chain_rhs(rhs: &str) -> bool {
     inner.starts_with(".__rr_cse_") && inner.contains(" + ")
 }
 
-fn prefer_smaller_cse_symbol(lhs: &str, rhs: &str) -> String {
+pub(crate) fn prefer_smaller_cse_symbol(lhs: &str, rhs: &str) -> String {
     if !lhs.starts_with(".__rr_cse_") {
         return lhs.to_string();
     }
@@ -348,7 +358,11 @@ fn prefer_smaller_cse_symbol(lhs: &str, rhs: &str) -> String {
     lhs.to_string()
 }
 
-fn replace_exact_rhs_occurrence(stmt: &EmittedStmt, rhs: &str, lhs: &str) -> Option<String> {
+pub(crate) fn replace_exact_rhs_occurrence(
+    stmt: &EmittedStmt,
+    rhs: &str,
+    lhs: &str,
+) -> Option<String> {
     match &stmt.kind {
         EmittedStmtKind::Assign {
             lhs: assign_lhs,

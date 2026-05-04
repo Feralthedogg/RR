@@ -1,4 +1,4 @@
-use RR::compiler::{OptLevel, compile};
+use rr::compiler::{OptLevel, compile};
 
 #[test]
 fn user_functions_preserve_default_and_named_args_in_emitted_r() {

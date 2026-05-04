@@ -1,7 +1,7 @@
-use super::common::*;
+use super::*;
 
 #[test]
-fn rewrites_literal_field_get_calls_to_base_indexing() {
+pub(crate) fn rewrites_literal_field_get_calls_to_base_indexing() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -16,7 +16,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn rewrites_literal_named_list_calls_to_base_list() {
+pub(crate) fn rewrites_literal_named_list_calls_to_base_list() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -35,7 +35,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn rewrites_later_literal_helpers_when_earlier_literal_candidate_is_dynamic() {
+pub(crate) fn rewrites_later_literal_helpers_when_earlier_literal_candidate_is_dynamic() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -55,7 +55,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn rewrites_safe_loop_index_write_calls_to_base_indexing() {
+pub(crate) fn rewrites_safe_loop_index_write_calls_to_base_indexing() {
     let input = "\
 Sym_1 <- function(n, xs) \n\
 {\n\
@@ -74,7 +74,7 @@ next\n\
 }
 
 #[test]
-fn keeps_index_write_helper_when_loop_index_is_reassigned_non_canonically() {
+pub(crate) fn keeps_index_write_helper_when_loop_index_is_reassigned_non_canonically() {
     let input = "\
 Sym_1 <- function(n, xs) \n\
 {\n\
@@ -92,7 +92,7 @@ next\n\
 }
 
 #[test]
-fn rewrites_safe_named_index_read_calls_to_base_indexing() {
+pub(crate) fn rewrites_safe_named_index_read_calls_to_base_indexing() {
     let input = "\
 Sym_1 <- function(u, f, ix, iy, N) \n\
 {\n\
@@ -110,7 +110,7 @@ Sym_1 <- function(u, f, ix, iy, N) \n\
 }
 
 #[test]
-fn rewrites_later_safe_index_read_when_earlier_call_is_unsafe() {
+pub(crate) fn rewrites_later_safe_index_read_when_earlier_call_is_unsafe() {
     let input = "\
 Sym_1 <- function(samples, draws, f, ix, iy, n, raw_idx) \n\
 {\n\
@@ -133,7 +133,7 @@ Sym_1 <- function(samples, draws, f, ix, iy, n, raw_idx) \n\
 }
 
 #[test]
-fn rewrites_floor_clamped_named_index_reads_to_base_indexing() {
+pub(crate) fn rewrites_floor_clamped_named_index_reads_to_base_indexing() {
     let input = "\
 Sym_1 <- function(samples, draws, n, inner, resample) \n\
 {\n\
@@ -156,7 +156,7 @@ Sym_1 <- function(samples, draws, n, inner, resample) \n\
 }
 
 #[test]
-fn rewrites_flat_positive_loop_index_reads_to_base_indexing() {
+pub(crate) fn rewrites_flat_positive_loop_index_reads_to_base_indexing() {
     let input = "\
 Sym_1 <- function(draws, n, resamples) \n\
 {\n\
@@ -187,7 +187,7 @@ next\n\
 }
 
 #[test]
-fn rewrites_same_len_tail_scalar_reads_to_base_indexing() {
+pub(crate) fn rewrites_same_len_tail_scalar_reads_to_base_indexing() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -205,7 +205,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn rewrites_safe_interior_loop_neighbor_reads_to_base_indexing() {
+pub(crate) fn rewrites_safe_interior_loop_neighbor_reads_to_base_indexing() {
     let input = "\
 Sym_1 <- function(n, a, next_a) \n\
 {\n\
@@ -235,7 +235,7 @@ next\n\
 }
 
 #[test]
-fn keeps_identical_rr_field_get_rebind_when_particles_change_inside_loop() {
+pub(crate) fn keeps_identical_rr_field_get_rebind_when_particles_change_inside_loop() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -271,7 +271,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn does_not_inline_singleton_assign_slice_as_whole_range_copy() {
+pub(crate) fn does_not_inline_singleton_assign_slice_as_whole_range_copy() {
     let input = "\
 Sym_78 <- function(f, ys) \n\
 {\n\
@@ -285,10 +285,9 @@ return(rot)\n\
 }\n";
     let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
         input,
-        true,
         &FxHashSet::default(),
         &FxHashSet::default(),
-        true,
+        PeepholeOptions::new(true).preserving_all_defs(true),
     );
     assert!(out.contains("rot <- replace(rot, 1, 1)"));
     assert!(!out.contains("rot <- rep.int(1, 1)"));
@@ -296,7 +295,7 @@ return(rot)\n\
 }
 
 #[test]
-fn rewrites_readonly_param_aliases_and_index_only_mutated_param_shadows() {
+pub(crate) fn rewrites_readonly_param_aliases_and_index_only_mutated_param_shadows() {
     let input = "\
 Sym_60 <- function(f, x, ys, size) \n\
 {\n\
@@ -334,7 +333,7 @@ Sym_186 <- function(px, py, pf, u, v, dt, N) \n\
 }
 
 #[test]
-fn does_not_rewrite_mutated_param_shadow_aliases() {
+pub(crate) fn does_not_rewrite_mutated_param_shadow_aliases() {
     let input = "\
 Sym_13 <- function(n, acc) \n\
 {\n\
@@ -357,7 +356,7 @@ next\n\
 }
 
 #[test]
-fn readonly_param_alias_rewrite_keeps_mutated_tco_shadow_aliases() {
+pub(crate) fn readonly_param_alias_rewrite_keeps_mutated_tco_shadow_aliases() {
     let input = vec![
         "Sym_13 <- function(n, acc) ".to_string(),
         "{".to_string(),
@@ -381,7 +380,7 @@ fn readonly_param_alias_rewrite_keeps_mutated_tco_shadow_aliases() {
 }
 
 #[test]
-fn strip_unused_arg_aliases_keeps_mutated_tco_shadow_aliases() {
+pub(crate) fn strip_unused_arg_aliases_keeps_mutated_tco_shadow_aliases() {
     let input = vec![
         "Sym_13 <- function(n, acc) ".to_string(),
         "{".to_string(),
@@ -404,7 +403,7 @@ fn strip_unused_arg_aliases_keeps_mutated_tco_shadow_aliases() {
 }
 
 #[test]
-fn readonly_param_alias_rewrite_fully_rewrites_recursive_param_uses() {
+pub(crate) fn readonly_param_alias_rewrite_fully_rewrites_recursive_param_uses() {
     let input = vec![
         "Sym_13 <- function(n, acc) ".to_string(),
         "{".to_string(),
@@ -426,7 +425,7 @@ fn readonly_param_alias_rewrite_fully_rewrites_recursive_param_uses() {
 }
 
 #[test]
-fn shifted_square_reuse_collapses_recent_temp_chain_to_named_scalar() {
+pub(crate) fn shifted_square_reuse_collapses_recent_temp_chain_to_named_scalar() {
     let input = "\
 Sym_37 <- function(f, x, y, size) \n\
 {\n\
@@ -460,7 +459,7 @@ lat <- ((-(45)) - ((1 - ((((.__rr_cse_7 - 1) * (.__rr_cse_7 - 1)) + ((.__rr_cse_
 }
 
 #[test]
-fn shifted_square_reuse_handles_actual_sym37_shape() {
+pub(crate) fn shifted_square_reuse_handles_actual_sym37_shape() {
     let input = "\
 Sym_37 <- function(f, x, y, size) \n\
 {\n\
@@ -499,7 +498,7 @@ lat <- ((-(45)) - ((1 - ((((.__rr_cse_7 - 1) * (.__rr_cse_7 - 1)) + ((.__rr_cse_
 }
 
 #[test]
-fn shifted_square_reuse_handles_raw_emitted_sym37_shape() {
+pub(crate) fn shifted_square_reuse_handles_raw_emitted_sym37_shape() {
     let input = "\
 Sym_37 <- function(f, x, y, size) \n\
 {\n\
@@ -544,7 +543,7 @@ lat <- (((.__rr_cse_11 + .__rr_cse_11) - 1) * 45)\n\
 }
 
 #[test]
-fn removes_redundant_identical_nested_temp_reassign() {
+pub(crate) fn removes_redundant_identical_nested_temp_reassign() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -563,7 +562,7 @@ y <- ((.__rr_cse_1 + .__rr_cse_1) - 1)\n\
 }
 
 #[test]
-fn removes_redundant_temp_reassign_even_with_intermediate_self_copy() {
+pub(crate) fn removes_redundant_temp_reassign_even_with_intermediate_self_copy() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\

@@ -151,8 +151,9 @@ R S3/S4 method tables.
 Claim boundary: RR traits are a Rust-inspired static dispatch feature, not a
 full Rust trait system. The supported contract is that a resolvable trait call is
 checked before MIR lowering, rewritten to a concrete helper, and emitted as a
-direct R call. This removes R runtime trait lookup from supported monomorphic
-and monomorphized generic paths.
+direct R helper call or, in the standard optimized pipeline, a let-lifted inline
+R expression. This removes R runtime trait lookup from supported monomorphic and
+monomorphized generic paths.
 
 ```rust
 trait Physical {
@@ -173,11 +174,20 @@ fn main() {
 ```
 
 The `Trait.method(receiver, ...)` and `receiver.method(...)` call forms are
-resolved during lowering. The receiver must have an explicit source-level type
-hint, such as `let b: Body`. RR rewrites the call to the concrete impl function
-before MIR/codegen, so the emitted R does not perform dynamic trait lookup.
-RR also accepts UFCS-style `Trait::method(receiver, ...)`; it is equivalent to
+resolved during lowering. The receiver type must be statically visible, either
+from an explicit source-level type hint such as `let b: Body`, from a generic
+parameter bound, or from a straight-line expression whose trait method/operator
+return type is known. RR rewrites the call to the concrete impl function before
+MIR/codegen, so the emitted R does not perform dynamic trait lookup. RR also
+accepts UFCS-style `Trait::method(receiver, ...)`; it is equivalent to
 `Trait.method(receiver, ...)` in this static trait slice.
+
+For straight-line pure trait helpers, the standard optimized pipeline may inline
+the helper body into emitted R. When the helper returns record/list-shaped data,
+RR materializes nested helper calls into deterministic `.__rr_inline_expr_*`
+temporaries instead of duplicating the whole aggregate expression. This avoids
+both R function-call overhead and exponential emitted-AST growth in method
+chains.
 
 Receiver-method sugar is accepted only when RR can identify exactly one trait
 impl method for the receiver type. If multiple traits implemented for the same
@@ -523,6 +533,60 @@ Current lexer limits:
   - `rec.x -= y`
   - lowered as `lhs = lhs <op> rhs`
 
+### Unsafe R Blocks
+
+RR supports a statement-level raw R escape hatch:
+
+```rust
+unsafe r {
+  energy <- sum(values * values)
+  print(energy)
+}
+```
+
+For read-only logging/probing code, RR also supports:
+
+```rust
+unsafe r(read) {
+  print(energy)
+}
+```
+
+The compiler preserves the block body as R source text and emits it at the same
+statement position inside the generated function. RR does not parse or typecheck
+the R body. Braces inside R strings, comments, and nested R functions are
+handled by the lexer so the outer `unsafe r { ... }` block can contain normal R
+code. RR locals and parameters emitted as R bindings are visible by their normal
+names inside the raw R body; assignments in the raw R body can update those
+bindings for later RR statements.
+
+Claim boundary:
+
+- `unsafe r { ... }` is statement-only and currently has no RR return value.
+- The containing MIR function is marked opaque interop and optimized
+  conservatively.
+- Raw R post-emission cleanup is skipped for a function that contains an unsafe
+  R block, so compiler text rewrites cannot alter the raw user code.
+- After the block, RR conservatively reloads generated-function-frame locals
+  because the raw R body may assign through ordinary R lexical scope.
+- There is no template-capture syntax today. Refer to emitted RR locals and
+  parameters directly, and do not depend on compiler-generated temporaries or
+  mangled helper symbols.
+- `unsafe r(read) { ... }` is a no-write promise. It can read RR-visible
+  generated-function-frame bindings without marking the whole function opaque or
+  reloading locals afterward. If the raw R body assigns to RR locals anyway,
+  later RR statements are outside the stable language contract.
+- This is not a sandbox. The R code can read or mutate R-visible state and is
+  the user's responsibility, like Rust `unsafe` or C inline assembly.
+- Lambda capture discovery scans raw R identifiers conservatively, so current
+  lifted closures capture RR locals named inside unsafe R blocks. If RR adds
+  deeper closure or nested-environment lowering, captured-variable behavior
+  around `unsafe r` must be treated as a separate compatibility and
+  optimizer-boundary audit.
+- This source feature is separate from Rust `unsafe` in RR's compiler
+  implementation; compiler-side unsafe rules are documented in
+  [Unsafe Boundaries](compiler/unsafe-boundaries.md).
+
 ### Functions
 
 - Declaration forms:
@@ -811,8 +875,10 @@ Important newline rule:
 From `src/hir/lower.rs`:
 
 - default: assignment to undeclared name is a compile error
-- legacy relaxed mode: `--strict-let off` allows implicit declaration
-- warning mode: `--warn-implicit-decl on` emits implicit-declaration warnings when relaxed mode is enabled
+- RR 2.0 stable CLI: `--strict-let on`
+- temporary migration mode: set `RR_ALLOW_LEGACY_IMPLICIT_DECL=1` before using
+  `--strict-let off`
+- warning mode: `--warn-implicit-decl on` emits implicit-declaration warnings when migration mode is enabled
 
 ## Function and Closure Semantics
 

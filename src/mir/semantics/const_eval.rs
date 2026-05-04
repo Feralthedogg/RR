@@ -1,11 +1,12 @@
+use super::*;
 use crate::diagnostic::DiagnosticBuilder;
 use crate::error::{RR, RRCode, RRException, Stage};
-use crate::mir::*;
+use crate::mir::const_fold;
 use crate::syntax::ast::BinOp;
 use crate::utils::Span;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-pub(super) fn collect_reachable_blocks(fn_ir: &FnIR) -> FxHashSet<BlockId> {
+pub(crate) fn collect_reachable_blocks(fn_ir: &FnIR) -> FxHashSet<BlockId> {
     let mut seen = FxHashSet::default();
     let mut stack = vec![fn_ir.entry];
     let mut memo: FxHashMap<ValueId, Option<Lit>> = FxHashMap::default();
@@ -39,7 +40,7 @@ pub(super) fn collect_reachable_blocks(fn_ir: &FnIR) -> FxHashSet<BlockId> {
     seen
 }
 
-pub(super) fn collect_reachable_values(
+pub(crate) fn collect_reachable_values(
     fn_ir: &FnIR,
     reachable_blocks: &FxHashSet<BlockId>,
 ) -> FxHashSet<ValueId> {
@@ -79,6 +80,7 @@ pub(super) fn collect_reachable_values(
                     roots.push(*k);
                     roots.push(*val);
                 }
+                Instr::UnsafeRBlock { .. } => {}
             }
         }
     }
@@ -147,7 +149,7 @@ pub(super) fn collect_reachable_values(
     seen
 }
 
-pub(super) fn eval_const(
+pub(crate) fn eval_const(
     fn_ir: &FnIR,
     vid: ValueId,
     memo: &mut FxHashMap<ValueId, Option<Lit>>,
@@ -211,7 +213,7 @@ pub(super) fn eval_const(
     out
 }
 
-pub(super) fn matrix_known_dims(
+pub(crate) fn matrix_known_dims(
     fn_ir: &FnIR,
     vid: ValueId,
     memo: &mut FxHashMap<ValueId, Option<Lit>>,
@@ -221,7 +223,7 @@ pub(super) fn matrix_known_dims(
     matrix_known_dims_inner(fn_ir, vid, memo, visiting, &mut seen)
 }
 
-fn matrix_known_rows(
+pub(crate) fn matrix_known_rows(
     fn_ir: &FnIR,
     vid: ValueId,
     memo: &mut FxHashMap<ValueId, Option<Lit>>,
@@ -231,7 +233,7 @@ fn matrix_known_rows(
     matrix_known_axis_inner(fn_ir, vid, memo, visiting, &mut seen, true)
 }
 
-fn matrix_known_cols(
+pub(crate) fn matrix_known_cols(
     fn_ir: &FnIR,
     vid: ValueId,
     memo: &mut FxHashMap<ValueId, Option<Lit>>,
@@ -241,7 +243,7 @@ fn matrix_known_cols(
     matrix_known_axis_inner(fn_ir, vid, memo, visiting, &mut seen, false)
 }
 
-fn matrix_known_dims_inner(
+pub(crate) fn matrix_known_dims_inner(
     fn_ir: &FnIR,
     vid: ValueId,
     memo: &mut FxHashMap<ValueId, Option<Lit>>,
@@ -284,7 +286,7 @@ fn matrix_known_dims_inner(
     }
 }
 
-fn matrix_known_axis_inner(
+pub(crate) fn matrix_known_axis_inner(
     fn_ir: &FnIR,
     vid: ValueId,
     memo: &mut FxHashMap<ValueId, Option<Lit>>,
@@ -338,7 +340,7 @@ fn matrix_known_axis_inner(
     }
 }
 
-fn unique_assign_source_for_var(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
+pub(crate) fn unique_assign_source_for_var(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
     let mut found = None;
     for block in &fn_ir.blocks {
         for instr in &block.instrs {
@@ -355,72 +357,11 @@ fn unique_assign_source_for_var(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
     found
 }
 
-pub(super) fn eval_binary_const(op: BinOp, lhs: Lit, rhs: Lit) -> Option<Lit> {
-    use crate::syntax::ast::BinOp::*;
-    match op {
-        Add => match (lhs, rhs) {
-            (Lit::Int(a), Lit::Int(b)) => Some(Lit::Int(a + b)),
-            (Lit::Float(a), Lit::Float(b)) => Some(Lit::Float(a + b)),
-            (Lit::Int(a), Lit::Float(b)) => Some(Lit::Float(a as f64 + b)),
-            (Lit::Float(a), Lit::Int(b)) => Some(Lit::Float(a + b as f64)),
-            _ => None,
-        },
-        Sub => match (lhs, rhs) {
-            (Lit::Int(a), Lit::Int(b)) => Some(Lit::Int(a - b)),
-            (Lit::Float(a), Lit::Float(b)) => Some(Lit::Float(a - b)),
-            (Lit::Int(a), Lit::Float(b)) => Some(Lit::Float(a as f64 - b)),
-            (Lit::Float(a), Lit::Int(b)) => Some(Lit::Float(a - b as f64)),
-            _ => None,
-        },
-        Mul => match (lhs, rhs) {
-            (Lit::Int(a), Lit::Int(b)) => Some(Lit::Int(a * b)),
-            (Lit::Float(a), Lit::Float(b)) => Some(Lit::Float(a * b)),
-            (Lit::Int(a), Lit::Float(b)) => Some(Lit::Float(a as f64 * b)),
-            (Lit::Float(a), Lit::Int(b)) => Some(Lit::Float(a * b as f64)),
-            _ => None,
-        },
-        Div => match (lhs, rhs) {
-            (Lit::Int(a), Lit::Int(b)) => Some(Lit::Float(a as f64 / b as f64)),
-            (Lit::Float(a), Lit::Float(b)) => Some(Lit::Float(a / b)),
-            (Lit::Int(a), Lit::Float(b)) => Some(Lit::Float(a as f64 / b)),
-            (Lit::Float(a), Lit::Int(b)) => Some(Lit::Float(a / b as f64)),
-            _ => None,
-        },
-        Mod => match (lhs, rhs) {
-            (Lit::Int(_), Lit::Int(0)) => None,
-            (Lit::Int(a), Lit::Int(b)) => Some(Lit::Int(a % b)),
-            _ => None,
-        },
-        Eq => Some(Lit::Bool(lhs == rhs)),
-        Ne => Some(Lit::Bool(lhs != rhs)),
-        Lt | Le | Gt | Ge => {
-            let (a, b) = match (lhs, rhs) {
-                (Lit::Int(a), Lit::Int(b)) => (a as f64, b as f64),
-                (Lit::Float(a), Lit::Float(b)) => (a, b),
-                (Lit::Int(a), Lit::Float(b)) => (a as f64, b),
-                (Lit::Float(a), Lit::Int(b)) => (a, b as f64),
-                _ => return None,
-            };
-            let r = match op {
-                Lt => a < b,
-                Le => a <= b,
-                Gt => a > b,
-                Ge => a >= b,
-                _ => false,
-            };
-            Some(Lit::Bool(r))
-        }
-        And | Or => match (lhs, rhs) {
-            (Lit::Bool(a), Lit::Bool(b)) => {
-                Some(Lit::Bool(if op == And { a && b } else { a || b }))
-            }
-            _ => None,
-        },
-        _ => None,
-    }
+pub(crate) fn eval_binary_const(op: BinOp, lhs: Lit, rhs: Lit) -> Option<Lit> {
+    const_fold::eval_binary_const(op, &lhs, &rhs)
 }
 
-pub(super) fn validate_const_condition(lit: Lit, span: Span) -> RR<()> {
+pub(crate) fn validate_const_condition(lit: Lit, span: Span) -> RR<()> {
     match lit {
         Lit::Bool(_) => Ok(()),
         Lit::Na => Err(DiagnosticBuilder::new(
@@ -447,14 +388,14 @@ pub(super) fn validate_const_condition(lit: Lit, span: Span) -> RR<()> {
     }
 }
 
-pub(super) fn validate_index_lit_for_read(lit: Lit, span: Span) -> RR<()> {
+pub(crate) fn validate_index_lit_for_read(lit: Lit, span: Span) -> RR<()> {
     if matches!(lit, Lit::Na) {
         return Ok(());
     }
     validate_index_integral_positive(lit, span)
 }
 
-pub(super) fn validate_index_lit_for_write(lit: Lit, span: Span) -> RR<()> {
+pub(crate) fn validate_index_lit_for_write(lit: Lit, span: Span) -> RR<()> {
     if matches!(lit, Lit::Na) {
         return Err(DiagnosticBuilder::new(
             "RR.RuntimeError",
@@ -472,7 +413,7 @@ pub(super) fn validate_index_lit_for_write(lit: Lit, span: Span) -> RR<()> {
     validate_index_integral_positive(lit, span)
 }
 
-pub(super) fn validate_index_integral_positive(lit: Lit, span: Span) -> RR<()> {
+pub(crate) fn validate_index_integral_positive(lit: Lit, span: Span) -> RR<()> {
     let Some(i) = as_integral(&lit) else {
         return Err(DiagnosticBuilder::new(
             "RR.TypeError",
@@ -511,7 +452,7 @@ pub(super) fn validate_index_integral_positive(lit: Lit, span: Span) -> RR<()> {
     Ok(())
 }
 
-pub(super) fn as_integral(lit: &Lit) -> Option<i64> {
+pub(crate) fn as_integral(lit: &Lit) -> Option<i64> {
     match lit {
         Lit::Int(i) => Some(*i),
         Lit::Float(f) => {
@@ -525,7 +466,7 @@ pub(super) fn as_integral(lit: &Lit) -> Option<i64> {
     }
 }
 
-pub(super) fn is_zero_number(lit: &Lit) -> bool {
+pub(crate) fn is_zero_number(lit: &Lit) -> bool {
     match lit {
         Lit::Int(i) => *i == 0,
         Lit::Float(f) => *f == 0.0,

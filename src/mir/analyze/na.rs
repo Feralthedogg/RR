@@ -131,93 +131,111 @@ fn field_value_na_state(
 }
 
 fn call_na_behavior(callee: &str, args: &[ValueId], states: &[NaState]) -> NaState {
-    // Functions that never return NA regardless of args.
-    match callee {
-        "length" | "seq_len" | "seq_along" | "dim" | "dimnames" | "nrow" | "ncol" | "t" => {
-            return NaState::Never;
-        }
-        _ => {}
+    if call_never_returns_na(callee) {
+        return NaState::Never;
     }
-
-    // Functions that propagate NA from their arguments.
-    match callee {
-        "abs" | "sqrt" | "sin" | "cos" | "tan" | "log" | "exp" | "floor" | "ceiling" | "round"
-        | "trunc" => {
-            let mut acc = NaState::Never;
-            for a in args {
-                acc = NaState::propagate(acc, states[*a]);
-            }
-            return acc;
-        }
-        "c"
-        | "sum"
-        | "mean"
-        | "var"
-        | "sd"
-        | "min"
-        | "max"
-        | "prod"
-        | "rr_reduce_range"
-        | "rr_can_reduce_range"
-        | "rr_tile_map_range"
-        | "rr_tile_reduce_range"
-        | "rr_row_sum_range"
-        | "rr_col_sum_range"
-        | "rr_col_reduce_range"
-        | "rr_can_col_reduce_range"
-        | "rr_tile_col_binop_assign"
-        | "rr_tile_col_reduce_range"
-        | "rr_matrix_reduce_rect"
-        | "rr_can_matrix_reduce_rect"
-        | "rr_tile_matrix_binop_assign"
-        | "rr_tile_matrix_reduce_rect"
-        | "rr_dim1_sum_range"
-        | "rr_dim2_sum_range"
-        | "rr_dim3_sum_range"
-        | "rr_dim1_reduce_range"
-        | "rr_can_dim1_reduce_range"
-        | "rr_can_array3_reduce_cube"
-        | "rr_array3_reduce_cube"
-        | "rr_array3_binop_cube_assign"
-        | "rr_tile_array3_reduce_cube"
-        | "rr_tile_array3_binop_cube_assign"
-        | "rr_tile_dim1_binop_assign"
-        | "rr_tile_dim1_reduce_range"
-        | "rr_dim2_reduce_range"
-        | "rr_dim3_reduce_range"
-        | "rr_dim1_read_values"
-        | "rr_dim2_read_values"
-        | "rr_dim3_read_values"
-        | "rr_array3_gather_values"
-        | "rr_can_same_len"
-        | "rr_can_same_or_scalar"
-        | "rr_same_matrix_shape_or_scalar"
-        | "rr_same_array3_shape_or_scalar"
-        | "rr_can_same_matrix_shape_or_scalar"
-        | "rr_can_same_array3_shape_or_scalar"
-        | "rr_matrix_binop_assign"
-        | "colSums"
-        | "rowSums"
-        | "%*%"
-        | "crossprod"
-        | "tcrossprod" => {
-            let mut acc = NaState::Never;
-            for a in args {
-                acc = NaState::propagate(acc, states[*a]);
-            }
-            return acc;
-        }
-        "diag" | "rbind" | "cbind" => {
-            let mut acc = NaState::Never;
-            for a in args {
-                acc = NaState::propagate(acc, states[*a]);
-            }
-            return acc;
-        }
-        _ => {}
+    if call_propagates_arg_na(callee) {
+        return propagate_arg_na(args, states);
     }
+    unknown_call_na_state()
+}
 
-    // Unknown calls are conservatively Maybe.
+fn call_never_returns_na(callee: &str) -> bool {
+    matches!(
+        callee,
+        "length" | "seq_len" | "seq_along" | "dim" | "dimnames" | "nrow" | "ncol" | "t"
+    )
+}
+
+fn call_propagates_arg_na(callee: &str) -> bool {
+    call_is_na_preserving_math(callee)
+        || call_is_na_preserving_reduction(callee)
+        || matches!(callee, "diag" | "rbind" | "cbind")
+}
+
+fn call_is_na_preserving_math(callee: &str) -> bool {
+    matches!(
+        callee,
+        "abs"
+            | "sqrt"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "log"
+            | "exp"
+            | "floor"
+            | "ceiling"
+            | "round"
+            | "trunc"
+    )
+}
+
+fn call_is_na_preserving_reduction(callee: &str) -> bool {
+    matches!(
+        callee,
+        "c" | "sum"
+            | "mean"
+            | "var"
+            | "sd"
+            | "min"
+            | "max"
+            | "prod"
+            | "rr_reduce_range"
+            | "rr_can_reduce_range"
+            | "rr_tile_map_range"
+            | "rr_tile_reduce_range"
+            | "rr_row_sum_range"
+            | "rr_col_sum_range"
+            | "rr_col_reduce_range"
+            | "rr_can_col_reduce_range"
+            | "rr_tile_col_binop_assign"
+            | "rr_tile_col_reduce_range"
+            | "rr_matrix_reduce_rect"
+            | "rr_can_matrix_reduce_rect"
+            | "rr_tile_matrix_binop_assign"
+            | "rr_tile_matrix_reduce_rect"
+            | "rr_dim1_sum_range"
+            | "rr_dim2_sum_range"
+            | "rr_dim3_sum_range"
+            | "rr_dim1_reduce_range"
+            | "rr_can_dim1_reduce_range"
+            | "rr_can_array3_reduce_cube"
+            | "rr_array3_reduce_cube"
+            | "rr_array3_binop_cube_assign"
+            | "rr_tile_array3_reduce_cube"
+            | "rr_tile_array3_binop_cube_assign"
+            | "rr_tile_dim1_binop_assign"
+            | "rr_tile_dim1_reduce_range"
+            | "rr_dim2_reduce_range"
+            | "rr_dim3_reduce_range"
+            | "rr_dim1_read_values"
+            | "rr_dim2_read_values"
+            | "rr_dim3_read_values"
+            | "rr_array3_gather_values"
+            | "rr_can_same_len"
+            | "rr_can_same_or_scalar"
+            | "rr_same_matrix_shape_or_scalar"
+            | "rr_same_array3_shape_or_scalar"
+            | "rr_can_same_matrix_shape_or_scalar"
+            | "rr_can_same_array3_shape_or_scalar"
+            | "rr_matrix_binop_assign"
+            | "colSums"
+            | "rowSums"
+            | "%*%"
+            | "crossprod"
+            | "tcrossprod"
+    )
+}
+
+fn propagate_arg_na(args: &[ValueId], states: &[NaState]) -> NaState {
+    let mut acc = NaState::Never;
+    for arg in args {
+        acc = NaState::propagate(acc, states[*arg]);
+    }
+    acc
+}
+
+fn unknown_call_na_state() -> NaState {
     NaState::Maybe
 }
 

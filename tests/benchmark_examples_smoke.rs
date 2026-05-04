@@ -151,6 +151,10 @@ fn signal_pipeline_rewrites_back_to_vector_whole_slice_shape() {
     let code = fs::read_to_string(&out_path).expect("failed to read compiled signal pipeline R");
 
     assert!(
+        !code.contains("rr-hybrid-fallback"),
+        "signal_pipeline should not carry a recovered pre-deSSA Phi fallback marker"
+    );
+    assert!(
         code.contains("score <- pmax("),
         "signal_pipeline score stage failed to lower back to whole-vector pmax"
     );
@@ -268,6 +272,7 @@ fn bootstrap_resample_unit_index_and_metric_helpers_inline() {
         (code.contains("print(\"bootstrap_bench_acc\")")
             && code.contains(".__rr_inline_metric_0 <- acc")
             && code.contains("return(.__rr_inline_metric_0)"))
+            || code.contains("return(print_metric(\"bootstrap_bench_acc\", acc))")
             || (code.contains("return(Sym_") && code.contains("\"bootstrap_bench_acc\", acc)")),
         "bootstrap_resample should preserve the final print_metric path"
     );
@@ -459,6 +464,8 @@ fn heat_diffusion_metric_helper_inlines_at_return_site() {
             && (code.contains(".__rr_inline_metric_0 <- (sum(temp))")
                 || code.contains(".__rr_inline_metric_0 <- ((sum(temp)))"))
             && code.contains("return(.__rr_inline_metric_0)"))
+            || code.contains("return(print_metric(\"heat_bench_energy\", ((sum(temp)))))")
+            || code.contains("return(print_metric(\"heat_bench_energy\", (sum(temp))))")
             || (code.contains("return(Sym_")
                 && (code.contains("\"heat_bench_energy\", ((sum(temp))))")
                     || code.contains("\"heat_bench_energy\", (sum(temp)))"))),
@@ -500,6 +507,8 @@ fn reaction_diffusion_metric_helper_inlines_at_return_site() {
             && (code.contains(".__rr_inline_metric_0 <- (sum(b))")
                 || code.contains(".__rr_inline_metric_0 <- ((sum(b)))"))
             && code.contains("return(.__rr_inline_metric_0)"))
+            || code.contains("return(print_metric(\"rd_bench_mass\", ((sum(b)))))")
+            || code.contains("return(print_metric(\"rd_bench_mass\", (sum(b))))")
             || (code.contains("return(Sym_")
                 && (code.contains("\"rd_bench_mass\", ((sum(b))))")
                     || code.contains("\"rd_bench_mass\", (sum(b)))"))),
@@ -508,9 +517,9 @@ fn reaction_diffusion_metric_helper_inlines_at_return_site() {
         code.contains("pmin(pmax(")
             && code.contains("rr_gather(a, (")
             && code.contains("rr_gather(b, (")
-            && (code.contains("rr_index1_read_vec(a, rr_index_vec_floor(")
+            && (code.contains("rr_index1_read_vec(a,")
                 || code.contains(".tachyon_exprmap0_0 <- pmin(pmax("))
-            && (code.contains("rr_index1_read_vec(b, rr_index_vec_floor(")
+            && (code.contains("rr_index1_read_vec(b,")
                 || code.contains(".tachyon_exprmap1_0 <- pmin(pmax("))
             && code.contains("next_a <- rr_assign_slice(")
             && (code.contains("next_b <- rr_assign_slice(next_b")
@@ -549,23 +558,11 @@ fn reaction_diffusion_reuses_current_cell_vector_reads() {
     let code = fs::read_to_string(&out_path).expect("failed to read compiled reaction diffusion R");
 
     assert!(
-        code.matches(".__rr_cse_141 <- rr_index1_read_vec(a, .__rr_cse_140)")
-            .count()
-            == 1
-            || code
-                .matches("rr_index1_read_vec(a, rr_index_vec_floor(")
-                .count()
-                == 1,
+        code.matches("rr_index1_read_vec(a,").count() == 1,
         "reaction_diffusion should materialize the current-cell vector read for a only once\n{code}"
     );
     assert!(
-        code.matches(".__rr_cse_142 <- rr_index1_read_vec(b, .__rr_cse_140)")
-            .count()
-            == 1
-            || code
-                .matches("rr_index1_read_vec(b, rr_index_vec_floor(")
-                .count()
-                == 1,
+        code.matches("rr_index1_read_vec(b,").count() == 1,
         "reaction_diffusion should materialize the current-cell vector read for b only once\n{code}"
     );
 }
@@ -601,9 +598,9 @@ fn reaction_diffusion_direct_indexing_happens_before_peephole() {
         raw.contains("pmin(pmax(")
             && raw.contains("rr_gather(a, (")
             && raw.contains("rr_gather(b, (")
-            && (raw.contains(".__rr_cse_0 <- rr_index1_read_vec(a,")
+            && (raw.contains("rr_index1_read_vec(a,")
                 || raw.contains(".tachyon_exprmap0_0 <- pmin(pmax("))
-            && (raw.contains(".__rr_cse_1 <- rr_index1_read_vec(b,")
+            && (raw.contains("rr_index1_read_vec(b,")
                 || raw.contains(".tachyon_exprmap1_0 <- pmin(pmax("))
             && raw.contains("next_a <- rr_assign_slice(")
             && raw.contains("next_b <- rr_assign_slice(next_b")

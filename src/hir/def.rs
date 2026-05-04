@@ -81,6 +81,8 @@ pub struct HirFn {
     pub params: Vec<HirParam>,
     pub has_varargs: bool,
     pub ret_ty: Option<Ty>,
+    #[serde(default)]
+    pub ret_ty_inferred: bool,
     pub body: HirBlock,
     pub attrs: HirFnAttrs,
     pub span: Span,
@@ -105,6 +107,8 @@ pub enum InlineHint {
 pub struct HirParam {
     pub name: SymbolId,
     pub ty: Option<Ty>,
+    #[serde(default)]
+    pub ty_inferred: bool,
     pub default: Option<HirExpr>,
     pub span: Span,
 }
@@ -263,6 +267,11 @@ pub enum HirStmt {
         span: Span,
     },
     Next {
+        span: Span,
+    },
+    UnsafeRBlock {
+        code: String,
+        read_only: bool,
         span: Span,
     },
     Expr {

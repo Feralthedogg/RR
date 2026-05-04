@@ -3,39 +3,36 @@
 //!
 //! The functions in this module prepare stable per-function jobs, lower HIR to
 //! MIR, and concatenate emitted function fragments into the final artifact.
+use super::*;
 
-use super::super::*;
-use crate::error::{RRCode, RRException};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::{Duration, Instant, UNIX_EPOCH};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct CachedModuleArtifact {
-    schema: String,
+pub(crate) struct CachedModuleArtifact {
+    pub(crate) schema: String,
     #[serde(default)]
-    schema_version: u32,
-    compiler_version: String,
-    canonical_path: String,
-    source_len: u64,
-    source_mtime_ns: u128,
-    public_symbols: Vec<String>,
-    public_function_arities: Vec<(String, usize)>,
-    emit_roots: Vec<String>,
-    module_fingerprint: u64,
-    symbols: Vec<(u32, String)>,
+    pub(crate) schema_version: u32,
+    pub(crate) compiler_version: String,
+    pub(crate) canonical_path: String,
+    pub(crate) source_len: u64,
+    pub(crate) source_mtime_ns: u128,
+    pub(crate) public_symbols: Vec<String>,
+    pub(crate) public_function_arities: Vec<(String, usize)>,
+    pub(crate) emit_roots: Vec<String>,
+    pub(crate) module_fingerprint: u64,
+    pub(crate) symbols: Vec<(u32, String)>,
     #[serde(default)]
-    source_metadata: Option<crate::syntax::ast::Program>,
-    module: crate::hir::def::HirModule,
+    pub(crate) source_metadata: Option<crate::syntax::ast::Program>,
+    pub(crate) module: crate::hir::def::HirModule,
 }
 
-struct ModuleLoadJob {
-    path: PathBuf,
-    content: Option<String>,
-    ast: Option<crate::syntax::ast::Program>,
-    mod_id: u32,
-    is_entry: bool,
-    imports_preloaded: bool,
+pub(crate) struct ModuleLoadJob {
+    pub(crate) path: PathBuf,
+    pub(crate) content: Option<String>,
+    pub(crate) ast: Option<crate::syntax::ast::Program>,
+    pub(crate) mod_id: u32,
+    pub(crate) is_entry: bool,
+    pub(crate) imports_preloaded: bool,
 }
 
 /// Owned lowering job for a user-declared function.
@@ -72,6 +69,351 @@ pub(crate) fn hir_fn_work_size(f: &crate::hir::def::HirFn) -> usize {
         .saturating_add(f.params.len())
 }
 
+pub(crate) fn preserve_source_names_in_output(program: &ProgramIR, output: String) -> String {
+    let output = preserve_readonly_arg_alias_names(output);
+    let map = source_function_name_map(program);
+    if map.is_empty() {
+        output
+    } else {
+        replace_r_identifiers(&output, &map)
+    }
+}
+
+pub(crate) fn source_function_name_map(program: &ProgramIR) -> FxHashMap<String, String> {
+    let mut counts = FxHashMap::<String, usize>::default();
+    for unit in &program.fns {
+        if let Some(user_name) = unit.ir.as_ref().and_then(|ir| ir.user_name.as_ref()) {
+            *counts.entry(user_name.clone()).or_default() += 1;
+        }
+    }
+
+    let mut map = FxHashMap::default();
+    for unit in &program.fns {
+        let Some(fn_ir) = unit.ir.as_ref() else {
+            continue;
+        };
+        let Some(user_name) = fn_ir.user_name.as_ref() else {
+            continue;
+        };
+        if unit.name == *user_name
+            || unit.is_top_level
+            || !unit.name.starts_with("Sym_")
+            || user_name_is_reserved_for_r_output(user_name)
+            || counts.get(user_name).copied().unwrap_or(0) != 1
+        {
+            continue;
+        }
+        map.insert(unit.name.clone(), user_name.clone());
+    }
+    map
+}
+
+pub(crate) fn user_name_is_reserved_for_r_output(name: &str) -> bool {
+    !is_plain_r_identifier(name)
+        || is_r_reserved_word(name)
+        || crate::mir::def::builtin_kind_for_name(name).is_some()
+        || is_runtime_reserved_output_symbol(name)
+}
+
+pub(crate) fn is_runtime_reserved_output_symbol(name: &str) -> bool {
+    name.starts_with(".phi_")
+        || name.starts_with(".tachyon_")
+        || name.starts_with("Sym_")
+        || name.starts_with("__lambda_")
+        || name.starts_with("rr_")
+}
+
+pub(crate) fn preserve_readonly_arg_alias_names(output: String) -> String {
+    let mut lines: Vec<String> = output.lines().map(str::to_string).collect();
+    if lines.is_empty() {
+        return output;
+    }
+
+    let had_trailing_newline = output.ends_with('\n');
+    let mut fn_start = 0usize;
+    while fn_start < lines.len() {
+        while fn_start < lines.len() && !lines[fn_start].contains("<- function(") {
+            fn_start += 1;
+        }
+        if fn_start >= lines.len() {
+            break;
+        }
+        let Some(params) = parse_r_function_header_params(&lines[fn_start]) else {
+            fn_start += 1;
+            continue;
+        };
+        let fn_end = find_r_function_segment_end(&lines, fn_start);
+        let replacements = readonly_arg_alias_replacements(&lines[fn_start..fn_end], &params);
+        if !replacements.is_empty() {
+            for line in &mut lines[fn_start..fn_end] {
+                let rewritten = replace_r_identifiers(line, &replacements);
+                if is_noop_self_assignment(rewritten.trim()) {
+                    line.clear();
+                } else {
+                    *line = rewritten;
+                }
+            }
+        }
+        fn_start = fn_end;
+    }
+
+    let mut rewritten = lines.join("\n");
+    if had_trailing_newline {
+        rewritten.push('\n');
+    }
+    rewritten
+}
+
+pub(crate) fn parse_r_function_header_params(line: &str) -> Option<Vec<String>> {
+    let start = line.find("<- function(")? + "<- function(".len();
+    let tail = &line[start..];
+    let end = tail.find(')')?;
+    let params = &tail[..end];
+    let mut out = Vec::new();
+    for raw in params.split(',') {
+        let name = raw.split('=').next().unwrap_or_default().trim().to_string();
+        if is_plain_r_identifier(&name) {
+            out.push(name);
+        }
+    }
+    Some(out)
+}
+
+pub(crate) fn find_r_function_segment_end(lines: &[String], fn_start: usize) -> usize {
+    let mut idx = fn_start + 1;
+    while idx < lines.len() {
+        if lines[idx].contains("<- function(") {
+            break;
+        }
+        idx += 1;
+    }
+    idx
+}
+
+pub(crate) fn readonly_arg_alias_replacements(
+    lines: &[String],
+    params: &[String],
+) -> FxHashMap<String, String> {
+    let mut replacements = FxHashMap::default();
+    for param in params {
+        let alias = format!(".arg_{param}");
+        if !lines
+            .iter()
+            .any(|line| r_code_mentions_identifier(line, &alias))
+        {
+            continue;
+        }
+        if lines
+            .iter()
+            .map(|line| line.trim())
+            .any(|line| arg_alias_rewrite_is_unsafe(line, &alias, param))
+        {
+            continue;
+        }
+        replacements.insert(alias, param.clone());
+    }
+    replacements
+}
+
+pub(crate) fn arg_alias_rewrite_is_unsafe(line: &str, alias: &str, param: &str) -> bool {
+    if is_simple_arg_alias_init(line, alias, param) {
+        return false;
+    }
+    line_writes_r_lvalue(line, alias) || line_writes_r_lvalue(line, param)
+}
+
+pub(crate) fn is_simple_arg_alias_init(line: &str, alias: &str, param: &str) -> bool {
+    line == format!("{alias} <- {param}")
+}
+
+pub(crate) fn is_noop_self_assignment(line: &str) -> bool {
+    let Some((lhs, rhs)) = line.split_once("<-") else {
+        return false;
+    };
+    let lhs = lhs.trim();
+    let rhs = rhs.trim();
+    !lhs.is_empty() && lhs == rhs && is_plain_r_identifier(lhs)
+}
+
+pub(crate) fn line_writes_r_lvalue(line: &str, var: &str) -> bool {
+    if !line.starts_with(var) {
+        return false;
+    }
+    let rest = &line[var.len()..];
+    rest.starts_with(" <-") || rest.starts_with("[") || rest.starts_with("$")
+}
+
+pub(crate) fn r_code_mentions_identifier(line: &str, ident: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        if ch == '"' || ch == '\'' || ch == '`' {
+            idx = skip_quoted_r_token(line, idx, ch);
+            continue;
+        }
+        if ch == '#' {
+            break;
+        }
+        if is_r_identifier_start_byte(bytes[idx]) {
+            let start = idx;
+            idx += 1;
+            while idx < bytes.len() && is_r_identifier_continue_byte(bytes[idx]) {
+                idx += 1;
+            }
+            if &line[start..idx] == ident {
+                return true;
+            }
+            continue;
+        }
+        idx += 1;
+    }
+    false
+}
+
+pub(crate) fn is_plain_r_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '.') {
+        return false;
+    }
+    if first == '.'
+        && let Some(second) = name.chars().nth(1)
+        && second.is_ascii_digit()
+    {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
+}
+
+pub(crate) fn is_r_reserved_word(name: &str) -> bool {
+    matches!(
+        name,
+        "if" | "else"
+            | "repeat"
+            | "while"
+            | "function"
+            | "for"
+            | "in"
+            | "next"
+            | "break"
+            | "TRUE"
+            | "FALSE"
+            | "NULL"
+            | "Inf"
+            | "NaN"
+            | "NA"
+            | "NA_integer_"
+            | "NA_real_"
+            | "NA_complex_"
+            | "NA_character_"
+    )
+}
+
+pub(crate) fn replace_r_identifiers(
+    input: &str,
+    replacements: &FxHashMap<String, String>,
+) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        if ch == '"' || ch == '\'' || ch == '`' {
+            let next = copy_quoted_r_token(input, idx, &mut out, ch);
+            idx = next;
+            continue;
+        }
+        if ch == '#' {
+            let next = copy_r_comment(input, idx, &mut out);
+            idx = next;
+            continue;
+        }
+        if is_r_identifier_start_byte(bytes[idx]) {
+            let start = idx;
+            idx += 1;
+            while idx < bytes.len() && is_r_identifier_continue_byte(bytes[idx]) {
+                idx += 1;
+            }
+            let token = &input[start..idx];
+            if let Some(replacement) = replacements.get(token) {
+                out.push_str(replacement);
+            } else {
+                out.push_str(token);
+            }
+            continue;
+        }
+        out.push(ch);
+        idx += 1;
+    }
+    out
+}
+
+pub(crate) fn copy_quoted_r_token(
+    input: &str,
+    start: usize,
+    out: &mut String,
+    quote: char,
+) -> usize {
+    let bytes = input.as_bytes();
+    let mut idx = start;
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        out.push(ch);
+        idx += 1;
+        if ch == '\\' && idx < bytes.len() {
+            out.push(bytes[idx] as char);
+            idx += 1;
+            continue;
+        }
+        if ch == quote {
+            break;
+        }
+    }
+    idx
+}
+
+pub(crate) fn skip_quoted_r_token(input: &str, start: usize, quote: char) -> usize {
+    let bytes = input.as_bytes();
+    let mut idx = start;
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        idx += 1;
+        if ch == '\\' && idx < bytes.len() {
+            idx += 1;
+            continue;
+        }
+        if ch == quote {
+            break;
+        }
+    }
+    idx
+}
+
+pub(crate) fn copy_r_comment(input: &str, start: usize, out: &mut String) -> usize {
+    let bytes = input.as_bytes();
+    let mut idx = start;
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        out.push(ch);
+        idx += 1;
+        if ch == '\n' {
+            break;
+        }
+    }
+    idx
+}
+
+pub(crate) fn is_r_identifier_start_byte(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'.'
+}
+
+pub(crate) fn is_r_identifier_continue_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.'
+}
+
 /// Collect user-defined callees that are reachable from a single MIR function.
 pub(crate) fn called_user_fns(
     fn_ir: &crate::mir::def::FnIR,
@@ -86,15 +428,11 @@ pub(crate) fn called_user_fns(
                     out.insert(canonical.to_string());
                 }
             }
-            crate::mir::def::ValueKind::Load { var } => {
-                if program.contains_name(var) {
-                    out.insert(var.clone());
-                }
+            crate::mir::def::ValueKind::Load { var } if program.contains_name(var) => {
+                out.insert(var.clone());
             }
-            crate::mir::def::ValueKind::RSymbol { name } => {
-                if program.contains_name(name) {
-                    out.insert(name.clone());
-                }
+            crate::mir::def::ValueKind::RSymbol { name } if program.contains_name(name) => {
+                out.insert(name.clone());
             }
             _ => {}
         }
@@ -266,1826 +604,17 @@ pub(crate) fn reachable_emit_order_slots(program: &ProgramIR) -> Vec<FnSlot> {
         .collect()
 }
 
-fn duration_from_nanos(ns: u128) -> Duration {
-    Duration::from_nanos(ns.min(u64::MAX as u128) as u64)
-}
+#[path = "source_emit/cached_emit.rs"]
+pub(crate) mod cached_emit;
+#[path = "source_emit/mir_synthesis.rs"]
+pub(crate) mod mir_synthesis;
+#[path = "source_emit/module_artifacts.rs"]
+pub(crate) mod module_artifacts;
+#[path = "source_emit/raw_emit.rs"]
+pub(crate) mod raw_emit;
+#[path = "source_emit/source_analysis.rs"]
+pub(crate) mod source_analysis;
 
-fn module_artifact_cache_root(entry_path: &str) -> PathBuf {
-    if let Some(v) = std::env::var_os("RR_INCREMENTAL_CACHE_DIR")
-        && !v.is_empty()
-    {
-        return PathBuf::from(v).join("modules");
-    }
-
-    let normalized_entry = normalize_module_path(Path::new(entry_path));
-    let mut cur = normalized_entry
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    loop {
-        let managed_root = cur.join("rr.mod").is_file()
-            || cur.join("src").join("main.rr").is_file()
-            || cur.join("src").join("lib.rr").is_file();
-        let legacy_root = cur.file_name().and_then(|name| name.to_str()) != Some("src")
-            && cur.join("main.rr").is_file();
-        if managed_root || legacy_root {
-            return cur.join("Build").join("incremental").join("modules");
-        }
-        let Some(parent) = cur.parent() else {
-            return normalized_entry
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join(".rr-cache")
-                .join("modules");
-        };
-        cur = parent.to_path_buf();
-    }
-}
-
-fn module_artifact_path(cache_root: &Path, canonical_path: &Path) -> PathBuf {
-    let path_hash = stable_hash_bytes(canonical_path.to_string_lossy().as_bytes());
-    cache_root.join(format!("{:016x}.json", path_hash))
-}
-
-fn source_file_signature(path: &Path) -> std::io::Result<(u64, u128)> {
-    let meta = fs::metadata(path)?;
-    let modified = meta
-        .modified()
-        .ok()
-        .and_then(|ts| ts.duration_since(UNIX_EPOCH).ok())
-        .map(|dur| dur.as_nanos())
-        .unwrap_or(0);
-    Ok((meta.len(), modified))
-}
-
-fn desugar_single_module(
-    module: crate::hir::def::HirModule,
-) -> crate::error::RR<crate::hir::def::HirModule> {
-    let mut desugarer = crate::hir::desugar::Desugarer::new();
-    let mut program = desugarer.desugar_program(crate::hir::def::HirProgram {
-        modules: vec![module],
-    })?;
-    program.modules.pop().ok_or_else(|| {
-        InternalCompilerError::new(Stage::Lower, "desugarer produced no module").into_exception()
-    })
-}
-
-fn collect_public_symbols_from_module(
-    module: &crate::hir::def::HirModule,
-    symbol_map: &FxHashMap<crate::hir::def::SymbolId, String>,
-) -> Vec<String> {
-    let mut names = Vec::new();
-    for item in &module.items {
-        if let crate::hir::def::HirItem::Fn(f) = item
-            && f.public
-            && f.type_params.is_empty()
-        {
-            if let Some(name) = symbol_map.get(&f.name) {
-                names.push(name.clone());
-            }
-        }
-    }
-    names.sort();
-    names.dedup();
-    names
-}
-
-fn collect_public_function_arities(
-    module: &crate::hir::def::HirModule,
-    symbol_map: &FxHashMap<crate::hir::def::SymbolId, String>,
-) -> Vec<(String, usize)> {
-    let mut out = Vec::new();
-    for item in &module.items {
-        if let crate::hir::def::HirItem::Fn(f) = item
-            && f.public
-            && f.type_params.is_empty()
-            && let Some(name) = symbol_map.get(&f.name)
-        {
-            out.push((name.clone(), f.params.len()));
-        }
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
-
-fn collect_emit_roots(
-    module: &crate::hir::def::HirModule,
-    symbol_map: &FxHashMap<crate::hir::def::SymbolId, String>,
-) -> Vec<String> {
-    let mut out = collect_public_symbols_from_module(module, symbol_map);
-    if module
-        .items
-        .iter()
-        .any(|item| matches!(item, crate::hir::def::HirItem::Stmt(_)))
-    {
-        out.push(format!("Sym_top_{}", module.id.0));
-    }
-    out.sort();
-    out.dedup();
-    out
-}
-
-fn build_cached_module_artifact(
-    module_path: &Path,
-    module: &crate::hir::def::HirModule,
-    lowerer: &crate::hir::lower::Lowerer,
-    source_metadata: crate::syntax::ast::Program,
-) -> crate::error::RR<CachedModuleArtifact> {
-    let (source_len, source_mtime_ns) = source_file_signature(module_path).map_err(|e| {
-        RRException::new(
-            "RR.ParseError",
-            RRCode::E0001,
-            Stage::Parse,
-            format!(
-                "failed to read module metadata '{}': {}",
-                module_path.display(),
-                e
-            ),
-        )
-    })?;
-    let symbol_entries = lowerer.symbols_snapshot();
-    let mut symbol_map = FxHashMap::default();
-    for (id, name) in &symbol_entries {
-        symbol_map.insert(*id, name.clone());
-    }
-    let public_symbols = collect_public_symbols_from_module(module, &symbol_map);
-    let public_function_arities = collect_public_function_arities(module, &symbol_map);
-    let emit_roots = collect_emit_roots(module, &symbol_map);
-    let module_fingerprint = serde_json::to_vec(module)
-        .map(|bytes| stable_hash_bytes(&bytes))
-        .unwrap_or(0);
-    Ok(CachedModuleArtifact {
-        schema: "rr-module-artifact".to_string(),
-        schema_version: 2,
-        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
-        canonical_path: module_path.to_string_lossy().to_string(),
-        source_len,
-        source_mtime_ns,
-        public_symbols,
-        public_function_arities,
-        emit_roots,
-        module_fingerprint,
-        symbols: symbol_entries
-            .into_iter()
-            .map(|(id, name)| (id.0, name))
-            .collect(),
-        source_metadata: Some(source_metadata),
-        module: module.clone(),
-    })
-}
-
-fn store_module_artifact(
-    cache_root: &Path,
-    module_path: &Path,
-    module: &crate::hir::def::HirModule,
-    lowerer: &crate::hir::lower::Lowerer,
-    source_metadata: crate::syntax::ast::Program,
-) -> crate::error::RR<()> {
-    fs::create_dir_all(cache_root).map_err(|e| {
-        RRException::new(
-            "RR.CompilerError",
-            RRCode::ICE9001,
-            Stage::Codegen,
-            format!(
-                "failed to create module artifact cache dir '{}': {}",
-                cache_root.display(),
-                e
-            ),
-        )
-    })?;
-    let artifact = build_cached_module_artifact(module_path, module, lowerer, source_metadata)?;
-    let payload = serde_json::to_vec_pretty(&artifact).map_err(|e| {
-        InternalCompilerError::new(
-            Stage::Codegen,
-            format!(
-                "failed to serialize module artifact '{}': {}",
-                module_path.display(),
-                e
-            ),
-        )
-        .into_exception()
-    })?;
-    fs::write(module_artifact_path(cache_root, module_path), payload).map_err(|e| {
-        RRException::new(
-            "RR.CompilerError",
-            RRCode::ICE9001,
-            Stage::Codegen,
-            format!(
-                "failed to write module artifact '{}': {}",
-                module_path.display(),
-                e
-            ),
-        )
-    })?;
-    Ok(())
-}
-
-fn load_module_artifact(
-    cache_root: &Path,
-    module_path: &Path,
-    mod_id: crate::hir::def::ModuleId,
-    lowerer: &mut crate::hir::lower::Lowerer,
-) -> crate::error::RR<Option<crate::hir::def::HirModule>> {
-    let artifact_path = module_artifact_path(cache_root, module_path);
-    if !artifact_path.is_file() {
-        return Ok(None);
-    }
-    let payload = match fs::read(&artifact_path) {
-        Ok(bytes) => bytes,
-        Err(_) => return Ok(None),
-    };
-    let artifact: CachedModuleArtifact = match serde_json::from_slice(&payload) {
-        Ok(artifact) => artifact,
-        Err(_) => return Ok(None),
-    };
-    if artifact.schema != "rr-module-artifact"
-        || artifact.schema_version != 2
-        || artifact.compiler_version != env!("CARGO_PKG_VERSION")
-        || artifact.canonical_path != module_path.to_string_lossy()
-    {
-        return Ok(None);
-    }
-    let (source_len, source_mtime_ns) = match source_file_signature(module_path) {
-        Ok(sig) => sig,
-        Err(_) => return Ok(None),
-    };
-    if artifact.source_len != source_len || artifact.source_mtime_ns != source_mtime_ns {
-        return Ok(None);
-    }
-    let mut module = artifact.module;
-    let symbols: Vec<(crate::hir::def::SymbolId, String)> = artifact
-        .symbols
-        .iter()
-        .cloned()
-        .map(|(id, name)| (crate::hir::def::SymbolId(id), name))
-        .collect();
-    if !lowerer.try_preload_symbols(&symbols) {
-        return Ok(None);
-    }
-    if let Some(source_metadata) = artifact.source_metadata.as_ref() {
-        if public_impl_metadata_needs_external_traits(source_metadata) {
-            return Ok(None);
-        }
-        lowerer.preload_public_module_metadata(source_metadata)?;
-    } else if hir_module_requires_source_lowering_for_metadata(&module) {
-        return Ok(None);
-    }
-    module.id = mod_id;
-    Ok(Some(module))
-}
-
-fn hir_module_requires_source_lowering_for_metadata(module: &crate::hir::def::HirModule) -> bool {
-    module.items.iter().any(|item| match item {
-        crate::hir::def::HirItem::Trait(_) | crate::hir::def::HirItem::Impl(_) => true,
-        crate::hir::def::HirItem::Fn(f) => !f.type_params.is_empty(),
-        _ => false,
-    })
-}
-
-fn public_impl_metadata_needs_external_traits(prog: &crate::syntax::ast::Program) -> bool {
-    let public_traits = prog
-        .stmts
-        .iter()
-        .filter_map(|stmt| match &stmt.kind {
-            crate::syntax::ast::StmtKind::TraitDecl(decl) if decl.public => {
-                Some(decl.name.as_str())
-            }
-            _ => None,
-        })
-        .collect::<FxHashSet<_>>();
-
-    prog.stmts.iter().any(|stmt| {
-        matches!(
-            &stmt.kind,
-            crate::syntax::ast::StmtKind::ImplDecl(decl)
-                if decl.public && !public_traits.contains(decl.trait_name.as_str())
-        )
-    })
-}
-
-fn enqueue_ast_module_imports(
-    stmts: &[crate::syntax::ast::Stmt],
-    curr_path: &Path,
-    loaded_paths: &mut FxHashSet<PathBuf>,
-    queue: &mut std::collections::VecDeque<ModuleLoadJob>,
-    next_mod_id: &mut u32,
-) -> crate::error::RR<usize> {
-    let mut targets = Vec::new();
-    for stmt in stmts {
-        let crate::syntax::ast::StmtKind::Import {
-            source: crate::syntax::ast::ImportSource::Module,
-            path,
-            ..
-        } = &stmt.kind
-        else {
-            continue;
-        };
-        let target = crate::pkg::resolve_import_path(curr_path, path)?;
-        if loaded_paths.contains(&target) {
-            continue;
-        }
-        if !target.is_absolute() {
-            return Err(crate::error::RRException::new(
-                "RR.ParseError",
-                crate::error::RRCode::E0001,
-                crate::error::Stage::Parse,
-                format!(
-                    "relative import resolution requires an absolute entry path; normalize '{}' before compiling",
-                    curr_path.display()
-                ),
-            ));
-        }
-        loaded_paths.insert(target.clone());
-        targets.push(target);
-    }
-
-    let mut jobs = Vec::with_capacity(targets.len());
-    for target in targets {
-        jobs.push(ModuleLoadJob {
-            path: target,
-            content: None,
-            ast: None,
-            mod_id: *next_mod_id,
-            is_entry: false,
-            imports_preloaded: false,
-        });
-        *next_mod_id += 1;
-    }
-    let enqueued = jobs.len();
-    for job in jobs.into_iter().rev() {
-        queue.push_front(job);
-    }
-    Ok(enqueued)
-}
-
-fn enqueue_module_imports(
-    module: &crate::hir::def::HirModule,
-    curr_path: &Path,
-    loaded_paths: &mut FxHashSet<PathBuf>,
-    queue: &mut std::collections::VecDeque<ModuleLoadJob>,
-    next_mod_id: &mut u32,
-) -> crate::error::RR<()> {
-    for item in &module.items {
-        if let crate::hir::def::HirItem::Import(imp) = item {
-            let target = crate::pkg::resolve_import_path(curr_path, &imp.module)?;
-            if !loaded_paths.contains(&target) {
-                if !target.is_absolute() {
-                    return Err(crate::error::RRException::new(
-                        "RR.ParseError",
-                        crate::error::RRCode::E0001,
-                        crate::error::Stage::Parse,
-                        format!(
-                            "relative import resolution requires an absolute entry path; normalize '{}' before compiling",
-                            curr_path.display()
-                        ),
-                    ));
-                }
-                loaded_paths.insert(target.clone());
-                queue.push_back(ModuleLoadJob {
-                    path: target,
-                    content: None,
-                    ast: None,
-                    mod_id: *next_mod_id,
-                    is_entry: false,
-                    imports_preloaded: false,
-                });
-                *next_mod_id += 1;
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn run_source_analysis_and_canonicalization(
-    ui: &CliLog,
-    entry_path: &str,
-    entry_input: &str,
-    total_steps: usize,
-    output_opts: CompileOutputOptions,
-) -> crate::error::RR<(SourceAnalysisOutput, SourceAnalysisMetrics)> {
-    let mut loaded_paths: FxHashSet<PathBuf> = FxHashSet::default();
-    let mut queue = std::collections::VecDeque::new();
-    let module_cache_root = module_artifact_cache_root(entry_path);
-
-    let entry_abs = normalize_module_path(Path::new(entry_path));
-    loaded_paths.insert(entry_abs.clone());
-    queue.push_back(ModuleLoadJob {
-        path: entry_abs,
-        content: Some(entry_input.to_string()),
-        ast: None,
-        mod_id: 0,
-        is_entry: true,
-        imports_preloaded: false,
-    });
-
-    let mut next_mod_id = 1;
-
-    let _step_load = ui.step_start(
-        1,
-        total_steps,
-        "Source Analysis",
-        "parse + scope resolution",
-    );
-    let mut hir_modules = Vec::new();
-    let mut hir_lowerer = crate::hir::lower::Lowerer::with_policy(
-        output_opts.strict_let,
-        output_opts.warn_implicit_decl,
-    );
-    let mut load_errors: Vec<crate::error::RRException> = Vec::new();
-    let mut source_analysis_elapsed_ns = 0u128;
-    let mut canonicalization_elapsed_ns = 0u128;
-    let mut parsed_modules = 0usize;
-    let mut cached_modules = 0usize;
-
-    while let Some(job) = queue.pop_front() {
-        let ModuleLoadJob {
-            path: curr_path,
-            content,
-            ast,
-            mod_id,
-            is_entry,
-            imports_preloaded,
-        } = job;
-        let curr_path_str = curr_path.to_string_lossy().to_string();
-        ui.trace(&format!("module#{}", mod_id), &curr_path_str);
-
-        if !is_entry && ast.is_none() {
-            let artifact_started = Instant::now();
-            if let Some(module) = load_module_artifact(
-                &module_cache_root,
-                &curr_path,
-                crate::hir::def::ModuleId(mod_id),
-                &mut hir_lowerer,
-            )? {
-                source_analysis_elapsed_ns += artifact_started.elapsed().as_nanos();
-                cached_modules += 1;
-                ui.trace("artifact", &curr_path_str);
-                enqueue_module_imports(
-                    &module,
-                    &curr_path,
-                    &mut loaded_paths,
-                    &mut queue,
-                    &mut next_mod_id,
-                )?;
-                hir_modules.push(module);
-                continue;
-            }
-            source_analysis_elapsed_ns += artifact_started.elapsed().as_nanos();
-        }
-
-        let source_started = Instant::now();
-        let ast_prog = if let Some(ast_prog) = ast {
-            ast_prog
-        } else {
-            let content = if let Some(content) = content {
-                content
-            } else {
-                match fs::read_to_string(&curr_path) {
-                    Ok(content) => content,
-                    Err(e) => {
-                        return Err(crate::error::RRException::new(
-                            "RR.ParseError",
-                            crate::error::RRCode::E0001,
-                            crate::error::Stage::Parse,
-                            format!("failed to load imported module '{}': {}", curr_path_str, e),
-                        ));
-                    }
-                }
-            };
-            parsed_modules += 1;
-            let mut parser = Parser::new(&content);
-            match parser.parse_program() {
-                Ok(p) => p,
-                Err(e) => {
-                    load_errors.push(e);
-                    continue;
-                }
-            }
-        };
-        if !imports_preloaded {
-            let import_count = enqueue_ast_module_imports(
-                &ast_prog.stmts,
-                &curr_path,
-                &mut loaded_paths,
-                &mut queue,
-                &mut next_mod_id,
-            )?;
-            if import_count > 0 {
-                queue.insert(
-                    import_count,
-                    ModuleLoadJob {
-                        path: curr_path,
-                        content: None,
-                        ast: Some(ast_prog),
-                        mod_id,
-                        is_entry,
-                        imports_preloaded: true,
-                    },
-                );
-                source_analysis_elapsed_ns += source_started.elapsed().as_nanos();
-                continue;
-            }
-        }
-
-        let source_metadata = ast_prog.clone();
-        let hir_mod = match hir_lowerer.lower_module(ast_prog, crate::hir::def::ModuleId(mod_id)) {
-            Ok(v) => v,
-            Err(e) => {
-                load_errors.push(e);
-                continue;
-            }
-        };
-        source_analysis_elapsed_ns += source_started.elapsed().as_nanos();
-        for w in hir_lowerer.take_warnings() {
-            ui.warn(&format!("{}: {}", curr_path_str, w));
-        }
-
-        enqueue_module_imports(
-            &hir_mod,
-            &curr_path,
-            &mut loaded_paths,
-            &mut queue,
-            &mut next_mod_id,
-        )?;
-
-        let canonicalize_started = Instant::now();
-        let desugared_module = desugar_single_module(hir_mod)?;
-        canonicalization_elapsed_ns += canonicalize_started.elapsed().as_nanos();
-        if !is_entry {
-            store_module_artifact(
-                &module_cache_root,
-                &curr_path,
-                &desugared_module,
-                &hir_lowerer,
-                source_metadata.clone(),
-            )?;
-            hir_lowerer.prune_private_module_metadata(&source_metadata);
-        }
-        hir_modules.push(desugared_module);
-    }
-    if !load_errors.is_empty() {
-        if load_errors.len() == 1 {
-            return Err(load_errors.remove(0));
-        }
-        return Err(crate::error::RRException::aggregate(
-            "RR.ParseError",
-            crate::error::RRCode::E0001,
-            crate::error::Stage::Parse,
-            format!("source analysis failed: {} error(s)", load_errors.len()),
-            load_errors,
-        ));
-    }
-    ui.step_line_ok(&format!(
-        "Loaded {} module(s) in {}",
-        hir_modules.len(),
-        format_duration(duration_from_nanos(source_analysis_elapsed_ns))
-    ));
-
-    hir_modules.sort_by_key(|module| module.id.0);
-    let hir_prog = crate::hir::def::HirProgram {
-        modules: hir_modules,
-    };
-    let global_symbols = hir_lowerer.into_symbols();
-
-    let step_desugar = ui.step_start(
-        2,
-        total_steps,
-        "Canonicalization",
-        "normalize HIR structure",
-    );
-    ui.step_line_ok(&format!(
-        "Desugared {} source-read module(s) in {}",
-        parsed_modules,
-        format_duration(duration_from_nanos(canonicalization_elapsed_ns))
-    ));
-    let _ = step_desugar;
-
-    Ok((
-        SourceAnalysisOutput {
-            desugared_hir: hir_prog,
-            global_symbols,
-        },
-        SourceAnalysisMetrics {
-            source_analysis_elapsed_ns,
-            canonicalization_elapsed_ns,
-            parsed_modules,
-            cached_modules,
-        },
-    ))
-}
-
-fn emit_r_functions(
-    ui: &CliLog,
-    total_steps: usize,
-    program: &ProgramIR,
-    emit_order: &[FnSlot],
-) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
-    let scheduler = CompilerScheduler::new(CompilerParallelConfig::default());
-    let (out, map, _, _, _) = emit_r_functions_cached(
-        ui,
-        total_steps,
-        program,
-        emit_order,
-        &[],
-        OptLevel::O0,
-        TypeConfig::default(),
-        ParallelConfig::default(),
-        &scheduler,
-        CompileOutputOptions::default(),
-        None,
-    )?;
-    Ok((out, map))
-}
-
-fn trivial_zero_arg_entry_callee(
-    fn_ir: &crate::mir::def::FnIR,
-    program: &ProgramIR,
-) -> Option<String> {
-    if !fn_ir.params.is_empty() {
-        return None;
-    }
-    let mut returned = None;
-    for block in &fn_ir.blocks {
-        if let crate::mir::def::Terminator::Return(Some(val)) = block.term
-            && returned.replace(val).is_some()
-        {
-            return None;
-        }
-    }
-    let ret = returned?;
-    match &fn_ir.values.get(ret)?.kind {
-        crate::mir::def::ValueKind::Call {
-            callee,
-            args,
-            names,
-        } if args.is_empty() && names.is_empty() => {
-            let target = program.get(callee)?;
-            if target.params.is_empty() && !callee.starts_with("Sym_top_") {
-                Some(callee.clone())
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
-fn quoted_body_entry_targets(program: &ProgramIR, top_level_calls: &[FnSlot]) -> FxHashSet<String> {
-    let mut out = FxHashSet::default();
-    for top_slot in top_level_calls {
-        let Some(top_fn) = program.get_slot(*top_slot) else {
-            continue;
-        };
-        let Some(callee) = trivial_zero_arg_entry_callee(top_fn, program) else {
-            continue;
-        };
-        out.insert(callee);
-    }
-    out
-}
-
-fn wrap_zero_arg_function_body_in_quote(code: &str, fn_name: &str) -> Option<String> {
-    const MIN_LINES_FOR_ENTRY_QUOTE_WRAP: usize = 20;
-    if code.lines().count() < MIN_LINES_FOR_ENTRY_QUOTE_WRAP {
-        return None;
-    }
-
-    let header = format!("{fn_name} <- function() \n{{\n");
-    let footer = "}\n";
-    if !code.starts_with(&header) || !code.ends_with(footer) {
-        return None;
-    }
-
-    let body = &code[header.len()..code.len() - footer.len()];
-    let body_name = format!(".__rr_body_{}", fn_name);
-    let mut wrapped = String::new();
-    wrapped.push_str(&format!("{body_name} <- quote({{\n"));
-    wrapped.push_str(body);
-    if !body.ends_with('\n') {
-        wrapped.push('\n');
-    }
-    wrapped.push_str("})\n");
-    wrapped.push_str(&header);
-    wrapped.push_str(&format!("  eval({body_name}, envir = environment())\n"));
-    wrapped.push_str(footer);
-    Some(wrapped)
-}
-
-fn apply_raw_rewrites_to_fragment(
-    mut output: String,
-    pure_user_calls: &FxHashSet<String>,
-    _output_opts: CompileOutputOptions,
-) -> String {
-    let _ = pure_user_calls;
-    output = rewrite_trivial_clamp_helper_calls_in_raw_emitted_r(&output);
-    output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_trivial_dot_product_wrappers_in_raw_emitted_r(&output);
-    output = rewrite_mountain_dx_temp_in_raw_emitted_r(&output);
-    output = collapse_sym287_melt_rate_branch_in_raw_emitted_r(&output);
-    output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_gray_scott_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_trivial_dot_product_wrappers_in_raw_emitted_r(&output);
-    output = collapse_sym287_melt_rate_branch_in_raw_emitted_r(&output);
-    output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_gray_scott_clamp_pair_in_raw_emitted_r(&output);
-    output = rewrite_helper_expr_reuse_calls_in_raw_emitted_r(&output);
-    output = rewrite_dot_product_helper_calls_in_raw_emitted_r(&output);
-    output = rewrite_sym119_helper_calls_in_raw_emitted_r(&output);
-    output = rewrite_trivial_fill_helper_calls_in_raw_emitted_r(&output);
-    output = rewrite_identical_zero_fill_pairs_to_aliases_in_raw_emitted_r(&output);
-    output = rewrite_duplicate_sym183_calls_in_raw_emitted_r(&output);
-    output = restore_particle_state_rebinds_in_raw_emitted_r(&output);
-    output = collapse_adjacent_dir_neighbor_row_branches_in_raw_emitted_r(&output);
-    output = rewrite_exact_safe_loop_index_write_calls_in_raw_emitted_r(&output);
-    output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_sym287_melt_rate_branch_in_raw_emitted_r(&output);
-    output = restore_cg_loop_carried_updates_in_raw_emitted_r(&output);
-    output = restore_buffer_swaps_after_temp_copy_in_raw_emitted_r(&output);
-    output = collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_emitted_r(&output);
-    output = rewrite_exact_safe_loop_index_write_calls_in_raw_emitted_r(&output);
-    output = rewrite_mountain_dx_temp_in_raw_emitted_r(&output);
-    output = collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_emitted_r(&output);
-    output = strip_dead_weno_topology_seed_i_before_direct_adj_gather_in_raw_emitted_r(&output);
-    output = restore_cg_loop_carried_updates_in_raw_emitted_r(&output);
-    output = repair_missing_cse_range_aliases_in_raw_emitted_r(&output);
-    output = strip_dead_zero_loop_seeds_before_for_in_raw_emitted_r(&output);
-    output
-}
-
-fn optimize_emitted_fragment(
-    code: &str,
-    map: &[MapEntry],
-    direct_builtin_call_map: bool,
-    pure_user_calls: &FxHashSet<String>,
-    fresh_user_calls: &FxHashSet<String>,
-    output_opts: CompileOutputOptions,
-) -> (String, Vec<MapEntry>) {
-    let mut output = code.to_string();
-    let skip_generated_poly_loop_rewrites = contains_generated_poly_loop_controls(&output);
-    if !skip_generated_poly_loop_rewrites {
-        output = apply_raw_rewrites_to_fragment(output, pure_user_calls, output_opts);
-    }
-    let (optimized_output, line_map) = if skip_generated_poly_loop_rewrites {
-        let line_map = (1..=output.lines().count() as u32).collect::<Vec<_>>();
-        (output, line_map)
-    } else {
-        crate::compiler::peephole::optimize_emitted_r_with_context_and_fresh_with_options(
-            &output,
-            direct_builtin_call_map,
-            pure_user_calls,
-            fresh_user_calls,
-            output_opts.preserve_all_defs,
-        )
-    };
-    let optimized_map = remap_source_map_lines(map.to_vec(), &line_map);
-    (optimized_output, optimized_map)
-}
-
-fn apply_full_raw_rewrites(
-    mut output: String,
-    pure_user_calls: &FxHashSet<String>,
-    output_opts: CompileOutputOptions,
-) -> String {
-    let _ = pure_user_calls;
-    output = rewrite_trivial_clamp_helper_calls_in_raw_emitted_r(&output);
-    output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_trivial_dot_product_wrappers_in_raw_emitted_r(&output);
-    output = rewrite_mountain_dx_temp_in_raw_emitted_r(&output);
-    output = collapse_sym287_melt_rate_branch_in_raw_emitted_r(&output);
-    output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_gray_scott_clamp_pair_in_raw_emitted_r(&output);
-    output = strip_unused_helper_params_in_raw_emitted_r(&output);
-    output = collapse_trivial_dot_product_wrappers_in_raw_emitted_r(&output);
-    output = collapse_sym287_melt_rate_branch_in_raw_emitted_r(&output);
-    output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_gray_scott_clamp_pair_in_raw_emitted_r(&output);
-    output = rewrite_helper_expr_reuse_calls_in_raw_emitted_r(&output);
-    output = rewrite_dot_product_helper_calls_in_raw_emitted_r(&output);
-    output = rewrite_sym119_helper_calls_in_raw_emitted_r(&output);
-    output = rewrite_trivial_fill_helper_calls_in_raw_emitted_r(&output);
-    output = rewrite_identical_zero_fill_pairs_to_aliases_in_raw_emitted_r(&output);
-    output = rewrite_duplicate_sym183_calls_in_raw_emitted_r(&output);
-    output = restore_particle_state_rebinds_in_raw_emitted_r(&output);
-    output = collapse_adjacent_dir_neighbor_row_branches_in_raw_emitted_r(&output);
-    output = rewrite_exact_safe_loop_index_write_calls_in_raw_emitted_r(&output);
-    output = collapse_floor_fed_particle_clamp_pair_in_raw_emitted_r(&output);
-    output = collapse_sym287_melt_rate_branch_in_raw_emitted_r(&output);
-    output = restore_cg_loop_carried_updates_in_raw_emitted_r(&output);
-    output = restore_buffer_swaps_after_temp_copy_in_raw_emitted_r(&output);
-    output = collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_emitted_r(&output);
-    output = rewrite_exact_safe_loop_index_write_calls_in_raw_emitted_r(&output);
-    output = rewrite_mountain_dx_temp_in_raw_emitted_r(&output);
-    output = collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_emitted_r(&output);
-    output = strip_dead_weno_topology_seed_i_before_direct_adj_gather_in_raw_emitted_r(&output);
-    if !output_opts.preserve_all_defs {
-        output = prune_unreachable_raw_helper_definitions(&output);
-    }
-    output = restore_cg_loop_carried_updates_in_raw_emitted_r(&output);
-    output = repair_missing_cse_range_aliases_in_raw_emitted_r(&output);
-    if !output_opts.preserve_all_defs {
-        output = prune_unreachable_raw_helper_definitions(&output);
-    }
-    output = strip_dead_zero_loop_seeds_before_for_in_raw_emitted_r(&output);
-    output
-}
-
-fn apply_post_assembly_finalize_rewrites(output: String) -> String {
-    let mut kept = Vec::new();
-    let mut prev_blank = false;
-    for line in output.lines() {
-        let trimmed = line.trim();
-        if trimmed == "# rr-cse-pruned" {
-            continue;
-        }
-        if trimmed.is_empty() {
-            if prev_blank {
-                continue;
-            }
-            prev_blank = true;
-            kept.push(String::new());
-            continue;
-        }
-        prev_blank = false;
-        kept.push(line.to_string());
-    }
-    let mut rewritten = kept.join("\n");
-    if !rewritten.is_empty() {
-        rewritten.push('\n');
-    }
-    rewritten
-}
-
-fn maybe_emit_raw_debug_output(
-    assembled_output: &str,
-    pure_user_calls: &FxHashSet<String>,
-    output_opts: CompileOutputOptions,
-    cache: Option<&dyn EmitFunctionCache>,
-) -> crate::error::RR<u128> {
-    let Some(path) = std::env::var_os("RR_DEBUG_RAW_R_PATH") else {
-        return Ok(0);
-    };
-    let started = Instant::now();
-    let raw_output = if contains_generated_poly_loop_controls(assembled_output) {
-        assembled_output.to_string()
-    } else {
-        let raw_rewrite_cache_key = cache.map(|_| {
-            crate::compiler::pipeline::raw_rewrite_output_cache_key(
-                assembled_output,
-                pure_user_calls,
-                output_opts.preserve_all_defs,
-                output_opts.compile_mode,
-            )
-        });
-        if let (Some(cache), Some(cache_key)) = (cache, raw_rewrite_cache_key.as_deref()) {
-            if let Some(cached_output) = cache.load_raw_rewrite(cache_key)? {
-                cached_output
-            } else {
-                let rewritten = apply_full_raw_rewrites(
-                    assembled_output.to_string(),
-                    pure_user_calls,
-                    output_opts,
-                );
-                cache.store_raw_rewrite(cache_key, &rewritten)?;
-                rewritten
-            }
-        } else {
-            apply_full_raw_rewrites(assembled_output.to_string(), pure_user_calls, output_opts)
-        }
-    };
-    let _ = std::fs::write(path, &raw_output);
-    Ok(started.elapsed().as_nanos())
-}
-
-fn apply_full_peephole_to_output(
-    output: &str,
-    map: &[MapEntry],
-    direct_builtin_call_map: bool,
-    pure_user_calls: &FxHashSet<String>,
-    fresh_user_calls: &FxHashSet<String>,
-    output_opts: CompileOutputOptions,
-) -> (String, Vec<MapEntry>) {
-    let (optimized_output, line_map) =
-        crate::compiler::peephole::optimize_emitted_r_with_context_and_fresh_with_options(
-            output,
-            direct_builtin_call_map,
-            pure_user_calls,
-            fresh_user_calls,
-            output_opts.preserve_all_defs,
-        );
-    let optimized_map = remap_source_map_lines(map.to_vec(), &line_map);
-    (optimized_output, optimized_map)
-}
-
-fn assemble_emitted_fragments(
-    fragments: &[EmittedFnFragment],
-    use_optimized: bool,
-) -> (String, Vec<MapEntry>) {
-    let mut final_output = String::new();
-    let mut final_source_map = Vec::new();
-    let mut line_offset = 0u32;
-
-    for fragment in fragments {
-        let (code, map) = if use_optimized {
-            (
-                fragment.optimized_code.as_ref().unwrap_or(&fragment.code),
-                fragment.optimized_map.as_ref().unwrap_or(&fragment.map),
-            )
-        } else {
-            (&fragment.code, &fragment.map)
-        };
-        let mut shifted_map = map.clone();
-        for entry in &mut shifted_map {
-            entry.r_line = entry.r_line.saturating_add(line_offset);
-        }
-        line_offset = line_offset.saturating_add(emitted_segment_line_count(code));
-        final_output.push_str(code);
-        final_output.push('\n');
-        final_source_map.extend(shifted_map);
-    }
-
-    (final_output, final_source_map)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn emit_r_functions_cached(
-    ui: &CliLog,
-    total_steps: usize,
-    program: &ProgramIR,
-    emit_order: &[FnSlot],
-    top_level_calls: &[FnSlot],
-    opt_level: OptLevel,
-    type_cfg: TypeConfig,
-    parallel_cfg: ParallelConfig,
-    scheduler: &CompilerScheduler,
-    output_opts: CompileOutputOptions,
-    cache: Option<&dyn EmitFunctionCache>,
-) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize, EmitMetrics)> {
-    let step_emit = ui.step_start(
-        5,
-        total_steps,
-        "R Code Emission",
-        "reconstruct control flow",
-    );
-    let quoted_entry_targets = quoted_body_entry_targets(program, top_level_calls);
-    let pure_user_calls = collect_referentially_pure_user_functions(program);
-    let fresh_user_calls = collect_fresh_returning_user_functions(program);
-    let seq_len_param_end_slots_by_fn = collect_seq_len_param_end_slots_by_fn(program);
-    let shared_pure_user_calls = Arc::new(pure_user_calls.clone());
-    let shared_fresh_user_calls = Arc::new(fresh_user_calls.clone());
-    let shared_seq_len_param_end_slots_by_fn = Arc::new(seq_len_param_end_slots_by_fn.clone());
-    let direct_builtin_call_map =
-        matches!(type_cfg.native_backend, crate::typeck::NativeBackend::Off)
-            && matches!(parallel_cfg.mode, ParallelMode::Off);
-    let emit_total_ir = emit_order
-        .iter()
-        .filter_map(|slot| program.get_slot(*slot))
-        .map(fn_ir_work_size)
-        .sum::<usize>();
-    let cache_load_elapsed_ns = Arc::new(AtomicU64::new(0));
-    let emitter_elapsed_ns = Arc::new(AtomicU64::new(0));
-    let cache_store_elapsed_ns = Arc::new(AtomicU64::new(0));
-    let quote_wrap_elapsed_ns = Arc::new(AtomicU64::new(0));
-    let quoted_wrapped_functions = Arc::new(AtomicUsize::new(0));
-    let fragment_build_started = Instant::now();
-    let emitted_fragments = scheduler.map_try_stage(
-        crate::compiler::scheduler::CompilerParallelStage::Emit,
-        emit_order.to_vec(),
-        emit_total_ir,
-        |slot| {
-            let cache_load_elapsed_ns = Arc::clone(&cache_load_elapsed_ns);
-            let emitter_elapsed_ns = Arc::clone(&emitter_elapsed_ns);
-            let cache_store_elapsed_ns = Arc::clone(&cache_store_elapsed_ns);
-            let quote_wrap_elapsed_ns = Arc::clone(&quote_wrap_elapsed_ns);
-            let quoted_wrapped_functions = Arc::clone(&quoted_wrapped_functions);
-            let shared_pure_user_calls = Arc::clone(&shared_pure_user_calls);
-            let shared_fresh_user_calls = Arc::clone(&shared_fresh_user_calls);
-            let shared_seq_len_param_end_slots_by_fn =
-                Arc::clone(&shared_seq_len_param_end_slots_by_fn);
-            let Some(unit) = program.fns.get(slot) else {
-                return Err(crate::error::InternalCompilerError::new(
-                    crate::error::Stage::Codegen,
-                    format!("emit order references missing function slot '{}'", slot),
-                )
-                .into_exception());
-            };
-            let Some(fn_ir) = unit.ir.as_ref() else {
-                return Err(crate::error::InternalCompilerError::new(
-                crate::error::Stage::Codegen,
-                format!(
-                    "emit order references missing function '{}': MIR synthesis invariant violated",
-                    unit.name
-                ),
-            )
-            .into_exception());
-            };
-
-            let key = fn_emit_cache_key(
-                fn_ir,
-                opt_level,
-                type_cfg,
-                parallel_cfg,
-                output_opts.compile_mode,
-                seq_len_param_end_slots_by_fn.get(unit.name.as_str()),
-            );
-            let maybe_hit = if let Some(c) = cache {
-                let started = Instant::now();
-                let loaded = c.load(&key)?;
-                cache_load_elapsed_ns
-                    .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                loaded
-            } else {
-                None
-            };
-
-            let (code, map, cache_hit) = if let Some((code, map)) = maybe_hit {
-                (code, map, true)
-            } else {
-                let mut emitter =
-                    crate::codegen::mir_emit::MirEmitter::with_shared_analysis_options(
-                        Arc::clone(&shared_fresh_user_calls),
-                        Arc::clone(&shared_pure_user_calls),
-                        shared_seq_len_param_end_slots_by_fn,
-                        direct_builtin_call_map,
-                    );
-                let emit_started = Instant::now();
-                let (code, map) = emitter.emit(fn_ir)?;
-                emitter_elapsed_ns
-                    .fetch_add(emit_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                if let Some(c) = cache {
-                    let store_started = Instant::now();
-                    c.store(&key, &code, &map)?;
-                    cache_store_elapsed_ns
-                        .fetch_add(store_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                }
-                (code, map, false)
-            };
-
-            let mut code = code;
-            let mut map = map;
-            let wrap_started = Instant::now();
-            let maybe_wrapped = if quoted_entry_targets.contains(unit.name.as_str()) {
-                wrap_zero_arg_function_body_in_quote(&code, unit.name.as_str())
-            } else {
-                None
-            };
-            if let Some(wrapped) = maybe_wrapped {
-                code = wrapped;
-                for entry in &mut map {
-                    entry.r_line = entry.r_line.saturating_sub(1);
-                }
-                quote_wrap_elapsed_ns
-                    .fetch_add(wrap_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                quoted_wrapped_functions.fetch_add(1, Ordering::Relaxed);
-            }
-            let optimized_key = cache.map(|_| {
-                crate::compiler::pipeline::optimized_fragment_output_cache_key(
-                    &code,
-                    direct_builtin_call_map,
-                    shared_pure_user_calls.as_ref(),
-                    shared_fresh_user_calls.as_ref(),
-                    output_opts.preserve_all_defs,
-                    output_opts.compile_mode,
-                )
-            });
-            let maybe_optimized_hit =
-                if let (Some(c), Some(key)) = (cache, optimized_key.as_deref()) {
-                    c.load_optimized_fragment(key)?
-                } else {
-                    None
-                };
-            let (optimized_code, optimized_map, optimized_cache_hit) =
-                if let Some((optimized_code, optimized_map)) = maybe_optimized_hit {
-                    (Some(optimized_code), Some(optimized_map), true)
-                } else if let (Some(c), Some(key)) = (cache, optimized_key.as_deref()) {
-                    let (optimized_code, optimized_map) = optimize_emitted_fragment(
-                        &code,
-                        &map,
-                        direct_builtin_call_map,
-                        shared_pure_user_calls.as_ref(),
-                        shared_fresh_user_calls.as_ref(),
-                        output_opts,
-                    );
-                    c.store_optimized_fragment(key, &optimized_code, &optimized_map)?;
-                    (Some(optimized_code), Some(optimized_map), false)
-                } else {
-                    (None, None, false)
-                };
-            Ok(EmittedFnFragment {
-                code,
-                map,
-                cache_hit,
-                optimized_code,
-                optimized_map,
-                optimized_cache_hit,
-            })
-        },
-    )?;
-    let fragment_build_elapsed_ns = fragment_build_started.elapsed().as_nanos();
-
-    let mut cache_hits = 0usize;
-    let mut cache_misses = 0usize;
-    let optimized_fragment_cache_hits = emitted_fragments
-        .iter()
-        .filter(|fragment| fragment.optimized_cache_hit)
-        .count();
-    let optimized_fragment_cache_misses = emitted_fragments
-        .iter()
-        .filter(|fragment| fragment.optimized_code.is_some() && !fragment.optimized_cache_hit)
-        .count();
-    for fragment in &emitted_fragments {
-        if fragment.cache_hit {
-            cache_hits += 1;
-        } else {
-            cache_misses += 1;
-        }
-    }
-    let fragment_assembly_started = Instant::now();
-    let (mut final_output, final_source_map) =
-        assemble_emitted_fragments(&emitted_fragments, false);
-    let fragment_assembly_elapsed_ns = fragment_assembly_started.elapsed().as_nanos();
-    ui.step_line_ok(&format!(
-        "Emitted {} functions ({} debug maps) in {}",
-        emit_order.len(),
-        final_source_map.len(),
-        format_duration(step_emit.elapsed())
-    ));
-
-    let optimized_fragment_variants_ready = emitted_fragments
-        .iter()
-        .all(|fragment| fragment.optimized_code.is_some() && fragment.optimized_map.is_some());
-    let optimized_assembly_key = cache.map(|_| {
-        crate::compiler::pipeline::optimized_assembly_cache_key(
-            &final_output,
-            direct_builtin_call_map,
-            &pure_user_calls,
-            &fresh_user_calls,
-            output_opts.preserve_all_defs,
-            output_opts.compile_mode,
-        )
-    });
-    let cached_optimized_final_source_map =
-        if let (Some(c), Some(key)) = (cache, optimized_assembly_key.as_deref()) {
-            c.load_optimized_assembly_source_map(key)?
-        } else {
-            None
-        };
-    let cached_optimized_final_artifact =
-        if let (Some(c), Some(key)) = (cache, optimized_assembly_key.as_deref()) {
-            c.load_optimized_assembly_artifact(key)?
-        } else {
-            None
-        };
-    if optimized_fragment_variants_ready
-        && let Some((cached_output, cached_source_map)) = cached_optimized_final_artifact
-    {
-        let raw_debug_elapsed_ns =
-            maybe_emit_raw_debug_output(&final_output, &pure_user_calls, output_opts, cache)?;
-        return Ok((
-            cached_output,
-            cached_source_map,
-            cache_hits,
-            cache_misses,
-            EmitMetrics {
-                elapsed_ns: step_emit.elapsed().as_nanos(),
-                emitted_functions: emit_order.len(),
-                cache_hits,
-                cache_misses,
-                breakdown: EmitBreakdownProfile {
-                    fragment_build_elapsed_ns,
-                    cache_load_elapsed_ns: cache_load_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    emitter_elapsed_ns: emitter_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    cache_store_elapsed_ns: cache_store_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    optimized_fragment_cache_hits,
-                    optimized_fragment_cache_misses,
-                    optimized_fragment_final_artifact_hits: 1,
-                    optimized_fragment_fast_path_direct_hits: 0,
-                    optimized_fragment_fast_path_raw_hits: 0,
-                    optimized_fragment_fast_path_peephole_hits: 0,
-                    quote_wrap_elapsed_ns: quote_wrap_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    fragment_assembly_elapsed_ns,
-                    raw_rewrite_elapsed_ns: raw_debug_elapsed_ns,
-                    peephole_elapsed_ns: 0,
-                    source_map_remap_elapsed_ns: 0,
-                    quoted_wrapped_functions: quoted_wrapped_functions.load(Ordering::Relaxed),
-                    ..EmitBreakdownProfile::default()
-                },
-            },
-        ));
-    }
-    let optimized_fragment_fast_path = cache.is_some()
-        && optimized_fragment_variants_ready
-        && cached_optimized_final_source_map.is_some()
-        && cache.is_some_and(|c| {
-            optimized_assembly_key
-                .as_deref()
-                .is_some_and(|key| c.has_optimized_assembly_safe(key).unwrap_or(false))
-        });
-    let optimized_fragment_raw_fast_path = !optimized_fragment_fast_path
-        && cache.is_some()
-        && optimized_fragment_variants_ready
-        && cached_optimized_final_source_map.is_some()
-        && cache.is_some_and(|c| {
-            optimized_assembly_key
-                .as_deref()
-                .is_some_and(|key| c.has_optimized_raw_assembly_safe(key).unwrap_or(false))
-        });
-    let optimized_fragment_peephole_fast_path = !optimized_fragment_fast_path
-        && !optimized_fragment_raw_fast_path
-        && cache.is_some()
-        && optimized_fragment_variants_ready
-        && cached_optimized_final_source_map.is_some()
-        && cache.is_some_and(|c| {
-            optimized_assembly_key
-                .as_deref()
-                .is_some_and(|key| c.has_optimized_peephole_assembly_safe(key).unwrap_or(false))
-        });
-    if optimized_fragment_fast_path {
-        let fast_started = Instant::now();
-        let raw_debug_elapsed_ns =
-            maybe_emit_raw_debug_output(&final_output, &pure_user_calls, output_opts, cache)?;
-        let (optimized_output, optimized_source_map) =
-            assemble_emitted_fragments(&emitted_fragments, true);
-        let final_source_map = cached_optimized_final_source_map
-            .clone()
-            .unwrap_or(optimized_source_map);
-        let fragment_assembly_elapsed_ns =
-            fragment_assembly_elapsed_ns + fast_started.elapsed().as_nanos();
-        return Ok((
-            optimized_output,
-            final_source_map,
-            cache_hits,
-            cache_misses,
-            EmitMetrics {
-                elapsed_ns: step_emit.elapsed().as_nanos(),
-                emitted_functions: emit_order.len(),
-                cache_hits,
-                cache_misses,
-                breakdown: EmitBreakdownProfile {
-                    fragment_build_elapsed_ns,
-                    cache_load_elapsed_ns: cache_load_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    emitter_elapsed_ns: emitter_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    cache_store_elapsed_ns: cache_store_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    optimized_fragment_cache_hits,
-                    optimized_fragment_cache_misses,
-                    optimized_fragment_final_artifact_hits: 0,
-                    optimized_fragment_fast_path_direct_hits: 1,
-                    optimized_fragment_fast_path_raw_hits: 0,
-                    optimized_fragment_fast_path_peephole_hits: 0,
-                    quote_wrap_elapsed_ns: quote_wrap_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    fragment_assembly_elapsed_ns,
-                    raw_rewrite_elapsed_ns: raw_debug_elapsed_ns,
-                    peephole_elapsed_ns: 0,
-                    source_map_remap_elapsed_ns: 0,
-                    quoted_wrapped_functions: quoted_wrapped_functions.load(Ordering::Relaxed),
-                    ..EmitBreakdownProfile::default()
-                },
-            },
-        ));
-    }
-    if optimized_fragment_raw_fast_path {
-        let fast_started = Instant::now();
-        let raw_debug_elapsed_ns =
-            maybe_emit_raw_debug_output(&final_output, &pure_user_calls, output_opts, cache)?;
-        let (optimized_output, optimized_source_map) =
-            assemble_emitted_fragments(&emitted_fragments, true);
-        let final_source_map = cached_optimized_final_source_map
-            .clone()
-            .unwrap_or(optimized_source_map);
-        let optimized_output = apply_post_assembly_finalize_rewrites(apply_full_raw_rewrites(
-            optimized_output,
-            &pure_user_calls,
-            output_opts,
-        ));
-        let fragment_assembly_elapsed_ns =
-            fragment_assembly_elapsed_ns + fast_started.elapsed().as_nanos();
-        return Ok((
-            optimized_output,
-            final_source_map,
-            cache_hits,
-            cache_misses,
-            EmitMetrics {
-                elapsed_ns: step_emit.elapsed().as_nanos(),
-                emitted_functions: emit_order.len(),
-                cache_hits,
-                cache_misses,
-                breakdown: EmitBreakdownProfile {
-                    fragment_build_elapsed_ns,
-                    cache_load_elapsed_ns: cache_load_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    emitter_elapsed_ns: emitter_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    cache_store_elapsed_ns: cache_store_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    optimized_fragment_cache_hits,
-                    optimized_fragment_cache_misses,
-                    optimized_fragment_final_artifact_hits: 0,
-                    optimized_fragment_fast_path_direct_hits: 0,
-                    optimized_fragment_fast_path_raw_hits: 1,
-                    optimized_fragment_fast_path_peephole_hits: 0,
-                    quote_wrap_elapsed_ns: quote_wrap_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    fragment_assembly_elapsed_ns,
-                    raw_rewrite_elapsed_ns: fast_started.elapsed().as_nanos()
-                        + raw_debug_elapsed_ns,
-                    peephole_elapsed_ns: 0,
-                    source_map_remap_elapsed_ns: 0,
-                    quoted_wrapped_functions: quoted_wrapped_functions.load(Ordering::Relaxed),
-                    ..EmitBreakdownProfile::default()
-                },
-            },
-        ));
-    }
-    if optimized_fragment_peephole_fast_path {
-        let fast_started = Instant::now();
-        let raw_debug_elapsed_ns =
-            maybe_emit_raw_debug_output(&final_output, &pure_user_calls, output_opts, cache)?;
-        let (optimized_output, optimized_source_map) =
-            assemble_emitted_fragments(&emitted_fragments, true);
-        let (optimized_output, optimized_source_map) = apply_full_peephole_to_output(
-            &optimized_output,
-            &optimized_source_map,
-            direct_builtin_call_map,
-            &pure_user_calls,
-            &fresh_user_calls,
-            output_opts,
-        );
-        let fragment_assembly_elapsed_ns =
-            fragment_assembly_elapsed_ns + fast_started.elapsed().as_nanos();
-        let final_source_map = cached_optimized_final_source_map
-            .clone()
-            .unwrap_or(optimized_source_map);
-        return Ok((
-            optimized_output,
-            final_source_map,
-            cache_hits,
-            cache_misses,
-            EmitMetrics {
-                elapsed_ns: step_emit.elapsed().as_nanos(),
-                emitted_functions: emit_order.len(),
-                cache_hits,
-                cache_misses,
-                breakdown: EmitBreakdownProfile {
-                    fragment_build_elapsed_ns,
-                    cache_load_elapsed_ns: cache_load_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    emitter_elapsed_ns: emitter_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    cache_store_elapsed_ns: cache_store_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    optimized_fragment_cache_hits,
-                    optimized_fragment_cache_misses,
-                    optimized_fragment_final_artifact_hits: 0,
-                    optimized_fragment_fast_path_direct_hits: 0,
-                    optimized_fragment_fast_path_raw_hits: 0,
-                    optimized_fragment_fast_path_peephole_hits: 1,
-                    quote_wrap_elapsed_ns: quote_wrap_elapsed_ns.load(Ordering::Relaxed) as u128,
-                    fragment_assembly_elapsed_ns,
-                    raw_rewrite_elapsed_ns: raw_debug_elapsed_ns,
-                    peephole_elapsed_ns: fast_started.elapsed().as_nanos(),
-                    source_map_remap_elapsed_ns: 0,
-                    quoted_wrapped_functions: quoted_wrapped_functions.load(Ordering::Relaxed),
-                    ..EmitBreakdownProfile::default()
-                },
-            },
-        ));
-    }
-
-    let skip_generated_poly_loop_rewrites = contains_generated_poly_loop_controls(&final_output);
-    let raw_rewrite_cache_key = cache.map(|_| {
-        crate::compiler::pipeline::raw_rewrite_output_cache_key(
-            &final_output,
-            &pure_user_calls,
-            output_opts.preserve_all_defs,
-            output_opts.compile_mode,
-        )
-    });
-    let raw_rewrite_started = Instant::now();
-    if !skip_generated_poly_loop_rewrites {
-        if let (Some(cache), Some(cache_key)) = (cache, raw_rewrite_cache_key.as_deref()) {
-            if let Some(cached_output) = cache.load_raw_rewrite(cache_key)? {
-                final_output = cached_output;
-            } else {
-                final_output = apply_full_raw_rewrites(final_output, &pure_user_calls, output_opts);
-                cache.store_raw_rewrite(cache_key, &final_output)?;
-            }
-        } else {
-            final_output = apply_full_raw_rewrites(final_output, &pure_user_calls, output_opts);
-        }
-    }
-    let raw_rewrite_elapsed_ns = raw_rewrite_started.elapsed().as_nanos();
-    if let Some(path) = std::env::var_os("RR_DEBUG_RAW_R_PATH") {
-        let _ = std::fs::write(path, &final_output);
-    }
-    let peephole_cache_key = cache.map(|_| {
-        crate::compiler::pipeline::peephole_output_cache_key(
-            &final_output,
-            direct_builtin_call_map,
-            &pure_user_calls,
-            &fresh_user_calls,
-            output_opts.preserve_all_defs,
-            output_opts.compile_mode,
-        )
-    });
-    let peephole_started = Instant::now();
-    let ((final_output, line_map), peephole_profile) = if skip_generated_poly_loop_rewrites {
-        let line_map = (1..=final_output.lines().count() as u32).collect::<Vec<_>>();
-        (
-            (final_output, line_map),
-            crate::compiler::peephole::PeepholeProfile::default(),
-        )
-    } else if let (Some(cache), Some(cache_key)) = (cache, peephole_cache_key.as_deref()) {
-        if let Some((cached_output, cached_line_map)) = cache.load_peephole(cache_key)? {
-            (
-                (cached_output, cached_line_map),
-                crate::compiler::peephole::PeepholeProfile::default(),
-            )
-        } else {
-            let ((optimized_output, line_map), profile) =
-                crate::compiler::peephole::optimize_emitted_r_with_context_and_fresh_with_options_and_profile(
-                    &final_output,
-                    direct_builtin_call_map,
-                    &pure_user_calls,
-                    &fresh_user_calls,
-                    output_opts.preserve_all_defs,
-                    matches!(output_opts.compile_mode, CompileMode::FastDev),
-                );
-            cache.store_peephole(cache_key, &optimized_output, &line_map)?;
-            ((optimized_output, line_map), profile)
-        }
-    } else {
-        crate::compiler::peephole::optimize_emitted_r_with_context_and_fresh_with_options_and_profile(
-            &final_output,
-            direct_builtin_call_map,
-            &pure_user_calls,
-            &fresh_user_calls,
-            output_opts.preserve_all_defs,
-            matches!(output_opts.compile_mode, CompileMode::FastDev),
-        )
-    };
-    let peephole_elapsed_ns = peephole_started.elapsed().as_nanos();
-    let remap_started = Instant::now();
-    let final_source_map = remap_source_map_lines(final_source_map, &line_map);
-    let source_map_remap_elapsed_ns = remap_started.elapsed().as_nanos();
-
-    if let Some(c) = cache {
-        let (optimized_output, _optimized_source_map) =
-            assemble_emitted_fragments(&emitted_fragments, true);
-        let key = optimized_assembly_key.clone().unwrap_or_else(|| {
-            crate::compiler::pipeline::optimized_assembly_cache_key(
-                &assemble_emitted_fragments(&emitted_fragments, false).0,
-                direct_builtin_call_map,
-                &pure_user_calls,
-                &fresh_user_calls,
-                output_opts.preserve_all_defs,
-                output_opts.compile_mode,
-            )
-        });
-        c.store_optimized_assembly_artifact(&key, &final_output, &final_source_map)?;
-        if optimized_output == final_output {
-            c.store_optimized_assembly_source_map(&key, &final_source_map)?;
-            c.store_optimized_assembly_safe(&key)?;
-        } else {
-            let optimized_raw_output = apply_post_assembly_finalize_rewrites(
-                apply_full_raw_rewrites(optimized_output, &pure_user_calls, output_opts),
-            );
-            if optimized_raw_output == final_output {
-                c.store_optimized_assembly_source_map(&key, &final_source_map)?;
-                c.store_optimized_raw_assembly_safe(&key)?;
-            } else {
-                let (optimized_peephole_output, optimized_peephole_map) =
-                    apply_full_peephole_to_output(
-                        &assemble_emitted_fragments(&emitted_fragments, true).0,
-                        &assemble_emitted_fragments(&emitted_fragments, true).1,
-                        direct_builtin_call_map,
-                        &pure_user_calls,
-                        &fresh_user_calls,
-                        output_opts,
-                    );
-                if optimized_peephole_output == final_output {
-                    let _ = optimized_peephole_map;
-                    c.store_optimized_assembly_source_map(&key, &final_source_map)?;
-                    c.store_optimized_peephole_assembly_safe(&key)?;
-                }
-            }
-        }
-    }
-
-    Ok((
-        final_output,
-        final_source_map,
-        cache_hits,
-        cache_misses,
-        EmitMetrics {
-            elapsed_ns: step_emit.elapsed().as_nanos(),
-            emitted_functions: emit_order.len(),
-            cache_hits,
-            cache_misses,
-            breakdown: EmitBreakdownProfile {
-                fragment_build_elapsed_ns,
-                cache_load_elapsed_ns: cache_load_elapsed_ns.load(Ordering::Relaxed) as u128,
-                emitter_elapsed_ns: emitter_elapsed_ns.load(Ordering::Relaxed) as u128,
-                cache_store_elapsed_ns: cache_store_elapsed_ns.load(Ordering::Relaxed) as u128,
-                optimized_fragment_cache_hits,
-                optimized_fragment_cache_misses,
-                optimized_fragment_final_artifact_hits: 0,
-                optimized_fragment_fast_path_direct_hits: 0,
-                optimized_fragment_fast_path_raw_hits: 0,
-                optimized_fragment_fast_path_peephole_hits: 0,
-                quote_wrap_elapsed_ns: quote_wrap_elapsed_ns.load(Ordering::Relaxed) as u128,
-                fragment_assembly_elapsed_ns,
-                raw_rewrite_elapsed_ns,
-                peephole_elapsed_ns,
-                peephole_linear_scan_elapsed_ns: peephole_profile.linear_scan_elapsed_ns,
-                peephole_primary_rewrite_elapsed_ns: peephole_profile.primary_rewrite_elapsed_ns,
-                peephole_primary_flow_elapsed_ns: peephole_profile.primary_flow_elapsed_ns,
-                peephole_primary_inline_elapsed_ns: peephole_profile.primary_inline_elapsed_ns,
-                peephole_primary_reuse_elapsed_ns: peephole_profile.primary_reuse_elapsed_ns,
-                peephole_primary_loop_cleanup_elapsed_ns: peephole_profile
-                    .primary_loop_cleanup_elapsed_ns,
-                peephole_primary_loop_dead_zero_elapsed_ns: peephole_profile
-                    .primary_loop_dead_zero_elapsed_ns,
-                peephole_primary_loop_normalize_elapsed_ns: peephole_profile
-                    .primary_loop_normalize_elapsed_ns,
-                peephole_primary_loop_hoist_elapsed_ns: peephole_profile
-                    .primary_loop_hoist_elapsed_ns,
-                peephole_primary_loop_repeat_to_for_elapsed_ns: peephole_profile
-                    .primary_loop_repeat_to_for_elapsed_ns,
-                peephole_primary_loop_tail_cleanup_elapsed_ns: peephole_profile
-                    .primary_loop_tail_cleanup_elapsed_ns,
-                peephole_primary_loop_guard_cleanup_elapsed_ns: peephole_profile
-                    .primary_loop_guard_cleanup_elapsed_ns,
-                peephole_primary_loop_helper_cleanup_elapsed_ns: peephole_profile
-                    .primary_loop_helper_cleanup_elapsed_ns,
-                peephole_primary_loop_exact_cleanup_elapsed_ns: peephole_profile
-                    .primary_loop_exact_cleanup_elapsed_ns,
-                peephole_primary_loop_exact_pre_elapsed_ns: peephole_profile
-                    .primary_loop_exact_pre_elapsed_ns,
-                peephole_primary_loop_exact_reuse_elapsed_ns: peephole_profile
-                    .primary_loop_exact_reuse_elapsed_ns,
-                peephole_primary_loop_exact_reuse_prepare_elapsed_ns: peephole_profile
-                    .primary_loop_exact_reuse_prepare_elapsed_ns,
-                peephole_primary_loop_exact_reuse_forward_elapsed_ns: peephole_profile
-                    .primary_loop_exact_reuse_forward_elapsed_ns,
-                peephole_primary_loop_exact_reuse_pure_call_elapsed_ns: peephole_profile
-                    .primary_loop_exact_reuse_pure_call_elapsed_ns,
-                peephole_primary_loop_exact_reuse_expr_elapsed_ns: peephole_profile
-                    .primary_loop_exact_reuse_expr_elapsed_ns,
-                peephole_primary_loop_exact_reuse_vector_alias_elapsed_ns: peephole_profile
-                    .primary_loop_exact_reuse_vector_alias_elapsed_ns,
-                peephole_primary_loop_exact_reuse_rebind_elapsed_ns: peephole_profile
-                    .primary_loop_exact_reuse_rebind_elapsed_ns,
-                peephole_primary_loop_exact_fixpoint_elapsed_ns: peephole_profile
-                    .primary_loop_exact_fixpoint_elapsed_ns,
-                peephole_primary_loop_exact_fixpoint_prepare_elapsed_ns: peephole_profile
-                    .primary_loop_exact_fixpoint_prepare_elapsed_ns,
-                peephole_primary_loop_exact_fixpoint_forward_elapsed_ns: peephole_profile
-                    .primary_loop_exact_fixpoint_forward_elapsed_ns,
-                peephole_primary_loop_exact_fixpoint_pure_call_elapsed_ns: peephole_profile
-                    .primary_loop_exact_fixpoint_pure_call_elapsed_ns,
-                peephole_primary_loop_exact_fixpoint_expr_elapsed_ns: peephole_profile
-                    .primary_loop_exact_fixpoint_expr_elapsed_ns,
-                peephole_primary_loop_exact_fixpoint_rebind_elapsed_ns: peephole_profile
-                    .primary_loop_exact_fixpoint_rebind_elapsed_ns,
-                peephole_primary_loop_exact_fixpoint_rounds: peephole_profile
-                    .primary_loop_exact_fixpoint_rounds,
-                peephole_primary_loop_exact_finalize_elapsed_ns: peephole_profile
-                    .primary_loop_exact_finalize_elapsed_ns,
-                peephole_primary_loop_dead_temp_cleanup_elapsed_ns: peephole_profile
-                    .primary_loop_dead_temp_cleanup_elapsed_ns,
-                peephole_secondary_rewrite_elapsed_ns: peephole_profile
-                    .secondary_rewrite_elapsed_ns,
-                peephole_secondary_inline_elapsed_ns: peephole_profile.secondary_inline_elapsed_ns,
-                peephole_secondary_inline_branch_hoist_elapsed_ns: peephole_profile
-                    .secondary_inline_branch_hoist_elapsed_ns,
-                peephole_secondary_inline_immediate_scalar_elapsed_ns: peephole_profile
-                    .secondary_inline_immediate_scalar_elapsed_ns,
-                peephole_secondary_inline_named_index_elapsed_ns: peephole_profile
-                    .secondary_inline_named_index_elapsed_ns,
-                peephole_secondary_inline_named_expr_elapsed_ns: peephole_profile
-                    .secondary_inline_named_expr_elapsed_ns,
-                peephole_secondary_inline_scalar_region_elapsed_ns: peephole_profile
-                    .secondary_inline_scalar_region_elapsed_ns,
-                peephole_secondary_inline_immediate_index_elapsed_ns: peephole_profile
-                    .secondary_inline_immediate_index_elapsed_ns,
-                peephole_secondary_inline_adjacent_dedup_elapsed_ns: peephole_profile
-                    .secondary_inline_adjacent_dedup_elapsed_ns,
-                peephole_secondary_exact_elapsed_ns: peephole_profile.secondary_exact_elapsed_ns,
-                peephole_secondary_helper_cleanup_elapsed_ns: peephole_profile
-                    .secondary_helper_cleanup_elapsed_ns,
-                peephole_secondary_helper_wrapper_elapsed_ns: peephole_profile
-                    .secondary_helper_wrapper_elapsed_ns,
-                peephole_secondary_helper_metric_elapsed_ns: peephole_profile
-                    .secondary_helper_metric_elapsed_ns,
-                peephole_secondary_helper_alias_elapsed_ns: peephole_profile
-                    .secondary_helper_alias_elapsed_ns,
-                peephole_secondary_helper_simple_expr_elapsed_ns: peephole_profile
-                    .secondary_helper_simple_expr_elapsed_ns,
-                peephole_secondary_helper_full_range_elapsed_ns: peephole_profile
-                    .secondary_helper_full_range_elapsed_ns,
-                peephole_secondary_helper_named_copy_elapsed_ns: peephole_profile
-                    .secondary_helper_named_copy_elapsed_ns,
-                peephole_secondary_finalize_cleanup_elapsed_ns: peephole_profile
-                    .secondary_finalize_cleanup_elapsed_ns,
-                peephole_secondary_finalize_bundle_elapsed_ns: peephole_profile
-                    .secondary_finalize_bundle_elapsed_ns,
-                peephole_secondary_finalize_dead_temp_elapsed_ns: peephole_profile
-                    .secondary_finalize_dead_temp_elapsed_ns,
-                peephole_secondary_finalize_dead_temp_facts_elapsed_ns: peephole_profile
-                    .secondary_finalize_dead_temp_facts_elapsed_ns,
-                peephole_secondary_finalize_dead_temp_mark_elapsed_ns: peephole_profile
-                    .secondary_finalize_dead_temp_mark_elapsed_ns,
-                peephole_secondary_finalize_dead_temp_reverse_elapsed_ns: peephole_profile
-                    .secondary_finalize_dead_temp_reverse_elapsed_ns,
-                peephole_secondary_finalize_dead_temp_compact_elapsed_ns: peephole_profile
-                    .secondary_finalize_dead_temp_compact_elapsed_ns,
-                peephole_finalize_elapsed_ns: peephole_profile.finalize_elapsed_ns,
-                source_map_remap_elapsed_ns,
-                quoted_wrapped_functions: quoted_wrapped_functions.load(Ordering::Relaxed),
-            },
-        },
-    ))
-}
-
-pub(crate) fn run_mir_synthesis(
-    ui: &CliLog,
-    total_steps: usize,
-    desugared_hir: crate::hir::def::HirProgram,
-    global_symbols: &FxHashMap<crate::hir::def::SymbolId, String>,
-    type_cfg: TypeConfig,
-    scheduler: &CompilerScheduler,
-) -> crate::error::RR<(ProgramIR, MirSynthesisMetrics)> {
-    let step_ssa = ui.step_start(
-        3,
-        total_steps,
-        "SSA Graph Synthesis",
-        "build dominator tree & phi nodes",
-    );
-    let mut all_fns = FxHashMap::default();
-    let mut emit_order: Vec<String> = Vec::new();
-    let mut emit_roots: Vec<String> = Vec::new();
-    let mut top_level_calls: Vec<String> = Vec::new();
-    let mut known_fn_arities: FxHashMap<String, usize> = FxHashMap::default();
-    let mut fn_jobs = Vec::new();
-    let mut top_jobs = Vec::new();
-    let mut meta_by_name: FxHashMap<String, (bool, bool)> = FxHashMap::default();
-
-    for module in &desugared_hir.modules {
-        for item in &module.items {
-            if let crate::hir::def::HirItem::Fn(f) = item
-                && f.type_params.is_empty()
-                && let Some(name) = global_symbols.get(&f.name).cloned()
-            {
-                known_fn_arities.insert(name, f.params.len());
-            }
-        }
-    }
-
-    for module in desugared_hir.modules {
-        let mut top_level_stmts: Vec<crate::hir::def::HirStmt> = Vec::new();
-
-        for item in module.items {
-            match item {
-                crate::hir::def::HirItem::Fn(f) if f.type_params.is_empty() => {
-                    let fn_name = format!("Sym_{}", f.name.0);
-                    let is_public = f.public;
-                    let mut params = Vec::with_capacity(f.params.len());
-                    for p in &f.params {
-                        let Some(name) = global_symbols.get(&p.name).cloned() else {
-                            return Err(InternalCompilerError::new(
-                                Stage::Mir,
-                                format!(
-                                    "missing parameter symbol during MIR lowering pipeline: {:?}",
-                                    p.name
-                                ),
-                            )
-                            .into_exception());
-                        };
-                        params.push(name);
-                    }
-                    let var_names = f.local_names.clone().into_iter().collect();
-
-                    fn_jobs.push(MirLowerJob {
-                        fn_name: fn_name.clone(),
-                        is_public,
-                        params,
-                        var_names,
-                        hir_fn: f,
-                    });
-                    meta_by_name.insert(fn_name.clone(), (is_public, false));
-                    if is_public {
-                        emit_roots.push(fn_name.clone());
-                    }
-                    emit_order.push(fn_name);
-                }
-                crate::hir::def::HirItem::Fn(_) => {}
-                crate::hir::def::HirItem::Stmt(s) => top_level_stmts.push(s),
-                _ => {}
-            }
-        }
-
-        if !top_level_stmts.is_empty() {
-            let top_fn_name = format!("Sym_top_{}", module.id.0);
-            let top_fn = crate::hir::def::HirFn {
-                id: crate::hir::def::FnId(1_000_000 + module.id.0),
-                name: crate::hir::def::SymbolId(1_000_000 + module.id.0),
-                type_params: Vec::new(),
-                where_bounds: Vec::new(),
-                params: Vec::new(),
-                has_varargs: false,
-                ret_ty: None,
-                body: crate::hir::def::HirBlock {
-                    stmts: top_level_stmts,
-                    span: crate::utils::Span::default(),
-                },
-                attrs: crate::hir::def::HirFnAttrs {
-                    inline_hint: crate::hir::def::InlineHint::Never,
-                    tidy_safe: false,
-                },
-                span: crate::utils::Span::default(),
-                local_names: FxHashMap::default(),
-                public: false,
-            };
-            top_jobs.push(TopLevelMirLowerJob {
-                fn_name: top_fn_name.clone(),
-                hir_fn: top_fn,
-            });
-            meta_by_name.insert(top_fn_name.clone(), (false, true));
-            emit_order.push(top_fn_name.clone());
-            emit_roots.push(top_fn_name.clone());
-            top_level_calls.push(top_fn_name);
-        }
-    }
-
-    let total_hir_work = fn_jobs
-        .iter()
-        .map(|job| hir_fn_work_size(&job.hir_fn))
-        .sum::<usize>()
-        .saturating_add(
-            top_jobs
-                .iter()
-                .map(|job| hir_fn_work_size(&job.hir_fn))
-                .sum::<usize>(),
-        );
-    let lowered_fns = scheduler.map_try_stage(
-        crate::compiler::scheduler::CompilerParallelStage::MirLowering,
-        fn_jobs,
-        total_hir_work,
-        |job| {
-            let lowerer = crate::mir::lower_hir::MirLowerer::new(
-                job.fn_name.clone(),
-                job.params,
-                job.var_names,
-                global_symbols,
-                &known_fn_arities,
-            );
-            lowerer
-                .lower_fn(job.hir_fn)
-                .map(|fn_ir| (job.fn_name, job.is_public, fn_ir))
-        },
-    )?;
-    for (fn_name, _is_public, fn_ir) in lowered_fns {
-        all_fns.insert(fn_name, fn_ir);
-    }
-    let lowered_tops = scheduler.map_try_stage(
-        crate::compiler::scheduler::CompilerParallelStage::MirLowering,
-        top_jobs,
-        total_hir_work,
-        |job| {
-            let lowerer = crate::mir::lower_hir::MirLowerer::new(
-                job.fn_name.clone(),
-                Vec::new(),
-                FxHashMap::default(),
-                global_symbols,
-                &known_fn_arities,
-            );
-            lowerer
-                .lower_fn(job.hir_fn)
-                .map(|fn_ir| (job.fn_name, fn_ir))
-        },
-    )?;
-    for (fn_name, fn_ir) in lowered_tops {
-        all_fns.insert(fn_name, fn_ir);
-    }
-    ui.step_line_ok(&format!(
-        "Synthesized {} MIR functions in {}",
-        all_fns.len(),
-        format_duration(step_ssa.elapsed())
-    ));
-
-    crate::typeck::solver::analyze_program_with_compiler_parallel(
-        &mut all_fns,
-        type_cfg,
-        scheduler,
-    )?;
-    crate::mir::semantics::validate_program(&all_fns)?;
-    crate::mir::semantics::validate_runtime_safety(&all_fns)?;
-
-    let program = ProgramIR::from_parts(
-        all_fns,
-        emit_order,
-        emit_roots,
-        top_level_calls,
-        meta_by_name,
-    )?;
-    let lowered_functions = program.fns.len();
-    Ok((
-        program,
-        MirSynthesisMetrics {
-            elapsed_ns: step_ssa.elapsed().as_nanos(),
-            lowered_functions,
-        },
-    ))
-}
+pub(crate) use cached_emit::{EmitFunctionsRequest, emit_r_functions_cached};
+pub(crate) use mir_synthesis::run_mir_synthesis;
+pub(crate) use source_analysis::run_source_analysis_and_canonicalization;

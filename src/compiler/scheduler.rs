@@ -1,9 +1,9 @@
+use crate::error::{InternalCompilerError, RRException, Stage};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompilerParallelMode {
@@ -312,7 +312,7 @@ impl CompilerScheduler {
         {
             None
         } else {
-            shared_pool_for_threads(cfg.active_workers())
+            build_pool_for_threads(cfg.active_workers())
         };
         Self {
             cfg,
@@ -472,6 +472,7 @@ impl CompilerScheduler {
         T: Send,
         R: Send,
         E: Send,
+        E: From<RRException>,
         F: Fn(T) -> Result<R, E> + Sync + Send,
     {
         let job_count = jobs.len();
@@ -546,12 +547,7 @@ impl CompilerScheduler {
             let mut guard = lock_or_recover(&results);
             std::mem::take(&mut *guard)
         };
-        Ok(ordered
-            .into_iter()
-            .map(|value| {
-                value.unwrap_or_else(|| unreachable!("parallel map produced every result"))
-            })
-            .collect())
+        collect_ordered_parallel_results(ordered)
     }
 
     pub fn map_try_stage<T, R, E, F>(
@@ -565,6 +561,7 @@ impl CompilerScheduler {
         T: Send,
         R: Send,
         E: Send,
+        E: From<RRException>,
         F: Fn(T) -> Result<R, E> + Sync + Send,
     {
         let job_count = jobs.len();
@@ -640,13 +637,28 @@ impl CompilerScheduler {
             let mut guard = lock_or_recover(&results);
             std::mem::take(&mut *guard)
         };
-        Ok(ordered
-            .into_iter()
-            .map(|value| {
-                value.unwrap_or_else(|| unreachable!("parallel map produced every result"))
-            })
-            .collect())
+        collect_ordered_parallel_results(ordered)
     }
+}
+
+fn collect_ordered_parallel_results<R, E>(ordered: Vec<Option<R>>) -> Result<Vec<R>, E>
+where
+    E: From<RRException>,
+{
+    let mut out = Vec::with_capacity(ordered.len());
+    for (idx, value) in ordered.into_iter().enumerate() {
+        let Some(value) = value else {
+            return Err(InternalCompilerError::new(
+                Stage::Ice,
+                format!("parallel scheduler did not produce result for job {idx}"),
+            )
+            .note("worker scope completed without recording an error or result")
+            .into_exception()
+            .into());
+        };
+        out.push(value);
+    }
+    Ok(out)
 }
 
 fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -656,28 +668,10 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 
-fn shared_pool_cache() -> &'static Mutex<FxHashMap<usize, Arc<ThreadPool>>> {
-    static CACHE: OnceLock<Mutex<FxHashMap<usize, Arc<ThreadPool>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(FxHashMap::default()))
-}
-
-fn shared_pool_for_threads(threads: usize) -> Option<Arc<ThreadPool>> {
-    // This cache is performance-only. It is keyed solely by worker count and
-    // does not contribute to compilation results, emitted order, or diagnostics.
-    let cache = shared_pool_cache();
-    if let Ok(guard) = cache.lock()
-        && let Some(pool) = guard.get(&threads)
-    {
-        return Some(pool.clone());
-    }
-    let built = ThreadPoolBuilder::new()
+fn build_pool_for_threads(threads: usize) -> Option<Arc<ThreadPool>> {
+    ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
         .ok()
-        .map(Arc::new)?;
-    if let Ok(mut guard) = cache.lock() {
-        let pooled = guard.entry(threads).or_insert_with(|| built.clone());
-        return Some(pooled.clone());
-    }
-    Some(built)
+        .map(Arc::new)
 }

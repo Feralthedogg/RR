@@ -11,8 +11,9 @@ and stay in the user docs flow.
 
 - [Compiler Pipeline](pipeline.md): end-to-end compile flow from source loading
   to emitted `.R`
-- [Adaptive Phase Ordering Design](adaptive-phase-ordering.md): proposed
-  function-sensitive scheduling for Tachyon heavy-tier passes
+- [Adaptive Phase Ordering Design](adaptive-phase-ordering.md): implemented
+  function-sensitive scheduling plus the remaining design boundary for Tachyon
+  heavy-tier passes
 - [Compile-Time Reduction Plan](compile-time-reduction.md): structured plan for
   replacing repeated peephole rescans with function facts and pass-local caches
 - [Parallel Compilation Design](parallel-compilation.md): where compile-time
@@ -20,8 +21,12 @@ and stay in the user docs flow.
 - [IR Model](ir-model.md): HIR and MIR structure, invariants, and ownership
 - [Tachyon Engine](optimization.md): optimizer stages, proof model, and
   pass-level behavior
+- [MIR SROA Design](sroa.md): implemented aggregate scalar replacement subset
+  for `RecordLit` / `FieldGet` / `FieldSet`, plus the remaining ABI boundary
 - [Runtime and Error Model](runtime-and-errors.md): emitted helpers,
   diagnostics, and runtime policy
+- [Unsafe Boundaries](unsafe-boundaries.md): Rust `unsafe` use in the compiler
+  and the separate RR `unsafe r` escape hatch
 - [Testing and Quality Gates](testing.md): CI tiers, optimizer suites, soak
   coverage, and regression workflows
 - [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md):
@@ -57,3 +62,5 @@ If you are preparing a patch for review:
 1. Read [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 2. Read [Testing and Quality Gates](testing.md).
 3. Read [Contributing Audit Checklist](contributing-audit.md).
+4. If the patch touches `unsafe` or raw R escape hatches, read
+   [Unsafe Boundaries](unsafe-boundaries.md).

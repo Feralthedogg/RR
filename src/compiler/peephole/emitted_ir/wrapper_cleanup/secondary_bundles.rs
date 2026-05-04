@@ -1,22 +1,24 @@
+use super::*;
 #[derive(Default)]
-pub(in super::super) struct SecondaryAliasSimpleExprBundleProfile {
-    pub(in super::super) alias_elapsed_ns: u128,
-    pub(in super::super) simple_expr_elapsed_ns: u128,
-    pub(in super::super) tail_elapsed_ns: u128,
+pub(crate) struct SecondaryAliasSimpleExprBundleProfile {
+    pub(crate) alias_elapsed_ns: u128,
+    pub(crate) simple_expr_elapsed_ns: u128,
+    pub(crate) tail_elapsed_ns: u128,
 }
 
 #[derive(Default)]
-pub(in super::super) struct SecondaryHelperIrBundleProfile {
-    pub(in super::super) post_wrapper_elapsed_ns: u128,
-    pub(in super::super) metric_elapsed_ns: u128,
-    pub(in super::super) alias_elapsed_ns: u128,
-    pub(in super::super) simple_expr_elapsed_ns: u128,
-    pub(in super::super) tail_elapsed_ns: u128,
+pub(crate) struct SecondaryHelperIrBundleProfile {
+    pub(crate) post_wrapper_elapsed_ns: u128,
+    pub(crate) metric_elapsed_ns: u128,
+    pub(crate) alias_elapsed_ns: u128,
+    pub(crate) simple_expr_elapsed_ns: u128,
+    pub(crate) tail_elapsed_ns: u128,
 }
 
-pub(in super::super) fn run_secondary_helper_ir_bundle(
+pub(crate) fn run_secondary_helper_ir_bundle(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
+    size_controlled_simple_expr: bool,
 ) -> (Vec<String>, SecondaryHelperIrBundleProfile) {
     let needs_arg_return_wrapper = has_arg_return_wrapper_candidates_ir(&lines);
     let needs_passthrough_return_wrapper = has_passthrough_return_wrapper_candidates_ir(&lines);
@@ -130,6 +132,7 @@ pub(in super::super) fn run_secondary_helper_ir_bundle(
             &simple_helpers,
             &simple_helper_names,
             None,
+            size_controlled_simple_expr,
         );
     }
     profile.simple_expr_elapsed_ns = started.elapsed().as_nanos();
@@ -143,9 +146,10 @@ pub(in super::super) fn run_secondary_helper_ir_bundle(
     (program.into_lines(), profile)
 }
 
-pub(in super::super) fn run_secondary_alias_simple_expr_bundle_ir(
+pub(crate) fn run_secondary_alias_simple_expr_bundle_ir(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
+    size_controlled_simple_expr: bool,
 ) -> (Vec<String>, SecondaryAliasSimpleExprBundleProfile) {
     let needs_alias = has_arg_alias_cleanup_candidates_ir(&lines);
     let needs_singleton = has_singleton_assign_slice_scalar_edit_candidates_ir(&lines);
@@ -186,7 +190,13 @@ pub(in super::super) fn run_secondary_alias_simple_expr_bundle_ir(
         apply_collapse_trivial_scalar_clamp_wrappers_ir(&mut program);
     }
     if needs_simple_expr {
-        apply_rewrite_simple_expr_helper_calls_ir(&mut program, &helpers, &helper_names, None);
+        apply_rewrite_simple_expr_helper_calls_ir(
+            &mut program,
+            &helpers,
+            &helper_names,
+            None,
+            size_controlled_simple_expr,
+        );
     }
     profile.simple_expr_elapsed_ns = simple_started.elapsed().as_nanos();
     let tail_started = std::time::Instant::now();

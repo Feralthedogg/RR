@@ -1,4 +1,9 @@
-fn replace_symbol_occurrences_local(line: &str, symbol: &str, replacement: &str) -> String {
+use super::*;
+pub(crate) fn replace_symbol_occurrences_local(
+    line: &str,
+    symbol: &str,
+    replacement: &str,
+) -> String {
     if line.is_empty() || symbol.is_empty() || !line.contains(symbol) {
         return line.to_string();
     }
@@ -48,7 +53,7 @@ fn replace_symbol_occurrences_local(line: &str, symbol: &str, replacement: &str)
     out
 }
 
-fn unquoted_sym_refs_local(line: &str) -> Vec<String> {
+pub(crate) fn unquoted_sym_refs_local(line: &str) -> Vec<String> {
     raw_expr_idents_local(line)
         .into_iter()
         .filter(|ident| ident.starts_with("Sym_"))

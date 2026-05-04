@@ -2,8 +2,8 @@
 
 mod common;
 
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use libfuzzer_sys::{Corpus, fuzz_target};
+use rr::typeck::{NativeBackend, TypeConfig, TypeMode};
 
 fn synthesize_type_program(data: &[u8]) -> String {
     let a = (data.first().copied().unwrap_or(3) % 7 + 1) as i64;

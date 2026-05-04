@@ -1,3 +1,4 @@
+use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeMode {
     Strict,
@@ -70,7 +71,7 @@ impl Default for TypeConfig {
     }
 }
 
-fn from_hir_ty(ty: &Ty) -> TypeState {
+pub(crate) fn from_hir_ty(ty: &Ty) -> TypeState {
     match ty {
         Ty::Any => TypeState::unknown(),
         Ty::Null => TypeState::null(),
@@ -97,11 +98,11 @@ fn from_hir_ty(ty: &Ty) -> TypeState {
     }
 }
 
-fn from_hir_ty_term(ty: &Ty) -> TypeTerm {
+pub(crate) fn from_hir_ty_term(ty: &Ty) -> TypeTerm {
     term_from_hir_ty(ty)
 }
 
-fn lit_type(lit: &crate::syntax::ast::Lit) -> TypeState {
+pub(crate) fn lit_type(lit: &crate::syntax::ast::Lit) -> TypeState {
     match lit {
         crate::syntax::ast::Lit::Int(_) => TypeState::scalar(PrimTy::Int, true),
         crate::syntax::ast::Lit::Float(_) => TypeState::scalar(PrimTy::Double, true),
@@ -112,7 +113,7 @@ fn lit_type(lit: &crate::syntax::ast::Lit) -> TypeState {
     }
 }
 
-fn normalize_call_numeric_shape(args: &[TypeState]) -> ShapeTy {
+pub(crate) fn normalize_call_numeric_shape(args: &[TypeState]) -> ShapeTy {
     let has_matrix = args.iter().any(|a| a.shape == ShapeTy::Matrix);
     let has_vector = args.iter().any(|a| a.shape == ShapeTy::Vector);
     match (has_matrix, has_vector) {
@@ -123,7 +124,7 @@ fn normalize_call_numeric_shape(args: &[TypeState]) -> ShapeTy {
     }
 }
 
-fn type_state_from_term(term: &TypeTerm) -> TypeState {
+pub(crate) fn type_state_from_term(term: &TypeTerm) -> TypeState {
     match term {
         TypeTerm::Any | TypeTerm::Never => TypeState::unknown(),
         TypeTerm::Null => TypeState::null(),
@@ -175,16 +176,44 @@ fn type_state_from_term(term: &TypeTerm) -> TypeState {
     }
 }
 
-fn refine_type_with_term(ty: TypeState, term: &TypeTerm) -> TypeState {
+pub(crate) fn refine_type_with_term(ty: TypeState, term: &TypeTerm) -> TypeState {
     let term_ty = type_state_from_term(term);
     let mut out = ty.join(term_ty);
+    if ty.na == NaTy::Never && !type_term_can_introduce_na(term) {
+        out.na = NaTy::Never;
+    }
     if out.len_sym.is_none() {
         out.len_sym = ty.len_sym.or(term_ty.len_sym);
     }
     out
 }
 
-fn promoted_numeric_prim(lhs: PrimTy, rhs: PrimTy) -> PrimTy {
+pub(crate) fn type_term_can_introduce_na(term: &TypeTerm) -> bool {
+    match term {
+        TypeTerm::Option(_) => true,
+        TypeTerm::Boxed(inner)
+        | TypeTerm::Vector(inner)
+        | TypeTerm::VectorLen(inner, _)
+        | TypeTerm::Matrix(inner)
+        | TypeTerm::MatrixDim(inner, _, _)
+        | TypeTerm::ArrayDim(inner, _)
+        | TypeTerm::List(inner) => type_term_can_introduce_na(inner),
+        TypeTerm::DataFrame(cols) => cols.iter().any(type_term_can_introduce_na),
+        TypeTerm::DataFrameNamed(cols) | TypeTerm::NamedList(cols) => cols
+            .iter()
+            .any(|(_, field)| type_term_can_introduce_na(field)),
+        TypeTerm::Union(fields) => fields.iter().any(type_term_can_introduce_na),
+        TypeTerm::Any
+        | TypeTerm::Never
+        | TypeTerm::Null
+        | TypeTerm::Logical
+        | TypeTerm::Int
+        | TypeTerm::Double
+        | TypeTerm::Char => false,
+    }
+}
+
+pub(crate) fn promoted_numeric_prim(lhs: PrimTy, rhs: PrimTy) -> PrimTy {
     match (lhs, rhs) {
         (PrimTy::Int, PrimTy::Int) => PrimTy::Int,
         (PrimTy::Int, PrimTy::Double)

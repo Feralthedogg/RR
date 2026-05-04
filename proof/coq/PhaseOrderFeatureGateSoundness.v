@@ -1,5 +1,5 @@
-Require Import RRProofs.PhaseOrderClusterSoundness.
-Require Import RRProofs.PhaseOrderGuardSoundness.
+Require Import PhaseOrderClusterSoundness.
+Require Import PhaseOrderGuardSoundness.
 
 Module RRPhaseOrderFeatureGateSoundness.
 

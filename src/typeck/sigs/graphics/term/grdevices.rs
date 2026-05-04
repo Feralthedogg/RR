@@ -1,7 +1,7 @@
 use crate::typeck::builtin_sigs::vectorized_scalar_or_vector_double_term;
 use crate::typeck::term::TypeTerm;
 
-pub(super) fn infer_grdevices_term(callee: &str, arg_terms: &[TypeTerm]) -> Option<TypeTerm> {
+pub(crate) fn infer_grdevices_term(callee: &str, arg_terms: &[TypeTerm]) -> Option<TypeTerm> {
     match callee {
         "grDevices::jpeg" | "grDevices::bmp" | "grDevices::tiff" => Some(TypeTerm::Null),
         "grDevices::dev.size" => Some(TypeTerm::Vector(Box::new(TypeTerm::Double))),

@@ -3,7 +3,7 @@
 RR is an optimizing compiler for an R-oriented source language.
 It compiles `.rr` programs into self-contained `.R` output, using an SSA-like MIR pipeline,
 the `Tachyon` optimizer, and an embedded runtime for checks and helper operations.
-Current compiler line: `RR Tachyon v1.3.0`.
+Current compiler line: `RR Tachyon v2.0.0`.
 
 ## Documentation Sets
 
@@ -11,6 +11,7 @@ RR documentation is split into manual-style sets:
 
 - Guide
   - [Getting Started](./docs/getting-started.md)
+  - [What Is New in 2.0](./docs/whats-new-2.0.md)
   - [Writing RR for Performance and Safety](./docs/writing-rr.md)
   - [CLI Reference](./docs/cli.md)
 - Reference
@@ -20,6 +21,7 @@ RR documentation is split into manual-style sets:
   - [Compatibility and Limits](./docs/compatibility.md)
 - Compiler Dev Docs
   - [Overview](./docs/compiler/index.md)
+  - [Unsafe Boundaries](./docs/compiler/unsafe-boundaries.md)
   - [Contributing Audit Checklist](./docs/compiler/contributing-audit.md)
 
 ## What RR Does
@@ -27,7 +29,29 @@ RR documentation is split into manual-style sets:
 - accepts R-first syntax such as `<-`, `function(...)`, dotted identifiers, and `1..n`
 - lowers through HIR and MIR rather than directly emitting R
 - optimizes selected loops and expressions at MIR level
+- supports raw R escape hatches through `unsafe r { ... }` and read-only
+  `unsafe r(read) { ... }` blocks
 - emits standalone `.R` files that can run through `Rscript`
+
+## RR 2.0.0 Highlights
+
+RR 2.0.0 adds the managed project/package workflow, resets strictness defaults,
+and expands the optimizer/cache surface.
+
+- managed projects use `rr.mod`, `rr.lock`, `src/main.rr`, and `src/lib.rr`
+- `RR run .`, `RR build .`, and `RR watch .` resolve managed project entries
+  through `src/main.rr`
+- strict declarations and strict type mode are the stable defaults, with
+  explicit migration hatches for RR 1.x code
+- source-visible function and variable names are preserved where possible in
+  emitted R
+- `unsafe r(read) { ... }` provides a narrower read-only raw R escape
+- Tachyon includes adaptive phase ordering, bounded MIR outlining, bounded loop
+  unrolling, optimization fuel, and richer compile profiles
+- the package manager includes registry publishing, signatures, approval,
+  channels, audit logs, and policy checks
+
+See [What Is New in 2.0](./docs/whats-new-2.0.md) for the upgrade checklist.
 
 ## Quick Start
 
@@ -77,8 +101,8 @@ GitHub Releases are built with `cargo-dist` for:
 Cut a release by pushing a version tag:
 
 ```bash
-git tag v1.3.0
-git push origin v1.3.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 ### Compile a file to R
@@ -99,9 +123,10 @@ cargo run -- path/to/input.rr -o out.R --no-runtime -O2
 cargo run -- run . -O2
 ```
 
-`run` resolves `.` or a directory to `src/main.rr` for managed projects, then
-falls back to root `main.rr` for legacy projects. The entry must define
-`fn main()`. If the source does not already call `main()` at top level, RR
+`run` resolves `.` or a directory to `src/main.rr`. Root-level `main.rr` is no
+longer a directory fallback in RR 2.0; pass it as an explicit file path when you
+need to compile an older single-file project. The entry must define `fn main()`.
+If the source does not already call `main()` at top level, RR
 appends that call automatically for `run`.
 
 ### Build a project
@@ -110,8 +135,9 @@ appends that call automatically for `run`.
 cargo run -- build . -O2
 ```
 
-If the target directory contains `src/main.rr` or `main.rr`, `build` compiles
-only that project entry into `Build/debug/` without executing it.
+If the target directory contains `src/main.rr`, `build` compiles only that
+project entry into `Build/debug/` without executing it. Root-level `main.rr`
+must be passed explicitly as a file.
 
 ### Watch and recompile
 
@@ -142,12 +168,12 @@ print(main())
 
 Common options:
 
-- `-O0 | -O1 | -O2`
+- `-O0 | -O1 | -O2 | -O3 | -Oz`
 - `-o <file>`
 - `--out-dir <dir>`
 - `--no-runtime`
   - omit source/native bootstrap while keeping helper definitions and runtime settings
-- `--type-mode strict|gradual`
+- `--type-mode strict`
 - `--native-backend off|optional|required`
 - `--parallel-mode off|optional|required`
 - `--parallel-backend auto|r|openmp`
@@ -159,7 +185,7 @@ Common options:
 Default compile policy:
 
 - `RR build`, `RR run`, and `RR watch` default to `--compile-mode fast-dev`
-- `-O2` on those managed flows promotes back to `standard` unless overridden
+- `-O2`, `-O3`, and `-Oz` on those managed flows promote back to `standard` unless overridden
 - compiler parallel scheduling defaults to `auto` with thresholds `min-functions=2` and `min-fn-ir=128`
 
 ## Project Layout

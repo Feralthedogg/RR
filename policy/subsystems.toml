@@ -124,6 +124,7 @@ paths = [
   "scripts/check_pr_evidence.py",
   "scripts/lib/test_manifests.sh",
   "tests/process_gate_smoke.rs",
+  "tests/cli_commands.rs",
   "tests/compiler_hardcode_guard.rs",
   "scripts/verify_cleanroom.sh",
   "tests/contributing_audit_smoke.rs",
@@ -155,6 +156,7 @@ paths = [
   "tests/syntax_errors.rs",
   "tests/parse_multi_errors.rs",
   "tests/statement_boundaries.rs",
+  "tests/unsafe_r.rs",
 ]
 checks = [
   "tier0",
@@ -188,6 +190,7 @@ owners = [
 ]
 paths = [
   "src/mir/analyze/",
+  "src/mir/def.rs",
   "src/mir/flow.rs",
   "src/mir/opt/",
   "src/mir/semantics.rs",
@@ -198,6 +201,7 @@ paths = [
   "src/compiler/pipeline/phases/tachyon_runtime.rs",
   "src/compiler/peephole/",
   "tests/cases/optimizer/",
+  "tests/perf_regression_gate.rs",
   "tests/sccp_overflow_regression.rs",
   "tests/opt_level_equivalence.rs",
   "tests/numeric_property_differential.rs",
@@ -257,6 +261,8 @@ paths = [
   "src/compiler/pipeline/phases/source_emit.rs",
   "src/compiler/pipeline/late_raw_rewrites",
   "src/compiler/pipeline/raw_rewrites.rs",
+  "src/compiler/pipeline/scalar_raw_rewrites.rs",
+  "src/compiler/pipeline/tests/",
   "src/compiler/pipeline.rs",
   "example/",
   "example/benchmarks/",

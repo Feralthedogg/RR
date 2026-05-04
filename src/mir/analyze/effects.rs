@@ -9,6 +9,9 @@ pub fn stmt_is_pure(stmt: &Instr, fn_ir: &FnIR) -> bool {
         Instr::StoreIndex1D { .. } => false, // Memory write is a side effect
         Instr::StoreIndex2D { .. } => false, // Memory write is a side effect
         Instr::StoreIndex3D { .. } => false, // Memory write is a side effect
+        // Raw R is an observable escape hatch. Even `unsafe r(read)` is not
+        // pure because it may print, inspect options, or read R-visible state.
+        Instr::UnsafeRBlock { .. } => false,
     }
 }
 
@@ -43,14 +46,9 @@ fn rvalue_is_pure_inner(vid: ValueId, fn_ir: &FnIR, visiting: &mut HashSet<Value
         ValueKind::Phi { args } => args
             .iter()
             .all(|(v, _)| rvalue_is_pure_inner(*v, fn_ir, visiting)),
-        ValueKind::Call { callee, args, .. } => {
-            if call_is_pure(callee) {
-                args.iter()
-                    .all(|a| rvalue_is_pure_inner(*a, fn_ir, visiting))
-            } else {
-                false
-            }
-        }
+        ValueKind::Call { callee, args, .. } if call_is_pure(callee) => args
+            .iter()
+            .all(|a| rvalue_is_pure_inner(*a, fn_ir, visiting)),
         ValueKind::Len { base } => rvalue_is_pure_inner(*base, fn_ir, visiting),
         ValueKind::Indices { base } => rvalue_is_pure_inner(*base, fn_ir, visiting),
         ValueKind::Range { start, end } => {

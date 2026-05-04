@@ -1,8 +1,16 @@
 use crate::mir::analyze::{alias, effects};
-use crate::mir::opt::loop_analysis::LoopAnalyzer;
+use crate::mir::opt::loop_analysis::{LoopAnalyzer, LoopInfo};
 use crate::mir::*;
 
 pub struct MirLicm;
+
+struct HoistabilityContext<'a> {
+    invariants: &'a std::collections::HashSet<ValueId>,
+    loop_info: &'a crate::mir::opt::loop_analysis::LoopInfo,
+    val_to_bb: &'a std::collections::HashMap<ValueId, BlockId>,
+    loop_ctx: &'a LoopEffectCtx,
+    loop_written_vars: &'a std::collections::HashSet<String>,
+}
 
 impl Default for MirLicm {
     fn default() -> Self {
@@ -18,10 +26,14 @@ impl MirLicm {
     pub fn optimize(&self, fn_ir: &mut FnIR) -> bool {
         let analyzer = LoopAnalyzer::new(fn_ir);
         let loops = analyzer.find_loops();
+        self.optimize_with_loop_info(fn_ir, &loops)
+    }
+
+    pub fn optimize_with_loop_info(&self, fn_ir: &mut FnIR, loops: &[LoopInfo]) -> bool {
         let mut changed = false;
 
         for loop_info in loops {
-            changed |= self.hoist_invariants(fn_ir, &loop_info);
+            changed |= self.hoist_invariants(fn_ir, loop_info);
         }
         changed
     }
@@ -51,6 +63,7 @@ impl MirLicm {
                     Instr::StoreIndex3D { val: src, .. } => {
                         val_to_bb.insert(*src, block.id);
                     }
+                    Instr::UnsafeRBlock { .. } => {}
                 }
             }
         }
@@ -70,6 +83,9 @@ impl MirLicm {
                         } else {
                             loop_mutated_aliases.insert(cls);
                         }
+                    }
+                    Instr::UnsafeRBlock { .. } => {
+                        loop_has_unknown_mutation = true;
                     }
                     _ => {}
                 }
@@ -115,21 +131,21 @@ impl MirLicm {
                             continue;
                         }
 
-                        if self.is_hoistable(
-                            fn_ir,
-                            *src,
-                            &invariants,
+                        let hoistability = HoistabilityContext {
+                            invariants: &invariants,
                             loop_info,
-                            &val_to_bb,
-                            &loop_ctx,
-                            &loop_written_vars,
-                        ) {
+                            val_to_bb: &val_to_bb,
+                            loop_ctx: &loop_ctx,
+                            loop_written_vars: &loop_written_vars,
+                        };
+                        if self.is_hoistable(fn_ir, *src, &hoistability) {
                             // Deduplicate
                             if !hoist_candidates.contains(src) {
                                 hoist_candidates.push(*src);
                             }
                         }
                     }
+                    Instr::UnsafeRBlock { .. } => {}
                 }
             }
         }
@@ -241,34 +257,25 @@ impl MirLicm {
         invariants
     }
 
-    fn is_hoistable(
-        &self,
-        fn_ir: &FnIR,
-        val_id: ValueId,
-        invariants: &std::collections::HashSet<ValueId>,
-        loop_info: &crate::mir::opt::loop_analysis::LoopInfo,
-        val_to_bb: &std::collections::HashMap<ValueId, BlockId>,
-        loop_ctx: &LoopEffectCtx,
-        loop_written_vars: &std::collections::HashSet<String>,
-    ) -> bool {
+    fn is_hoistable(&self, fn_ir: &FnIR, val_id: ValueId, ctx: &HoistabilityContext<'_>) -> bool {
         // Can only hoist pure things defined INSIDE the loop.
         // If it's defined outside, it's already "hoisted" (invariant).
 
-        if let Some(&bb) = val_to_bb.get(&val_id) {
-            if !loop_info.body.contains(&bb) {
+        if let Some(&bb) = ctx.val_to_bb.get(&val_id) {
+            if !ctx.loop_info.body.contains(&bb) {
                 return false; // Already outside
             }
         } else {
             return false; // Unknown definition site, safer not to touch
         }
 
-        if !invariants.contains(&val_id) {
+        if !ctx.invariants.contains(&val_id) {
             return false;
         }
         if self.value_mentions_written_var(
             fn_ir,
             val_id,
-            loop_written_vars,
+            ctx.loop_written_vars,
             &mut std::collections::HashSet::new(),
         ) {
             return false;
@@ -276,14 +283,14 @@ impl MirLicm {
         if self.value_depends_on_loop_phi(
             fn_ir,
             val_id,
-            loop_info,
+            ctx.loop_info,
             &mut std::collections::HashSet::new(),
         ) {
             return false;
         }
 
         // Must be speculatable to hoist
-        self.is_value_invariant(fn_ir, val_id, invariants, loop_ctx)
+        self.is_value_invariant(fn_ir, val_id, ctx.invariants, ctx.loop_ctx)
             && !matches!(fn_ir.values[val_id].kind, ValueKind::Phi { .. })
     }
 
@@ -312,6 +319,7 @@ impl MirLicm {
                         }
                     },
                     Instr::Eval { .. } => {}
+                    Instr::UnsafeRBlock { .. } => {}
                 }
             }
         }

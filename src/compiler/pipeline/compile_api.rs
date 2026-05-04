@@ -174,7 +174,7 @@ pub fn compile_with_configs_with_options_and_compiler_parallel(
     compiler_parallel_cfg: CompilerParallelConfig,
     output_opts: CompileOutputOptions,
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
-    compile_with_configs_with_options_and_compiler_parallel_and_profile(
+    compile_with_profile_request(CompileWithProfileRequest {
         entry_path,
         entry_input,
         opt_level,
@@ -182,35 +182,39 @@ pub fn compile_with_configs_with_options_and_compiler_parallel(
         parallel_cfg,
         compiler_parallel_cfg,
         output_opts,
-        None,
-    )
+        profile: None,
+    })
 }
 
-pub fn compile_with_configs_with_options_and_compiler_parallel_and_profile(
-    entry_path: &str,
-    entry_input: &str,
-    opt_level: OptLevel,
-    type_cfg: TypeConfig,
-    parallel_cfg: ParallelConfig,
-    compiler_parallel_cfg: CompilerParallelConfig,
-    output_opts: CompileOutputOptions,
-    profile: Option<&mut CompileProfile>,
+pub struct CompileWithProfileRequest<'a> {
+    pub entry_path: &'a str,
+    pub entry_input: &'a str,
+    pub opt_level: OptLevel,
+    pub type_cfg: TypeConfig,
+    pub parallel_cfg: ParallelConfig,
+    pub compiler_parallel_cfg: CompilerParallelConfig,
+    pub output_opts: CompileOutputOptions,
+    pub profile: Option<&'a mut CompileProfile>,
+}
+
+pub fn compile_with_profile_request(
+    request: CompileWithProfileRequest<'_>,
 ) -> crate::error::RR<(String, Vec<crate::codegen::mir_emit::MapEntry>)> {
-    let cache_root = crate::compiler::incremental::cache_root_for_entry(entry_path);
+    let cache_root = crate::compiler::incremental::cache_root_for_entry(request.entry_path);
     let fn_cache =
         crate::compiler::incremental::DiskFnEmitCache::new(cache_root.join("function-emits"));
     let optimized_mir_cache_root = cache_root.join("optimized-mir");
     let (code, map, _, _) = compile_with_pipeline_request(CompilePipelineRequest {
-        entry_path,
-        entry_input,
-        opt_level,
-        type_cfg,
-        parallel_cfg,
-        compiler_parallel_cfg,
+        entry_path: request.entry_path,
+        entry_input: request.entry_input,
+        opt_level: request.opt_level,
+        type_cfg: request.type_cfg,
+        parallel_cfg: request.parallel_cfg,
+        compiler_parallel_cfg: request.compiler_parallel_cfg,
         cache: Some(&fn_cache),
         optimized_mir_cache_root: Some(optimized_mir_cache_root),
-        output_opts,
-        profile,
+        output_opts: request.output_opts,
+        profile: request.profile,
     })?;
     Ok((code, map))
 }
@@ -259,11 +263,11 @@ pub(crate) fn compile_with_configs_using_emit_cache_and_compiler_parallel(
     compile_with_pipeline_request(request)
 }
 
-fn compile_with_pipeline_request(
+pub(crate) fn compile_with_pipeline_request(
     mut request: CompilePipelineRequest<'_>,
 ) -> crate::error::RR<(String, Vec<MapEntry>, usize, usize)> {
     // Proof correspondence:
-    // `proof/pipeline_correspondence.md` ties the reduced
+    // `proof/README.md` ties the reduced
     // lowering/codegen/pipeline proof layers, including the newer
     // `PipelineBlockEnvSubset` / `PipelineFnEnvSubset` / `PipelineFnCfgSubset`
     // shells, to this top-level Rust pipeline entry point.
@@ -303,16 +307,16 @@ fn compile_with_pipeline_request(
         )?;
 
         let mut all_fns = program.take_all_fns_map()?;
-        let tachyon_metrics = run_tachyon_phase(
-            &ui,
-            TOTAL_STEPS,
+        let tachyon_metrics = run_tachyon_phase(TachyonPhaseRequest {
+            ui: &ui,
+            total_steps: TOTAL_STEPS,
             optimize,
-            request.opt_level,
-            request.output_opts.compile_mode,
-            &mut all_fns,
-            &scheduler,
-            request.optimized_mir_cache_root.as_deref(),
-        )?;
+            opt_level: request.opt_level,
+            compile_mode: request.output_opts.compile_mode,
+            all_fns: &mut all_fns,
+            scheduler: &scheduler,
+            optimized_mir_cache_root: request.optimized_mir_cache_root.as_deref(),
+        })?;
         verify_emittable_program(&all_fns)?;
         program.restore_all_fns_map(all_fns)?;
         let top_level_call_names = program.top_level_call_names();
@@ -323,19 +327,19 @@ fn compile_with_pipeline_request(
         };
 
         let (final_output, final_source_map, emit_cache_hits, emit_cache_misses, emit_metrics) =
-            emit_r_functions_cached(
-                &ui,
-                TOTAL_STEPS,
-                &program,
-                &emit_order,
-                &program.top_level_calls,
-                request.opt_level,
-                request.type_cfg,
-                request.parallel_cfg,
-                &scheduler,
-                request.output_opts,
-                request.cache,
-            )?;
+            emit_r_functions_cached(EmitFunctionsRequest {
+                ui: &ui,
+                total_steps: TOTAL_STEPS,
+                program: &program,
+                emit_order: &emit_order,
+                top_level_calls: &program.top_level_calls,
+                opt_level: request.opt_level,
+                type_cfg: request.type_cfg,
+                parallel_cfg: request.parallel_cfg,
+                scheduler: &scheduler,
+                output_opts: request.output_opts,
+                cache: request.cache,
+            })?;
 
         let runtime_started = Instant::now();
         let final_code = if request.output_opts.inject_runtime {
@@ -446,7 +450,7 @@ fn compile_with_pipeline_request(
     })
 }
 
-fn verify_emittable_program(
+pub(crate) fn verify_emittable_program(
     all_fns: &FxHashMap<String, crate::mir::def::FnIR>,
 ) -> crate::error::RR<()> {
     let mut names: Vec<&String> = all_fns.keys().collect();

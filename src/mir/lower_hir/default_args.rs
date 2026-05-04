@@ -1,11 +1,12 @@
+use super::*;
 impl<'a> MirLowerer<'a> {
     // Most math/data builtins are treated as intrinsics by later passes.
     // Only the small scalar-indexing group is allowed to shadow base R names.
-    fn allow_user_builtin_shadowing(name: &str) -> bool {
+    pub(crate) fn allow_user_builtin_shadowing(name: &str) -> bool {
         matches!(name, "length" | "floor" | "round" | "ceiling" | "trunc")
     }
 
-    fn function_name_suggestion_candidates() -> &'static [&'static str] {
+    pub(crate) fn function_name_suggestion_candidates() -> &'static [&'static str] {
         &[
             "length",
             "seq_along",
@@ -106,7 +107,7 @@ impl<'a> MirLowerer<'a> {
         ]
     }
 
-    fn suggest_function_name(&self, name: &str) -> Option<String> {
+    pub(crate) fn suggest_function_name(&self, name: &str) -> Option<String> {
         did_you_mean(
             name,
             self.known_functions.keys().cloned().chain(
@@ -117,7 +118,7 @@ impl<'a> MirLowerer<'a> {
         )
     }
 
-    fn render_default_lit(lit: &hir::HirLit) -> String {
+    pub(crate) fn render_default_lit(lit: &hir::HirLit) -> String {
         match lit {
             hir::HirLit::Int(i) => format!("{i}L"),
             hir::HirLit::Double(f) => {
@@ -135,14 +136,14 @@ impl<'a> MirLowerer<'a> {
         }
     }
 
-    fn render_default_unop(op: &hir::HirUnOp) -> &'static str {
+    pub(crate) fn render_default_unop(op: &hir::HirUnOp) -> &'static str {
         match op {
             hir::HirUnOp::Not => "!",
             hir::HirUnOp::Neg => "-",
         }
     }
 
-    fn render_default_binop(op: &hir::HirBinOp) -> &'static str {
+    pub(crate) fn render_default_binop(op: &hir::HirBinOp) -> &'static str {
         match op {
             hir::HirBinOp::Add => "+",
             hir::HirBinOp::Sub => "-",
@@ -161,7 +162,7 @@ impl<'a> MirLowerer<'a> {
         }
     }
 
-    fn render_default_arg(&self, arg: &hir::HirArg) -> RR<String> {
+    pub(crate) fn render_default_arg(&self, arg: &hir::HirArg) -> RR<String> {
         match arg {
             hir::HirArg::Pos(expr) => self.render_default_expr(expr),
             hir::HirArg::Named { name, value } => {
@@ -178,7 +179,7 @@ impl<'a> MirLowerer<'a> {
         }
     }
 
-    fn render_default_expr(&self, expr: &hir::HirExpr) -> RR<String> {
+    pub(crate) fn render_default_expr(&self, expr: &hir::HirExpr) -> RR<String> {
         match expr {
             hir::HirExpr::Local(local) => self.var_names.get(local).cloned().ok_or_else(|| {
                 InternalCompilerError::new(

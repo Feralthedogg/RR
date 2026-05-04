@@ -1,4 +1,5 @@
-pub(in super::super) fn strip_empty_else_blocks_ir(lines: Vec<String>) -> Vec<String> {
+use super::*;
+pub(crate) fn strip_empty_else_blocks_ir(lines: Vec<String>) -> Vec<String> {
     if !has_empty_else_block_candidates_ir(&lines) {
         return lines;
     }
@@ -7,7 +8,7 @@ pub(in super::super) fn strip_empty_else_blocks_ir(lines: Vec<String>) -> Vec<St
     program.into_lines()
 }
 
-fn apply_strip_empty_else_blocks_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_strip_empty_else_blocks_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -39,7 +40,7 @@ fn apply_strip_empty_else_blocks_ir(program: &mut EmittedProgram) {
     }
 }
 
-fn parse_singleton_list_match_cond_ir(line: &str) -> Option<String> {
+pub(crate) fn parse_singleton_list_match_cond_ir(line: &str) -> Option<String> {
     let pattern = format!(
         r#"^if \(\(\(length\((?P<base>{})\) == 1L\) & TRUE\)\) \{{$"#,
         IDENT_PATTERN
@@ -48,7 +49,7 @@ fn parse_singleton_list_match_cond_ir(line: &str) -> Option<String> {
     Some(caps.name("base")?.as_str().to_string())
 }
 
-fn parse_single_field_record_match_cond_ir(line: &str) -> Option<(String, String)> {
+pub(crate) fn parse_single_field_record_match_cond_ir(line: &str) -> Option<(String, String)> {
     let pattern = format!(
         r#"^if \(\(\(TRUE & rr_field_exists\((?P<base>{}), "(?P<field>[^"]+)"\)\) & TRUE\)\) \{{$"#,
         IDENT_PATTERN
@@ -60,7 +61,7 @@ fn parse_single_field_record_match_cond_ir(line: &str) -> Option<(String, String
     ))
 }
 
-fn has_restore_empty_match_single_bind_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_restore_empty_match_single_bind_candidates_ir(lines: &[String]) -> bool {
     for idx in 0..lines.len().saturating_sub(3) {
         if lines[idx + 1].trim() != "} else {" || lines[idx + 3].trim() != "}" {
             continue;
@@ -85,7 +86,7 @@ fn has_restore_empty_match_single_bind_candidates_ir(lines: &[String]) -> bool {
     false
 }
 
-fn has_empty_else_block_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_empty_else_block_candidates_ir(lines: &[String]) -> bool {
     for idx in 0..lines.len().saturating_sub(1) {
         if lines[idx].trim() != "} else {" {
             continue;
@@ -101,7 +102,7 @@ fn has_empty_else_block_candidates_ir(lines: &[String]) -> bool {
     false
 }
 
-fn apply_restore_empty_match_single_bind_arms_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_restore_empty_match_single_bind_arms_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -159,7 +160,7 @@ fn apply_restore_empty_match_single_bind_arms_ir(program: &mut EmittedProgram) {
     }
 }
 
-pub(in super::super) fn run_empty_else_match_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_empty_else_match_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
     let needs_empty_else = has_empty_else_block_candidates_ir(&lines);
     let needs_match_phi = has_restore_empty_match_single_bind_candidates_ir(&lines);
     if !needs_empty_else && !needs_match_phi {

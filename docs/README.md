@@ -9,7 +9,13 @@ repository, but the reading order is user-first: how to write RR, compile it,
 and run it comes before compiler structure. Compiler contributor manuals live
 under `docs/compiler/`.
 
-Current compiler line: `RR Tachyon v1.3.0`.
+Current compiler line: `RR Tachyon v2.0.0`.
+
+Current user-facing raw R escape surface:
+
+- `unsafe r { ... }` for deliberate read/write raw R interop
+- `unsafe r(read) { ... }` for read-only raw R probes that should not force the
+  containing MIR function into opaque interop
 
 ## Manual Organization
 
@@ -36,6 +42,7 @@ compiler change?" separate instead of mixing them into one page.
 If you are using RR:
 
 - [Getting Started](getting-started.md)
+- [What Is New in 2.0](whats-new-2.0.md)
 - [RR for R Users](r-for-r-users.md)
 - [Writing RR for Performance and Safety](writing-rr.md)
 - [CLI Reference](cli.md)
@@ -46,6 +53,7 @@ If you are validating generated output:
 - [Configuration](configuration.md)
 - [Compatibility and Limits](compatibility.md)
 - [R Interop](r-interop.md)
+- [Package Manager Design](package-manager-design.md)
 
 If you are working on the compiler:
 
@@ -56,12 +64,16 @@ If you are working on the compiler:
 - [Parallel Compilation Design](compiler/parallel-compilation.md)
 - [IR Model](compiler/ir-model.md)
 - [Tachyon Engine](compiler/optimization.md)
+- [Compile-Time Reduction Plan](compiler/compile-time-reduction.md)
+- [MIR SROA Design](compiler/sroa.md)
+- [Unsafe Boundaries](compiler/unsafe-boundaries.md)
 - [Testing and Quality Gates](compiler/testing.md)
 - [Contributing Audit Checklist](compiler/contributing-audit.md)
 
 ## Documentation Conventions
 
 - User-facing pages state commands, workflows, guarantees, and limits before implementation detail.
+- Release-line pages state migration impact before optimizer internals.
 - Internal pages state phase boundaries, invariants, and failure modes before code layout.
 - Testing pages are treated as product contract, not as contributor-only notes.
 - Pages prefer exact file paths, pass names, flags, and helper names over vague summaries.

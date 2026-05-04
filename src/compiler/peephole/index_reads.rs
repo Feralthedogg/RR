@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn literal_field_get_re() -> Option<&'static Regex> {
+pub(crate) fn literal_field_get_re() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(format!(
@@ -11,11 +11,11 @@ pub(super) fn literal_field_get_re() -> Option<&'static Regex> {
     .as_ref()
 }
 
-pub(super) fn rewrite_literal_field_get_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_literal_field_get_calls(lines: Vec<String>) -> Vec<String> {
     rewrite_literal_field_get_calls_ir(lines)
 }
 
-pub(super) fn literal_record_field_name(arg: &str) -> Option<String> {
+pub(crate) fn literal_record_field_name(arg: &str) -> Option<String> {
     let trimmed = arg.trim();
     let inner = trimmed
         .strip_prefix('"')
@@ -30,18 +30,18 @@ pub(super) fn literal_record_field_name(arg: &str) -> Option<String> {
         .then(|| inner.to_string())
 }
 
-pub(super) fn rewrite_literal_named_list_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_literal_named_list_calls(lines: Vec<String>) -> Vec<String> {
     rewrite_literal_named_list_calls_ir(lines)
 }
 
-pub(super) fn expr_is_safe_scalar_index_source(expr: &str) -> bool {
+pub(crate) fn expr_is_safe_scalar_index_source(expr: &str) -> bool {
     let expr = expr.trim();
     expr.starts_with("rr_idx_cube_vec_i(")
         || expr.starts_with("rr_wrap_index_vec_i(")
         || expr_is_floor_clamped_scalar_index_source(expr)
 }
 
-pub(super) fn expr_is_floor_clamped_scalar_index_source(expr: &str) -> bool {
+pub(crate) fn expr_is_floor_clamped_scalar_index_source(expr: &str) -> bool {
     let mut compact = compact_expr(expr);
     if compact.starts_with('(') && compact.ends_with(')') {
         compact = compact[1..compact.len() - 1].to_string();
@@ -52,7 +52,7 @@ pub(super) fn expr_is_floor_clamped_scalar_index_source(expr: &str) -> bool {
         || compact.starts_with("pmin(pmax(1.0+floor(")
 }
 
-fn find_next_callee<'a>(
+pub(crate) fn find_next_callee<'a>(
     line: &str,
     search_start: usize,
     callees: &'a [&'a str],
@@ -67,7 +67,7 @@ fn find_next_callee<'a>(
         .min_by_key(|(_, start)| *start)
 }
 
-fn find_call_end(line: &str, call_start: usize) -> Option<usize> {
+pub(crate) fn find_call_end(line: &str, call_start: usize) -> Option<usize> {
     let mut depth = 0i32;
     for (off, ch) in line[call_start..].char_indices() {
         match ch {
@@ -84,7 +84,7 @@ fn find_call_end(line: &str, call_start: usize) -> Option<usize> {
     None
 }
 
-fn rewrite_index_access_calls_in_line(
+pub(crate) fn rewrite_index_access_calls_in_line(
     mut rewritten: String,
     safe_index_vars: &FxHashSet<String>,
     scalar_positive: &FxHashSet<String>,
@@ -93,14 +93,11 @@ fn rewrite_index_access_calls_in_line(
     current_idx: usize,
 ) -> String {
     let mut search_start = 0usize;
-    loop {
-        let Some((callee, start)) = find_next_callee(
-            &rewritten,
-            search_start,
-            &["rr_index1_read", "rr_index1_write"],
-        ) else {
-            break;
-        };
+    while let Some((callee, start)) = find_next_callee(
+        &rewritten,
+        search_start,
+        &["rr_index1_read", "rr_index1_write"],
+    ) {
         let call_start = start + callee.len();
         let Some(call_end) = find_call_end(&rewritten, call_start) else {
             break;
@@ -117,13 +114,12 @@ fn rewrite_index_access_calls_in_line(
                 let ctx_ok = args.len() == 2 || is_literal_index_ctx(&args[2]);
                 if !plain_ident_re().is_some_and(|re| re.is_match(base)) || !ctx_ok {
                     None
-                } else if idx.starts_with("rr_wrap_index_vec_i(") {
-                    Some(format!("{base}[{idx}]"))
-                } else if safe_index_vars.contains(idx) || expr_is_safe_scalar_index_source(idx) {
-                    Some(format!("{base}[{idx}]"))
-                } else if plain_ident_re().is_some_and(|re| re.is_match(idx))
-                    && scalar_positive.contains(idx)
-                    && vector_lens.get(base).map(String::as_str) == Some(idx)
+                } else if idx.starts_with("rr_wrap_index_vec_i(")
+                    || safe_index_vars.contains(idx)
+                    || expr_is_safe_scalar_index_source(idx)
+                    || (plain_ident_re().is_some_and(|re| re.is_match(idx))
+                        && scalar_positive.contains(idx)
+                        && vector_lens.get(base).map(String::as_str) == Some(idx))
                 {
                     Some(format!("{base}[{idx}]"))
                 } else if let Some((outer, bound, inner)) = parse_flat_positive_loop_index_expr(idx)
@@ -158,7 +154,7 @@ fn rewrite_index_access_calls_in_line(
     rewritten
 }
 
-pub(super) fn rewrite_index_access_patterns(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_index_access_patterns(lines: Vec<String>) -> Vec<String> {
     if !lines.iter().any(|line| {
         line.contains("rr_index1_read(")
             || (line.contains("rr_index1_write(") && line.contains("rr_wrap_index_vec_i("))
@@ -237,7 +233,7 @@ pub(super) fn rewrite_index_access_patterns(lines: Vec<String>) -> Vec<String> {
     out
 }
 
-pub(super) fn rewrite_safe_named_index_read_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_safe_named_index_read_calls(lines: Vec<String>) -> Vec<String> {
     if !lines.iter().any(|line| line.contains("rr_index1_read(")) {
         return lines;
     }
@@ -275,11 +271,8 @@ pub(super) fn rewrite_safe_named_index_read_calls(lines: Vec<String>) -> Vec<Str
         }
 
         let mut search_start = 0usize;
-        loop {
-            let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
-            else {
-                break;
-            };
+        while let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
+        {
             let call_start = start + "rr_index1_read".len();
             let Some(call_end) = find_call_end(&rewritten, call_start) else {
                 break;
@@ -313,7 +306,7 @@ pub(super) fn rewrite_safe_named_index_read_calls(lines: Vec<String>) -> Vec<Str
     out
 }
 
-pub(super) fn parse_flat_positive_loop_index_expr(expr: &str) -> Option<(String, String, String)> {
+pub(crate) fn parse_flat_positive_loop_index_expr(expr: &str) -> Option<(String, String, String)> {
     let mut compact = compact_expr(expr);
     if compact.starts_with('(') && compact.ends_with(')') {
         compact = compact[1..compact.len() - 1].to_string();
@@ -330,7 +323,7 @@ pub(super) fn parse_flat_positive_loop_index_expr(expr: &str) -> Option<(String,
     ))
 }
 
-pub(super) fn rewrite_safe_flat_loop_index_read_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_safe_flat_loop_index_read_calls(lines: Vec<String>) -> Vec<String> {
     if !lines.iter().any(|line| line.contains("rr_index1_read(")) {
         return lines;
     }
@@ -341,11 +334,8 @@ pub(super) fn rewrite_safe_flat_loop_index_read_calls(lines: Vec<String>) -> Vec
         }
         let mut rewritten = out[idx].clone();
         let mut search_start = 0usize;
-        loop {
-            let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
-            else {
-                break;
-            };
+        while let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
+        {
             let call_start = start + "rr_index1_read".len();
             let Some(call_end) = find_call_end(&rewritten, call_start) else {
                 break;
@@ -385,7 +375,7 @@ pub(super) fn rewrite_safe_flat_loop_index_read_calls(lines: Vec<String>) -> Vec
     out
 }
 
-pub(super) fn is_length_preserving_call(name: &str) -> bool {
+pub(crate) fn is_length_preserving_call(name: &str) -> bool {
     matches!(
         name,
         "abs"
@@ -405,7 +395,7 @@ pub(super) fn is_length_preserving_call(name: &str) -> bool {
     )
 }
 
-pub(super) fn expr_is_length_preserving_shape(expr: &str) -> bool {
+pub(crate) fn expr_is_length_preserving_shape(expr: &str) -> bool {
     let expr = expr.trim();
     if expr.is_empty() || expr.contains("<-") || expr.contains("function(") {
         return false;
@@ -419,7 +409,7 @@ pub(super) fn expr_is_length_preserving_shape(expr: &str) -> bool {
     })
 }
 
-pub(super) fn infer_same_len_expr(
+pub(crate) fn infer_same_len_expr(
     expr: &str,
     vector_lens: &FxHashMap<String, String>,
 ) -> Option<String> {
@@ -478,7 +468,7 @@ pub(super) fn infer_same_len_expr(
         .then_some(first)
 }
 
-pub(super) fn rewrite_same_len_scalar_tail_reads(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_same_len_scalar_tail_reads(lines: Vec<String>) -> Vec<String> {
     if !lines.iter().any(|line| line.contains("rr_index1_read(")) {
         return lines;
     }
@@ -498,11 +488,8 @@ pub(super) fn rewrite_same_len_scalar_tail_reads(lines: Vec<String>) -> Vec<Stri
         let mut rewritten = line;
 
         let mut search_start = 0usize;
-        loop {
-            let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
-            else {
-                break;
-            };
+        while let Some((_, start)) = find_next_callee(&rewritten, search_start, &["rr_index1_read"])
+        {
             let call_start = start + "rr_index1_read".len();
             let Some(call_end) = find_call_end(&rewritten, call_start) else {
                 break;
@@ -563,11 +550,11 @@ pub(super) fn rewrite_same_len_scalar_tail_reads(lines: Vec<String>) -> Vec<Stri
     out
 }
 
-pub(super) fn is_literal_index_ctx(arg: &str) -> bool {
+pub(crate) fn is_literal_index_ctx(arg: &str) -> bool {
     matches!(arg.trim(), "\"index\"" | "'index'")
 }
 
-pub(super) fn rewrite_wrap_index_scalar_access_helpers(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_wrap_index_scalar_access_helpers(lines: Vec<String>) -> Vec<String> {
     if !lines.iter().any(|line| {
         line.contains("rr_wrap_index_vec_i(")
             && (line.contains("rr_index1_read(") || line.contains("rr_index1_write("))

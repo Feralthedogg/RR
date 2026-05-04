@@ -1,4 +1,7 @@
-fn reduction_op_symbol(kind: ReduceKind) -> &'static str {
+use super::*;
+use crate::mir::value_dependencies;
+use rustc_hash::FxHashSet;
+pub(crate) fn reduction_op_symbol(kind: ReduceKind) -> &'static str {
     match kind {
         ReduceKind::Sum => "sum",
         ReduceKind::Prod => "prod",
@@ -7,30 +10,33 @@ fn reduction_op_symbol(kind: ReduceKind) -> &'static str {
     }
 }
 
-fn is_same_named_value(fn_ir: &FnIR, value: ValueId, name: &str) -> bool {
-    fn rec(
-        fn_ir: &FnIR,
-        value: ValueId,
-        name: &str,
-        seen: &mut rustc_hash::FxHashSet<ValueId>,
-    ) -> bool {
+pub(crate) fn is_same_named_value(fn_ir: &FnIR, value: ValueId, name: &str) -> bool {
+    let mut stack = vec![value];
+    let mut seen = FxHashSet::default();
+    while let Some(value) = stack.pop() {
         if !seen.insert(value) {
-            return false;
+            continue;
         }
-        if fn_ir.values[value].origin_var.as_deref() == Some(name) {
+        let Some(row) = fn_ir.values.get(value) else {
+            continue;
+        };
+        if row.origin_var.as_deref() == Some(name) {
             return true;
         }
-        match &fn_ir.values[value].kind {
-            ValueKind::Load { var } => var == name,
-            ValueKind::Phi { args } => args.iter().any(|(arg, _)| rec(fn_ir, *arg, name, seen)),
-            _ => false,
+        match &row.kind {
+            ValueKind::Load { var } if var == name => return true,
+            ValueKind::Phi { args } => stack.extend(args.iter().map(|(arg, _)| *arg)),
+            _ => {}
         }
     }
-
-    rec(fn_ir, value, name, &mut rustc_hash::FxHashSet::default())
+    false
 }
 
-fn index_reads_nested_2d_rect(fn_ir: &FnIR, scop: &ScopRegion, value: ValueId) -> Option<ValueId> {
+pub(crate) fn index_reads_nested_2d_rect(
+    fn_ir: &FnIR,
+    scop: &ScopRegion,
+    value: ValueId,
+) -> Option<ValueId> {
     if scop.dimensions.len() != 2 {
         return None;
     }
@@ -52,7 +58,11 @@ fn index_reads_nested_2d_rect(fn_ir: &FnIR, scop: &ScopRegion, value: ValueId) -
     }
 }
 
-fn seed_assignment_outside_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> Option<ValueId> {
+pub(crate) fn seed_assignment_outside_loop(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    var: &str,
+) -> Option<ValueId> {
     let mut seed = None;
     for (bid, block) in fn_ir.blocks.iter().enumerate() {
         if lp.body.contains(&bid) {
@@ -70,7 +80,7 @@ fn seed_assignment_outside_loop(fn_ir: &FnIR, lp: &LoopInfo, var: &str) -> Optio
     seed
 }
 
-fn build_nested_2d_full_matrix_reduce_value(
+pub(crate) fn build_nested_2d_full_matrix_reduce_value(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -85,7 +95,7 @@ fn build_nested_2d_full_matrix_reduce_value(
     Some((assignment, guard))
 }
 
-fn build_nested_2d_reduce_assignment(
+pub(crate) fn build_nested_2d_reduce_assignment(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -219,7 +229,7 @@ fn build_nested_2d_reduce_assignment(
     ))
 }
 
-fn build_multi_nested_2d_full_matrix_reduce_assignments(
+pub(crate) fn build_multi_nested_2d_full_matrix_reduce_assignments(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -249,7 +259,11 @@ fn build_multi_nested_2d_full_matrix_reduce_assignments(
     (!assignments.is_empty()).then_some((assignments, guards))
 }
 
-fn index_reads_nested_3d_cube(fn_ir: &FnIR, scop: &ScopRegion, value: ValueId) -> Option<ValueId> {
+pub(crate) fn index_reads_nested_3d_cube(
+    fn_ir: &FnIR,
+    scop: &ScopRegion,
+    value: ValueId,
+) -> Option<ValueId> {
     if scop.dimensions.len() != 3 {
         return None;
     }
@@ -271,7 +285,7 @@ fn index_reads_nested_3d_cube(fn_ir: &FnIR, scop: &ScopRegion, value: ValueId) -
     }
 }
 
-fn build_nested_3d_full_cube_map_assignment(
+pub(crate) fn build_nested_3d_full_cube_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
     dest: ValueId,
@@ -362,7 +376,7 @@ fn build_nested_3d_full_cube_map_assignment(
     ))
 }
 
-fn build_multi_nested_3d_full_cube_map_assignments(
+pub(crate) fn build_multi_nested_3d_full_cube_map_assignments(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(Vec<PreparedVectorAssignment>, Vec<Array3MapOperands>)> {
@@ -405,7 +419,7 @@ fn build_multi_nested_3d_full_cube_map_assignments(
     (!assignments.is_empty()).then_some((assignments, guards))
 }
 
-fn build_single_nested_3d_full_cube_map_assignment(
+pub(crate) fn build_single_nested_3d_full_cube_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(PreparedVectorAssignment, Array3MapOperands)> {
@@ -417,7 +431,7 @@ fn build_single_nested_3d_full_cube_map_assignment(
     Some((assignments.pop()?, guards.pop()?))
 }
 
-fn build_nested_3d_full_cube_reduce_assignment(
+pub(crate) fn build_nested_3d_full_cube_reduce_assignment(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -555,7 +569,7 @@ fn build_nested_3d_full_cube_reduce_assignment(
     ))
 }
 
-fn build_multi_nested_3d_full_cube_reduce_assignments(
+pub(crate) fn build_multi_nested_3d_full_cube_reduce_assignments(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -585,7 +599,7 @@ fn build_multi_nested_3d_full_cube_reduce_assignments(
     (!assignments.is_empty()).then_some((assignments, guards))
 }
 
-fn build_single_nested_3d_full_cube_reduce_assignment(
+pub(crate) fn build_single_nested_3d_full_cube_reduce_assignment(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -598,36 +612,44 @@ fn build_single_nested_3d_full_cube_reduce_assignment(
     Some((assignments.pop()?, guards.pop()?))
 }
 
-fn expr_contains_loop_read(fn_ir: &FnIR, scop: &ScopRegion, root: ValueId) -> bool {
-    let root = resolve_scop_local_source(fn_ir, scop, root);
-    match &fn_ir.values[root].kind {
-        ValueKind::Index1D { .. } => index_reads_loop_vector(fn_ir, scop, root).is_some(),
-        ValueKind::Index2D { c, .. } => index_reads_2d_col_vector(fn_ir, scop, root, *c).is_some(),
-        ValueKind::Index3D { j, k, .. } => {
-            index_reads_3d_dim1_vector(fn_ir, scop, root, *j, *k).is_some()
+pub(crate) fn expr_contains_loop_read(fn_ir: &FnIR, scop: &ScopRegion, root: ValueId) -> bool {
+    let mut stack = vec![root];
+    let mut seen = FxHashSet::default();
+    while let Some(value) = stack.pop() {
+        let value = resolve_scop_local_source(fn_ir, scop, value);
+        if !seen.insert(value) {
+            continue;
         }
-        ValueKind::Binary { lhs, rhs, .. } => {
-            expr_contains_loop_read(fn_ir, scop, *lhs) || expr_contains_loop_read(fn_ir, scop, *rhs)
+        let Some(row) = fn_ir.values.get(value) else {
+            continue;
+        };
+        match &row.kind {
+            ValueKind::Index1D { .. } if index_reads_loop_vector(fn_ir, scop, value).is_some() => {
+                return true;
+            }
+            ValueKind::Index2D { c, .. }
+                if index_reads_2d_col_vector(fn_ir, scop, value, *c).is_some() =>
+            {
+                return true;
+            }
+            ValueKind::Index3D { j, k, .. }
+                if index_reads_3d_dim1_vector(fn_ir, scop, value, *j, *k).is_some() =>
+            {
+                return true;
+            }
+            _ => {
+                stack.extend(value_dependencies(&row.kind));
+            }
         }
-        ValueKind::Unary { rhs, .. } => expr_contains_loop_read(fn_ir, scop, *rhs),
-        ValueKind::Call { args, .. } | ValueKind::Intrinsic { args, .. } => args
-            .iter()
-            .any(|arg| expr_contains_loop_read(fn_ir, scop, *arg)),
-        ValueKind::Phi { args } => args
-            .iter()
-            .any(|(arg, _)| expr_contains_loop_read(fn_ir, scop, *arg)),
-        ValueKind::Len { base } | ValueKind::Indices { base } => {
-            expr_contains_loop_read(fn_ir, scop, *base)
-        }
-        ValueKind::Range { start, end } => {
-            expr_contains_loop_read(fn_ir, scop, *start)
-                || expr_contains_loop_read(fn_ir, scop, *end)
-        }
-        _ => false,
     }
+    false
 }
 
-fn build_reduce_plan(fn_ir: &FnIR, lp: &LoopInfo, scop: &ScopRegion) -> Option<VectorPlan> {
+pub(crate) fn build_reduce_plan(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    scop: &ScopRegion,
+) -> Option<VectorPlan> {
     if scop.dimensions.len() != 1 {
         return None;
     }
@@ -761,11 +783,15 @@ fn build_reduce_plan(fn_ir: &FnIR, lp: &LoopInfo, scop: &ScopRegion) -> Option<V
     None
 }
 
-fn build_identity_plan(fn_ir: &FnIR, lp: &LoopInfo, scop: &ScopRegion) -> Option<VectorPlan> {
+pub(crate) fn build_identity_plan(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    scop: &ScopRegion,
+) -> Option<VectorPlan> {
     build_map_plan(fn_ir, lp, scop).or_else(|| build_reduce_plan(fn_ir, lp, scop))
 }
 
-fn replace_reduction_result_in_assignment(
+pub(crate) fn replace_reduction_result_in_assignment(
     fn_ir: &mut FnIR,
     out_val: ValueId,
     new_reduce_val: ValueId,
@@ -801,7 +827,7 @@ fn replace_reduction_result_in_assignment(
     }
 }
 
-fn combine_optional_same(lhs: Option<ValueId>, rhs: Option<ValueId>) -> Option<ValueId> {
+pub(crate) fn combine_optional_same(lhs: Option<ValueId>, rhs: Option<ValueId>) -> Option<ValueId> {
     match (lhs, rhs) {
         (Some(a), Some(b)) if a == b => Some(a),
         (Some(a), None) => Some(a),
@@ -810,7 +836,7 @@ fn combine_optional_same(lhs: Option<ValueId>, rhs: Option<ValueId>) -> Option<V
     }
 }
 
-fn extract_reduction_op_literal(fn_ir: &FnIR, value: ValueId) -> Option<ValueId> {
+pub(crate) fn extract_reduction_op_literal(fn_ir: &FnIR, value: ValueId) -> Option<ValueId> {
     match &fn_ir.values[value].kind {
         ValueKind::Call { callee, args, .. }
             if matches!(

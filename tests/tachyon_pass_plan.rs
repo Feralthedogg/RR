@@ -125,3 +125,137 @@ fn compute_heavy_o2_profile_can_expose_experimental_group() {
     assert!(profile.contains("\"active_pass_groups\": [\"required\", \"dev-cheap\", \"release-expensive\", \"experimental\"]"));
     assert!(profile.contains("groups=required,dev-cheap,release-expensive,experimental"));
 }
+
+#[test]
+fn o3_profile_enables_aggressive_plan_group_for_balanced_functions() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("tachyon_pass_plan");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "o3_aggressive");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let src_path = proj_dir.join("main.rr");
+    fs::write(
+        &src_path,
+        r#"
+fn helper(x) {
+  let y = x + 1.0
+  return y
+}
+
+fn main() {
+  print(helper(41.0))
+}
+main()
+"#,
+    )
+    .expect("failed to write O3 main.rr");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("profile.json");
+    let profile = compile_profile(&rr_bin, &src_path, &out_dir, &profile_path, &["-O3"]);
+    assert!(profile.contains("\"active_pass_groups\": [\"required\", \"dev-cheap\", \"release-expensive\", \"experimental\"]"));
+    assert!(profile.contains("groups=required,dev-cheap,release-expensive,experimental"));
+}
+
+#[test]
+fn oz_profile_is_accepted_and_avoids_experimental_group() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("tachyon_pass_plan");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "oz_size");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let src_path = proj_dir.join("main.rr");
+    fs::write(
+        &src_path,
+        r#"
+fn main() {
+  let xs = c(1.0, 2.0, 3.0)
+  print(sum(xs))
+}
+main()
+"#,
+    )
+    .expect("failed to write Oz main.rr");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("profile.json");
+    let profile = compile_profile(&rr_bin, &src_path, &out_dir, &profile_path, &["-Oz"]);
+    assert!(
+        profile.contains(
+            "\"active_pass_groups\": [\"required\", \"dev-cheap\", \"release-expensive\"]"
+        )
+    );
+    assert!(!profile.contains("experimental"));
+    assert!(profile.contains("groups=required,dev-cheap,release-expensive"));
+}
+
+#[test]
+fn profile_use_and_mir_dump_are_wired_into_tachyon() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("tachyon_pass_plan");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "profile_use_dump");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+
+    let src_path = proj_dir.join("main.rr");
+    fs::write(
+        &src_path,
+        r#"
+fn hot(n) {
+  let acc = 0.0
+  let i = 1.0
+  while (i <= n) {
+    acc = acc + i
+    i = i + 1.0
+  }
+  return acc
+}
+
+fn main() {
+  print(hot(8.0))
+}
+main()
+"#,
+    )
+    .expect("failed to write profile-use main.rr");
+    let profile_use_path = proj_dir.join("hot-counts.txt");
+    fs::write(&profile_use_path, "hot=1000\n").expect("failed to write profile counts");
+
+    let rr_bin = PathBuf::from(env!("CARGO_BIN_EXE_RR"));
+    let out_dir = proj_dir.join("out");
+    let profile_path = proj_dir.join("profile.json");
+    let dump_dir = proj_dir.join("mir-dumps");
+    let status = Command::new(&rr_bin)
+        .arg("build")
+        .arg(&src_path)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--profile-compile-out")
+        .arg(&profile_path)
+        .arg("--profile-use")
+        .arg(&profile_use_path)
+        .arg("--no-incremental")
+        .arg("-O3")
+        .env("RR_MIR_DUMP_DIR", &dump_dir)
+        .env("RR_MIR_DUMP_FILTER", "hot")
+        .env("RR_MIR_DUMP_WHEN", "before,after")
+        .status()
+        .expect("failed to run RR build with profile-use");
+    assert!(status.success(), "RR build with profile-use failed");
+
+    let profile = fs::read_to_string(&profile_path).expect("failed to read profile json");
+    assert!(profile.contains("\"pass_decisions\":"));
+    assert!(profile.contains("\"optimization_opportunities\":"));
+    assert!(profile.contains("\"function\": \"hot\""));
+    assert!(profile.contains("\"budget_class\":"));
+
+    let dump_count = fs::read_dir(&dump_dir)
+        .expect("failed to read MIR dump dir")
+        .filter_map(Result::ok)
+        .count();
+    assert!(dump_count > 0, "expected MIR dump files in {:?}", dump_dir);
+}

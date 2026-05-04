@@ -1,7 +1,7 @@
 use super::*;
 
 impl RBackend {
-    fn single_positional_call_arg(
+    pub(crate) fn single_positional_call_arg(
         values: &[Value],
         val_id: usize,
         callee_name: &str,
@@ -27,7 +27,7 @@ impl RBackend {
         Some(args[0])
     }
 
-    fn negated_single_positional_call_arg(
+    pub(crate) fn negated_single_positional_call_arg(
         values: &[Value],
         val_id: usize,
         callee_name: &str,
@@ -42,7 +42,7 @@ impl RBackend {
         Self::single_positional_call_arg(values, *rhs, callee_name)
     }
 
-    fn eq_zero_operand(values: &[Value], val_id: usize) -> Option<usize> {
+    pub(crate) fn eq_zero_operand(values: &[Value], val_id: usize) -> Option<usize> {
         let ValueKind::Binary {
             op: BinOp::Eq,
             lhs,
@@ -60,7 +60,7 @@ impl RBackend {
         }
     }
 
-    fn try_simplify_same_var_non_finite_guard(
+    pub(crate) fn try_simplify_same_var_non_finite_guard(
         &self,
         lhs: usize,
         rhs: usize,
@@ -80,7 +80,7 @@ impl RBackend {
         None
     }
 
-    fn try_simplify_not_finite_or_zero_guard(
+    pub(crate) fn try_simplify_not_finite_or_zero_guard(
         &self,
         lhs: usize,
         rhs: usize,
@@ -102,7 +102,7 @@ impl RBackend {
         None
     }
 
-    pub(super) fn named_mutable_base_expr(
+    pub(crate) fn named_mutable_base_expr(
         val_id: usize,
         values: &[Value],
         value_bindings: &FxHashMap<usize, (String, u64)>,
@@ -121,7 +121,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn resolve_val(
+    pub(crate) fn resolve_val(
         &self,
         val_id: usize,
         values: &[Value],
@@ -226,7 +226,16 @@ impl RBackend {
                 idx,
                 is_safe,
                 is_na_safe,
-            } => self.resolve_index1d_expr(*base, *idx, *is_safe, *is_na_safe, values, params),
+            } => self.resolve_index1d_expr(
+                *base,
+                *idx,
+                index_emit::IndexReadSafety {
+                    bounds_safe: *is_safe,
+                    na_safe: *is_na_safe,
+                },
+                values,
+                params,
+            ),
             ValueKind::Index2D { base, r, c } => {
                 self.resolve_index2d_expr(*base, *r, *c, values, params)
             }
@@ -240,7 +249,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn resolve_param(&self, index: usize, params: &[String]) -> String {
+    pub(crate) fn resolve_param(&self, index: usize, params: &[String]) -> String {
         if index < params.len() {
             params[index].clone()
         } else {
@@ -248,7 +257,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn resolve_binary_expr(
+    pub(crate) fn resolve_binary_expr(
         &self,
         val: &Value,
         op: BinOp,
@@ -328,7 +337,7 @@ impl RBackend {
         format!("({} {} {})", l, Self::binary_op_str(op), r)
     }
 
-    pub(super) fn resolve_live_const_origin_var(
+    pub(crate) fn resolve_live_const_origin_var(
         &self,
         val_id: usize,
         values: &[Value],
@@ -349,7 +358,7 @@ impl RBackend {
         None
     }
 
-    pub(super) fn resolve_unary_expr(
+    pub(crate) fn resolve_unary_expr(
         &self,
         op: UnaryOp,
         rhs: usize,
@@ -379,7 +388,7 @@ impl RBackend {
         format!("({}({}))", Self::unary_op_str(op), r)
     }
 
-    pub(super) fn resolve_call_expr(
+    pub(crate) fn resolve_call_expr(
         &self,
         val: &Value,
         callee: &str,
@@ -513,7 +522,7 @@ impl RBackend {
         format!("{}({})", rendered_callee, arg_list)
     }
 
-    pub(super) fn resolve_rr_idx_cube_vec_arg_expr(
+    pub(crate) fn resolve_rr_idx_cube_vec_arg_expr(
         &self,
         val_id: usize,
         values: &[Value],
@@ -526,7 +535,7 @@ impl RBackend {
             .unwrap_or_else(|| self.resolve_preferred_plain_symbol_expr(val_id, values, params))
     }
 
-    pub(super) fn try_resolve_singleton_replace_expr(
+    pub(crate) fn try_resolve_singleton_replace_expr(
         &self,
         val_id: usize,
         values: &[Value],
@@ -571,7 +580,7 @@ impl RBackend {
         Some(format!("replace({}, {}, {})", base, start_expr, scalar))
     }
 
-    pub(super) fn resolve_singleton_assign_scalar_expr(
+    pub(crate) fn resolve_singleton_assign_scalar_expr(
         &self,
         val_id: usize,
         values: &[Value],
@@ -626,7 +635,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn try_render_singleton_assign_call_with_scalar_rhs(
+    pub(crate) fn try_render_singleton_assign_call_with_scalar_rhs(
         &self,
         val_id: usize,
         values: &[Value],
@@ -655,7 +664,7 @@ impl RBackend {
         ))
     }
 
-    pub(super) fn resolve_intrinsic_expr(
+    pub(crate) fn resolve_intrinsic_expr(
         &self,
         op: IntrinsicOp,
         args: &[usize],

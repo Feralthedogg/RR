@@ -1,7 +1,7 @@
-use super::common::*;
+use super::*;
 
 #[test]
-fn does_not_inline_named_scalar_expr_inside_repeat_loop() {
+pub(crate) fn does_not_inline_named_scalar_expr_inside_repeat_loop() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -19,7 +19,7 @@ time <- (time + dt)\n\
 }
 
 #[test]
-fn rewrites_adjacent_duplicate_pure_call_assignments_to_alias() {
+pub(crate) fn rewrites_adjacent_duplicate_pure_call_assignments_to_alias() {
     let input = "\
 Sym_303 <- function() \n\
 {\n\
@@ -35,7 +35,7 @@ Sym_303 <- function() \n\
 }
 
 #[test]
-fn rewrites_adjacent_duplicate_symbol_assignments_to_alias() {
+pub(crate) fn rewrites_adjacent_duplicate_symbol_assignments_to_alias() {
     let input = "\
 Sym_123 <- function(b) \n\
 {\n\
@@ -53,7 +53,7 @@ Sym_123 <- function(b) \n\
 }
 
 #[test]
-fn prunes_dead_zero_loop_seeds_before_for() {
+pub(crate) fn prunes_dead_zero_loop_seeds_before_for() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -78,7 +78,7 @@ for (steps in seq_len(5)) {\n\
 }
 
 #[test]
-fn simplifies_same_var_is_na_or_not_finite_guards() {
+pub(crate) fn simplifies_same_var_is_na_or_not_finite_guards() {
     let input = "\
 Sym_123 <- function() \n\
 {\n\
@@ -100,7 +100,7 @@ alpha <- 0\n\
 }
 
 #[test]
-fn simplifies_not_finite_or_zero_guard_parens() {
+pub(crate) fn simplifies_not_finite_or_zero_guard_parens() {
     let input = "\
 Sym_123 <- function() \n\
 {\n\
@@ -120,7 +120,7 @@ rs_old <- 0.0000001\n\
 }
 
 #[test]
-fn simplifies_wrapped_not_finite_parens() {
+pub(crate) fn simplifies_wrapped_not_finite_parens() {
     let input = "\
 Sym_123 <- function() \n\
 {\n\
@@ -134,7 +134,7 @@ alpha <- 0\n\
 }
 
 #[test]
-fn strips_terminal_repeat_nexts_without_touching_inner_if_nexts() {
+pub(crate) fn strips_terminal_repeat_nexts_without_touching_inner_if_nexts() {
     let input = "\
 Sym_83 <- function() \n\
 {\n\
@@ -158,7 +158,7 @@ next\n\
 }
 
 #[test]
-fn inlines_single_use_named_scalar_pure_calls() {
+pub(crate) fn inlines_single_use_named_scalar_pure_calls() {
     let input = "\
 Sym_222 <- function() \n\
 {\n\
@@ -188,7 +188,7 @@ Sym_222 <- function() \n\
 }
 
 #[test]
-fn rewrites_wrap_index_scalar_access_helpers_to_base_indexing() {
+pub(crate) fn rewrites_wrap_index_scalar_access_helpers_to_base_indexing() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -216,7 +216,7 @@ Sym_top_0()\n";
 }
 
 #[test]
-fn rewrites_straight_line_sym156_helper_call() {
+pub(crate) fn rewrites_straight_line_sym156_helper_call() {
     let input = "\
 Sym_156 <- function(u, v, n_l, n_r, n_d, n_u, size)\n\
 {\n\
@@ -267,7 +267,7 @@ Sym_1 <- function()\n\
 }
 
 #[test]
-fn rewrites_selected_simple_expr_helper_calls_in_text() {
+pub(crate) fn rewrites_selected_simple_expr_helper_calls_in_text() {
     let input = "\
 Sym_244 <- function(v_m2, v_m1, v_c, v_p1, v_p2)\n\
 {\n\
@@ -296,7 +296,7 @@ Sym_303 <- function()\n\
 }
 
 #[test]
-fn substitute_helper_expr_preserves_named_list_labels() {
+pub(crate) fn substitute_helper_expr_preserves_named_list_labels() {
     let bindings = FxHashMap::from_iter([
         (
             "bucket".to_string(),
@@ -317,7 +317,7 @@ fn substitute_helper_expr_preserves_named_list_labels() {
 }
 
 #[test]
-fn restores_missing_scalar_loop_increment_for_repeat_guarded_index_loop() {
+pub(crate) fn restores_missing_scalar_loop_increment_for_repeat_guarded_index_loop() {
     let input = "\
 Sym_1 <- function(n)\n\
 {\n\
@@ -334,7 +334,7 @@ y[i] <- 0L\n\
 }
 
 #[test]
-fn restores_missing_scalar_loop_increment_for_repeat_guarded_reduction_loop() {
+pub(crate) fn restores_missing_scalar_loop_increment_for_repeat_guarded_reduction_loop() {
     let input = "\
 Sym_1 <- function(n)\n\
 {\n\
@@ -354,7 +354,7 @@ acc <- (acc + (i * i))\n\
 }
 
 #[test]
-fn restores_missing_scalar_loop_increment_before_next_branch() {
+pub(crate) fn restores_missing_scalar_loop_increment_before_next_branch() {
     let input = "\
 Sym_1 <- function(n)\n\
 {\n\
@@ -379,7 +379,7 @@ s <- (s + i)\n\
 }
 
 #[test]
-fn restores_missing_scalar_loop_increment_after_nested_if() {
+pub(crate) fn restores_missing_scalar_loop_increment_after_nested_if() {
     let input = "\
 Sym_11 <- function(n, k)\n\
 {\n\
@@ -404,7 +404,7 @@ if ((x[i] > k)) {\n\
 }
 
 #[test]
-fn rewrites_known_length_calls_from_prior_vector_facts() {
+pub(crate) fn rewrites_known_length_calls_from_prior_vector_facts() {
     let mut vector_lens = FxHashMap::default();
     vector_lens.insert("y".to_string(), "n".to_string());
     assert_eq!(
@@ -418,7 +418,7 @@ fn rewrites_known_length_calls_from_prior_vector_facts() {
 }
 
 #[test]
-fn restores_empty_singleton_list_match_arm() {
+pub(crate) fn restores_empty_singleton_list_match_arm() {
     let input = "\
 Sym_9 <- function(v)\n\
 {\n\
@@ -437,7 +437,7 @@ if (((length(v) == 1L) & TRUE)) {\n\
 }
 
 #[test]
-fn restores_empty_single_field_record_match_arm() {
+pub(crate) fn restores_empty_single_field_record_match_arm() {
     let input = "\
 Sym_17 <- function(v)\n\
 {\n\
@@ -456,7 +456,7 @@ if (((TRUE & rr_field_exists(v, \"a\")) & TRUE)) {\n\
 }
 
 #[test]
-fn simplifies_nested_index_vec_floor_calls_in_text() {
+pub(crate) fn simplifies_nested_index_vec_floor_calls_in_text() {
     let input = "\
 Sym_303 <- function()\n\
 {\n\
@@ -476,7 +476,7 @@ Sym_303 <- function()\n\
 }
 
 #[test]
-fn keeps_loop_carried_assignments_that_are_read_elsewhere_in_function() {
+pub(crate) fn keeps_loop_carried_assignments_that_are_read_elsewhere_in_function() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\

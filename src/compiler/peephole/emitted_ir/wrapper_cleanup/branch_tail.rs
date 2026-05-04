@@ -1,4 +1,7 @@
-fn apply_collapse_identical_if_else_tail_assignments_late_ir(program: &mut EmittedProgram) {
+use super::*;
+pub(crate) fn apply_collapse_identical_if_else_tail_assignments_late_ir(
+    program: &mut EmittedProgram,
+) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;

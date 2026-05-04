@@ -1,7 +1,7 @@
 use super::*;
 
 impl<'a> MirLowerer<'a> {
-    pub(super) fn lower_for(
+    pub(crate) fn lower_for(
         &mut self,
         iter: hir::HirForIter,
         body: hir::HirBlock,

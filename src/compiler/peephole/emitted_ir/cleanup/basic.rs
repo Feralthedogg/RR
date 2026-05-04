@@ -1,4 +1,5 @@
-pub(in super::super) fn strip_dead_simple_eval_lines_ir(lines: Vec<String>) -> Vec<String> {
+use super::*;
+pub(crate) fn strip_dead_simple_eval_lines_ir(lines: Vec<String>) -> Vec<String> {
     if !scan_basic_cleanup_candidates_ir(&lines).needs_dead_eval {
         return lines;
     }
@@ -7,7 +8,7 @@ pub(in super::super) fn strip_dead_simple_eval_lines_ir(lines: Vec<String>) -> V
     program.into_lines()
 }
 
-fn apply_strip_dead_simple_eval_lines_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_strip_dead_simple_eval_lines_ir(program: &mut EmittedProgram) {
     program.items = program
         .items
         .drain(..)
@@ -30,12 +31,12 @@ fn apply_strip_dead_simple_eval_lines_ir(program: &mut EmittedProgram) {
         .collect();
 }
 
-fn is_noop_self_assign_stmt(stmt: &EmittedStmt) -> bool {
+pub(crate) fn is_noop_self_assign_stmt(stmt: &EmittedStmt) -> bool {
     stmt.assign_parts()
         .is_some_and(|(lhs, rhs)| lhs.trim() == rhs.trim())
 }
 
-pub(in super::super) fn strip_noop_self_assignments_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn strip_noop_self_assignments_ir(lines: Vec<String>) -> Vec<String> {
     if !scan_basic_cleanup_candidates_ir(&lines).needs_noop_assign {
         return lines;
     }
@@ -44,7 +45,7 @@ pub(in super::super) fn strip_noop_self_assignments_ir(lines: Vec<String>) -> Ve
     program.into_lines()
 }
 
-fn apply_strip_noop_self_assignments_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_strip_noop_self_assignments_ir(program: &mut EmittedProgram) {
     program.items = program
         .items
         .drain(..)
@@ -62,13 +63,13 @@ fn apply_strip_noop_self_assignments_ir(program: &mut EmittedProgram) {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct BasicCleanupCandidatesIr {
-    needs_dead_eval: bool,
-    needs_noop_assign: bool,
-    needs_nested_temp: bool,
+pub(crate) struct BasicCleanupCandidatesIr {
+    pub(crate) needs_dead_eval: bool,
+    pub(crate) needs_noop_assign: bool,
+    pub(crate) needs_nested_temp: bool,
 }
 
-fn scan_basic_cleanup_candidates_ir(lines: &[String]) -> BasicCleanupCandidatesIr {
+pub(crate) fn scan_basic_cleanup_candidates_ir(lines: &[String]) -> BasicCleanupCandidatesIr {
     let mut out = BasicCleanupCandidatesIr::default();
     for line in lines {
         let trimmed = line.trim();
@@ -108,7 +109,7 @@ fn scan_basic_cleanup_candidates_ir(lines: &[String]) -> BasicCleanupCandidatesI
     out
 }
 
-pub(in super::super) fn run_dead_eval_noop_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_dead_eval_noop_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
     let scan = scan_basic_cleanup_candidates_ir(&lines);
     let needs_dead_eval = scan.needs_dead_eval;
     let needs_noop_assign = scan.needs_noop_assign;

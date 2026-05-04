@@ -4,9 +4,7 @@ use super::super::{
 };
 use rustc_hash::FxHashMap;
 
-pub(in super::super) fn rewrite_temp_minus_one_scaled_to_named_scalar(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn rewrite_temp_minus_one_scaled_to_named_scalar(lines: Vec<String>) -> Vec<String> {
     if !lines.iter().any(|line| line.contains(".__rr_cse_"))
         || !lines.iter().any(|line| line.contains("- 1"))
     {
@@ -62,17 +60,15 @@ pub(in super::super) fn rewrite_temp_minus_one_scaled_to_named_scalar(
     out
 }
 
-pub(in super::super) fn strip_redundant_nested_temp_reassigns(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn strip_redundant_nested_temp_reassigns(lines: Vec<String>) -> Vec<String> {
     strip_redundant_nested_temp_reassigns_ir(lines)
 }
 
-pub(in super::super) fn strip_redundant_tail_assign_slice_return(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn strip_redundant_tail_assign_slice_return(lines: Vec<String>) -> Vec<String> {
     strip_redundant_tail_assign_slice_return_ir(lines)
 }
 
-fn function_has_matching_exprmap_whole_assign(
+pub(crate) fn function_has_matching_exprmap_whole_assign(
     lines: &[String],
     dest_var: &str,
     end_expr: &str,
@@ -133,7 +129,7 @@ fn function_has_matching_exprmap_whole_assign(
     false
 }
 
-fn function_has_non_empty_repeat_whole_assign(
+pub(crate) fn function_has_non_empty_repeat_whole_assign(
     lines: &[String],
     dest_var: &str,
     end_expr: &str,
@@ -257,11 +253,11 @@ fn function_has_non_empty_repeat_whole_assign(
     positive && has_one
 }
 
-fn previous_non_empty_line(lines: &[String], idx: usize) -> Option<usize> {
+pub(crate) fn previous_non_empty_line(lines: &[String], idx: usize) -> Option<usize> {
     (0..idx).rev().find(|i| !lines[*i].trim().is_empty())
 }
 
-fn has_assignment_to_one_before(lines: &[String], idx: usize, var: &str) -> bool {
+pub(crate) fn has_assignment_to_one_before(lines: &[String], idx: usize, var: &str) -> bool {
     (0..idx).rev().any(|i| {
         assign_re()
             .and_then(|re| re.captures(lines[i].trim()))

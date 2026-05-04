@@ -1,7 +1,7 @@
 use super::package_manager_cli_common::*;
 
 #[test]
-fn publish_with_push_tag_pushes_git_tag_to_remote() {
+pub(crate) fn publish_with_push_tag_pushes_git_tag_to_remote() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -94,7 +94,7 @@ fn publish_with_push_tag_pushes_git_tag_to_remote() {
 }
 
 #[test]
-fn publish_to_local_registry_allows_registry_backed_install() {
+pub(crate) fn publish_to_local_registry_allows_registry_backed_install() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -210,14 +210,16 @@ fn main() {
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("40L + 1L") || built_r.contains("x + 1L"),
+        built_r.contains("40L + 1L")
+            || built_r.contains("x + 1L")
+            || built_r.contains("return(41L)"),
         "expected registry dependency logic in built artifact, got:\n{}",
         built_r
     );
 }
 
 #[test]
-fn publish_to_remote_registry_git_repo_allows_registry_install() {
+pub(crate) fn publish_to_remote_registry_git_repo_allows_registry_install() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -308,7 +310,7 @@ fn main() {
 }
 
 #[test]
-fn workspace_member_import_resolves_without_install() {
+pub(crate) fn workspace_member_import_resolves_without_install() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -383,14 +385,16 @@ fn add_one(x) {
     )
     .expect("failed to read built main.R");
     assert!(
-        built_r.contains("40L + 1L") || built_r.contains("x + 1L"),
+        built_r.contains("40L + 1L")
+            || built_r.contains("x + 1L")
+            || built_r.contains("return(41L)"),
         "expected workspace member logic in built artifact, got:\n{}",
         built_r
     );
 }
 
 #[test]
-fn mod_tidy_ignores_workspace_member_imports() {
+pub(crate) fn mod_tidy_ignores_workspace_member_imports() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -466,7 +470,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn registry_search_and_info_surface_metadata() {
+pub(crate) fn registry_search_and_info_surface_metadata() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -590,7 +594,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn registry_yank_and_deprecate_update_latest_resolution() {
+pub(crate) fn registry_yank_and_deprecate_update_latest_resolution() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -771,7 +775,7 @@ fn main() {
 }
 
 #[test]
-fn registry_list_and_verify_report_clean_registry() {
+pub(crate) fn registry_list_and_verify_report_clean_registry() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")

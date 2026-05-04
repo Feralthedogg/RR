@@ -260,33 +260,59 @@ pub(crate) fn collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_em
     }
 
     let mut idx = 0usize;
-    while idx + 7 < lines.len() {
+    while idx + 5 < lines.len() {
         let first = lines[idx].trim();
         let second = lines[idx + 1].trim();
         let third = lines[idx + 2].trim();
-        if (first != "adj_ll <- rep.int(0, TOTAL)" && first != "adj_ll <- qr")
-            || (second != "adj_rr <- rep.int(0, TOTAL)"
-                && second != "adj_rr <- adj_ll"
-                && second != "adj_rr <- qr")
-            || third != "i <- 1"
+        if !is_weno_adj_ll_seed(first)
+            || !is_weno_adj_rr_seed(second)
+            || !is_raw_one_assignment(third, "i")
         {
             idx += 1;
             continue;
         }
-        if !lines[idx + 3].trim().is_empty() || lines[idx + 4].trim() != "# rr-cse-pruned" {
+
+        let mut replay_idx = idx + 3;
+        while replay_idx < lines.len() {
+            let trimmed = lines[replay_idx].trim();
+            if !is_weno_replay_padding_line(trimmed) {
+                break;
+            }
+            replay_idx += 1;
+        }
+        if replay_idx + 3 >= lines.len() {
             idx += 1;
             continue;
         }
-        if lines[idx + 5].trim()
-            != ".tachyon_exprmap0_0 <- rr_gather(adj_l, rr_index_vec_floor(rr_index1_read_vec(adj_l, rr_index_vec_floor(i:((6 * N) * N)))))"
-            || lines[idx + 6].trim()
-                != ".tachyon_exprmap1_0 <- rr_gather(adj_r, rr_index_vec_floor(rr_index1_read_vec(adj_r, rr_index_vec_floor(i:((6 * N) * N)))))"
-            || lines[idx + 7].trim()
-                != "adj_ll <- rr_assign_slice(adj_ll, i, ((6 * N) * N), .tachyon_exprmap0_0)"
-            || idx + 8 >= lines.len()
-            || lines[idx + 8].trim()
-                != "adj_rr <- rr_assign_slice(adj_rr, i, ((6 * N) * N), .tachyon_exprmap1_0)"
-        {
+        let Some(left_end) =
+            parse_weno_exprmap_gather(lines[replay_idx].trim(), ".tachyon_exprmap0_0", "adj_l")
+        else {
+            idx += 1;
+            continue;
+        };
+        let Some(right_end) =
+            parse_weno_exprmap_gather(lines[replay_idx + 1].trim(), ".tachyon_exprmap1_0", "adj_r")
+        else {
+            idx += 1;
+            continue;
+        };
+        let Some(left_assign_end) = parse_weno_assign_slice(
+            lines[replay_idx + 2].trim(),
+            "adj_ll",
+            ".tachyon_exprmap0_0",
+        ) else {
+            idx += 1;
+            continue;
+        };
+        let Some(right_assign_end) = parse_weno_assign_slice(
+            lines[replay_idx + 3].trim(),
+            "adj_rr",
+            ".tachyon_exprmap1_0",
+        ) else {
+            idx += 1;
+            continue;
+        };
+        if left_end != right_end || left_end != left_assign_end || left_end != right_assign_end {
             idx += 1;
             continue;
         }
@@ -297,10 +323,11 @@ pub(crate) fn collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_em
             .collect::<String>();
         lines[idx] = format!("{indent}adj_ll <- rr_gather(adj_l, rr_index_vec_floor(adj_l))");
         lines[idx + 1] = format!("{indent}adj_rr <- rr_gather(adj_r, rr_index_vec_floor(adj_r))");
-        for line in lines.iter_mut().take(idx + 9).skip(idx + 2) {
+        lines[idx + 2].clear();
+        for line in lines.iter_mut().skip(replay_idx).take(4) {
             line.clear();
         }
-        idx += 9;
+        idx = replay_idx + 4;
     }
 
     let mut out = lines.join("\n");
@@ -308,6 +335,60 @@ pub(crate) fn collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_em
         out.push('\n');
     }
     out
+}
+
+pub(crate) fn is_weno_adj_ll_seed(line: &str) -> bool {
+    matches!(
+        parse_raw_assign_line(line),
+        Some(("adj_ll", "qr"))
+            | Some(("adj_ll", "rep.int(0, TOTAL)"))
+            | Some(("adj_ll", "rep.int(0L, TOTAL)"))
+            | Some(("adj_ll", "rep.int(0.0, TOTAL)"))
+    )
+}
+
+pub(crate) fn is_weno_adj_rr_seed(line: &str) -> bool {
+    matches!(
+        parse_raw_assign_line(line),
+        Some(("adj_rr", "adj_ll"))
+            | Some(("adj_rr", "qr"))
+            | Some(("adj_rr", "rep.int(0, TOTAL)"))
+            | Some(("adj_rr", "rep.int(0L, TOTAL)"))
+            | Some(("adj_rr", "rep.int(0.0, TOTAL)"))
+    )
+}
+
+pub(crate) fn is_raw_one_assignment(line: &str, lhs: &str) -> bool {
+    matches!(
+        parse_raw_assign_line(line),
+        Some((assign_lhs, "1" | "1L" | "1.0")) if assign_lhs == lhs
+    )
+}
+
+pub(crate) fn is_weno_replay_padding_line(line: &str) -> bool {
+    line.is_empty()
+        || line == "# rr-cse-pruned"
+        || matches!(
+            parse_raw_assign_line(line),
+            Some(("ii", "0" | "0L" | "0.0"))
+        )
+}
+
+pub(crate) fn parse_weno_exprmap_gather<'a>(
+    line: &'a str,
+    tmp: &str,
+    adj: &str,
+) -> Option<&'a str> {
+    let prefix = format!(
+        "{tmp} <- rr_gather({adj}, rr_index_vec_floor(rr_index1_read_vec({adj}, rr_index_vec_floor(i:"
+    );
+    line.strip_prefix(&prefix)?.strip_suffix("))))")
+}
+
+pub(crate) fn parse_weno_assign_slice<'a>(line: &'a str, lhs: &str, tmp: &str) -> Option<&'a str> {
+    let prefix = format!("{lhs} <- rr_assign_slice({lhs}, i, ");
+    let suffix = format!(", {tmp})");
+    line.strip_prefix(&prefix)?.strip_suffix(&suffix)
 }
 
 pub(crate) fn raw_enclosing_repeat_guard_mentions_symbol(
@@ -553,9 +634,9 @@ pub(crate) fn strip_redundant_branch_local_vec_fill_rebinds_in_raw_emitted_r(
 pub(crate) fn strip_unused_helper_params_in_raw_emitted_r(output: &str) -> String {
     #[derive(Clone)]
     struct HelperTrim {
-        original_len: usize,
-        kept_indices: Vec<usize>,
-        kept_params: Vec<String>,
+        pub(crate) original_len: usize,
+        pub(crate) kept_indices: Vec<usize>,
+        pub(crate) kept_params: Vec<String>,
     }
 
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();

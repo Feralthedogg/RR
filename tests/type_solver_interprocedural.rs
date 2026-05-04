@@ -1,7 +1,8 @@
-use RR::mir::{FnIR, Terminator, ValueKind};
-use RR::typeck::solver::{TypeConfig, analyze_program};
-use RR::typeck::{PrimTy, TypeState};
-use RR::{mir::Facts, utils::Span};
+use rr::Span;
+use rr::compiler::internal::mir::Facts;
+use rr::compiler::internal::mir::{FnIR, Terminator, ValueKind};
+use rr::compiler::internal::typeck::solver::{TypeConfig, analyze_program};
+use rr::compiler::internal::typeck::{PrimTy, TypeState};
 use rustc_hash::FxHashMap;
 
 #[test]
@@ -18,14 +19,14 @@ fn interprocedural_solver_propagates_user_return_type() {
         None,
     );
     let one = callee.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let ret = callee.add_value(
         ValueKind::Binary {
-            op: RR::syntax::ast::BinOp::Add,
+            op: rr::compiler::internal::syntax::ast::BinOp::Add,
             lhs: p,
             rhs: one,
         },
@@ -40,7 +41,7 @@ fn interprocedural_solver_propagates_user_return_type() {
     main.entry = mb;
     main.body_head = mb;
     let arg = main.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,

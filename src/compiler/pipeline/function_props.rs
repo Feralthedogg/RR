@@ -243,6 +243,11 @@ pub(crate) fn collect_referentially_pure_user_functions(program: &ProgramIR) -> 
                             return false;
                         }
                     }
+                    crate::mir::def::Instr::UnsafeRBlock { .. } => {
+                        memo.insert(name.to_string(), false);
+                        visiting_fns.remove(name);
+                        return false;
+                    }
                 }
             }
             match &block.term {
@@ -307,10 +312,10 @@ pub(crate) fn collect_referentially_pure_user_functions(program: &ProgramIR) -> 
 
 pub(crate) fn collect_fresh_returning_user_functions(program: &ProgramIR) -> FxHashSet<String> {
     struct FreshAnalysisCtx {
-        pure_memo: FxHashMap<String, bool>,
-        fresh_memo: FxHashMap<String, bool>,
-        visiting_pure: FxHashSet<String>,
-        visiting_fresh: FxHashSet<String>,
+        pub(crate) pure_memo: FxHashMap<String, bool>,
+        pub(crate) fresh_memo: FxHashMap<String, bool>,
+        pub(crate) visiting_pure: FxHashSet<String>,
+        pub(crate) visiting_fresh: FxHashSet<String>,
     }
 
     fn helper_is_functionally_pure(callee: &str) -> bool {
@@ -589,6 +594,11 @@ pub(crate) fn collect_fresh_returning_user_functions(program: &ProgramIR) -> FxH
                             ctx.visiting_pure.remove(name);
                             return false;
                         }
+                    }
+                    crate::mir::def::Instr::UnsafeRBlock { .. } => {
+                        ctx.pure_memo.insert(name.to_string(), false);
+                        ctx.visiting_pure.remove(name);
+                        return false;
                     }
                 }
             }

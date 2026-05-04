@@ -1,5 +1,5 @@
 use super::access::MemoryLayout;
-use super::schedule::{SchedulePlan, SchedulePlanKind, ScheduleRelation};
+use super::schedule::{PolyBackendUsed, SchedulePlan, SchedulePlanKind, ScheduleRelation};
 use super::{LoopDimension, ScopRegion};
 use crate::mir::opt::poly::affine::AffineSymbol;
 use std::collections::BTreeMap;
@@ -119,6 +119,99 @@ fn tile_volume(schedule: &SchedulePlan) -> Option<u32> {
     }
 }
 
+fn env_flag_is_enabled(key: &str) -> bool {
+    std::env::var(key).ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn env_flag_is_disabled(key: &str) -> bool {
+    std::env::var(key).ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        )
+    })
+}
+
+fn env_usize(key: &str, default_value: u32) -> u32 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_value)
+}
+
+pub fn r_backend_cost_model_enabled() -> bool {
+    !env_flag_is_disabled("RR_POLY_R_COST_MODEL")
+        && !env_flag_is_disabled("RR_POLY_R_CODE_SIZE_MODEL")
+}
+
+pub fn schedule_forced_by_env(schedule: &SchedulePlan) -> bool {
+    match schedule.kind {
+        SchedulePlanKind::Tile1D => env_flag_is_enabled("RR_POLY_TILE_1D"),
+        SchedulePlanKind::Tile2D => env_flag_is_enabled("RR_POLY_TILE_2D"),
+        SchedulePlanKind::Tile3D => env_flag_is_enabled("RR_POLY_TILE_3D"),
+        SchedulePlanKind::Skew2D => env_flag_is_enabled("RR_POLY_SKEW_2D"),
+        _ => false,
+    }
+}
+
+fn r_backend_tile_code_growth_units(scop: &ScopRegion, schedule: &SchedulePlan) -> u32 {
+    let data_stmt_count = scop
+        .statements
+        .iter()
+        .filter(|stmt| !stmt.accesses.is_empty())
+        .count() as u32;
+    match schedule.kind {
+        SchedulePlanKind::Tile1D => 4 + data_stmt_count,
+        SchedulePlanKind::Tile2D => 10 + data_stmt_count.saturating_mul(2),
+        SchedulePlanKind::Tile3D => 18 + data_stmt_count.saturating_mul(3),
+        _ => 0,
+    }
+}
+
+pub fn r_backend_code_size_reject_reason(
+    scop: &ScopRegion,
+    schedule: &SchedulePlan,
+) -> Option<&'static str> {
+    if !r_backend_cost_model_enabled()
+        || schedule.backend != PolyBackendUsed::Isl
+        || schedule_forced_by_env(schedule)
+        || !matches!(
+            schedule.kind,
+            SchedulePlanKind::Tile1D | SchedulePlanKind::Tile2D | SchedulePlanKind::Tile3D
+        )
+    {
+        return None;
+    }
+
+    let min_profitable_volume = env_usize("RR_POLY_R_MIN_TILE_VOLUME", 65_536);
+    match constant_iteration_volume(scop) {
+        Some(volume) if volume >= min_profitable_volume => {
+            let code_growth_limit = env_usize("RR_POLY_R_MAX_CODE_GROWTH", 18);
+            if r_backend_tile_code_growth_units(scop, schedule) > code_growth_limit {
+                Some("estimated R code growth exceeds tile budget")
+            } else {
+                None
+            }
+        }
+        Some(_) => Some("constant trip count too small for R tile lowering"),
+        None => Some("dynamic trip count cannot justify R tile code growth"),
+    }
+}
+
+fn r_backend_code_size_penalty(scop: &ScopRegion, schedule: &SchedulePlan) -> u32 {
+    if r_backend_code_size_reject_reason(scop, schedule).is_some() {
+        10_000 + r_backend_tile_code_growth_units(scop, schedule).saturating_mul(32)
+    } else {
+        0
+    }
+}
+
 fn repeated_read_base_count(scop: &ScopRegion) -> u32 {
     let mut counts = BTreeMap::new();
     for stmt in &scop.statements {
@@ -225,8 +318,9 @@ pub fn estimate_fission_benefit(scop: &ScopRegion, schedule: &SchedulePlan) -> i
 
 pub fn describe_schedule_decision(scop: &ScopRegion, schedule: &SchedulePlan) -> String {
     let breakdown = analyze_multi_stmt_cost(scop);
+    let r_backend_gate = r_backend_code_size_reject_reason(scop, schedule).unwrap_or("ok");
     format!(
-        "kind={:?} cost={} fission_benefit={} stmts={} reused_reads={} write_disjoint_pairs={} reduction_pressure={}",
+        "kind={:?} cost={} fission_benefit={} stmts={} reused_reads={} write_disjoint_pairs={} reduction_pressure={} r_backend_gate={}",
         schedule.kind,
         estimate_schedule_cost(scop, schedule),
         estimate_fission_benefit(scop, schedule),
@@ -234,6 +328,7 @@ pub fn describe_schedule_decision(scop: &ScopRegion, schedule: &SchedulePlan) ->
         breakdown.reused_read_bases,
         breakdown.write_disjoint_stmt_pairs,
         breakdown.reduction_like_stmt_count,
+        r_backend_gate,
     )
 }
 
@@ -269,6 +364,8 @@ pub fn estimate_schedule_cost(scop: &ScopRegion, schedule: &SchedulePlan) -> u32
         }
         SchedulePlanKind::Interchange | SchedulePlanKind::Identity | SchedulePlanKind::None => {}
     }
+
+    cost = cost.saturating_add(r_backend_code_size_penalty(scop, schedule));
 
     if matches!(
         schedule.kind,

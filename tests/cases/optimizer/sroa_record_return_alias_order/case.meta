@@ -1,0 +1,2 @@
+expect=run-equal-o0-o2
+emit_not_contains=.__rr_sroa_alias_

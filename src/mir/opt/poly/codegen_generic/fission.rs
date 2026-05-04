@@ -1,4 +1,5 @@
-pub(super) fn lower_fission_sequence_generic(
+use super::*;
+pub(crate) fn lower_fission_sequence_generic(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,

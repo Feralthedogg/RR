@@ -3,9 +3,9 @@
 #[path = "../../tests/common/random_error_cases.rs"]
 mod random_error_cases;
 
-use RR::compiler::{OptLevel, ParallelConfig, compile_with_configs};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use libfuzzer_sys::{Corpus, fuzz_target};
+use rr::compiler::{OptLevel, ParallelConfig, compile_with_configs};
+use rr::typeck::{NativeBackend, TypeConfig, TypeMode};
 use std::sync::Once;
 
 fn seed_from_bytes(data: &[u8]) -> u64 {
@@ -63,7 +63,7 @@ impl Drop for EnvGuard {
 fn assert_expected_error(
     case: &random_error_cases::GeneratedErrorCase,
     opt_level: OptLevel,
-    result: RR::error::RR<(String, Vec<RR::codegen::mir_emit::MapEntry>)>,
+    result: rr::error::RR<(String, Vec<rr::codegen::mir_emit::MapEntry>)>,
 ) {
     match result {
         Ok((code, _map)) => {

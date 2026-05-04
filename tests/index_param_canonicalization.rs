@@ -45,8 +45,9 @@ print(gather(seq_len(4), seq_len(4) + 0.25, 4))
 
     let code = fs::read_to_string(&out_path).expect("failed to read compiled R");
     let fn_pos = code
-        .find("Sym_1 <- function")
-        .expect("expected compiled function Sym_1");
+        .find("gather <- function")
+        .or_else(|| code.find("Sym_1 <- function"))
+        .expect("expected compiled gather function");
     let fn_end = code[fn_pos + 1..]
         .find("\nSym_")
         .map(|idx| fn_pos + 1 + idx)

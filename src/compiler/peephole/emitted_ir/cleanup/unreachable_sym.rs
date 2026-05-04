@@ -1,4 +1,5 @@
-fn apply_strip_unreachable_sym_helpers_ir(program: &mut EmittedProgram) {
+use super::*;
+pub(crate) fn apply_strip_unreachable_sym_helpers_ir(program: &mut EmittedProgram) {
     let mut item_index_by_name = FxHashMap::<String, usize>::default();
     for (item_idx, item) in program.items.iter().enumerate() {
         let EmittedItem::Function(function) = item else {

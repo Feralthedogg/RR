@@ -1,27 +1,39 @@
+use super::*;
 impl<'a> MirLowerer<'a> {
     // Helpers
 
-    fn add_void_val(&mut self, span: Span) -> ValueId {
+    pub(crate) fn add_void_val(&mut self, span: Span) -> ValueId {
         self.add_value(ValueKind::Const(Lit::Null), span)
     }
 
-    fn add_null_val(&mut self, span: Span) -> ValueId {
+    pub(crate) fn add_null_val(&mut self, span: Span) -> ValueId {
         self.add_value(ValueKind::Const(Lit::Null), span)
     }
 
-    fn add_bool_val(&mut self, b: bool, span: Span) -> ValueId {
+    pub(crate) fn add_bool_val(&mut self, b: bool, span: Span) -> ValueId {
         self.add_value(ValueKind::Const(Lit::Bool(b)), span)
     }
 
-    fn add_int_val(&mut self, n: i64, span: Span) -> ValueId {
+    pub(crate) fn add_int_val(&mut self, n: i64, span: Span) -> ValueId {
         self.add_value(ValueKind::Const(Lit::Int(n)), span)
     }
 
-    fn add_bin_bool(&mut self, op: BinOp, lhs: ValueId, rhs: ValueId, span: Span) -> ValueId {
+    pub(crate) fn add_bin_bool(
+        &mut self,
+        op: BinOp,
+        lhs: ValueId,
+        rhs: ValueId,
+        span: Span,
+    ) -> ValueId {
         self.add_value(ValueKind::Binary { op, lhs, rhs }, span)
     }
 
-    fn add_call_value(&mut self, callee: &str, args: Vec<ValueId>, span: Span) -> ValueId {
+    pub(crate) fn add_call_value(
+        &mut self,
+        callee: &str,
+        args: Vec<ValueId>,
+        span: Span,
+    ) -> ValueId {
         let names = vec![None; args.len()];
         self.add_value(
             ValueKind::Call {
@@ -33,14 +45,14 @@ impl<'a> MirLowerer<'a> {
         )
     }
 
-    fn symbol_name(&self, sym: hir::SymbolId) -> String {
+    pub(crate) fn symbol_name(&self, sym: hir::SymbolId) -> String {
         self.symbols
             .get(&sym)
             .cloned()
             .unwrap_or_else(|| format!("field_{}", sym.0))
     }
 
-    fn terminate_and_detach(&mut self, term: Terminator) {
+    pub(crate) fn terminate_and_detach(&mut self, term: Terminator) {
         let from = self.curr_block;
         self.terminate(term);
         let dead_bb = self.fn_ir.add_block();
@@ -52,15 +64,15 @@ impl<'a> MirLowerer<'a> {
         self.curr_block = dead_bb;
     }
 
-    fn terminate(&mut self, term: Terminator) {
+    pub(crate) fn terminate(&mut self, term: Terminator) {
         self.fn_ir.blocks[self.curr_block].term = term;
     }
 
-    fn is_terminated(&self, b: BlockId) -> bool {
+    pub(crate) fn is_terminated(&self, b: BlockId) -> bool {
         !matches!(self.fn_ir.blocks[b].term, Terminator::Unreachable)
     }
 
-    fn map_binop(&self, op: hir::HirBinOp) -> BinOp {
+    pub(crate) fn map_binop(&self, op: hir::HirBinOp) -> BinOp {
         match op {
             hir::HirBinOp::Add => BinOp::Add,
             hir::HirBinOp::Sub => BinOp::Sub,

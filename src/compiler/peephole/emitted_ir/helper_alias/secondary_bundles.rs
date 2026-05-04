@@ -1,10 +1,11 @@
+use super::*;
 #[derive(Default)]
-pub(in super::super) struct SecondaryMetricBundleProfile {
-    pub(in super::super) post_wrapper_elapsed_ns: u128,
-    pub(in super::super) metric_elapsed_ns: u128,
+pub(crate) struct SecondaryMetricBundleProfile {
+    pub(crate) post_wrapper_elapsed_ns: u128,
+    pub(crate) metric_elapsed_ns: u128,
 }
 
-pub(in super::super) fn run_post_passthrough_metric_bundle_ir(
+pub(crate) fn run_post_passthrough_metric_bundle_ir(
     lines: Vec<String>,
 ) -> (Vec<String>, SecondaryMetricBundleProfile) {
     let needs_arg_return_wrapper = has_arg_return_wrapper_candidates_ir(&lines);
@@ -66,7 +67,7 @@ pub(in super::super) fn run_post_passthrough_metric_bundle_ir(
     (program.into_lines(), profile)
 }
 
-pub(in super::super) fn run_passthrough_secondary_bundle_ir(
+pub(crate) fn run_passthrough_secondary_bundle_ir(
     lines: Vec<String>,
 ) -> (Vec<String>, SecondaryMetricBundleProfile) {
     let needs_arg_return_wrapper = has_arg_return_wrapper_candidates_ir(&lines);
@@ -133,9 +134,7 @@ pub(in super::super) fn run_passthrough_secondary_bundle_ir(
     (program.into_lines(), profile)
 }
 
-pub(in super::super) fn collapse_trivial_scalar_clamp_wrappers_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn collapse_trivial_scalar_clamp_wrappers_ir(lines: Vec<String>) -> Vec<String> {
     if !has_trivial_scalar_clamp_wrapper_candidates_ir(&lines) {
         return lines;
     }

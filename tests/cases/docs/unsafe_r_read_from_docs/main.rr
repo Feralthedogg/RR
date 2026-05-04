@@ -1,0 +1,9 @@
+fn probe_read(values: vector<float>) -> float {
+  let energy = sum(values * values)
+  unsafe r(read) {
+    print(energy)
+  }
+  return energy + 1.0
+}
+
+print(probe_read(c(1.0, 2.0, 3.0)))

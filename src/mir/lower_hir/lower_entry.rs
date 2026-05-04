@@ -1,4 +1,23 @@
+use super::*;
 impl<'a> MirLowerer<'a> {
+    pub(crate) fn block_contains_write_unsafe_r(blk: &hir::HirBlock) -> bool {
+        blk.stmts.iter().any(|stmt| match stmt {
+            hir::HirStmt::UnsafeRBlock { read_only, .. } => !read_only,
+            hir::HirStmt::If {
+                then_blk, else_blk, ..
+            } => {
+                Self::block_contains_write_unsafe_r(then_blk)
+                    || else_blk
+                        .as_ref()
+                        .is_some_and(Self::block_contains_write_unsafe_r)
+            }
+            hir::HirStmt::While { body, .. } | hir::HirStmt::For { body, .. } => {
+                Self::block_contains_write_unsafe_r(body)
+            }
+            _ => false,
+        })
+    }
+
     // Call update: terminate must track preds
 
     // Proof correspondence:
@@ -10,6 +29,7 @@ impl<'a> MirLowerer<'a> {
     // and the Coq `Lowering*` / `Pipeline*Subset` companions model reduced
     // slices of this source-to-MIR lowering entry point.
     pub fn lower_fn(mut self, f: hir::HirFn) -> RR<FnIR> {
+        self.unsafe_r_seen = Self::block_contains_write_unsafe_r(&f.body);
         self.fn_ir.span = f.span;
         self.fn_ir.user_name = self.symbols.get(&f.name).cloned();
         self.fn_ir.param_default_r_exprs = f
@@ -44,14 +64,20 @@ impl<'a> MirLowerer<'a> {
         self.fn_ir.param_hint_spans = f
             .params
             .iter()
-            .map(|p| p.ty.as_ref().map(|_| p.span))
+            .map(|p| {
+                p.ty.as_ref()
+                    .and_then(|_| (!p.ty_inferred).then_some(p.span))
+            })
             .collect();
         self.fn_ir.ret_ty_hint = f.ret_ty.as_ref().map(hir_ty_to_type_state);
         self.fn_ir.ret_term_hint = f
             .ret_ty
             .as_ref()
             .map(|ty| hir_ty_to_type_term_with_symbols(ty, self.symbols));
-        self.fn_ir.ret_hint_span = f.ret_ty.as_ref().map(|_| f.span);
+        self.fn_ir.ret_hint_span = f
+            .ret_ty
+            .as_ref()
+            .and_then(|_| (!f.ret_ty_inferred).then_some(f.span));
 
         // 1. Bind parameters in the entry block
         for (i, param) in f.params.iter().enumerate() {
@@ -101,7 +127,7 @@ impl<'a> MirLowerer<'a> {
         Ok(self.fn_ir)
     }
 
-    fn lower_block(&mut self, blk: hir::HirBlock) -> RR<ValueId> {
+    pub(crate) fn lower_block(&mut self, blk: hir::HirBlock) -> RR<ValueId> {
         let mut last_val = self.add_void_val(blk.span);
         let len = blk.stmts.len();
 
@@ -125,7 +151,7 @@ impl<'a> MirLowerer<'a> {
         Ok(last_val)
     }
 
-    fn lower_block_effects(&mut self, blk: hir::HirBlock) -> RR<()> {
+    pub(crate) fn lower_block_effects(&mut self, blk: hir::HirBlock) -> RR<()> {
         for stmt in blk.stmts {
             match stmt {
                 hir::HirStmt::Expr { expr, span } => {

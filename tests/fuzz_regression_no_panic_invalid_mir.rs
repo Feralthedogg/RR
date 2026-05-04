@@ -1,14 +1,16 @@
 use rustc_hash::FxHashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use RR::hir::def::{HirItem, HirProgram, ModuleId};
-use RR::hir::desugar::Desugarer;
-use RR::hir::lower::Lowerer;
-use RR::mir::lower_hir::MirLowerer;
-use RR::mir::opt::TachyonEngine;
-use RR::syntax::parse::Parser;
+use rr::compiler::internal::hir::def::{HirItem, HirProgram, ModuleId};
+use rr::compiler::internal::hir::desugar::Desugarer;
+use rr::compiler::internal::hir::lower::Lowerer;
+use rr::compiler::internal::mir::lower_hir::MirLowerer;
+use rr::compiler::internal::mir::opt::TachyonEngine;
+use rr::compiler::internal::syntax::parse::Parser;
 
-fn build_mir_without_semantic_gate(src: &str) -> FxHashMap<String, RR::mir::FnIR> {
+fn build_mir_without_semantic_gate(
+    src: &str,
+) -> FxHashMap<String, rr::compiler::internal::mir::FnIR> {
     let mut parser = Parser::new(src);
     let ast = parser
         .parse_program()
@@ -88,7 +90,7 @@ fn main() {
     assert!(
         all_fns
             .values()
-            .any(|f| RR::mir::verify::verify_ir(f).is_err()),
+            .any(|f| rr::compiler::internal::mir::verify::verify_ir(f).is_err()),
         "regression setup must contain invalid MIR before optimization"
     );
 

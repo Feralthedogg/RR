@@ -1,4 +1,5 @@
-pub(super) fn infer_generated_poly_loop_step(
+use super::*;
+pub(crate) fn infer_generated_poly_loop_step(
     lines: &[String],
     body_start: usize,
     body_end: usize,
@@ -28,7 +29,7 @@ pub(super) fn infer_generated_poly_loop_step(
         .unwrap_or(1)
 }
 
-pub(super) fn first_generated_poly_loop_var_in_line(line: &str) -> Option<String> {
+pub(crate) fn first_generated_poly_loop_var_in_line(line: &str) -> Option<String> {
     let mut search_from = 0usize;
     while let Some(rel_idx) = line[search_from..].find(GENERATED_POLY_LOOP_IV_PREFIX) {
         let idx = search_from + rel_idx;
@@ -45,7 +46,7 @@ pub(super) fn first_generated_poly_loop_var_in_line(line: &str) -> Option<String
     None
 }
 
-pub(super) fn restore_missing_generated_poly_loop_steps(output: &mut String) {
+pub(crate) fn restore_missing_generated_poly_loop_steps(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(str::to_string).collect();
     if lines.is_empty() {
         return;
@@ -93,7 +94,15 @@ pub(super) fn restore_missing_generated_poly_loop_steps(output: &mut String) {
         }
 
         let step = infer_generated_poly_loop_step(&lines, guard_idx, loop_end, &var);
-        lines.insert(loop_end, format!("{indent}{var} <- ({var} + {step}L)"));
+        let insert_idx = (guard_idx + 1..loop_end)
+            .rev()
+            .find(|line_idx| {
+                let trimmed = lines[*line_idx].trim();
+                !trimmed.is_empty() && trimmed != "# rr-cse-pruned"
+            })
+            .filter(|line_idx| lines[*line_idx].trim() == "next")
+            .unwrap_or(loop_end);
+        lines.insert(insert_idx, format!("{indent}{var} <- ({var} + {step}L)"));
         i += 1;
     }
 

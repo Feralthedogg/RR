@@ -1,14 +1,16 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn utils_package_calls_have_direct_types() {
+pub(crate) fn utils_package_calls_have_direct_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["xs".to_string(), "df".to_string(), "path".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::matrix(PrimTy::Any, false);
-    fn_ir.param_ty_hints[2] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[1] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Any, false);
+    fn_ir.param_ty_hints[2] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[1] = TypeTerm::DataFrameNamed(vec![
         (
@@ -42,678 +44,109 @@ fn utils_package_calls_have_direct_types() {
         None,
     );
 
-    let head = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::head".to_string(),
-            args: vec![xs],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let head = add_call(&mut fn_ir, "utils::head", vec![xs]);
+    let tail = add_call(&mut fn_ir, "utils::tail", vec![df]);
+    let read = add_call(&mut fn_ir, "utils::read.csv", vec![path]);
+    let read_csv2 = add_call(&mut fn_ir, "utils::read.csv2", vec![path]);
+    let read_table = add_call(&mut fn_ir, "utils::read.table", vec![path]);
+    let read_fwf = add_call(&mut fn_ir, "utils::read.fwf", vec![path]);
+    let read_delim = add_call(&mut fn_ir, "utils::read.delim", vec![path]);
+    let package_version = add_call(&mut fn_ir, "utils::packageVersion", vec![path]);
+    let maintainer = add_call(&mut fn_ir, "utils::maintainer", vec![path]);
+    let package_date = add_call(&mut fn_ir, "utils::packageDate", vec![path]);
+    let object_size = add_call(&mut fn_ir, "utils::object.size", vec![xs]);
+    let memory_size = add_call(&mut fn_ir, "utils::memory.size", vec![]);
+    let memory_limit = add_call(&mut fn_ir, "utils::memory.limit", vec![]);
+    let compare_left = add_str(&mut fn_ir, "1.2.0");
+    let compare_right = add_str(&mut fn_ir, "1.1.9");
+    let compare_version = add_call(
+        &mut fn_ir,
+        "utils::compareVersion",
+        vec![compare_left, compare_right],
     );
-    let tail = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::tail".to_string(),
-            args: vec![df],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let capture = add_call(&mut fn_ir, "utils::capture.output", vec![xs]);
+    let package_description = add_call(&mut fn_ir, "utils::packageDescription", vec![path]);
+    let session_info = add_call(&mut fn_ir, "utils::sessionInfo", vec![]);
+    let package_field_name = add_str(&mut fn_ir, "Package");
+    let base_pkgs_field_name = add_str(&mut fn_ir, "basePkgs");
+    let package_field = add_call(
+        &mut fn_ir,
+        "rr_field_get",
+        vec![package_description, package_field_name],
     );
-    let read = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::read.csv".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let session_base_pkgs = add_call(
+        &mut fn_ir,
+        "rr_field_get",
+        vec![session_info, base_pkgs_field_name],
     );
-    let read_csv2 = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::read.csv2".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let citation = add_call(&mut fn_ir, "utils::citation", vec![path]);
+    let person = add_call(&mut fn_ir, "utils::person", vec![path, path]);
+    let as_person = add_call(&mut fn_ir, "utils::as.person", vec![path]);
+    let as_person_list = add_call(&mut fn_ir, "utils::as.personList", vec![path]);
+    let as_roman = add_call(&mut fn_ir, "utils::as.roman", vec![xs]);
+    let has_name = add_call(&mut fn_ir, "utils::hasName", vec![df, path]);
+    let capture_a = add_str(&mut fn_ir, "1-one");
+    let capture_b = add_str(&mut fn_ir, "2-two");
+    let capture_input = add_call(&mut fn_ir, "c", vec![capture_a, capture_b]);
+    let strcapture = add_call(
+        &mut fn_ir,
+        "utils::strcapture",
+        vec![path, capture_input, df],
     );
-    let read_table = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::read.table".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let apropos = add_call(&mut fn_ir, "utils::apropos", vec![path]);
+    let find_pkg = add_call(&mut fn_ir, "utils::find", vec![path]);
+    let get_anywhere = add_call(&mut fn_ir, "utils::getAnywhere", vec![path]);
+    let args_anywhere = add_call(&mut fn_ir, "utils::argsAnywhere", vec![path]);
+    let match_pat = add_str(&mut fn_ir, "me");
+    let match_values = add_call(&mut fn_ir, "c", vec![path, path]);
+    let find_matches = add_call(
+        &mut fn_ir,
+        "utils::findMatches",
+        vec![match_pat, match_values],
     );
-    let read_fwf = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::read.fwf".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let methods_fn = add_call(&mut fn_ir, "utils::methods", vec![path]);
+    let help_search = add_call(&mut fn_ir, "utils::help.search", vec![path]);
+    let data_iqr = add_call(&mut fn_ir, "utils::data", vec![]);
+    let contrib_url = add_call(&mut fn_ir, "utils::contrib.url", vec![path]);
+    let locale_charset = add_call(&mut fn_ir, "utils::localeToCharset", vec![]);
+    let alpha_class = add_str(&mut fn_ir, "alpha");
+    let char_class = add_call(&mut fn_ir, "utils::charClass", vec![path, alpha_class]);
+    let file_snapshot = add_call(&mut fn_ir, "utils::fileSnapshot", vec![path]);
+    let url_encoded = add_call(&mut fn_ir, "utils::URLencode", vec![path]);
+    let url_decoded = add_call(&mut fn_ir, "utils::URLdecode", vec![path]);
+    let glob_rx = add_call(&mut fn_ir, "utils::glob2rx", vec![path]);
+    let file_flag = add_str(&mut fn_ir, "-f");
+    let file_test_scalar = add_call(&mut fn_ir, "utils::file_test", vec![file_flag, path]);
+    let other_path = add_str(&mut fn_ir, "other.txt");
+    let file_test_paths = add_call(&mut fn_ir, "c", vec![path, other_path]);
+    let file_test_vector = add_call(
+        &mut fn_ir,
+        "utils::file_test",
+        vec![file_flag, file_test_paths],
     );
-    let read_delim = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::read.delim".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let package_version = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::packageVersion".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let maintainer = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::maintainer".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let package_date = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::packageDate".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let object_size = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::object.size".to_string(),
-            args: vec![xs],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let memory_size = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::memory.size".to_string(),
-            args: vec![],
-            names: vec![],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let memory_limit = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::memory.limit".to_string(),
-            args: vec![],
-            names: vec![],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let compare_left = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("1.2.0".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let compare_right = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("1.1.9".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let compare_version = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::compareVersion".to_string(),
-            args: vec![compare_left, compare_right],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let capture = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::capture.output".to_string(),
-            args: vec![xs],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let package_description = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::packageDescription".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let session_info = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::sessionInfo".to_string(),
-            args: vec![],
-            names: vec![],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let package_field_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("Package".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let base_pkgs_field_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("basePkgs".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let package_field = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![package_description, package_field_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let session_base_pkgs = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_field_get".to_string(),
-            args: vec![session_info, base_pkgs_field_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let citation = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::citation".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let person = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::person".to_string(),
-            args: vec![path, path],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let as_person = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::as.person".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let as_person_list = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::as.personList".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let as_roman = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::as.roman".to_string(),
-            args: vec![xs],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let has_name = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::hasName".to_string(),
-            args: vec![df, path],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let capture_a = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("1-one".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let capture_b = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("2-two".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let capture_input = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "c".to_string(),
-            args: vec![capture_a, capture_b],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let strcapture = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::strcapture".to_string(),
-            args: vec![path, capture_input, df],
-            names: vec![None, None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let apropos = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::apropos".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let find_pkg = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::find".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let get_anywhere = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::getAnywhere".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let args_anywhere = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::argsAnywhere".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let match_pat = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("me".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let match_values = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "c".to_string(),
-            args: vec![path, path],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let find_matches = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::findMatches".to_string(),
-            args: vec![match_pat, match_values],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let methods_fn = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::methods".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let help_search = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::help.search".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let data_iqr = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::data".to_string(),
-            args: vec![],
-            names: vec![],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let contrib_url = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::contrib.url".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let locale_charset = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::localeToCharset".to_string(),
-            args: vec![],
-            names: vec![],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let alpha_class = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("alpha".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let char_class = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::charClass".to_string(),
-            args: vec![path, alpha_class],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let file_snapshot = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::fileSnapshot".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let url_encoded = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::URLencode".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let url_decoded = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::URLdecode".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let glob_rx = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::glob2rx".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let file_flag = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("-f".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let file_test_scalar = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::file_test".to_string(),
-            args: vec![file_flag, path],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let other_path = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("other.txt".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let file_test_paths = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "c".to_string(),
-            args: vec![path, other_path],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let file_test_vector = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::file_test".to_string(),
-            args: vec![file_flag, file_test_paths],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let write_table = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::write.table".to_string(),
-            args: vec![df, path],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let write_csv2 = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::write.csv2".to_string(),
-            args: vec![df, path],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
+    let write_table = add_call(&mut fn_ir, "utils::write.table", vec![df, path]);
+    let write_csv2 = add_call(&mut fn_ir, "utils::write.csv2", vec![df, path]);
     let combn_n = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
-    let combn = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::combn".to_string(),
-            args: vec![xs, combn_n],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let cat_word = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("cat".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let dog_word = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("dog".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let cot_word = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("cot".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let dig_word = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("dig".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let words_a = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "c".to_string(),
-            args: vec![cat_word, dog_word],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let words_b = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "c".to_string(),
-            args: vec![cot_word, dig_word],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let adist = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::adist".to_string(),
-            args: vec![words_a, words_b],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let count_fields = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::count.fields".to_string(),
-            args: vec![path],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let one_str = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("1".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let two_str = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("2".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let chars = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "c".to_string(),
-            args: vec![one_str, two_str],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let converted = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::type.convert".to_string(),
-            args: vec![chars],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let write = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::write.csv".to_string(),
-            args: vec![df, path],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let str_call = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "utils::str".to_string(),
-            args: vec![df],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
+    let combn = add_call(&mut fn_ir, "utils::combn", vec![xs, combn_n]);
+    let cat_word = add_str(&mut fn_ir, "cat");
+    let dog_word = add_str(&mut fn_ir, "dog");
+    let cot_word = add_str(&mut fn_ir, "cot");
+    let dig_word = add_str(&mut fn_ir, "dig");
+    let words_a = add_call(&mut fn_ir, "c", vec![cat_word, dog_word]);
+    let words_b = add_call(&mut fn_ir, "c", vec![cot_word, dig_word]);
+    let adist = add_call(&mut fn_ir, "utils::adist", vec![words_a, words_b]);
+    let count_fields = add_call(&mut fn_ir, "utils::count.fields", vec![path]);
+    let one_str = add_str(&mut fn_ir, "1");
+    let two_str = add_str(&mut fn_ir, "2");
+    let chars = add_call(&mut fn_ir, "c", vec![one_str, two_str]);
+    let converted = add_call(&mut fn_ir, "utils::type.convert", vec![chars]);
+    let write = add_call(&mut fn_ir, "utils::write.csv", vec![df, path]);
+    let str_call = add_call(&mut fn_ir, "utils::str", vec![df]);
     fn_ir.blocks[b0].term = Terminator::Return(Some(write));
 
     let mut all = FxHashMap::default();
@@ -929,7 +362,7 @@ fn utils_package_calls_have_direct_types() {
 
     assert_eq!(
         out.values[args_anywhere].value_ty,
-        RR::typeck::TypeState::unknown()
+        rr::compiler::internal::typeck::TypeState::unknown()
     );
     assert_eq!(out.values[args_anywhere].value_term, TypeTerm::Any);
 
@@ -1019,7 +452,10 @@ fn utils_package_calls_have_direct_types() {
     );
 
     for vid in [write, write_table, write_csv2, str_call] {
-        assert_eq!(out.values[vid].value_ty, RR::typeck::TypeState::null());
+        assert_eq!(
+            out.values[vid].value_ty,
+            rr::compiler::internal::typeck::TypeState::null()
+        );
         assert_eq!(out.values[vid].value_term, TypeTerm::Null);
     }
 }
@@ -1034,9 +470,10 @@ fn parallel_package_calls_have_direct_types() {
             "cluster".to_string(),
         ],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::scalar(PrimTy::Int, false);
-    fn_ir.param_ty_hints[2] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[1] = rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Int, false);
+    fn_ir.param_ty_hints[2] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[1] = TypeTerm::Int;
     fn_ir.param_term_hints[2] = TypeTerm::List(Box::new(TypeTerm::Any));
@@ -1064,192 +501,49 @@ fn parallel_package_calls_have_direct_types() {
         None,
     );
 
-    let cores = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::detectCores".to_string(),
-            args: vec![],
-            names: vec![],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let cores = add_call(&mut fn_ir, "parallel::detectCores", vec![]);
+    let mk = add_call(&mut fn_ir, "parallel::makeCluster", vec![worker_count]);
+    let apply = add_call(&mut fn_ir, "parallel::parLapply", vec![cluster, tasks]);
+    let export_name = add_str(&mut fn_ir, "offset");
+    let export = add_call(
+        &mut fn_ir,
+        "parallel::clusterExport",
+        vec![cluster, export_name],
     );
-    let mk = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::makeCluster".to_string(),
-            args: vec![worker_count],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let evalq = add_call(
+        &mut fn_ir,
+        "parallel::clusterEvalQ",
+        vec![cluster, worker_count],
     );
-    let apply = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::parLapply".to_string(),
-            args: vec![cluster, tasks],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let map = add_call(
+        &mut fn_ir,
+        "parallel::clusterMap",
+        vec![cluster, tasks, tasks],
     );
-    let export_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("offset".to_string())),
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let cluster_apply = add_call(&mut fn_ir, "parallel::clusterApply", vec![cluster, tasks]);
+    let cluster_call = add_call(
+        &mut fn_ir,
+        "parallel::clusterCall",
+        vec![cluster, worker_count],
     );
-    let export = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::clusterExport".to_string(),
-            args: vec![cluster, export_name],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let mc = add_call(&mut fn_ir, "parallel::mclapply", vec![tasks]);
+    let cluster_split = add_call(&mut fn_ir, "parallel::clusterSplit", vec![cluster, tasks]);
+    let split_indices = add_call(
+        &mut fn_ir,
+        "parallel::splitIndices",
+        vec![worker_count, worker_count],
     );
-    let evalq = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::clusterEvalQ".to_string(),
-            args: vec![cluster, worker_count],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
+    let apply_lb = add_call(&mut fn_ir, "parallel::clusterApplyLB", vec![cluster, tasks]);
+    let par_sapply = add_call(&mut fn_ir, "parallel::parSapply", vec![cluster, tasks]);
+    let par_sapply_lb = add_call(&mut fn_ir, "parallel::parSapplyLB", vec![cluster, tasks]);
+    let par_apply = add_call(
+        &mut fn_ir,
+        "parallel::parApply",
+        vec![cluster, tasks, worker_count, worker_count],
     );
-    let map = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::clusterMap".to_string(),
-            args: vec![cluster, tasks, tasks],
-            names: vec![None, None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let cluster_apply = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::clusterApply".to_string(),
-            args: vec![cluster, tasks],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let cluster_call = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::clusterCall".to_string(),
-            args: vec![cluster, worker_count],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let mc = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::mclapply".to_string(),
-            args: vec![tasks],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let cluster_split = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::clusterSplit".to_string(),
-            args: vec![cluster, tasks],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let split_indices = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::splitIndices".to_string(),
-            args: vec![worker_count, worker_count],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let apply_lb = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::clusterApplyLB".to_string(),
-            args: vec![cluster, tasks],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let par_sapply = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::parSapply".to_string(),
-            args: vec![cluster, tasks],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let par_sapply_lb = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::parSapplyLB".to_string(),
-            args: vec![cluster, tasks],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let par_apply = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::parApply".to_string(),
-            args: vec![cluster, tasks, worker_count, worker_count],
-            names: vec![None, None, None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let job = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::mcparallel".to_string(),
-            args: vec![tasks],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let collected = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::mccollect".to_string(),
-            args: vec![job],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let stop = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "parallel::stopCluster".to_string(),
-            args: vec![cluster],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
+    let job = add_call(&mut fn_ir, "parallel::mcparallel", vec![tasks]);
+    let collected = add_call(&mut fn_ir, "parallel::mccollect", vec![job]);
+    let stop = add_call(&mut fn_ir, "parallel::stopCluster", vec![cluster]);
     fn_ir.blocks[b0].term = Terminator::Return(Some(stop));
 
     let mut all = FxHashMap::default();
@@ -1310,20 +604,28 @@ fn parallel_package_calls_have_direct_types() {
         );
     }
 
-    assert_eq!(out.values[export].value_ty, RR::typeck::TypeState::null());
+    assert_eq!(
+        out.values[export].value_ty,
+        rr::compiler::internal::typeck::TypeState::null()
+    );
     assert_eq!(out.values[export].value_term, TypeTerm::Null);
-    assert_eq!(out.values[stop].value_ty, RR::typeck::TypeState::null());
+    assert_eq!(
+        out.values[stop].value_ty,
+        rr::compiler::internal::typeck::TypeState::null()
+    );
     assert_eq!(out.values[stop].value_term, TypeTerm::Null);
 }
 
 #[test]
-fn splines_package_calls_have_direct_matrix_types() {
+pub(crate) fn splines_package_calls_have_direct_matrix_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["xs".to_string(), "knots".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[1] = TypeTerm::Vector(Box::new(TypeTerm::Double));
 
@@ -1344,136 +646,19 @@ fn splines_package_calls_have_direct_matrix_types() {
         None,
     );
 
-    let bs = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::bs".to_string(),
-            args: vec![xs],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let ns = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::ns".to_string(),
-            args: vec![xs],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let spline_design = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::splineDesign".to_string(),
-            args: vec![knots, xs],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let interp = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::interpSpline".to_string(),
-            args: vec![xs, xs],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let periodic = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::periodicSpline".to_string(),
-            args: vec![xs, xs],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let back = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::backSpline".to_string(),
-            args: vec![interp],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let spline_knots = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::splineKnots".to_string(),
-            args: vec![interp],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let spline_order = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::splineOrder".to_string(),
-            args: vec![interp],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let xy = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::xyVector".to_string(),
-            args: vec![xs, xs],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let spline_des = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::spline.des".to_string(),
-            args: vec![knots, xs],
-            names: vec![None, None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let as_poly = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::as.polySpline".to_string(),
-            args: vec![interp],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let poly = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::polySpline".to_string(),
-            args: vec![periodic],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
-    let as_vec = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "splines::asVector".to_string(),
-            args: vec![xy],
-            names: vec![None],
-        },
-        Span::dummy(),
-        Facts::empty(),
-        None,
-    );
+    let bs = add_call(&mut fn_ir, "splines::bs", vec![xs]);
+    let ns = add_call(&mut fn_ir, "splines::ns", vec![xs]);
+    let spline_design = add_call(&mut fn_ir, "splines::splineDesign", vec![knots, xs]);
+    let interp = add_call(&mut fn_ir, "splines::interpSpline", vec![xs, xs]);
+    let periodic = add_call(&mut fn_ir, "splines::periodicSpline", vec![xs, xs]);
+    let back = add_call(&mut fn_ir, "splines::backSpline", vec![interp]);
+    let spline_knots = add_call(&mut fn_ir, "splines::splineKnots", vec![interp]);
+    let spline_order = add_call(&mut fn_ir, "splines::splineOrder", vec![interp]);
+    let xy = add_call(&mut fn_ir, "splines::xyVector", vec![xs, xs]);
+    let spline_des = add_call(&mut fn_ir, "splines::spline.des", vec![knots, xs]);
+    let as_poly = add_call(&mut fn_ir, "splines::as.polySpline", vec![interp]);
+    let poly = add_call(&mut fn_ir, "splines::polySpline", vec![periodic]);
+    let as_vec = add_call(&mut fn_ir, "splines::asVector", vec![xy]);
     fn_ir.blocks[b0].term = Terminator::Return(Some(spline_design));
 
     let mut all = FxHashMap::default();

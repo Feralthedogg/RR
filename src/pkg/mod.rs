@@ -9,10 +9,6 @@ mod types;
 mod util;
 
 use crate::error::{RR, RRCode, RRException, Stage};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use getrandom::getrandom;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,9 +17,31 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use env::{find_manifest_root, package_home, with_project_root_hint};
-pub use project::*;
-pub use registry::*;
-pub use types::*;
+pub use project::{
+    graph_project_dependencies, install_dependency_in_project, is_package_import,
+    outdated_direct_dependencies, remove_dependency_from_project, resolve_import_path,
+    tidy_project, update_project_dependencies, vendor_project_dependencies,
+    verify_project_dependencies, why_project_dependency,
+};
+pub use registry::{
+    RegistryOnboardOptions, RegistryPolicyBootstrapOptions, apply_registry_policy,
+    approve_registry_release, bootstrap_registry_policy, clear_registry_channel,
+    deprecate_registry_module, export_registry_audit_log, generate_registry_keypair,
+    lint_registry_policy, list_registry_modules, list_registry_queue, onboard_registry,
+    promote_registry_release, publish_project, read_registry_audit_log,
+    read_registry_audit_log_filtered, registry_diff, registry_module_info, registry_report,
+    registry_risk, rotate_registry_policy_key, search_registry_modules, set_registry_channel,
+    show_registry_policy, unapprove_registry_release, undeprecate_registry_module,
+    unyank_registry_release, verify_registry, yank_registry_release,
+};
+pub use types::{
+    InstallReport, InstalledModule, Manifest, OutdatedDependency, PublishOptions, PublishReport,
+    RegistryAuditEntry, RegistryDiffReport, RegistryInfo, RegistryKeygenReport,
+    RegistryOnboardReport, RegistryPolicyLintReport, RegistryPolicyShowReport, RegistryQueueItem,
+    RegistryReleaseInfo, RegistryReport, RegistryReportModule, RegistryRiskFactor,
+    RegistryRiskReport, RegistrySearchResult, RegistryVerifyIssue, RegistryVerifyReport,
+    VerifyMismatch, VerifyReport,
+};
 
 use self::env::registry_root;
 use self::git::{run_git, run_git_with_env};
@@ -32,6 +50,11 @@ use self::project::normalize_replace_target;
 use self::registry::{
     latest_registry_version, load_registry_index, load_registry_trust_policy,
     materialize_registry_read_root, registry_channel_version, verify_registry_release_trust,
+};
+use self::types::{
+    InstallState, LoadedModule, ModuleRequest, ModuleSource, RegistryAuditFilter, RegistryEntry,
+    RegistryIndex, RegistryTrustPolicy, RequestedVersion, ResolvedVersion, SelectedModule,
+    Workspace,
 };
 use self::util::{
     archive_checksum, compare_versions, copy_dir_recursive, directory_checksum, github_repo_root,

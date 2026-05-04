@@ -1,4 +1,5 @@
-pub(super) fn strip_noop_self_assignments(output: &mut String) {
+use super::*;
+pub(crate) fn strip_noop_self_assignments(output: &mut String) {
     let mut out = String::new();
     for line in output.lines() {
         let keep = if let Some((lhs, rhs)) = parse_local_assign_line(line.trim()) {
@@ -21,7 +22,7 @@ pub(super) fn strip_noop_self_assignments(output: &mut String) {
     *output = out;
 }
 
-pub(super) fn strip_empty_else_blocks(output: &mut String) {
+pub(crate) fn strip_empty_else_blocks(output: &mut String) {
     let lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;
@@ -55,7 +56,7 @@ pub(super) fn strip_empty_else_blocks(output: &mut String) {
     *output = rendered;
 }
 
-pub(super) fn collapse_nested_else_if_blocks(output: &mut String) {
+pub(crate) fn collapse_nested_else_if_blocks(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.len() < 3 {
         return;

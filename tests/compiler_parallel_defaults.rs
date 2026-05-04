@@ -1,4 +1,4 @@
-use RR::compiler::{
+use rr::compiler::{
     CompilerParallelConfig, CompilerParallelMode, CompilerScheduler,
     default_compiler_parallel_config,
 };

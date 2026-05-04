@@ -1,7 +1,7 @@
 use super::package_manager_cli_common::*;
 
 #[test]
-fn registry_verify_detects_missing_archive_and_admin_commands_restore_state() {
+pub(crate) fn registry_verify_detects_missing_archive_and_admin_commands_restore_state() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -163,7 +163,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn signed_registry_release_installs_and_verifies_with_trust_key() {
+pub(crate) fn signed_registry_release_installs_and_verifies_with_trust_key() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -284,7 +284,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn signed_registry_release_rejects_wrong_trust_key() {
+pub(crate) fn signed_registry_release_rejects_wrong_trust_key() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -353,7 +353,7 @@ fn signed_registry_release_rejects_wrong_trust_key() {
 }
 
 #[test]
-fn ed25519_signed_registry_release_supports_signer_identity_and_key_rotation() {
+pub(crate) fn ed25519_signed_registry_release_supports_signer_identity_and_key_rotation() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -475,7 +475,7 @@ fn ed25519_signed_registry_release_supports_signer_identity_and_key_rotation() {
 }
 
 #[test]
-fn ed25519_signed_registry_release_rejects_untrusted_public_key() {
+pub(crate) fn ed25519_signed_registry_release_rejects_untrusted_public_key() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -549,7 +549,7 @@ fn ed25519_signed_registry_release_rejects_untrusted_public_key() {
 }
 
 #[test]
-fn registry_policy_file_supplies_trust_and_signer_allowlist() {
+pub(crate) fn registry_policy_file_supplies_trust_and_signer_allowlist() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -640,7 +640,7 @@ fn registry_policy_file_supplies_trust_and_signer_allowlist() {
 }
 
 #[test]
-fn registry_policy_file_rejects_revoked_key() {
+pub(crate) fn registry_policy_file_rejects_revoked_key() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -710,7 +710,7 @@ fn registry_policy_file_rejects_revoked_key() {
 }
 
 #[test]
-fn registry_keygen_writes_files_and_matching_public_key() {
+pub(crate) fn registry_keygen_writes_files_and_matching_public_key() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")

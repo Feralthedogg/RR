@@ -1,6 +1,5 @@
-pub(in super::super) fn rewrite_dead_zero_loop_seeds_before_for_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+use super::*;
+pub(crate) fn rewrite_dead_zero_loop_seeds_before_for_ir(lines: Vec<String>) -> Vec<String> {
     if !has_dead_zero_loop_seed_candidates_ir(&lines) {
         return lines;
     }
@@ -9,13 +8,13 @@ pub(in super::super) fn rewrite_dead_zero_loop_seeds_before_for_ir(
     program.into_lines()
 }
 
-fn apply_rewrite_dead_zero_loop_seeds_before_for_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_rewrite_dead_zero_loop_seeds_before_for_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
         };
         let mut removable = vec![false; function.body.len()];
-        for idx in 0..function.body.len() {
+        for (idx, removable_slot) in removable.iter_mut().enumerate().take(function.body.len()) {
             let EmittedStmtKind::Assign { lhs, rhs } = &function.body[idx].kind else {
                 continue;
             };
@@ -35,7 +34,7 @@ fn apply_rewrite_dead_zero_loop_seeds_before_for_ir(program: &mut EmittedProgram
                 .iter()
                 .any(|stmt| stmt.mentions_ident(lhs));
             if !used_before_for {
-                removable[idx] = true;
+                *removable_slot = true;
             }
         }
         function.body = function
@@ -47,7 +46,7 @@ fn apply_rewrite_dead_zero_loop_seeds_before_for_ir(program: &mut EmittedProgram
     }
 }
 
-fn has_dead_zero_loop_seed_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_dead_zero_loop_seed_candidates_ir(lines: &[String]) -> bool {
     for (idx, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         let Some(caps) = assign_re().and_then(|re| re.captures(trimmed)) else {

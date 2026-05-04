@@ -1,4 +1,5 @@
-fn infer_value_type(
+use super::*;
+pub(crate) fn infer_value_type(
     fn_ir: &FnIR,
     vid: ValueId,
     fn_ret: &FxHashMap<String, TypeState>,
@@ -56,7 +57,11 @@ fn infer_value_type(
                 BinOp::And | BinOp::Or => TypeState {
                     prim: PrimTy::Logical,
                     shape: normalize_call_numeric_shape(&[l, r]),
-                    na: NaTy::Maybe,
+                    na: if l.na == NaTy::Never && r.na == NaTy::Never {
+                        NaTy::Never
+                    } else {
+                        NaTy::Maybe
+                    },
                     len_sym: if l.len_sym.is_some() && l.len_sym == r.len_sym {
                         l.len_sym
                     } else {
@@ -184,6 +189,13 @@ fn infer_value_type(
                 .iter()
                 .map(|a| fn_ir.values[*a].value_term.clone())
                 .collect();
+            let signature_indices = signature_value_arg_indices(callee, args, names);
+            let signature_arg_tys: Vec<TypeState> =
+                signature_indices.iter().map(|idx| arg_tys[*idx]).collect();
+            let signature_arg_terms: Vec<TypeTerm> = signature_indices
+                .iter()
+                .map(|idx| arg_terms[*idx].clone())
+                .collect();
             if callee == "compiler::getCompilerOption"
                 && let Some(option_name) =
                     args.first().and_then(|arg| match &fn_ir.values[*arg].kind {
@@ -200,12 +212,15 @@ fn infer_value_type(
                 };
                 return refine_type_with_term(narrowed, &fn_ir.values[vid].value_term);
             }
-            if let Some(b) = infer_builtin(callee, &arg_tys) {
-                let with_builtin_term = if let Some(term) = infer_builtin_term(callee, &arg_terms) {
-                    refine_type_with_term(b, &term)
-                } else {
-                    b
-                };
+            if let Some(b) = infer_builtin(callee, &signature_arg_tys) {
+                let with_builtin_term =
+                    if let Some(term) = infer_builtin_term(callee, &signature_arg_terms) {
+                        refine_type_with_term(b, &term)
+                    } else {
+                        b
+                    };
+                let with_builtin_term =
+                    refine_named_builtin_na(fn_ir, callee, args, names, with_builtin_term);
                 return refine_type_with_term(with_builtin_term, &fn_ir.values[vid].value_term);
             }
             if let Some(pkg_ty) = infer_named_package_call_type(fn_ir, callee, args, names) {
@@ -215,15 +230,19 @@ fn infer_value_type(
                 } else {
                     pkg_ty
                 };
+                let with_pkg_term =
+                    refine_named_builtin_na(fn_ir, callee, args, names, with_pkg_term);
                 return refine_type_with_term(with_pkg_term, &fn_ir.values[vid].value_term);
             }
-            if let Some(pkg_ty) = infer_package_call(callee, &arg_tys) {
-                let with_pkg_term = if let Some(term) = infer_package_call_term(callee, &arg_terms)
-                {
-                    refine_type_with_term(pkg_ty, &term)
-                } else {
-                    pkg_ty
-                };
+            if let Some(pkg_ty) = infer_package_call(callee, &signature_arg_tys) {
+                let with_pkg_term =
+                    if let Some(term) = infer_package_call_term(callee, &signature_arg_terms) {
+                        refine_type_with_term(pkg_ty, &term)
+                    } else {
+                        pkg_ty
+                    };
+                let with_pkg_term =
+                    refine_named_builtin_na(fn_ir, callee, args, names, with_pkg_term);
                 return refine_type_with_term(with_pkg_term, &fn_ir.values[vid].value_term);
             }
             if callee.starts_with("Sym_") {
@@ -326,5 +345,92 @@ fn infer_value_type(
                 }
             }
         }
+    }
+}
+
+pub(crate) fn refine_named_builtin_na(
+    fn_ir: &FnIR,
+    callee: &str,
+    args: &[ValueId],
+    names: &[Option<String>],
+    mut ty: TypeState,
+) -> TypeState {
+    let builtin = callee.strip_prefix("base::").unwrap_or(callee);
+    let value_args: Vec<ValueId> = args
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(
+            |(idx, arg)| match names.get(idx).and_then(Option::as_deref) {
+                Some("na.rm") => None,
+                _ => Some(arg),
+            },
+        )
+        .collect();
+    let all_values_non_na = !value_args.is_empty()
+        && value_args
+            .iter()
+            .all(|arg| fn_ir.values[*arg].value_ty.na == NaTy::Never);
+
+    match builtin {
+        "sum" | "prod" | "min" | "max"
+            if (named_bool_arg(fn_ir, args, names, "na.rm") == Some(true) || all_values_non_na) =>
+        {
+            ty.na = NaTy::Never;
+        }
+        "mean" => {
+            let all_scalar_non_na = !value_args.is_empty()
+                && value_args.iter().all(|arg| {
+                    let value_ty = fn_ir.values[*arg].value_ty;
+                    value_ty.shape == ShapeTy::Scalar && value_ty.na == NaTy::Never
+                });
+            if all_scalar_non_na {
+                ty.na = NaTy::Never;
+            }
+        }
+        _ => {}
+    }
+
+    ty
+}
+
+pub(crate) fn signature_value_arg_indices(
+    callee: &str,
+    args: &[ValueId],
+    names: &[Option<String>],
+) -> Vec<usize> {
+    let builtin = callee.strip_prefix("base::").unwrap_or(callee);
+    let drop_named_na_rm = matches!(builtin, "sum" | "prod" | "min" | "max" | "mean");
+    args.iter()
+        .enumerate()
+        .filter_map(|(idx, _)| {
+            if drop_named_na_rm && names.get(idx).and_then(Option::as_deref) == Some("na.rm") {
+                None
+            } else {
+                Some(idx)
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn named_bool_arg(
+    fn_ir: &FnIR,
+    args: &[ValueId],
+    names: &[Option<String>],
+    target: &str,
+) -> Option<bool> {
+    args.iter()
+        .enumerate()
+        .find_map(|(idx, arg)| {
+            (names.get(idx).and_then(Option::as_deref) == Some(target))
+                .then(|| const_bool(fn_ir, *arg))
+        })
+        .flatten()
+}
+
+pub(crate) fn const_bool(fn_ir: &FnIR, value: ValueId) -> Option<bool> {
+    match &fn_ir.values[value].kind {
+        ValueKind::Const(crate::syntax::ast::Lit::Bool(value)) => Some(*value),
+        _ => None,
     }
 }

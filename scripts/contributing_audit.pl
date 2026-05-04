@@ -232,11 +232,11 @@ sub scope_needs_pass_verify {
 }
 
 sub scope_touches_core_compiler {
-    return scope_matches(qr{^(?:src/compiler/|src/hir/|src/mir/|src/codegen/|src/runtime/|src/main\.rs$|src/main_.*\.rs$)});
+    return scope_matches(qr{^(?:src/compiler/|src/hir/|src/mir/|src/codegen/|src/runtime/|src/main\.rs$|src/main/|src/main_.*\.rs$)});
 }
 
 sub scope_needs_cache_semantics {
-    return scope_matches(qr{^(?:src/compiler/incremental\.rs$|src/compiler/pipeline\.rs$|src/main_compile\.rs$|tests/incremental_.*|tests/cli_incremental_default\.rs$)});
+    return scope_matches(qr{^(?:src/compiler/incremental\.rs$|src/compiler/pipeline\.rs$|src/main/compile/|src/main_compile\.rs$|tests/incremental_.*|tests/cli_incremental_default\.rs$)});
 }
 
 sub scope_needs_numeric_semantics {
@@ -244,7 +244,7 @@ sub scope_needs_numeric_semantics {
 }
 
 sub scope_needs_fallback_semantics {
-    return scope_matches(qr{^(?:src/main\.rs$|src/main_.*\.rs$|src/runtime/|src/compiler/pipeline\.rs$|src/compiler/scheduler\.rs$|src/mir/semantics/|src/mir/opt/poly/|tests/hybrid_fallback\.rs$|tests/native_optional_fallback\.rs$|tests/parallel_optional_fallback_semantics\.rs$|tests/poly_vopt_fallback\.rs$)});
+    return scope_matches(qr{^(?:src/main\.rs$|src/main/|src/main_.*\.rs$|src/runtime/|src/compiler/pipeline\.rs$|src/compiler/scheduler\.rs$|src/mir/semantics/|src/mir/opt/poly/|tests/hybrid_fallback\.rs$|tests/native_optional_fallback\.rs$|tests/parallel_optional_fallback_semantics\.rs$|tests/poly_vopt_fallback\.rs$)});
 }
 
 sub scope_needs_determinism_semantics {
@@ -702,6 +702,7 @@ for my $idx (0 .. $#paths) {
         my ($level, $code, $ast_shown, $line_no) = @{$finding};
         next if $ast_shown ne $shown;
         next if $line_no > scalar(@all_lines);
+        next if has_allow_marker($all_lines[$line_no - 1] // q{});
         if ($code =~ /^ast-production-(panic|unwrap|dbg)$/) {
             next if !$is_production_src || $line_no > $ast_prod_boundary;
             my %mapped = (
@@ -887,7 +888,6 @@ my @clippy_allow_args = (
     '-A', 'clippy::ptr_arg',
     '-A', 'clippy::unnecessary_sort_by',
     '-A', 'clippy::while_let_loop',
-    '-A', 'clippy::manual_checked_ops',
     '-A', 'clippy::question_mark',
 );
 

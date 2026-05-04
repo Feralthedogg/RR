@@ -15,6 +15,7 @@ use super::codegen_generic::{
 };
 use super::schedule::{SchedulePlan, SchedulePlanKind};
 use super::tree::{ScheduleTransform, ScheduleTree, ScheduleTreeNode};
+use super::{PolyStmtKind, access, affine, poly_trace_enabled, schedule};
 use crate::mir::opt::loop_analysis::LoopInfo;
 use crate::mir::opt::v_opt::{
     Axis3D, PreparedVectorAssignment, ReduceKind, VectorPlan, build_slice_assignment_value,
@@ -29,11 +30,27 @@ use crate::syntax::ast::BinOp;
 mod codegen_lower;
 use self::codegen_lower::*;
 
-include!("codegen/entry.rs");
-include!("codegen/operands.rs");
-include!("codegen/map_vector.rs");
-include!("codegen/map_nd.rs");
-include!("codegen/guards.rs");
-include!("codegen/reduce_nested.rs");
-include!("codegen/schedules.rs");
-include!("codegen/tests.rs");
+#[path = "codegen/entry.rs"]
+mod entry;
+pub(crate) use self::entry::*;
+#[path = "codegen/operands.rs"]
+mod operands;
+pub(crate) use self::operands::*;
+#[path = "codegen/map_vector.rs"]
+mod map_vector;
+pub(crate) use self::map_vector::*;
+#[path = "codegen/map_nd.rs"]
+mod map_nd;
+pub(crate) use self::map_nd::*;
+#[path = "codegen/guards.rs"]
+mod guards;
+pub(crate) use self::guards::*;
+#[path = "codegen/reduce_nested.rs"]
+mod reduce_nested;
+pub(crate) use self::reduce_nested::*;
+#[path = "codegen/schedules.rs"]
+mod schedules;
+pub(crate) use self::schedules::*;
+#[cfg(test)]
+#[path = "codegen/tests.rs"]
+mod tests;

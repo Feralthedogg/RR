@@ -1,33 +1,36 @@
 use super::super::{
     PeepholeAnalysisCache, assign_re, cached_function_facts, collect_prologue_arg_aliases,
-    expr_has_only_pure_calls, expr_idents, ident_re, is_peephole_temp, next_def_after_in_facts,
-    plain_ident_re, rewrite_forward_exact_expr_reuse_ir, rewrite_forward_exact_pure_call_reuse_ir,
-    scalar_lit_re, strip_terminal_repeat_nexts_ir, uses_in_region,
+    expr_has_only_pure_calls, expr_idents, ident_re, indexed_store_base_re, is_peephole_temp,
+    next_def_after_in_facts, plain_ident_re, rewrite_forward_exact_expr_reuse_ir,
+    rewrite_forward_exact_pure_call_reuse_ir, scalar_lit_re, strip_terminal_repeat_nexts_ir,
+    uses_in_region,
 };
 use crate::compiler::peephole::alias::normalize_expr_with_aliases;
 use regex::Captures;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-fn line_might_mention_any(text: &str, names: &FxHashSet<String>) -> bool {
+pub(crate) fn line_might_mention_any(text: &str, names: &FxHashSet<String>) -> bool {
     names.iter().any(|name| text.contains(name))
 }
 
-fn build_line_to_function(
+pub(crate) fn build_line_to_function(
     facts: &[super::super::FunctionFacts],
     total_lines: usize,
 ) -> Vec<Option<usize>> {
     let mut line_to_fn = vec![None; total_lines];
     for (fn_idx, function_facts) in facts.iter().enumerate() {
-        for line_idx in function_facts.function.start..=function_facts.function.end {
-            if line_idx < total_lines {
-                line_to_fn[line_idx] = Some(fn_idx);
-            }
+        for slot in line_to_fn
+            .iter_mut()
+            .take(function_facts.function.end.saturating_add(1))
+            .skip(function_facts.function.start)
+        {
+            *slot = Some(fn_idx);
         }
     }
     line_to_fn
 }
 
-fn extend_lines_in_region(
+pub(crate) fn extend_lines_in_region(
     out: &mut Vec<usize>,
     lines: Option<&Vec<usize>>,
     after_line: usize,
@@ -41,7 +44,7 @@ fn extend_lines_in_region(
     out.extend_from_slice(&lines[start..end]);
 }
 
-fn reuse_candidate_lines(
+pub(crate) fn reuse_candidate_lines(
     facts: &super::super::FunctionFacts,
     lhs: &str,
     deps: &FxHashSet<String>,
@@ -59,7 +62,7 @@ fn reuse_candidate_lines(
     lines
 }
 
-fn compare_exact_forward_ir(
+pub(crate) fn compare_exact_forward_ir(
     pass: &str,
     input: &[String],
     legacy: &[String],
@@ -117,14 +120,14 @@ fn compare_exact_forward_ir(
     }
 }
 
-fn use_ir_forward_pure_call() -> bool {
+pub(crate) fn use_ir_forward_pure_call() -> bool {
     !matches!(
         std::env::var("RR_USE_IR_FORWARD_PURE_CALL").ok().as_deref(),
         Some("0") | Some("false") | Some("no")
     )
 }
 
-fn use_ir_forward_exact_expr() -> bool {
+pub(crate) fn use_ir_forward_exact_expr() -> bool {
     !matches!(
         std::env::var("RR_USE_IR_FORWARD_EXACT_EXPR")
             .ok()
@@ -133,7 +136,7 @@ fn use_ir_forward_exact_expr() -> bool {
     )
 }
 
-pub(in super::super) fn rewrite_forward_simple_alias_guards(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_forward_simple_alias_guards(lines: Vec<String>) -> Vec<String> {
     let mut out = lines;
     let Some(ident_re) = ident_re() else {
         return out;
@@ -258,7 +261,7 @@ pub(in super::super) fn rewrite_forward_simple_alias_guards(lines: Vec<String>) 
     out
 }
 
-pub(in super::super) fn rewrite_loop_index_alias_ii(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_loop_index_alias_ii(lines: Vec<String>) -> Vec<String> {
     let mut out = lines;
     let Some(ident_re) = ident_re() else {
         return out;
@@ -318,7 +321,7 @@ pub(in super::super) fn rewrite_loop_index_alias_ii(lines: Vec<String>) -> Vec<S
     out
 }
 
-pub(in super::super) fn expr_is_exact_reusable_scalar(rhs: &str) -> bool {
+pub(crate) fn expr_is_exact_reusable_scalar(rhs: &str) -> bool {
     let rhs = rhs.trim();
     let has_runtime_helper = rhs.contains("rr_") && !rhs.contains(".__rr_cse_");
     if rhs.is_empty()
@@ -335,7 +338,7 @@ pub(in super::super) fn expr_is_exact_reusable_scalar(rhs: &str) -> bool {
     true
 }
 
-pub(in super::super) fn rewrite_forward_exact_pure_call_reuse(
+pub(crate) fn rewrite_forward_exact_pure_call_reuse(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
@@ -349,7 +352,7 @@ pub(in super::super) fn rewrite_forward_exact_pure_call_reuse(
     out
 }
 
-pub(in super::super) fn rewrite_forward_exact_pure_call_reuse_with_cache(
+pub(crate) fn rewrite_forward_exact_pure_call_reuse_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     cache: &mut PeepholeAnalysisCache,
@@ -371,7 +374,7 @@ pub(in super::super) fn rewrite_forward_exact_pure_call_reuse_with_cache(
     };
     let mut out = lines;
     let function_facts = cached_function_facts(cache, &out);
-    let line_to_fn = build_line_to_function(&function_facts, out.len());
+    let line_to_fn = build_line_to_function(function_facts, out.len());
     let candidates = function_facts
         .iter()
         .flat_map(|function| {
@@ -423,6 +426,14 @@ pub(in super::super) fn rewrite_forward_exact_pure_call_reuse_with_cache(
                 let line_trimmed = out[line_no].trim();
                 let is_return = line_trimmed == "return(NULL)"
                     || (line_trimmed.starts_with("return(") && line_trimmed.ends_with(')'));
+                if let Some(base) = indexed_store_base_re()
+                    .and_then(|re| re.captures(line_trimmed))
+                    .and_then(|caps| caps.name("base").map(|m| m.as_str().trim().to_string()))
+                    && (base == lhs || deps.contains(&base))
+                {
+                    should_break = true;
+                    return (should_break, should_continue);
+                }
                 if !line_trimmed.contains(" <- ") && !line_trimmed.contains(rhs) && !is_return {
                     return (false, false);
                 }
@@ -497,31 +508,55 @@ pub(in super::super) fn rewrite_forward_exact_pure_call_reuse_with_cache(
     out
 }
 
-pub(in super::super) fn rewrite_adjacent_duplicate_pure_call_assignments(
+pub(crate) fn rewrite_adjacent_duplicate_pure_call_assignments(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
-    rewrite_adjacent_duplicate_assignments_impl(lines, pure_user_calls, true, false)
+    rewrite_adjacent_duplicate_assignments_impl(
+        lines,
+        pure_user_calls,
+        AdjacentDuplicateRewritePolicy {
+            include_pure_call: true,
+            include_symbol: false,
+        },
+    )
 }
 
-pub(in super::super) fn rewrite_adjacent_duplicate_symbol_assignments(
-    lines: Vec<String>,
-) -> Vec<String> {
-    rewrite_adjacent_duplicate_assignments_impl(lines, &FxHashSet::default(), false, true)
+pub(crate) fn rewrite_adjacent_duplicate_symbol_assignments(lines: Vec<String>) -> Vec<String> {
+    rewrite_adjacent_duplicate_assignments_impl(
+        lines,
+        &FxHashSet::default(),
+        AdjacentDuplicateRewritePolicy {
+            include_pure_call: false,
+            include_symbol: true,
+        },
+    )
 }
 
-pub(in super::super) fn rewrite_adjacent_duplicate_assignments(
+pub(crate) fn rewrite_adjacent_duplicate_assignments(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
-    rewrite_adjacent_duplicate_assignments_impl(lines, pure_user_calls, true, true)
+    rewrite_adjacent_duplicate_assignments_impl(
+        lines,
+        pure_user_calls,
+        AdjacentDuplicateRewritePolicy {
+            include_pure_call: true,
+            include_symbol: true,
+        },
+    )
 }
 
-fn rewrite_adjacent_duplicate_assignments_impl(
+#[derive(Clone, Copy)]
+pub(crate) struct AdjacentDuplicateRewritePolicy {
+    pub(crate) include_pure_call: bool,
+    pub(crate) include_symbol: bool,
+}
+
+pub(crate) fn rewrite_adjacent_duplicate_assignments_impl(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
-    include_pure_call: bool,
-    include_symbol: bool,
+    policy: AdjacentDuplicateRewritePolicy,
 ) -> Vec<String> {
     let mut out = lines;
     if out.len() < 2 {
@@ -560,11 +595,11 @@ fn rewrite_adjacent_duplicate_assignments_impl(
             continue;
         }
 
-        let can_rewrite_pure_call = include_pure_call
+        let can_rewrite_pure_call = policy.include_pure_call
             && rhs0.contains('(')
             && expr_has_only_pure_calls(rhs0, pure_user_calls);
         let can_rewrite_symbol =
-            include_symbol && plain_ident_re.is_match(rhs0) && !rhs0.starts_with(".arg_");
+            policy.include_symbol && plain_ident_re.is_match(rhs0) && !rhs0.starts_with(".arg_");
         if !can_rewrite_pure_call && !can_rewrite_symbol {
             continue;
         }
@@ -579,11 +614,11 @@ fn rewrite_adjacent_duplicate_assignments_impl(
     out
 }
 
-pub(in super::super) fn strip_terminal_repeat_nexts(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn strip_terminal_repeat_nexts(lines: Vec<String>) -> Vec<String> {
     strip_terminal_repeat_nexts_ir(lines)
 }
 
-pub(in super::super) fn rewrite_forward_exact_expr_reuse(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_forward_exact_expr_reuse(lines: Vec<String>) -> Vec<String> {
     if use_ir_forward_exact_expr() {
         return rewrite_forward_exact_expr_reuse_ir(lines);
     }
@@ -594,7 +629,7 @@ pub(in super::super) fn rewrite_forward_exact_expr_reuse(lines: Vec<String>) -> 
     out
 }
 
-pub(in super::super) fn rewrite_forward_exact_expr_reuse_with_cache(
+pub(crate) fn rewrite_forward_exact_expr_reuse_with_cache(
     lines: Vec<String>,
     cache: &mut PeepholeAnalysisCache,
 ) -> Vec<String> {
@@ -610,7 +645,7 @@ pub(in super::super) fn rewrite_forward_exact_expr_reuse_with_cache(
     let mut out = lines;
     let debug = std::env::var_os("RR_DEBUG_PEEPHOLE").is_some();
     let function_facts = cached_function_facts(cache, &out);
-    let line_to_fn = build_line_to_function(&function_facts, out.len());
+    let line_to_fn = build_line_to_function(function_facts, out.len());
     let candidates = function_facts
         .iter()
         .flat_map(|function| {

@@ -1,7 +1,7 @@
 use super::common::*;
 
 #[test]
-fn constant_safe_partial_self_assign_renders_direct_slice_write() {
+pub(crate) fn constant_safe_partial_self_assign_renders_direct_slice_write() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -185,7 +185,7 @@ fn constant_safe_partial_self_assign_renders_direct_slice_write() {
 }
 
 #[test]
-fn constant_safe_partial_self_assign_recovers_alias_base_var() {
+pub(crate) fn constant_safe_partial_self_assign_recovers_alias_base_var() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -359,7 +359,7 @@ fn constant_safe_partial_self_assign_recovers_alias_base_var() {
 }
 
 #[test]
-fn whole_auto_builtin_call_map_is_emitted_as_direct_vector_call() {
+pub(crate) fn whole_auto_builtin_call_map_is_emitted_as_direct_vector_call() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -508,7 +508,7 @@ fn whole_auto_builtin_call_map_is_emitted_as_direct_vector_call() {
 }
 
 #[test]
-fn whole_auto_pmax_zip_call_map_is_emitted_as_direct_vector_call() {
+pub(crate) fn whole_auto_pmax_zip_call_map_is_emitted_as_direct_vector_call() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -670,7 +670,7 @@ fn whole_auto_pmax_zip_call_map_is_emitted_as_direct_vector_call() {
 }
 
 #[test]
-fn whole_range_pmax_zip_call_map_slice_is_emitted_as_direct_vector_call() {
+pub(crate) fn whole_range_pmax_zip_call_map_slice_is_emitted_as_direct_vector_call() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {

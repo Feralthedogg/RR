@@ -1,4 +1,5 @@
-pub(super) fn restore_missing_repeat_loop_counter_updates(output: &mut String) {
+use super::*;
+pub(crate) fn restore_missing_repeat_loop_counter_updates(output: &mut String) {
     fn latest_local_literal_seed_before(lines: &[String], idx: usize, var: &str) -> Option<String> {
         for line in lines.iter().take(idx).rev() {
             let Some((lhs, rhs)) = parse_local_assign_line(line.trim()) else {

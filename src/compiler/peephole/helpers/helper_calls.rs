@@ -9,13 +9,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-fn has_sym_call_candidates(lines: &[String]) -> bool {
+pub(crate) fn has_sym_call_candidates(lines: &[String]) -> bool {
     lines
         .iter()
         .any(|line| !line.contains("<- function") && line.contains("Sym_") && line.contains('('))
 }
 
-fn function_defs_signature(lines: &[String]) -> u64 {
+pub(crate) fn function_defs_signature(lines: &[String]) -> u64 {
     let mut hasher = DefaultHasher::new();
     for func in build_function_text_index(lines, parse_function_header) {
         for line in lines.iter().take(func.end + 1).skip(func.start) {
@@ -25,7 +25,7 @@ fn function_defs_signature(lines: &[String]) -> u64 {
     hasher.finish()
 }
 
-fn full_text_signature(lines: &[String]) -> u64 {
+pub(crate) fn full_text_signature(lines: &[String]) -> u64 {
     let mut hasher = DefaultHasher::new();
     for line in lines {
         line.hash(&mut hasher);
@@ -34,29 +34,32 @@ fn full_text_signature(lines: &[String]) -> u64 {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(in super::super) struct HelperAnalysisCache {
-    passthrough_signature: Option<u64>,
-    passthrough_helpers: FxHashMap<String, String>,
-    simple_signature: Option<u64>,
-    simple_helpers: FxHashMap<String, SimpleExprHelper>,
-    trim_signature: Option<u64>,
-    trims: FxHashMap<String, HelperTrim>,
+pub(crate) struct HelperAnalysisCache {
+    pub(crate) passthrough_signature: Option<u64>,
+    pub(crate) passthrough_helpers: FxHashMap<String, String>,
+    pub(crate) simple_signature: Option<u64>,
+    pub(crate) simple_helpers: FxHashMap<String, SimpleExprHelper>,
+    pub(crate) trim_signature: Option<u64>,
+    pub(crate) trims: FxHashMap<String, HelperTrim>,
 }
 
 #[derive(Debug, Clone)]
-pub(in super::super) struct SimpleExprHelper {
-    pub(super) params: Vec<String>,
-    pub(super) expr: String,
+pub(crate) struct SimpleExprHelper {
+    pub(crate) params: Vec<String>,
+    pub(crate) expr: String,
 }
 
 #[derive(Debug, Clone)]
-pub(in super::super) struct HelperTrim {
-    pub(super) original_len: usize,
-    pub(super) kept_indices: Vec<usize>,
-    pub(super) kept_params: Vec<String>,
+pub(crate) struct HelperTrim {
+    pub(crate) original_len: usize,
+    pub(crate) kept_indices: Vec<usize>,
+    pub(crate) kept_params: Vec<String>,
 }
 
-fn expr_is_trivial_passthrough_setup_rhs(rhs: &str, fresh_user_calls: &FxHashSet<String>) -> bool {
+pub(crate) fn expr_is_trivial_passthrough_setup_rhs(
+    rhs: &str,
+    fresh_user_calls: &FxHashSet<String>,
+) -> bool {
     let rhs = rhs.trim();
     plain_ident_re().is_some_and(|re| re.is_match(rhs))
         || scalar_lit_re().is_some_and(|re| re.is_match(rhs))
@@ -67,7 +70,7 @@ fn expr_is_trivial_passthrough_setup_rhs(rhs: &str, fresh_user_calls: &FxHashSet
             .is_some_and(|inner| plain_ident_re().is_some_and(|re| re.is_match(inner.trim())))
 }
 
-fn collect_passthrough_helpers(lines: &[String]) -> FxHashMap<String, String> {
+pub(crate) fn collect_passthrough_helpers(lines: &[String]) -> FxHashMap<String, String> {
     let mut out = FxHashMap::default();
     for func in build_function_text_index(lines, parse_function_header) {
         let Some(fn_name) = func.name.as_ref() else {
@@ -101,7 +104,7 @@ fn collect_passthrough_helpers(lines: &[String]) -> FxHashMap<String, String> {
     out
 }
 
-fn cached_passthrough_helpers(
+pub(crate) fn cached_passthrough_helpers(
     cache: &mut HelperAnalysisCache,
     lines: &[String],
 ) -> FxHashMap<String, String> {
@@ -113,13 +116,13 @@ fn cached_passthrough_helpers(
     cache.passthrough_helpers.clone()
 }
 
-pub(in super::super) fn rewrite_passthrough_helper_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_passthrough_helper_calls(lines: Vec<String>) -> Vec<String> {
     let mut cache = HelperAnalysisCache::default();
     let mut analysis_cache = PeepholeAnalysisCache::default();
     rewrite_passthrough_helper_calls_with_caches(lines, &mut cache, &mut analysis_cache)
 }
 
-pub(in super::super) fn rewrite_passthrough_helper_calls_with_cache(
+pub(crate) fn rewrite_passthrough_helper_calls_with_cache(
     lines: Vec<String>,
     cache: &mut HelperAnalysisCache,
 ) -> Vec<String> {
@@ -127,7 +130,7 @@ pub(in super::super) fn rewrite_passthrough_helper_calls_with_cache(
     rewrite_passthrough_helper_calls_with_caches(lines, cache, &mut analysis_cache)
 }
 
-pub(in super::super) fn rewrite_passthrough_helper_calls_with_caches(
+pub(crate) fn rewrite_passthrough_helper_calls_with_caches(
     lines: Vec<String>,
     cache: &mut HelperAnalysisCache,
     analysis_cache: &mut PeepholeAnalysisCache,
@@ -174,7 +177,7 @@ pub(in super::super) fn rewrite_passthrough_helper_calls_with_caches(
     out
 }
 
-pub(in super::super) fn rewrite_simple_expr_helper_calls_filtered(
+pub(crate) fn rewrite_simple_expr_helper_calls_filtered(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     allowed_helpers: Option<&FxHashSet<String>>,
@@ -190,24 +193,32 @@ pub(in super::super) fn rewrite_simple_expr_helper_calls_filtered(
     )
 }
 
-pub(in super::super) fn rewrite_simple_expr_helper_calls_filtered_with_cache(
+pub(crate) fn rewrite_simple_expr_helper_calls_filtered_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     allowed_helpers: Option<&FxHashSet<String>>,
     _cache: &mut HelperAnalysisCache,
     _analysis_cache: &mut PeepholeAnalysisCache,
 ) -> Vec<String> {
-    rewrite_simple_expr_helper_calls_ir(lines, pure_user_calls, allowed_helpers)
+    rewrite_simple_expr_helper_calls_ir(lines, pure_user_calls, allowed_helpers, false)
 }
 
-pub(in super::super) fn rewrite_simple_expr_helper_calls(
+pub(crate) fn rewrite_simple_expr_helper_calls_filtered_size_controlled(
+    lines: Vec<String>,
+    pure_user_calls: &FxHashSet<String>,
+    allowed_helpers: Option<&FxHashSet<String>>,
+) -> Vec<String> {
+    rewrite_simple_expr_helper_calls_ir(lines, pure_user_calls, allowed_helpers, true)
+}
+
+pub(crate) fn rewrite_simple_expr_helper_calls(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
     rewrite_simple_expr_helper_calls_filtered(lines, pure_user_calls, None)
 }
 
-pub(in super::super) fn rewrite_simple_expr_helper_calls_with_cache(
+pub(crate) fn rewrite_simple_expr_helper_calls_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     cache: &mut HelperAnalysisCache,
@@ -222,7 +233,7 @@ pub(in super::super) fn rewrite_simple_expr_helper_calls_with_cache(
     )
 }
 
-pub(in super::super) fn rewrite_simple_expr_helper_calls_with_caches(
+pub(crate) fn rewrite_simple_expr_helper_calls_with_caches(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     cache: &mut HelperAnalysisCache,
@@ -237,11 +248,11 @@ pub(in super::super) fn rewrite_simple_expr_helper_calls_with_caches(
     )
 }
 
-pub(in super::super) fn simplify_nested_index_vec_floor_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn simplify_nested_index_vec_floor_calls(lines: Vec<String>) -> Vec<String> {
     simplify_nested_index_vec_floor_calls_ir(lines)
 }
 
-pub(in super::super) fn rewrite_selected_simple_expr_helper_calls_in_text(
+pub(crate) fn rewrite_selected_simple_expr_helper_calls_in_text(
     code: &str,
     helper_names: &[&str],
 ) -> String {
@@ -261,7 +272,7 @@ pub(in super::super) fn rewrite_selected_simple_expr_helper_calls_in_text(
     out
 }
 
-pub(in super::super) fn simplify_nested_index_vec_floor_calls_in_text(code: &str) -> String {
+pub(crate) fn simplify_nested_index_vec_floor_calls_in_text(code: &str) -> String {
     let out_lines =
         simplify_nested_index_vec_floor_calls(code.lines().map(str::to_string).collect());
     let mut out = out_lines.join("\n");
@@ -271,30 +282,26 @@ pub(in super::super) fn simplify_nested_index_vec_floor_calls_in_text(code: &str
     out
 }
 
-pub(in super::super) fn strip_arg_aliases_in_trivial_return_wrappers(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn strip_arg_aliases_in_trivial_return_wrappers(lines: Vec<String>) -> Vec<String> {
     strip_arg_aliases_in_trivial_return_wrappers_ir(lines)
 }
 
-pub(in super::super) fn collapse_trivial_passthrough_return_wrappers(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn collapse_trivial_passthrough_return_wrappers(lines: Vec<String>) -> Vec<String> {
     collapse_trivial_passthrough_return_wrappers_ir(lines)
 }
 
-pub(in super::super) fn strip_unused_helper_params(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn strip_unused_helper_params(lines: Vec<String>) -> Vec<String> {
     strip_unused_helper_params_ir(lines)
 }
 
-pub(in super::super) fn strip_unused_helper_params_with_cache(
+pub(crate) fn strip_unused_helper_params_with_cache(
     lines: Vec<String>,
     _cache: &mut HelperAnalysisCache,
 ) -> Vec<String> {
     strip_unused_helper_params_ir(lines)
 }
 
-pub(in super::super) fn strip_unused_helper_params_with_caches(
+pub(crate) fn strip_unused_helper_params_with_caches(
     lines: Vec<String>,
     _cache: &mut HelperAnalysisCache,
     _analysis_cache: &mut PeepholeAnalysisCache,
@@ -302,7 +309,7 @@ pub(in super::super) fn strip_unused_helper_params_with_caches(
     strip_unused_helper_params_ir(lines)
 }
 
-pub(in super::super) fn parse_function_header(line: &str) -> Option<(String, Vec<String>)> {
+pub(crate) fn parse_function_header(line: &str) -> Option<(String, Vec<String>)> {
     let trimmed = line.trim();
     let (name, rest) = trimmed.split_once("<- function(")?;
     let args_inner = rest.split_once(')')?.0.trim();
@@ -317,10 +324,7 @@ pub(in super::super) fn parse_function_header(line: &str) -> Option<(String, Vec
     Some((name.trim().to_string(), params))
 }
 
-pub(in super::super) fn substitute_helper_expr(
-    expr: &str,
-    bindings: &FxHashMap<String, String>,
-) -> String {
+pub(crate) fn substitute_helper_expr(expr: &str, bindings: &FxHashMap<String, String>) -> String {
     let mut out = String::with_capacity(expr.len());
     let bytes = expr.as_bytes();
     let mut idx = 0usize;
@@ -365,7 +369,7 @@ pub(in super::super) fn substitute_helper_expr(
     out
 }
 
-fn helper_ident_is_start(expr: &str, idx: usize) -> bool {
+pub(crate) fn helper_ident_is_start(expr: &str, idx: usize) -> bool {
     let rest = &expr[idx..];
     let mut chars = rest.chars();
     let Some(first) = chars.next() else {
@@ -380,7 +384,7 @@ fn helper_ident_is_start(expr: &str, idx: usize) -> bool {
             .is_some_and(|next| next.is_ascii_alphabetic() || next == '_')
 }
 
-fn helper_ident_end(expr: &str, start: usize) -> usize {
+pub(crate) fn helper_ident_end(expr: &str, start: usize) -> usize {
     let mut end = start;
     for (off, ch) in expr[start..].char_indices() {
         if !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.')) {
@@ -391,7 +395,7 @@ fn helper_ident_end(expr: &str, start: usize) -> usize {
     end
 }
 
-fn helper_ident_is_named_label(expr: &str, end: usize) -> bool {
+pub(crate) fn helper_ident_is_named_label(expr: &str, end: usize) -> bool {
     let rest = &expr[end..];
     for (off, ch) in rest.char_indices() {
         if ch.is_ascii_whitespace() {
@@ -407,7 +411,7 @@ fn helper_ident_is_named_label(expr: &str, end: usize) -> bool {
     false
 }
 
-pub(in super::super) fn collect_simple_expr_helpers(
+pub(crate) fn collect_simple_expr_helpers(
     lines: &[String],
     _pure_user_calls: &FxHashSet<String>,
 ) -> FxHashMap<String, SimpleExprHelper> {

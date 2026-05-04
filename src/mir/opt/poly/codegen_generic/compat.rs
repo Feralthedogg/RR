@@ -1,4 +1,5 @@
-fn scop_is_generic_map_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> bool {
+use super::*;
+pub(crate) fn scop_is_generic_map_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> bool {
     let loop_iv_names = scop
         .dimensions
         .iter()
@@ -18,7 +19,7 @@ fn scop_is_generic_map_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> bool {
         })
 }
 
-fn scop_is_generic_reduce_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> bool {
+pub(crate) fn scop_is_generic_reduce_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> bool {
     let loop_iv_names = scop
         .dimensions
         .iter()
@@ -46,7 +47,7 @@ fn scop_is_generic_reduce_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> bool {
     reduction_stmt_count >= 1
 }
 
-fn scop_is_generic_nested_reduce_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> bool {
+pub(crate) fn scop_is_generic_nested_reduce_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> bool {
     let loop_iv_names = scop
         .dimensions
         .iter()
@@ -75,7 +76,7 @@ fn scop_is_generic_nested_reduce_compatible(fn_ir: &FnIR, scop: &ScopRegion) -> 
     reduction_stmt_count >= 1
 }
 
-fn classify_generic_reduce_kind(
+pub(crate) fn classify_generic_reduce_kind(
     fn_ir: &FnIR,
     scop: &ScopRegion,
     stmt: &PolyStmt,
@@ -137,7 +138,7 @@ fn classify_generic_reduce_kind(
     }
 }
 
-fn classify_generic_nested_reduce_kind(
+pub(crate) fn classify_generic_nested_reduce_kind(
     fn_ir: &FnIR,
     scop: &ScopRegion,
     _stmt: &PolyStmt,
@@ -196,14 +197,14 @@ fn classify_generic_nested_reduce_kind(
     }
 }
 
-fn stmt_reads_dense_1d_loop_vector(stmt: &PolyStmt, scop: &ScopRegion) -> bool {
+pub(crate) fn stmt_reads_dense_1d_loop_vector(stmt: &PolyStmt, scop: &ScopRegion) -> bool {
     stmt.accesses.iter().any(|access| {
         matches!(access.kind, super::access::AccessKind::Read)
             && access_is_generic_single_dim_contiguous(access, scop)
     })
 }
 
-fn has_multiple_data_statements(scop: &ScopRegion) -> bool {
+pub(crate) fn has_multiple_data_statements(scop: &ScopRegion) -> bool {
     scop.statements
         .iter()
         .filter(|stmt| !stmt.accesses.is_empty())
@@ -211,7 +212,7 @@ fn has_multiple_data_statements(scop: &ScopRegion) -> bool {
         > 1
 }
 
-fn expr_mentions_any_loop_iv(scop: &ScopRegion, expr: &AffineExpr) -> bool {
+pub(crate) fn expr_mentions_any_loop_iv(scop: &ScopRegion, expr: &AffineExpr) -> bool {
     expr.terms.iter().any(|(symbol, coeff)| {
         *coeff != 0
             && matches!(
@@ -221,7 +222,7 @@ fn expr_mentions_any_loop_iv(scop: &ScopRegion, expr: &AffineExpr) -> bool {
     })
 }
 
-fn access_is_generic_single_dim_contiguous(
+pub(crate) fn access_is_generic_single_dim_contiguous(
     access: &super::access::AccessRelation,
     scop: &ScopRegion,
 ) -> bool {
@@ -266,7 +267,7 @@ fn access_is_generic_single_dim_contiguous(
     }
 }
 
-fn is_loop_iv_subscript(scop: &ScopRegion, expr: &AffineExpr) -> bool {
+pub(crate) fn is_loop_iv_subscript(scop: &ScopRegion, expr: &AffineExpr) -> bool {
     expr.constant == 0
         && matches!(
             expr.terms.iter().next(),
@@ -277,7 +278,7 @@ fn is_loop_iv_subscript(scop: &ScopRegion, expr: &AffineExpr) -> bool {
         )
 }
 
-fn resolve_scop_local_source(fn_ir: &FnIR, scop: &ScopRegion, root: ValueId) -> ValueId {
+pub(crate) fn resolve_scop_local_source(fn_ir: &FnIR, scop: &ScopRegion, root: ValueId) -> ValueId {
     let mut current = root;
     let mut seen = FxHashSet::default();
     loop {
@@ -306,24 +307,29 @@ fn resolve_scop_local_source(fn_ir: &FnIR, scop: &ScopRegion, root: ValueId) -> 
     }
 }
 
-fn is_same_named_value(fn_ir: &FnIR, value: ValueId, name: &str) -> bool {
-    fn rec(fn_ir: &FnIR, value: ValueId, name: &str, seen: &mut FxHashSet<ValueId>) -> bool {
+pub(crate) fn is_same_named_value(fn_ir: &FnIR, value: ValueId, name: &str) -> bool {
+    let mut stack = vec![value];
+    let mut seen = FxHashSet::default();
+    while let Some(value) = stack.pop() {
         if !seen.insert(value) {
-            return false;
+            continue;
         }
-        if fn_ir.values[value].origin_var.as_deref() == Some(name) {
+        let Some(row) = fn_ir.values.get(value) else {
+            continue;
+        };
+        if row.origin_var.as_deref() == Some(name) {
             return true;
         }
-        match &fn_ir.values[value].kind {
-            ValueKind::Load { var } => var == name,
-            ValueKind::Phi { args } => args.iter().any(|(arg, _)| rec(fn_ir, *arg, name, seen)),
-            _ => false,
+        match &row.kind {
+            ValueKind::Load { var } if var == name => return true,
+            ValueKind::Phi { args } => stack.extend(args.iter().map(|(arg, _)| *arg)),
+            _ => {}
         }
     }
-    rec(fn_ir, value, name, &mut FxHashSet::default())
+    false
 }
 
-fn expr_mentions_var(
+pub(crate) fn expr_mentions_var(
     fn_ir: &FnIR,
     root: ValueId,
     var: &str,

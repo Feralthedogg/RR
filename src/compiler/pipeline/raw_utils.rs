@@ -3,7 +3,6 @@
 //! These routines sit on hot rewrite paths, so they intentionally stay small,
 //! allocation-light, and free of policy decisions about when a rewrite should
 //! fire.
-
 use super::*;
 
 pub(crate) fn parse_raw_assign_line(line: &str) -> Option<(&str, &str)> {
@@ -139,7 +138,7 @@ pub(crate) fn is_inlineable_raw_scalar_index_rhs(rhs: &str) -> bool {
     base.chars().all(is_symbol_char)
 }
 
-fn matching_square_close(s: &str, open: usize) -> Option<usize> {
+pub(crate) fn matching_square_close(s: &str, open: usize) -> Option<usize> {
     let bytes = s.as_bytes();
     let mut depth = 0usize;
     let mut idx = open;
@@ -413,7 +412,10 @@ pub(crate) fn replace_symbol_occurrences(line: &str, symbol: &str, replacement: 
     out
 }
 
-fn scan_symbol_occurrences<'a>(line: &'a str, symbol: &'a str) -> impl Iterator<Item = usize> + 'a {
+pub(crate) fn scan_symbol_occurrences<'a>(
+    line: &'a str,
+    symbol: &'a str,
+) -> impl Iterator<Item = usize> + 'a {
     let bytes = line.as_bytes();
     let symbol_bytes = symbol.as_bytes();
     let mut hits = Vec::new();
@@ -450,7 +452,7 @@ fn scan_symbol_occurrences<'a>(line: &'a str, symbol: &'a str) -> impl Iterator<
     hits.into_iter()
 }
 
-fn symbol_hit_is_rewritable(line: &str, idx: usize, symbol_len: usize) -> bool {
+pub(crate) fn symbol_hit_is_rewritable(line: &str, idx: usize, symbol_len: usize) -> bool {
     let before = line[..idx].chars().next_back();
     let after = line[idx + symbol_len..].chars().next();
     let boundary_ok =
@@ -458,7 +460,7 @@ fn symbol_hit_is_rewritable(line: &str, idx: usize, symbol_len: usize) -> bool {
     boundary_ok && !symbol_hit_is_named_label(line, idx + symbol_len)
 }
 
-fn symbol_hit_is_named_label(line: &str, after_idx: usize) -> bool {
+pub(crate) fn symbol_hit_is_named_label(line: &str, after_idx: usize) -> bool {
     let rest = &line[after_idx..];
     for (off, ch) in rest.char_indices() {
         if ch.is_ascii_whitespace() {

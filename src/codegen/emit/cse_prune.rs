@@ -1,7 +1,7 @@
 use super::*;
 
 impl RBackend {
-    pub(super) fn prune_dead_cse_temps(output: &mut String) {
+    pub(crate) fn prune_dead_cse_temps(output: &mut String) {
         let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
         if lines.is_empty() {
             return;
@@ -136,7 +136,7 @@ impl RBackend {
         *output = rebuilt;
     }
 
-    pub(super) fn function_scope_ends(lines: &[String]) -> Vec<usize> {
+    pub(crate) fn function_scope_ends(lines: &[String]) -> Vec<usize> {
         let mut ends: Vec<usize> = (0..lines.len()).collect();
         let mut idx = 0usize;
         while idx < lines.len() {
@@ -174,7 +174,7 @@ impl RBackend {
         ends
     }
 
-    pub(super) fn extract_cse_assign_name(line: &str) -> Option<(String, String)> {
+    pub(crate) fn extract_cse_assign_name(line: &str) -> Option<(String, String)> {
         let trimmed = line.trim_start();
         if !(trimmed.starts_with(".__rr_cse_")
             || trimmed.starts_with(".tachyon_callmap_arg")
@@ -189,7 +189,7 @@ impl RBackend {
         ))
     }
 
-    pub(super) fn extract_dead_loop_seed_assign(line: &str) -> Option<(String, String, String)> {
+    pub(crate) fn extract_dead_loop_seed_assign(line: &str) -> Option<(String, String, String)> {
         let trimmed = line.trim_start();
         let (name, rhs) = trimmed.split_once(" <- ")?;
         if !is_recognized_loop_index_name(name) {
@@ -202,7 +202,7 @@ impl RBackend {
         ))
     }
 
-    pub(super) fn extract_plain_assign(line: &str) -> Option<(String, String, String)> {
+    pub(crate) fn extract_plain_assign(line: &str) -> Option<(String, String, String)> {
         let trimmed = line.trim_start();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             return None;
@@ -218,7 +218,7 @@ impl RBackend {
         ))
     }
 
-    pub(super) fn is_prunable_dead_init_rhs(rhs: &str) -> bool {
+    pub(crate) fn is_prunable_dead_init_rhs(rhs: &str) -> bool {
         rhs.starts_with("rep.int(")
             || rhs.starts_with("numeric(")
             || rhs.starts_with("integer(")
@@ -233,7 +233,7 @@ impl RBackend {
             )
     }
 
-    pub(super) fn has_later_symbol_use(
+    pub(crate) fn has_later_symbol_use(
         lines: &[String],
         start_idx: usize,
         scope_end: usize,
@@ -247,7 +247,7 @@ impl RBackend {
             .any(|(_, line)| Self::line_contains_symbol(line, symbol))
     }
 
-    pub(super) fn is_dead_pre_loop_init_overwritten_before_use(
+    pub(crate) fn is_dead_pre_loop_init_overwritten_before_use(
         lines: &[String],
         start_idx: usize,
         scope_end: usize,
@@ -298,7 +298,7 @@ impl RBackend {
         false
     }
 
-    pub(super) fn block_end_for_open_brace(
+    pub(crate) fn block_end_for_open_brace(
         lines: &[String],
         start_idx: usize,
         scope_end: usize,
@@ -323,7 +323,7 @@ impl RBackend {
         None
     }
 
-    pub(super) fn find_dead_overwrite_without_intervening_use(
+    pub(crate) fn find_dead_overwrite_without_intervening_use(
         lines: &[String],
         start_idx: usize,
         scope_end: usize,
@@ -357,7 +357,7 @@ impl RBackend {
         None
     }
 
-    pub(super) fn line_breaks_straight_line(trimmed: &str) -> bool {
+    pub(crate) fn line_breaks_straight_line(trimmed: &str) -> bool {
         trimmed == "{"
             || trimmed == "}"
             || trimmed.starts_with("if ")
@@ -372,7 +372,7 @@ impl RBackend {
             || trimmed.starts_with("return ")
     }
 
-    pub(super) fn line_contains_symbol(line: &str, symbol: &str) -> bool {
+    pub(crate) fn line_contains_symbol(line: &str, symbol: &str) -> bool {
         let mut search_from = 0;
         while let Some(rel_idx) = line[search_from..].find(symbol) {
             let idx = search_from + rel_idx;
@@ -388,7 +388,7 @@ impl RBackend {
         false
     }
 
-    pub(super) fn is_symbol_char(ch: char) -> bool {
+    pub(crate) fn is_symbol_char(ch: char) -> bool {
         ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.')
     }
 }

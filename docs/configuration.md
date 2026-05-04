@@ -46,11 +46,17 @@ not ambient environment-driven policy.
   - control whether assignment to an undeclared name is rejected
 - `--warn-implicit-decl on|off`
   - warn when relaxed implicit declaration is allowed
+- `RR_ALLOW_LEGACY_IMPLICIT_DECL`
+  - temporary RR 2.0 migration hatch that permits `--strict-let off`
+  - unset by default; remove after source files have explicit `let` bindings
 
 ## Type and Native Backend
 
 Use CLI flags or explicit API config to choose compile-time type/native policy.
 
+- `RR_ALLOW_GRADUAL_TYPE_MODE`
+  - temporary RR 2.0 migration hatch that permits `--type-mode gradual`
+  - unset by default; stable RR 2.0 CLI defaults to strict type mode
 - `RR_NATIVE_LIB`
   - explicit shared library path for native helpers at runtime
 - `RR_NATIVE_AUTOBUILD`
@@ -96,7 +102,7 @@ Compile-mode defaults:
 
 - direct single-file compile starts in `standard`
 - `RR build`, `RR run`, and `RR watch` start in `fast-dev`
-- `-O2` on managed build/run/watch flows promotes back to `standard` unless explicitly overridden
+- `-O2`, `-O3`, and `-Oz` on managed build/run/watch flows promote back to `standard` unless explicitly overridden
 
 ## Runtime Behavior
 
@@ -117,23 +123,69 @@ Compile-mode defaults:
 
 - `RR_INCREMENTAL_CACHE_DIR`
   - override the incremental cache root directory
+  - the `--cold` compile path may temporarily redirect this value to an
+    isolated cache directory for one CLI invocation, then restore the previous
+    process environment value
 
 ## Optimizer Control
 
 - `RR_VERIFY_EACH_PASS`
 - `RR_VERIFY_DUMP_DIR`
+- `RR_MIR_DUMP_DIR`
+  - write MIR snapshots around Chronos pass boundaries
+- `RR_MIR_DUMP_FILTER`
+  - comma-separated function-name filter for `RR_MIR_DUMP_DIR`; `*` matches all
+- `RR_MIR_DUMP_STAGE`
+  - comma-separated stage/pass substring filter for `RR_MIR_DUMP_DIR`
+- `RR_MIR_DUMP_WHEN`
+  - `before`, `after`, or `both` for pass-boundary MIR snapshots
 - `RR_DEBUG_RAW_R_PATH`
   - write the pre-peephole emitted R artifact to a file before final cleanup/remap
+- `RR_DEBUG_FNIR`
+  - comma-separated function-name filter for dumping optimized `FnIR` debug output
 - `RR_PULSE_JSON_PATH`
   - write `TachyonPulseStats` JSON diagnostics for a compile to the given path
+- `RR_PROFILE_USE` / `RR_PROFILE_USE_PATH`
+  - read hot-count profile data for Tachyon's function budget planner
 - `RR_PHASE_ORDERING`
   - `off|balanced|auto` override the heavy-tier phase-ordering policy explicitly
 - `RR_PHASE_ORDERING_TRACE`
   - emit per-function adaptive phase-ordering classification and schedule traces
+- `RR_OPT_FUEL`
+  - `0|false|no|off` disables optimization fuel; a positive integer overrides
+    the per-function fuel budget
+- `RR_OPT_FUEL_TRACE`
+  - trace functions that exhaust optimization fuel
+- `RR_OUTLINE_ENABLE`
+  - override the O2/O3 default for MIR function outlining
+- `RR_OUTLINE_MIN_PARENT_IR`
+  - minimum parent-function IR size before outlining is considered
+- `RR_OUTLINE_MIN_REGION_IR`
+  - baseline minimum candidate region size
+- `RR_OUTLINE_BRANCH_MIN_REGION_IR`
+  - branch-arm-specific candidate threshold
+- `RR_OUTLINE_LOOP_MIN_REGION_IR`
+  - loop-body-specific candidate threshold
+- `RR_OUTLINE_TRACE`
+  - trace outlining candidates, skips, and applications
+- `RR_UNROLL_ENABLE`
+  - override the O2/O3 default for MIR loop unrolling
+- `RR_UNROLL_PARTIAL_ENABLE`
+  - enable or disable partial unrolling when full unroll is too large
+- `RR_UNROLL_MAX_TRIP`
+  - maximum constant trip count for full unroll
+- `RR_UNROLL_MAX_PARTIAL_TRIP`
+  - maximum constant trip count considered for partial unroll
+- `RR_UNROLL_MAX_FACTOR`
+  - maximum partial-unroll factor
+- `RR_UNROLL_MAX_GROWTH_IR`
+  - IR growth budget for partial unroll
+- `RR_UNROLL_TRACE`
+  - trace unroll candidates, skips, and applications
 - `RR_POLY_ENABLE`
   - `auto`/unset enables poly optimization automatically when RR was built with ISL support
 - `RR_POLY_BACKEND`
-  - `auto`/unset prefers the ISL backend when RR was built with ISL support
+  - `auto`/unset uses the ISL backend by default; set `heuristic` explicitly for the fallback backend
 - `RR_POLY_TILE_1D`
   - force-enable 1D poly tiling policy
 - `RR_POLY_TILE_2D`
@@ -152,7 +204,23 @@ Compile-mode defaults:
   - `auto|on|off` control whether 2D skew scheduling is considered
 - `RR_POLY_TRACE`
   - emit additional polyhedral optimizer tracing when poly optimization is enabled
+- `RR_POLY_FISSION`
+  - force the polyhedral tree scheduler to consider fission plans
+- `RR_POLY_GENERIC_MIR`
+  - enable the generic MIR poly lowering path used by poly regression tests and diagnostics
+- `RR_POLY_GENERIC_FISSION`
+  - enable generic-MIR fission lowering when the generic poly path is active
+- `RR_POLY_R_COST_MODEL`
+  - disable with `0|false|no|off` to bypass the R-backend profitability cost model
+- `RR_POLY_R_CODE_SIZE_MODEL`
+  - disable with `0|false|no|off` to bypass R-backend code-size profitability checks
+- `RR_POLY_R_MIN_TILE_VOLUME`
+  - minimum tile volume before the R-backend cost model considers a tiled plan profitable
+- `RR_POLY_R_MAX_CODE_GROWTH`
+  - maximum tolerated generated-code growth for R-backend poly plans
 - `RR_VECTORIZE_TRACE`
+- `RR_DISABLE_VECTORIZE`
+  - disable MIR vectorization; intended for poly/vectorization fallback tests
 - `RR_VOPT_PROOF`
   - enable proof-certified vectorization rewrites explicitly
 - `RR_VOPT_PROOF_TRACE`
@@ -186,14 +254,26 @@ polyhedral path.
 - `RR_INLINE_MAX_INSTRS`
 - `RR_INLINE_MAX_COST`
 - `RR_INLINE_MAX_CALLSITE_COST`
+- `RR_INLINE_MAX_KERNEL_COST`
 - `RR_INLINE_MAX_CALLER_INSTRS`
 - `RR_INLINE_MAX_TOTAL_INSTRS`
 - `RR_INLINE_MAX_UNIT_GROWTH_PCT`
 - `RR_INLINE_MAX_FN_GROWTH_PCT`
 - `RR_INLINE_ALLOW_LOOPS`
 - `RR_INLINE_LOCAL_ROUNDS`
+- `RR_INLINE_O3_MAX_BLOCKS`
+- `RR_INLINE_O3_MAX_INSTRS`
+- `RR_INLINE_O3_MAX_COST`
+- `RR_INLINE_O3_MAX_CALLSITE_COST`
+- `RR_INLINE_O3_MAX_KERNEL_COST`
+- `RR_INLINE_O3_MAX_CALLER_INSTRS`
+- `RR_INLINE_O3_MAX_TOTAL_INSTRS`
+- `RR_INLINE_O3_MAX_UNIT_GROWTH_PCT`
+- `RR_INLINE_O3_MAX_FN_GROWTH_PCT`
+- `RR_INLINE_O3_ALLOW_LOOPS`
 
-These control inlining eligibility and growth limits.
+These control inlining eligibility and growth limits. The O3-specific variants
+override the standard limits only for aggressive `-O3` inlining.
 
 ## Related Manuals
 
@@ -204,6 +284,7 @@ These control inlining eligibility and growth limits.
 
 - `RR_PERF_GATE_MS`
 - `RR_PERF_O2_O1_RATIO`
+- `RR_PERF_TRAIT_SROA_MS`
 - `RR_EXAMPLE_PERF_TOTAL_COMPILE_O2_MS`
 - `RR_EXAMPLE_PERF_TOTAL_RUNTIME_O2_MS`
 - `RR_EXAMPLE_PERF_MAX_CASE_RUNTIME_O2_MS`
@@ -215,3 +296,9 @@ These are test-budget knobs, not general optimization controls.
 
 - `RRSCRIPT`
   - override the R executable used by integration tests and local harnesses
+- `RR_TYPE_MODE`
+  - integration-test compatibility input translated to `--type-mode`
+- `RR_STRICT_LET`
+  - integration-test compatibility input translated to `--strict-let`
+- `RR_STRICT_ASSIGN`
+  - integration-test compatibility alias translated to `--strict-let`

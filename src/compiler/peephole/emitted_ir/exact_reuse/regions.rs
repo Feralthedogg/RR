@@ -1,4 +1,5 @@
-fn straight_line_region_end(body: &[EmittedStmt], idx: usize) -> usize {
+use super::*;
+pub(crate) fn straight_line_region_end(body: &[EmittedStmt], idx: usize) -> usize {
     let candidate_indent = body[idx].indent().len();
     let mut line_no = idx + 1;
     while line_no < body.len() {
@@ -17,7 +18,7 @@ fn straight_line_region_end(body: &[EmittedStmt], idx: usize) -> usize {
     line_no
 }
 
-fn collect_assign_line_indices(body: &[EmittedStmt]) -> FxHashMap<String, Vec<usize>> {
+pub(crate) fn collect_assign_line_indices(body: &[EmittedStmt]) -> FxHashMap<String, Vec<usize>> {
     let mut defs = FxHashMap::default();
     for (idx, stmt) in body.iter().enumerate() {
         if let Some((lhs, _)) = stmt.assign_parts() {
@@ -29,7 +30,7 @@ fn collect_assign_line_indices(body: &[EmittedStmt]) -> FxHashMap<String, Vec<us
     defs
 }
 
-fn next_assign_line_before(
+pub(crate) fn next_assign_line_before(
     defs: &FxHashMap<String, Vec<usize>>,
     lhs: &str,
     after_idx: usize,
@@ -45,7 +46,7 @@ fn next_assign_line_before(
     }
 }
 
-fn prev_assign_line_before(
+pub(crate) fn prev_assign_line_before(
     defs: &FxHashMap<String, Vec<usize>>,
     lhs: &str,
     before_idx: usize,
@@ -55,7 +56,7 @@ fn prev_assign_line_before(
     end.checked_sub(1).and_then(|idx| lines.get(idx)).copied()
 }
 
-fn compute_straight_line_region_ends(body: &[EmittedStmt]) -> Vec<usize> {
+pub(crate) fn compute_straight_line_region_ends(body: &[EmittedStmt]) -> Vec<usize> {
     (0..body.len())
         .map(|idx| straight_line_region_end(body, idx))
         .collect()

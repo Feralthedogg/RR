@@ -2,10 +2,16 @@ mod common;
 
 use common::unique_dir;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
+
+fn create_project_src(proj_dir: &Path) -> PathBuf {
+    let src_dir = proj_dir.join("src");
+    fs::create_dir_all(&src_dir).expect("failed to create project src dir");
+    src_dir
+}
 
 #[test]
 fn watch_once_compiles_and_exits_successfully() {
@@ -14,11 +20,11 @@ fn watch_once_compiles_and_exits_successfully() {
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "proj");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let src_dir = create_project_src(&proj_dir);
     let cache_dir = proj_dir.join(".rr-cache");
     common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
-    let main_path = proj_dir.join("main.rr");
+    let main_path = src_dir.join("main.rr");
     let source = r#"
 fn main() {
   print(42L)
@@ -51,11 +57,11 @@ fn watch_once_accepts_compiler_parallel_flags() {
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "compiler_parallel");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let src_dir = create_project_src(&proj_dir);
     let cache_dir = proj_dir.join(".rr-cache");
     common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
-    let main_path = proj_dir.join("main.rr");
+    let main_path = src_dir.join("main.rr");
     let source = r#"
 fn square(x) {
   return x * x
@@ -105,12 +111,12 @@ fn watch_rebuilds_when_imported_module_changes() {
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "import_change");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let src_dir = create_project_src(&proj_dir);
     let cache_dir = proj_dir.join(".rr-cache");
     common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
-    let main_path = proj_dir.join("main.rr");
-    let module_path = proj_dir.join("module.rr");
+    let main_path = src_dir.join("main.rr");
+    let module_path = src_dir.join("module.rr");
     fs::write(
         &main_path,
         r#"
@@ -200,11 +206,11 @@ fn watch_once_returns_failure_on_compile_error() {
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "compile_error");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let src_dir = create_project_src(&proj_dir);
     let cache_dir = proj_dir.join(".rr-cache");
     common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
-    let main_path = proj_dir.join("main.rr");
+    let main_path = src_dir.join("main.rr");
     fs::write(
         &main_path,
         r#"
@@ -247,11 +253,11 @@ fn watch_restores_output_when_artifact_is_missing_or_modified_without_source_cha
     let sandbox_root = root.join("target").join("tests").join("cli_watch_once");
     fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
     let proj_dir = unique_dir(&sandbox_root, "restore_output");
-    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let src_dir = create_project_src(&proj_dir);
     let cache_dir = proj_dir.join(".rr-cache");
     common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
 
-    let main_path = proj_dir.join("main.rr");
+    let main_path = src_dir.join("main.rr");
     fs::write(
         &main_path,
         r#"

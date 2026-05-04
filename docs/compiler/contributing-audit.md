@@ -5,7 +5,7 @@ This file is generated from `policy/contributing_rules.toml`. Edit the policy fi
 
 # Contributing Audit Checklist
 
-Current compiler line: `RR Tachyon v1.3.0`.
+Current compiler line: `RR Tachyon v2.0.0`.
 
 Use this checklist after meaningful compiler changes to verify that the code still matches [`CONTRIBUTING.md`](https://github.com/Feralthedogg/RR/blob/main/CONTRIBUTING.md).
 
@@ -15,7 +15,7 @@ This page is the post-change verification contract. It complements `CONTRIBUTING
 
 ## Current Status
 
-Automation baseline as of `2026-04-04`:
+Automation baseline as of `2026-05-05`:
 
 - Static audit enforces deterministic-path hazards such as `panic!`, `unwrap()`, `dbg!`, structured comment prefixes, `unsafe` safety notes, `static mut`, mutable globals, wall-clock access, cwd and temp path sensitivity, and hash-order review heuristics.
 - Semantic smoke lanes cover cache correctness, determinism, numeric semantics, fallback correctness, pass verification, and fuzz smoke.
@@ -78,7 +78,7 @@ cargo test -q --test example_perf_smoke -- --ignored --nocapture
 - Confirm externally visible behavior is still deterministic anywhere ordering, hashing, or parallel scheduling could matter.
 - Confirm touched semantic areas such as cache behavior, fallback behavior, numeric semantics, and IR invariants still match intent.
 - Confirm hot paths did not pick up hidden allocation, formatting, clone cost, or other non-obvious work beyond what automation can prove.
-- Confirm `unsafe`, mutable global state, wall-clock access, cwd access, and temp-path usage cannot change compilation correctness.
+- Confirm `unsafe`, mutable global state, wall-clock access, cwd access, and temp-path usage cannot change compilation correctness, and update `docs/compiler/unsafe-boundaries.md` when the unsafe boundary changes.
 - Confirm docs, benchmark evidence, and any exception notes are still accurate rather than placeholder text.
 
 ## Ongoing Watch Items

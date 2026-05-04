@@ -1,4 +1,5 @@
-pub(super) fn rewrite_loop_index_alias_ii(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_loop_index_alias_ii(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;
@@ -75,7 +76,7 @@ pub(super) fn rewrite_loop_index_alias_ii(output: &mut String) {
     *output = rewritten;
 }
 
-pub(super) fn strip_dead_zero_seed_ii(output: &mut String) {
+pub(crate) fn strip_dead_zero_seed_ii(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

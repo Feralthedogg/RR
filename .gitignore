@@ -4,6 +4,12 @@
 /example/**/Build/
 .idea
 .DS_Store
+Rplots.pdf
+*.rlib
+linemaster
+native/*.o
+stats*_plot.pdf
+stats*.png
 /scripts/__pycache__
 /scripts/contributing_ast_audit/target
 /proifile.json

@@ -20,7 +20,7 @@ impl TachyonEngine {
         )
     }
 
-    fn run_function_with_stats_with_proven(
+    pub(crate) fn run_function_with_stats_with_proven(
         &self,
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
@@ -35,7 +35,7 @@ impl TachyonEngine {
         )
     }
 
-    fn run_function_with_phase_plan_with_proven(
+    pub(crate) fn run_function_with_phase_plan_with_proven(
         &self,
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
@@ -51,7 +51,7 @@ impl TachyonEngine {
         .pulse_stats
     }
 
-    pub(super) fn run_function_with_phase_plan_with_proven_profile(
+    pub(crate) fn run_function_with_phase_plan_with_proven_profile(
         &self,
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
@@ -68,7 +68,7 @@ impl TachyonEngine {
         )
     }
 
-    fn run_function_with_proven_index_slots(
+    pub(crate) fn run_function_with_proven_index_slots(
         &self,
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
@@ -86,7 +86,7 @@ impl TachyonEngine {
         .pulse_stats
     }
 
-    fn run_function_with_proven_index_slots_with_phase_plan(
+    pub(crate) fn run_function_with_proven_index_slots_with_phase_plan(
         &self,
         fn_ir: &mut FnIR,
         callmap_user_whitelist: &FxHashSet<String>,
@@ -128,12 +128,14 @@ impl TachyonEngine {
             return profile;
         }
         Self::debug_stage_dump(fn_ir, "Start");
-        let canonicalized_index_params =
-            Self::canonicalize_floor_index_params(fn_ir, proven_param_slots, floor_helpers);
-        if canonicalized_index_params {
-            Self::maybe_verify(fn_ir, "After ParamIndexCanonicalize");
-            Self::debug_stage_dump(fn_ir, "After ParamIndexCanonicalize");
-        }
+        let _ = self.run_function_entry_index_canonicalization(
+            fn_ir,
+            &loop_opt,
+            proven_param_slots,
+            floor_helpers,
+            stats,
+            pass_timings,
+        );
         seen_hashes.insert(Self::fn_ir_fingerprint(fn_ir));
         let mut current_schedule = phase_plan.schedule;
         let mut fallback_used = false;
@@ -162,15 +164,16 @@ impl TachyonEngine {
             };
 
             let run_budgeted_passes = !(heavy_pass_budgeted && iterations > 1);
-            let iteration_result = self.run_heavy_phase_schedule_iteration(
-                current_schedule,
-                fn_ir,
-                callmap_user_whitelist,
-                &loop_opt,
-                stats,
-                pass_timings,
-                run_budgeted_passes,
-            );
+            let iteration_result =
+                self.run_heavy_phase_schedule_iteration(HeavyPhaseIterationRequest {
+                    schedule: current_schedule,
+                    fn_ir,
+                    callmap_user_whitelist,
+                    loop_opt: &loop_opt,
+                    stats,
+                    pass_timings,
+                    run_budgeted_passes,
+                });
             changed |= iteration_result.changed;
             control_flow_structural_skipped |= iteration_result.skipped_structural;
             // check_elimination remains disabled.
@@ -225,24 +228,56 @@ impl TachyonEngine {
             }
             polish_guard += 1;
             let before_polish = Self::fn_ir_fingerprint(fn_ir);
-            polishing =
-                Self::timed_bool_pass(pass_timings, "simplify_cfg", || self.simplify_cfg(fn_ir));
-            if polishing {
-                stats.simplify_hits += 1;
-            }
-            let dce_changed = Self::timed_bool_pass(pass_timings, "dce", || self.dce(fn_ir));
-            if dce_changed {
-                stats.dce_hits += 1;
-            }
-            polishing |= dce_changed;
+            polishing = self
+                .run_chronos_function_sequence(chronos::ChronosFunctionSequenceRequest {
+                    stage: chronos::ChronosStage::FunctionFinalPolish,
+                    passes: chronos::FUNCTION_FINAL_POLISH_PASSES,
+                    fn_ir,
+                    loop_optimizer: &loop_opt,
+                    user_call_whitelist: Some(callmap_user_whitelist),
+                    fresh_user_calls: None,
+                    stats,
+                    timings: pass_timings,
+                })
+                .is_changed();
             let after_polish = Self::fn_ir_fingerprint(fn_ir);
             if after_polish == before_polish || !polish_seen.insert(after_polish) {
                 break;
             }
         }
-        let _ = Self::verify_or_reject(fn_ir, "End");
+        let _ = Self::verify_pre_dessa_end(fn_ir);
         Self::debug_stage_dump(fn_ir, "End");
         profile
+    }
+
+    pub(crate) fn run_function_entry_index_canonicalization(
+        &self,
+        fn_ir: &mut FnIR,
+        loop_opt: &loop_opt::MirLoopOptimizer,
+        proven_param_slots: Option<&FxHashSet<usize>>,
+        floor_helpers: &FxHashSet<String>,
+        stats: &mut TachyonPulseStats,
+        pass_timings: &mut TachyonPassTimings,
+    ) -> chronos::ChronosPassOutcome {
+        let mut ctx = chronos::ChronosContext {
+            stats,
+            timings: pass_timings,
+            loop_optimizer: loop_opt,
+            user_call_whitelist: None,
+            fresh_user_calls: None,
+            proven_param_slots,
+            floor_helpers: Some(floor_helpers),
+            valid_analyses: chronos::ChronosAnalysisSet::ALL,
+            analysis_cache: chronos::ChronosAnalysisCache::default(),
+            fn_ir_size: Self::fn_ir_size(fn_ir),
+            run_light_sccp: true,
+            fuel: self.fuel_for_function(Self::fn_ir_size(fn_ir)),
+        };
+        chronos::ChronosPassManager::new(
+            chronos::ChronosStage::FunctionEntryCanonicalization,
+            chronos::FUNCTION_ENTRY_CANONICALIZATION_PASSES,
+        )
+        .run_sequence(self, fn_ir, &mut ctx)
     }
 
     // Backward-compat wrappers.
@@ -258,13 +293,13 @@ impl TachyonEngine {
         self.run_function(fn_ir);
     }
 
-    pub(super) fn collect_callmap_user_whitelist(
+    pub(crate) fn collect_callmap_user_whitelist(
         all_fns: &FxHashMap<String, FnIR>,
     ) -> FxHashSet<String> {
         callmap::collect_callmap_user_whitelist(all_fns)
     }
 
-    pub(super) fn is_callmap_vector_safe_user_fn(
+    pub(crate) fn is_callmap_vector_safe_user_fn(
         name: &str,
         fn_ir: &FnIR,
         user_whitelist: &FxHashSet<String>,
@@ -272,7 +307,7 @@ impl TachyonEngine {
         callmap::is_callmap_vector_safe_user_fn(name, fn_ir, user_whitelist)
     }
 
-    pub(super) fn is_vector_safe_user_expr(
+    pub(crate) fn is_vector_safe_user_expr(
         fn_ir: &FnIR,
         vid: ValueId,
         user_whitelist: &FxHashSet<String>,

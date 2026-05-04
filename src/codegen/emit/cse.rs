@@ -1,7 +1,46 @@
 use super::*;
 
+pub(crate) struct HoistedSubexprState<'a> {
+    pub(crate) values: &'a [Value],
+    pub(crate) params: &'a [String],
+    pub(crate) counts: &'a FxHashMap<usize, usize>,
+    pub(crate) emitted_ids: &'a mut FxHashSet<usize>,
+    pub(crate) path: &'a mut FxHashSet<usize>,
+    pub(crate) temps: &'a mut Vec<String>,
+}
+
 impl RBackend {
-    pub(super) fn named_written_base(base: usize, values: &[Value]) -> Option<String> {
+    pub(crate) fn function_frame_vars(fn_ir: &FnIR) -> FxHashSet<String> {
+        let mut vars = fn_ir.params.iter().cloned().collect::<FxHashSet<_>>();
+        for block in &fn_ir.blocks {
+            for instr in &block.instrs {
+                match instr {
+                    Instr::Assign { dst, .. } => {
+                        vars.insert(dst.clone());
+                    }
+                    Instr::StoreIndex1D { base, .. }
+                    | Instr::StoreIndex2D { base, .. }
+                    | Instr::StoreIndex3D { base, .. } => {
+                        if let Some(var) = Self::named_written_base(*base, &fn_ir.values) {
+                            vars.insert(var);
+                        }
+                    }
+                    Instr::Eval { .. } | Instr::UnsafeRBlock { .. } => {}
+                }
+            }
+        }
+        for value in &fn_ir.values {
+            if let Some(var) = &value.origin_var {
+                vars.insert(var.clone());
+            }
+            if let ValueKind::Load { var } = &value.kind {
+                vars.insert(var.clone());
+            }
+        }
+        vars
+    }
+
+    pub(crate) fn named_written_base(base: usize, values: &[Value]) -> Option<String> {
         if let Some(var) = values[base].origin_var.as_ref() {
             return Some(var.clone());
         }
@@ -11,7 +50,17 @@ impl RBackend {
         }
     }
 
-    pub(super) fn collect_mutated_vars(
+    pub(crate) fn named_written_base_in_context(
+        &self,
+        base: usize,
+        fn_ir: &FnIR,
+    ) -> Option<String> {
+        self.resolve_named_mutable_base_var(base, &fn_ir.values, &fn_ir.params)
+            .or_else(|| Self::named_written_base(base, &fn_ir.values))
+    }
+
+    pub(crate) fn collect_mutated_vars(
+        &self,
         node: &StructuredBlock,
         fn_ir: &FnIR,
         out: &mut FxHashSet<String>,
@@ -19,7 +68,7 @@ impl RBackend {
         match node {
             StructuredBlock::Sequence(items) => {
                 for item in items {
-                    Self::collect_mutated_vars(item, fn_ir, out);
+                    self.collect_mutated_vars(item, fn_ir, out);
                 }
             }
             StructuredBlock::BasicBlock(bid) => {
@@ -31,9 +80,12 @@ impl RBackend {
                         Instr::StoreIndex1D { base, .. }
                         | Instr::StoreIndex2D { base, .. }
                         | Instr::StoreIndex3D { base, .. } => {
-                            if let Some(var) = Self::named_written_base(*base, &fn_ir.values) {
+                            if let Some(var) = self.named_written_base_in_context(*base, fn_ir) {
                                 out.insert(var);
                             }
+                        }
+                        Instr::UnsafeRBlock { .. } => {
+                            out.extend(Self::function_frame_vars(fn_ir));
                         }
                         Instr::Eval { .. } => {}
                     }
@@ -44,9 +96,9 @@ impl RBackend {
                 else_body,
                 ..
             } => {
-                Self::collect_mutated_vars(then_body, fn_ir, out);
+                self.collect_mutated_vars(then_body, fn_ir, out);
                 if let Some(else_body) = else_body {
-                    Self::collect_mutated_vars(else_body, fn_ir, out);
+                    self.collect_mutated_vars(else_body, fn_ir, out);
                 }
             }
             StructuredBlock::Loop { header, body, .. } => {
@@ -58,20 +110,23 @@ impl RBackend {
                         Instr::StoreIndex1D { base, .. }
                         | Instr::StoreIndex2D { base, .. }
                         | Instr::StoreIndex3D { base, .. } => {
-                            if let Some(var) = Self::named_written_base(*base, &fn_ir.values) {
+                            if let Some(var) = self.named_written_base_in_context(*base, fn_ir) {
                                 out.insert(var);
                             }
+                        }
+                        Instr::UnsafeRBlock { .. } => {
+                            out.extend(Self::function_frame_vars(fn_ir));
                         }
                         Instr::Eval { .. } => {}
                     }
                 }
-                Self::collect_mutated_vars(body, fn_ir, out);
+                self.collect_mutated_vars(body, fn_ir, out);
             }
             StructuredBlock::Break | StructuredBlock::Next | StructuredBlock::Return(_) => {}
         }
     }
 
-    pub(super) fn collect_loop_invariant_scalar_candidates_from_instrs(
+    pub(crate) fn collect_loop_invariant_scalar_candidates_from_instrs(
         &self,
         instrs: &[Instr],
         values: &[Value],
@@ -159,11 +214,12 @@ impl RBackend {
                         out,
                     );
                 }
+                Instr::UnsafeRBlock { .. } => {}
             }
         }
     }
 
-    pub(super) fn collect_loop_invariant_scalar_candidates_from_block(
+    pub(crate) fn collect_loop_invariant_scalar_candidates_from_block(
         &self,
         node: &StructuredBlock,
         fn_ir: &FnIR,
@@ -239,7 +295,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn collect_loop_invariant_scalar_candidates_from_value(
+    pub(crate) fn collect_loop_invariant_scalar_candidates_from_value(
         &self,
         val_id: usize,
         values: &[Value],
@@ -264,7 +320,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn is_loop_invariant_scalar_expr_candidate(
+    pub(crate) fn is_loop_invariant_scalar_expr_candidate(
         &self,
         val_id: usize,
         values: &[Value],
@@ -302,7 +358,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn value_depends_only_on_loop_invariant_inputs(
+    pub(crate) fn value_depends_only_on_loop_invariant_inputs(
         &self,
         val_id: usize,
         values: &[Value],
@@ -343,7 +399,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn emit_loop_invariant_scalar_hoists(
+    pub(crate) fn emit_loop_invariant_scalar_hoists(
         &mut self,
         header: BlockId,
         cond: usize,
@@ -352,6 +408,9 @@ impl RBackend {
         loop_mutated_vars: &FxHashSet<String>,
         current_loop_idx_var: Option<&str>,
     ) {
+        if fn_ir.requires_conservative_optimization() {
+            return;
+        }
         let mut candidates = Vec::new();
         let mut visited = FxHashSet::default();
         self.collect_loop_invariant_scalar_candidates_from_instrs(
@@ -401,7 +460,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn emit_common_subexpr_temps(
+    pub(crate) fn emit_common_subexpr_temps(
         &mut self,
         root: usize,
         values: &[Value],
@@ -429,12 +488,14 @@ impl RBackend {
         self.emit_hoisted_subexprs_dfs(
             root,
             root,
-            values,
-            params,
-            &counts,
-            &mut emitted_ids,
-            &mut path,
-            &mut temps,
+            &mut HoistedSubexprState {
+                values,
+                params,
+                counts: &counts,
+                emitted_ids: &mut emitted_ids,
+                path: &mut path,
+                temps: &mut temps,
+            },
         );
         self.emit_scratch.expr_use_counts = counts;
         self.emit_scratch.expr_path = path;
@@ -442,54 +503,39 @@ impl RBackend {
         self.emit_scratch.emitted_temp_names = temps;
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn emit_hoisted_subexprs_dfs(
+    pub(crate) fn emit_hoisted_subexprs_dfs(
         &mut self,
         vid: usize,
         root: usize,
-        values: &[Value],
-        params: &[String],
-        counts: &FxHashMap<usize, usize>,
-        emitted_ids: &mut FxHashSet<usize>,
-        path: &mut FxHashSet<usize>,
-        temps: &mut Vec<String>,
+        state: &mut HoistedSubexprState<'_>,
     ) {
-        if !path.insert(vid) {
+        if !state.path.insert(vid) {
             return;
         }
-        Self::for_each_expr_child(vid, values, |child| {
-            self.emit_hoisted_subexprs_dfs(
-                child,
-                root,
-                values,
-                params,
-                counts,
-                emitted_ids,
-                path,
-                temps,
-            );
+        Self::for_each_expr_child(vid, state.values, |child| {
+            self.emit_hoisted_subexprs_dfs(child, root, state);
         });
-        path.remove(&vid);
+        state.path.remove(&vid);
 
         if vid == root {
             return;
         }
-        let uses = counts.get(&vid).copied().unwrap_or(0);
-        if !Self::should_hoist_common_subexpr(vid, uses, values) {
+        let uses = state.counts.get(&vid).copied().unwrap_or(0);
+        if !Self::should_hoist_common_subexpr(vid, uses, state.values) {
             return;
         }
-        if !emitted_ids.insert(vid) {
+        if !state.emitted_ids.insert(vid) {
             return;
         }
         if self.resolve_bound_value(vid).is_some() {
             return;
         }
-        if Self::should_prefer_stale_var_over_expr(&values[vid])
+        if Self::should_prefer_stale_var_over_expr(&state.values[vid])
             && (self
-                .resolve_stale_origin_var(vid, &values[vid], values)
+                .resolve_stale_origin_var(vid, &state.values[vid], state.values)
                 .is_some()
                 || self
-                    .resolve_stale_fresh_clone_var(vid, &values[vid], values)
+                    .resolve_stale_fresh_clone_var(vid, &state.values[vid], state.values)
                     .is_some())
         {
             return;
@@ -497,19 +543,19 @@ impl RBackend {
 
         let temp = format!(".__rr_cse_{}", vid);
         let expr = self.rewrite_known_one_based_full_range_alias_reads(
-            &self.resolve_val(vid, values, params, true),
-            values,
-            params,
+            &self.resolve_val(vid, state.values, state.params, true),
+            state.values,
+            state.params,
         );
         self.write_stmt(&format!("{} <- {}", temp, expr));
         self.note_var_write(&temp);
         self.bind_value_to_var(vid, &temp);
         self.bind_var_to_value(&temp, vid);
-        self.remember_known_full_end_expr(&temp, vid, values, params);
-        temps.push(temp);
+        self.remember_known_full_end_expr(&temp, vid, state.values, state.params);
+        state.temps.push(temp);
     }
 
-    pub(super) fn collect_expr_use_counts(
+    pub(crate) fn collect_expr_use_counts(
         root: usize,
         values: &[Value],
         counts: &mut FxHashMap<usize, usize>,
@@ -525,7 +571,7 @@ impl RBackend {
         path.remove(&root);
     }
 
-    pub(super) fn for_each_expr_child<F>(vid: usize, values: &[Value], mut visit: F)
+    pub(crate) fn for_each_expr_child<F>(vid: usize, values: &[Value], mut visit: F)
     where
         F: FnMut(usize),
     {
@@ -582,7 +628,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn invalidate_emitted_cse_temps(&mut self) {
+    pub(crate) fn invalidate_emitted_cse_temps(&mut self) {
         let mut temps = std::mem::take(&mut self.emit_scratch.emitted_temp_names);
         for temp in temps.drain(..) {
             self.note_var_write(&temp);
@@ -590,7 +636,7 @@ impl RBackend {
         self.emit_scratch.emitted_temp_names = temps;
     }
 
-    pub(super) fn should_hoist_common_subexpr(vid: usize, uses: usize, values: &[Value]) -> bool {
+    pub(crate) fn should_hoist_common_subexpr(vid: usize, uses: usize, values: &[Value]) -> bool {
         if uses <= 1 || values[vid].origin_var.is_some() {
             return false;
         }
@@ -613,7 +659,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn is_const_like_leaf(vid: usize, values: &[Value]) -> bool {
+    pub(crate) fn is_const_like_leaf(vid: usize, values: &[Value]) -> bool {
         matches!(values[vid].kind, ValueKind::Const(_))
     }
 }

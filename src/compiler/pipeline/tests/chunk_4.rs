@@ -1,7 +1,7 @@
-use super::common::*;
+use super::*;
 
 #[test]
-fn raw_emitted_single_use_named_scalar_pure_calls_inline_wrap_index_reads() {
+pub(crate) fn raw_emitted_single_use_named_scalar_pure_calls_inline_wrap_index_reads() {
     let input = [
         "Sym_222 <- function(B, x, y, W, H) ",
         "{",
@@ -36,7 +36,7 @@ fn raw_emitted_single_use_named_scalar_pure_calls_inline_wrap_index_reads() {
 }
 
 #[test]
-fn raw_emitted_trivial_dot_product_wrapper_collapses_to_direct_sum() {
+pub(crate) fn raw_emitted_trivial_dot_product_wrapper_collapses_to_direct_sum() {
     let input = [
         "Sym_117 <- function(a, b, n) ",
         "{",
@@ -66,7 +66,7 @@ fn raw_emitted_trivial_dot_product_wrapper_collapses_to_direct_sum() {
 }
 
 #[test]
-fn raw_emitted_trivial_dot_product_wrapper_with_parenthesized_iter_collapses() {
+pub(crate) fn raw_emitted_trivial_dot_product_wrapper_with_parenthesized_iter_collapses() {
     let input = [
         "Sym_117 <- function(a, b, n) ",
         "{",
@@ -95,7 +95,7 @@ fn raw_emitted_trivial_dot_product_wrapper_with_parenthesized_iter_collapses() {
 }
 
 #[test]
-fn raw_emitted_two_use_named_scalar_pure_call_inlines_idx_into_dx_dy() {
+pub(crate) fn raw_emitted_two_use_named_scalar_pure_call_inlines_idx_into_dx_dy() {
     let input = [
         "Sym_186 <- function(f, gx, gy, N, u, v, dt) ",
         "{",
@@ -122,7 +122,7 @@ fn raw_emitted_two_use_named_scalar_pure_call_inlines_idx_into_dx_dy() {
 }
 
 #[test]
-fn raw_emitted_particle_idx_alias_rewrites_into_dx_dy() {
+pub(crate) fn raw_emitted_particle_idx_alias_rewrites_into_dx_dy() {
     let input = [
         "Sym_186 <- function(f, gx, gy, N, u, v, dt) ",
         "{",
@@ -149,7 +149,95 @@ fn raw_emitted_particle_idx_alias_rewrites_into_dx_dy() {
 }
 
 #[test]
-fn raw_emitted_loop_index_alias_ii_rewrites_to_i() {
+pub(crate) fn raw_emitted_static_record_scalarization_splits_list_temps() {
+    let input = [
+        "Sym_29 <- function() ",
+        "{",
+        "  .__rr_inline_expr_0 <- list(x = (10.0 + 2.0), y = (15.0 + -3.0))",
+        "  .__rr_inline_expr_1 <- list(x = (0.0 - 2.0), y = (0.0 - -3.0))",
+        "  .__rr_inline_expr_2 <- list(x = (.__rr_inline_expr_0[[\"x\"]] + (.__rr_inline_expr_1)[[\"x\"]]), y = (.__rr_inline_expr_0[[\"y\"]] + (.__rr_inline_expr_1)[[\"y\"]]))",
+        "  final_state <- list(x = (.__rr_inline_expr_2[[\"x\"]] * 1.5), y = (.__rr_inline_expr_2[[\"y\"]] * 1.5))",
+        "  return(final_state[[\"x\"]])",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_static_record_scalarization_in_raw_emitted_r(&input);
+
+    assert!(
+        out.contains(".__rr_inline_expr_0__rr_sroa_x <- (10.0 + 2.0)"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            ".__rr_inline_expr_2__rr_sroa_x <- (.__rr_inline_expr_0__rr_sroa_x + .__rr_inline_expr_1__rr_sroa_x)"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("return(final_state__rr_sroa_x)"), "{out}");
+    assert!(!out.contains("<- list("), "{out}");
+}
+
+#[test]
+pub(crate) fn raw_emitted_static_record_scalarization_keeps_impure_literal_projection() {
+    let input = [
+        "Sym_29 <- function() ",
+        "{",
+        "  return(list(x = print(1), y = 2)[[\"y\"]])",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_static_record_scalarization_in_raw_emitted_r(&input);
+
+    assert!(
+        out.contains("return(list(x = print(1), y = 2)[[\"y\"]])"),
+        "{out}"
+    );
+}
+
+#[test]
+pub(crate) fn raw_emitted_static_record_scalarization_skips_self_dependent_record() {
+    let input = [
+        "Sym_29 <- function() ",
+        "{",
+        "  p <- list(x = p[[\"x\"]], y = 2)",
+        "  return(p[[\"x\"]])",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_static_record_scalarization_in_raw_emitted_r(&input);
+
+    assert!(out.contains("p <- list(x = p[[\"x\"]], y = 2)"), "{out}");
+    assert!(out.contains("return(p[[\"x\"]])"), "{out}");
+}
+
+#[test]
+pub(crate) fn raw_emitted_static_record_scalarization_skips_field_write_records() {
+    let input = [
+        "Sym_29 <- function() ",
+        "{",
+        "  cfg <- list(alpha = 1L, beta = 2L)",
+        "  cfg[[\"alpha\"]] <- 7L",
+        "  return(cfg[[\"alpha\"]])",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_static_record_scalarization_in_raw_emitted_r(&input);
+
+    assert!(out.contains("cfg <- list(alpha = 1L, beta = 2L)"), "{out}");
+    assert!(out.contains("cfg[[\"alpha\"]] <- 7L"), "{out}");
+    assert!(out.contains("return(cfg[[\"alpha\"]])"), "{out}");
+}
+
+#[test]
+pub(crate) fn raw_emitted_loop_index_alias_ii_rewrites_to_i() {
     let input = [
         "Sym_186 <- function(u, du1, adv_u, TOTAL) ",
         "{",
@@ -181,7 +269,7 @@ fn raw_emitted_loop_index_alias_ii_rewrites_to_i() {
 }
 
 #[test]
-fn raw_emitted_loop_index_alias_ii_keeps_alias_if_used_after_i_changes() {
+pub(crate) fn raw_emitted_loop_index_alias_ii_keeps_alias_if_used_after_i_changes() {
     let input = [
         "Sym_1 <- function(x, n) ",
         "{",
@@ -207,7 +295,7 @@ fn raw_emitted_loop_index_alias_ii_keeps_alias_if_used_after_i_changes() {
 }
 
 #[test]
-fn raw_emitted_blank_line_runs_compact() {
+pub(crate) fn raw_emitted_blank_line_runs_compact() {
     let input = "Sym_1 <- function() \n{\n\n\n  x <- 1\n\n\n  return(x)\n}\n";
     let out = compact_blank_lines_in_raw_emitted_r(input);
     assert!(!out.contains("\n\n\n"), "{out}");
@@ -215,7 +303,7 @@ fn raw_emitted_blank_line_runs_compact() {
 }
 
 #[test]
-fn raw_emitted_orphan_rr_cse_markers_before_repeat_prune() {
+pub(crate) fn raw_emitted_orphan_rr_cse_markers_before_repeat_prune() {
     let input = [
         "Sym_83 <- function(size) ",
         "{",
@@ -244,7 +332,7 @@ fn raw_emitted_orphan_rr_cse_markers_before_repeat_prune() {
 }
 
 #[test]
-fn raw_emitted_single_blank_spacers_prune_between_assignments_and_control() {
+pub(crate) fn raw_emitted_single_blank_spacers_prune_between_assignments_and_control() {
     let input = [
         "Sym_123 <- function() ",
         "{",
@@ -276,7 +364,7 @@ fn raw_emitted_single_blank_spacers_prune_between_assignments_and_control() {
 }
 
 #[test]
-fn raw_emitted_single_blank_spacers_prune_between_assignment_and_if() {
+pub(crate) fn raw_emitted_single_blank_spacers_prune_between_assignment_and_if() {
     let input = [
         "Sym_60 <- function(f, x, size) ",
         "{",
@@ -299,7 +387,7 @@ fn raw_emitted_single_blank_spacers_prune_between_assignment_and_if() {
 }
 
 #[test]
-fn raw_emitted_single_blank_spacers_prune_after_control_open_before_returns() {
+pub(crate) fn raw_emitted_single_blank_spacers_prune_after_control_open_before_returns() {
     let input = [
         "Sym_60 <- function(f, x, size) ",
         "{",
@@ -327,7 +415,7 @@ fn raw_emitted_single_blank_spacers_prune_after_control_open_before_returns() {
 }
 
 #[test]
-fn raw_emitted_single_blank_spacers_prune_between_closing_braces() {
+pub(crate) fn raw_emitted_single_blank_spacers_prune_between_closing_braces() {
     let input = [
         "Sym_60 <- function(f, x, size) ",
         "{",
@@ -348,7 +436,7 @@ fn raw_emitted_single_blank_spacers_prune_between_closing_braces() {
 }
 
 #[test]
-fn raw_emitted_single_blank_spacers_prune_after_break_before_branch() {
+pub(crate) fn raw_emitted_single_blank_spacers_prune_after_break_before_branch() {
     let input = [
         "Sym_83 <- function(dir, size) ",
         "{",
@@ -373,7 +461,7 @@ fn raw_emitted_single_blank_spacers_prune_after_break_before_branch() {
 }
 
 #[test]
-fn raw_emitted_readonly_arg_aliases_rewrite_to_bare_params() {
+pub(crate) fn raw_emitted_readonly_arg_aliases_rewrite_to_bare_params() {
     let input = [
         "Sym_83 <- function(dir, size) ",
         "{",
@@ -399,7 +487,7 @@ fn raw_emitted_readonly_arg_aliases_rewrite_to_bare_params() {
 }
 
 #[test]
-fn raw_emitted_noop_self_assignments_prune() {
+pub(crate) fn raw_emitted_noop_self_assignments_prune() {
     let input = [
         "Sym_287 <- function(temp) ",
         "{",
@@ -419,7 +507,7 @@ fn raw_emitted_noop_self_assignments_prune() {
 }
 
 #[test]
-fn raw_emitted_empty_else_blocks_prune() {
+pub(crate) fn raw_emitted_empty_else_blocks_prune() {
     let input = [
         "Sym_83 <- function(dir) ",
         "{",
@@ -440,7 +528,7 @@ fn raw_emitted_empty_else_blocks_prune() {
 }
 
 #[test]
-fn raw_emitted_branch_local_vec_fill_rebinds_prune_before_peephole() {
+pub(crate) fn raw_emitted_branch_local_vec_fill_rebinds_prune_before_peephole() {
     let input = [
         "Sym_123 <- function(size) ",
         "{",
@@ -462,14 +550,66 @@ fn raw_emitted_branch_local_vec_fill_rebinds_prune_before_peephole() {
 }
 
 #[test]
-fn raw_named_scalar_expr_inline_skips_function_literals() {
+pub(crate) fn emitted_r_cache_keys_partition_o3_and_oz() {
+    let pure = FxHashSet::default();
+    let fresh = FxHashSet::default();
+    let raw = "Sym_1 <- function(x) {\n  return(x + 1L)\n}\n";
+    let preserve_all_defs = false;
+    let compile_mode = CompileMode::Standard;
+    let cache_options = |opt_level| OutputCacheKeyOptions {
+        opt_level,
+        direct_builtin_call_map: false,
+        preserve_all_defs,
+        compile_mode,
+    };
+
+    let peephole_o2 = peephole_output_cache_key(raw, &pure, &fresh, cache_options(OptLevel::O2));
+    let peephole_o3 = peephole_output_cache_key(raw, &pure, &fresh, cache_options(OptLevel::O3));
+    let peephole_oz = peephole_output_cache_key(raw, &pure, &fresh, cache_options(OptLevel::Oz));
+    assert_ne!(peephole_o2, peephole_o3);
+    assert_ne!(peephole_o2, peephole_oz);
+    assert_ne!(peephole_o3, peephole_oz);
+
+    let opt_fragment_o2 =
+        optimized_fragment_output_cache_key(raw, &pure, &fresh, cache_options(OptLevel::O2));
+    let opt_fragment_o3 =
+        optimized_fragment_output_cache_key(raw, &pure, &fresh, cache_options(OptLevel::O3));
+    let opt_fragment_oz =
+        optimized_fragment_output_cache_key(raw, &pure, &fresh, cache_options(OptLevel::Oz));
+    assert_ne!(opt_fragment_o2, opt_fragment_o3);
+    assert_ne!(opt_fragment_o2, opt_fragment_oz);
+    assert_ne!(opt_fragment_o3, opt_fragment_oz);
+
+    let opt_assembly_o2 =
+        optimized_assembly_cache_key(raw, &pure, &fresh, cache_options(OptLevel::O2));
+    let opt_assembly_o3 =
+        optimized_assembly_cache_key(raw, &pure, &fresh, cache_options(OptLevel::O3));
+    let opt_assembly_oz =
+        optimized_assembly_cache_key(raw, &pure, &fresh, cache_options(OptLevel::Oz));
+    assert_ne!(opt_assembly_o2, opt_assembly_o3);
+    assert_ne!(opt_assembly_o2, opt_assembly_oz);
+    assert_ne!(opt_assembly_o3, opt_assembly_oz);
+
+    let raw_rewrite_o2 =
+        raw_rewrite_output_cache_key(raw, OptLevel::O2, &pure, preserve_all_defs, compile_mode);
+    let raw_rewrite_o3 =
+        raw_rewrite_output_cache_key(raw, OptLevel::O3, &pure, preserve_all_defs, compile_mode);
+    let raw_rewrite_oz =
+        raw_rewrite_output_cache_key(raw, OptLevel::Oz, &pure, preserve_all_defs, compile_mode);
+    assert_ne!(raw_rewrite_o2, raw_rewrite_o3);
+    assert_ne!(raw_rewrite_o2, raw_rewrite_oz);
+    assert_ne!(raw_rewrite_o3, raw_rewrite_oz);
+}
+
+#[test]
+pub(crate) fn raw_named_scalar_expr_inline_skips_function_literals() {
     assert!(!is_inlineable_raw_named_scalar_expr("function(x)"));
     assert!(!is_inlineable_raw_named_scalar_expr("function (x)"));
     assert!(is_inlineable_raw_named_scalar_expr("(x + 1L)"));
 }
 
 #[test]
-fn raw_shadowed_scalar_seed_prune_respects_else_boundaries() {
+pub(crate) fn raw_shadowed_scalar_seed_prune_respects_else_boundaries() {
     let input = [
         "Sym_4 <- function() ",
         "{",

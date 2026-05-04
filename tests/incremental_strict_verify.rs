@@ -1,13 +1,11 @@
 mod common;
 
-use RR::compiler::{
-    CompileOutputOptions, CompilerParallelConfig, CompilerParallelMode, IncrementalOptions,
-    IncrementalSession, OptLevel, compile_with_configs_incremental,
-    compile_with_configs_incremental_with_output_options,
-    compile_with_configs_incremental_with_output_options_and_compiler_parallel,
-    default_parallel_config, default_type_config,
-};
 use common::unique_dir;
+use rr::compiler::{
+    CompileOutputOptions, CompilerParallelConfig, CompilerParallelMode, IncrementalCompileRequest,
+    IncrementalOptions, IncrementalSession, OptLevel, compile_incremental_request,
+    compile_with_configs_incremental, default_parallel_config, default_type_config,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
@@ -266,34 +264,36 @@ fn strict_incremental_verify_checks_cached_outputs_under_compiler_parallel() {
     let opts = strict_opts();
     let mut session = IncrementalSession::default();
 
-    let first = compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-        &path_str,
-        source,
-        OptLevel::O1,
+    let first = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
         type_cfg,
         parallel_cfg,
-        compiler_parallel_cfg(),
-        opts,
-        CompileOutputOptions::default(),
-        Some(&mut session),
-    )
+        compiler_parallel_cfg: compiler_parallel_cfg(),
+        options: opts,
+        output_options: CompileOutputOptions::default(),
+        session: Some(&mut session),
+        profile: None,
+    })
     .expect("strict verify first compiler-parallel compile failed");
     assert!(
         !first.stats.strict_verification_checked,
         "first strict compiler-parallel compile should not claim a cache comparison"
     );
 
-    let second = compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-        &path_str,
-        source,
-        OptLevel::O1,
+    let second = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
         type_cfg,
         parallel_cfg,
-        compiler_parallel_cfg(),
-        opts,
-        CompileOutputOptions::default(),
-        Some(&mut session),
-    )
+        compiler_parallel_cfg: compiler_parallel_cfg(),
+        options: opts,
+        output_options: CompileOutputOptions::default(),
+        session: Some(&mut session),
+        profile: None,
+    })
     .expect("strict verify second compiler-parallel compile failed");
     assert!(second.stats.phase3_memory_hit);
     assert!(second.stats.phase1_artifact_hit);
@@ -329,20 +329,22 @@ fn incremental_cache_separates_runtime_injection_mode() {
     let parallel_cfg = default_parallel_config();
     let opts = phase1_only_opts();
 
-    let helper_only = compile_with_configs_incremental_with_output_options(
-        &path_str,
-        source,
-        OptLevel::O1,
+    let helper_only = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
         type_cfg,
         parallel_cfg,
-        opts,
-        CompileOutputOptions {
+        compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+        options: opts,
+        output_options: CompileOutputOptions {
             inject_runtime: false,
             preserve_all_defs: false,
             ..Default::default()
         },
-        None,
-    )
+        session: None,
+        profile: None,
+    })
     .expect("helper-only compile failed");
     assert!(
         !helper_only.stats.phase1_artifact_hit,
@@ -353,20 +355,22 @@ fn incremental_cache_separates_runtime_injection_mode() {
         "helper-only output should omit runtime bootstrap"
     );
 
-    let runtime_injected = compile_with_configs_incremental_with_output_options(
-        &path_str,
-        source,
-        OptLevel::O1,
+    let runtime_injected = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
         type_cfg,
         parallel_cfg,
-        opts,
-        CompileOutputOptions {
+        compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+        options: opts,
+        output_options: CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: false,
             ..Default::default()
         },
-        None,
-    )
+        session: None,
+        profile: None,
+    })
     .expect("runtime-injected compile failed");
     assert!(
         !runtime_injected.stats.phase1_artifact_hit,
@@ -379,40 +383,44 @@ fn incremental_cache_separates_runtime_injection_mode() {
         "runtime-injected output should include runtime bootstrap"
     );
 
-    let runtime_cached = compile_with_configs_incremental_with_output_options(
-        &path_str,
-        source,
-        OptLevel::O1,
+    let runtime_cached = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
         type_cfg,
         parallel_cfg,
-        opts,
-        CompileOutputOptions {
+        compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+        options: opts,
+        output_options: CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: false,
             ..Default::default()
         },
-        None,
-    )
+        session: None,
+        profile: None,
+    })
     .expect("cached runtime-injected compile failed");
     assert!(
         runtime_cached.stats.phase1_artifact_hit,
         "same output mode should reuse phase1 artifact cache"
     );
 
-    let preserve_defs = compile_with_configs_incremental_with_output_options(
-        &path_str,
-        source,
-        OptLevel::O1,
+    let preserve_defs = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
         type_cfg,
         parallel_cfg,
-        opts,
-        CompileOutputOptions {
+        compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+        options: opts,
+        output_options: CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: true,
             ..Default::default()
         },
-        None,
-    )
+        session: None,
+        profile: None,
+    })
     .expect("preserve-defs compile failed");
     assert!(
         !preserve_defs.stats.phase1_artifact_hit,

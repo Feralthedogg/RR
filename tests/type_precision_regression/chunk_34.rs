@@ -1,7 +1,7 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn stats_ts_model_helpers_have_direct_types() {
+pub(crate) fn stats_ts_model_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -9,79 +9,81 @@ fn stats_ts_model_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let eight = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(8.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(8.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let sixteen = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(16.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(16.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let thirty_two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(32.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(32.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let sixty_four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(64.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(64.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one_twenty_eight = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(128.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(128.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let false_v = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Bool(false)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Bool(false)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(4)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(4)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(1)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let zero_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let level = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("level".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "level".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -146,13 +148,13 @@ fn stats_ts_model_helpers_have_direct_types() {
         None,
     );
     let three_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(3)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(3)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let true_v = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Bool(true)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Bool(true)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -350,7 +352,7 @@ fn stats_ts_model_helpers_have_direct_types() {
 }
 
 #[test]
-fn stats_ts_diag_helpers_have_direct_types() {
+pub(crate) fn stats_ts_diag_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -358,73 +360,73 @@ fn stats_ts_diag_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let eight = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(8.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(8.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let sixteen = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(16.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(16.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let thirty_two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(32.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(32.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let sixty_four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(64.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(64.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one_twenty_eight = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(128.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(128.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(4)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(4)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(1)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let zero_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let five_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(5)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(5)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -533,7 +535,7 @@ fn stats_ts_diag_helpers_have_direct_types() {
 }
 
 #[test]
-fn stats_nls_helpers_have_direct_types() {
+pub(crate) fn stats_nls_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -541,109 +543,111 @@ fn stats_nls_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let five = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(5.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(5.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let six = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(6.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(6.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let seven = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(7.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(7.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let eight = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(8.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(8.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y1 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.4)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.4)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y2 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.8)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.8)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y3 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(5.1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(5.1)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y4 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(7.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(7.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y5 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(9.1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(9.1)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y6 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(11.2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(11.2)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y7 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(13.1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(13.1)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y8 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(15.4)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(15.4)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let nls_formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y ~ a + b * x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y ~ a + b * x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let init_formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str(
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
             "rate ~ stats::SSasymp(conc, Asym, R0, lrc)".to_string(),
         )),
         Span::dummy(),

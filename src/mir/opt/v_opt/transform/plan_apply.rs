@@ -1,5 +1,5 @@
-#[allow(clippy::too_many_arguments)]
-pub(super) fn apply_expr_vector_plan(
+use super::*;
+pub(crate) fn apply_expr_vector_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -20,17 +20,19 @@ pub(super) fn apply_expr_vector_plan(
         } => apply_cube_slice_expr_map_plan(
             fn_ir,
             lp,
-            site,
-            dest,
-            expr,
-            iv_phi,
-            face,
-            row,
-            size,
-            ctx,
-            start,
-            end,
-            shadow_vars,
+            CubeSliceExprMapApplyPlan {
+                site,
+                dest,
+                expr,
+                iv_phi,
+                face,
+                row,
+                size,
+                ctx,
+                start,
+                end,
+                shadow_vars,
+            },
         ),
         VectorPlan::ExprMap {
             dest,
@@ -43,14 +45,16 @@ pub(super) fn apply_expr_vector_plan(
         } => apply_expr_map_plan(
             fn_ir,
             lp,
-            site,
-            dest,
-            expr,
-            iv_phi,
-            start,
-            end,
-            whole_dest,
-            shadow_vars,
+            ExprMapApplyPlan {
+                site,
+                dest,
+                expr,
+                iv_phi,
+                start,
+                end,
+                whole_dest,
+                shadow_vars,
+            },
         ),
         VectorPlan::MultiExprMap {
             entries,
@@ -116,7 +120,7 @@ pub(super) fn apply_expr_vector_plan(
     }
 }
 
-pub(super) fn apply_structured_vector_plan(
+pub(crate) fn apply_structured_vector_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -194,7 +198,7 @@ pub(super) fn apply_structured_vector_plan(
     }
 }
 
-pub(super) fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> bool {
+pub(crate) fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorPlan) -> bool {
     let Some(site) = vector_apply_site(fn_ir, lp) else {
         return false;
     };
@@ -234,7 +238,7 @@ pub(super) fn apply_vectorization(fn_ir: &mut FnIR, lp: &LoopInfo, plan: VectorP
 }
 
 // Transactional vectorization apply has a reduced proof model in
-// `proof/optimizer_correspondence.md` and
+// `proof/README.md` and
 // `proof/{lean,coq}/.../VectorizeApplySubset.*`:
 // rejected plans must roll back to the scalar original, and certified
 // result-preserving plans may commit without changing the scalar result.
@@ -260,7 +264,7 @@ pub(crate) fn try_apply_vectorization_transactionally(
     true
 }
 
-pub(super) fn rewrite_sum_add_const(
+pub(crate) fn rewrite_sum_add_const(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     vec_expr: ValueId,

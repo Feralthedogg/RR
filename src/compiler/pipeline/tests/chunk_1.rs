@@ -1,7 +1,7 @@
-use super::common::*;
+use super::*;
 
 #[test]
-fn raw_emitted_trivial_clamp_helper_calls_inline_before_peephole() {
+pub(crate) fn raw_emitted_trivial_clamp_helper_calls_inline_before_peephole() {
     let input = [
         "Sym_1 <- function() ",
         "{",
@@ -39,7 +39,7 @@ fn raw_emitted_trivial_clamp_helper_calls_inline_before_peephole() {
 }
 
 #[test]
-fn raw_emitted_branch_local_identical_alloc_rebinds_are_pruned_before_peephole() {
+pub(crate) fn raw_emitted_branch_local_identical_alloc_rebinds_are_pruned_before_peephole() {
     let input = [
         "Sym_123 <- function(b, size) ",
         "{",
@@ -64,7 +64,7 @@ fn raw_emitted_branch_local_identical_alloc_rebinds_are_pruned_before_peephole()
 }
 
 #[test]
-fn raw_emitted_branch_local_identical_scalar_rebinds_prune_before_alias_inline() {
+pub(crate) fn raw_emitted_branch_local_identical_scalar_rebinds_prune_before_alias_inline() {
     let input = [
         "Sym_287 <- function(temp, q_v, size) ",
         "{",
@@ -96,7 +96,7 @@ fn raw_emitted_branch_local_identical_scalar_rebinds_prune_before_alias_inline()
 }
 
 #[test]
-fn raw_emitted_single_use_scalar_index_aliases_inline_before_peephole() {
+pub(crate) fn raw_emitted_single_use_scalar_index_aliases_inline_before_peephole() {
     let input = [
         "Sym_287 <- function(temp, q_v, q_c, size) ",
         "{",
@@ -136,7 +136,7 @@ fn raw_emitted_single_use_scalar_index_aliases_inline_before_peephole() {
 }
 
 #[test]
-fn raw_emitted_small_multiuse_scalar_index_aliases_inline_into_adjacent_assignments() {
+pub(crate) fn raw_emitted_small_multiuse_scalar_index_aliases_inline_into_adjacent_assignments() {
     let input = [
         "Sym_210 <- function(A, B, lapA, lapB, DA, DB, f, k, dt, i) ",
         "{",
@@ -171,7 +171,7 @@ fn raw_emitted_small_multiuse_scalar_index_aliases_inline_into_adjacent_assignme
 }
 
 #[test]
-fn raw_emitted_small_multiuse_scalar_index_aliases_do_not_inline_past_adjacent_region() {
+pub(crate) fn raw_emitted_small_multiuse_scalar_index_aliases_do_not_inline_past_adjacent_region() {
     let input = [
         "Sym_1 <- function(A, i) ",
         "{",
@@ -194,7 +194,7 @@ fn raw_emitted_small_multiuse_scalar_index_aliases_do_not_inline_past_adjacent_r
 }
 
 #[test]
-fn raw_emitted_floor_fed_particle_clamp_pair_collapses_gx_gy() {
+pub(crate) fn raw_emitted_floor_fed_particle_clamp_pair_collapses_gx_gy() {
     let input = [
         "Sym_186 <- function(x, y, N) ",
         "{",
@@ -233,7 +233,7 @@ fn raw_emitted_floor_fed_particle_clamp_pair_collapses_gx_gy() {
 }
 
 #[test]
-fn raw_emitted_gray_scott_clamp_pair_collapses_new_a_new_b() {
+pub(crate) fn raw_emitted_gray_scott_clamp_pair_collapses_new_a_new_b() {
     let input = [
         "Sym_222 <- function(A, B, lapA, lapB, DA, DB, f, k, dt, i) ",
         "{",
@@ -267,7 +267,7 @@ fn raw_emitted_gray_scott_clamp_pair_collapses_new_a_new_b() {
 }
 
 #[test]
-fn raw_emitted_gray_scott_clamp_pair_collapses_float_literal_bounds() {
+pub(crate) fn raw_emitted_gray_scott_clamp_pair_collapses_float_literal_bounds() {
     let input = [
         "Sym_222 <- function(A, B, lapA, lapB, DA, DB, f, k, dt, i) ",
         "{",
@@ -300,7 +300,7 @@ fn raw_emitted_gray_scott_clamp_pair_collapses_float_literal_bounds() {
 }
 
 #[test]
-fn raw_emitted_temp_copy_roundtrip_strips_before_gray_scott_clamp_collapse() {
+pub(crate) fn raw_emitted_temp_copy_roundtrip_strips_before_gray_scott_clamp_collapse() {
     let input = [
         "Sym_222 <- function(A, B, lapA, lapB, DA, DB, f, k, dt, i) ",
         "{",
@@ -337,7 +337,7 @@ fn raw_emitted_temp_copy_roundtrip_strips_before_gray_scott_clamp_collapse() {
 }
 
 #[test]
-fn raw_emitted_dead_temp_alias_strips_without_roundtrip_use() {
+pub(crate) fn raw_emitted_dead_temp_alias_strips_without_roundtrip_use() {
     let input = [
         "Sym_222 <- function(A, B) ",
         "{",
@@ -359,7 +359,7 @@ fn raw_emitted_dead_temp_alias_strips_without_roundtrip_use() {
 }
 
 #[test]
-fn raw_emitted_sym287_melt_rate_branch_collapses_to_direct_heat_sink_updates() {
+pub(crate) fn raw_emitted_sym287_melt_rate_branch_collapses_to_direct_heat_sink_updates() {
     let input = [
         "Sym_287 <- function(temp, q_s, q_g) ",
         "{",
@@ -402,7 +402,7 @@ fn raw_emitted_sym287_melt_rate_branch_collapses_to_direct_heat_sink_updates() {
 }
 
 #[test]
-fn raw_emitted_exact_safe_loop_index_write_calls_rewrite_to_base_indexing() {
+pub(crate) fn raw_emitted_exact_safe_loop_index_write_calls_rewrite_to_base_indexing() {
     let input = [
         "Sym_210 <- function(A, B, heat, SIZE) ",
         "{",
@@ -429,7 +429,7 @@ fn raw_emitted_exact_safe_loop_index_write_calls_rewrite_to_base_indexing() {
 }
 
 #[test]
-fn raw_emitted_literal_named_list_calls_rewrite_to_base_list() {
+pub(crate) fn raw_emitted_literal_named_list_calls_rewrite_to_base_list() {
     let input = [
         "Sym_186 <- function(px, py, pf) ",
         "{",
@@ -452,7 +452,7 @@ fn raw_emitted_literal_named_list_calls_rewrite_to_base_list() {
 }
 
 #[test]
-fn raw_emitted_literal_field_get_calls_rewrite_to_base_indexing() {
+pub(crate) fn raw_emitted_literal_field_get_calls_rewrite_to_base_indexing() {
     let input = [
         "Sym_303 <- function(particles) ",
         "{",
@@ -474,7 +474,7 @@ fn raw_emitted_literal_field_get_calls_rewrite_to_base_indexing() {
 }
 
 #[test]
-fn raw_emitted_particle_state_rebinds_are_restored_after_sym186_call() {
+pub(crate) fn raw_emitted_particle_state_rebinds_are_restored_after_sym186_call() {
     let input = [
         "Sym_top_0 <- function() ",
         "{",
@@ -494,7 +494,54 @@ fn raw_emitted_particle_state_rebinds_are_restored_after_sym186_call() {
 }
 
 #[test]
-fn raw_emitted_single_use_scalar_index_alias_rewrite_keeps_match_phi_assignments() {
+pub(crate) fn raw_emitted_stale_particle_state_replays_are_removed_after_reload_triplet() {
+    let input = [
+        "Sym_top_0 <- function() ",
+        "{",
+        "  particles <- Sym_186(p_x, p_y, p_f, u, v, dt, N)",
+        "  p_x <- particles[[\"px\"]]",
+        "  p_y <- particles[[\"py\"]]",
+        "  p_f <- particles[[\"pf\"]]",
+        "  i <- 1.0",
+        "  repeat {",
+        "    if (!(i <= TOTAL)) break",
+        "    u_stage[i] <- u[i]",
+        "    i <- (i + 1.0)",
+        "  }",
+        "  p_x <- Sym_186(p_x, p_y, p_f, u, v, dt, N)[[\"px\"]]",
+        "  p_y <- Sym_186(p_x, p_y, p_f, u, v, dt, N)[[\"py\"]]",
+        "  p_f <- Sym_186(p_x, p_y, p_f, u, v, dt, N)[[\"pf\"]]",
+        "  print(p_x[1L])",
+        "  return(0L)",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = strip_stale_particle_state_replays_in_raw_emitted_r(&input);
+
+    assert_eq!(
+        out.matches("p_x <- particles[[\"px\"]]").count(),
+        1,
+        "{out}"
+    );
+    assert_eq!(
+        out.matches("p_y <- particles[[\"py\"]]").count(),
+        1,
+        "{out}"
+    );
+    assert_eq!(
+        out.matches("p_f <- particles[[\"pf\"]]").count(),
+        1,
+        "{out}"
+    );
+    assert!(!out.contains("p_x <- Sym_186("), "{out}");
+    assert!(!out.contains("p_y <- Sym_186("), "{out}");
+    assert!(!out.contains("p_f <- Sym_186("), "{out}");
+}
+
+#[test]
+pub(crate) fn raw_emitted_single_use_scalar_index_alias_rewrite_keeps_match_phi_assignments() {
     let input = "\
 Sym_17 <- function(v)\n\
 {\n\
@@ -523,7 +570,7 @@ Sym_17 <- function(v)\n\
 }
 
 #[test]
-fn raw_emitted_slice_bound_aliases_inline_into_neighbor_row_writes() {
+pub(crate) fn raw_emitted_slice_bound_aliases_inline_into_neighbor_row_writes() {
     let input = [
         "Sym_83 <- function(dir, size) ",
         "{",
@@ -560,7 +607,7 @@ fn raw_emitted_slice_bound_aliases_inline_into_neighbor_row_writes() {
 }
 
 #[test]
-fn raw_emitted_adjacent_dir_neighbor_row_branches_collapse_to_else_if_chain() {
+pub(crate) fn raw_emitted_adjacent_dir_neighbor_row_branches_collapse_to_else_if_chain() {
     let input = [
     "Sym_83 <- function(dir, size) ",
     "{",
@@ -591,7 +638,7 @@ fn raw_emitted_adjacent_dir_neighbor_row_branches_collapse_to_else_if_chain() {
 }
 
 #[test]
-fn raw_emitted_single_assignment_loop_seed_literals_inline_into_next_vector_expr() {
+pub(crate) fn raw_emitted_single_assignment_loop_seed_literals_inline_into_next_vector_expr() {
     let input = [
         "Sym_210 <- function(field, w, h) ",
         "{",
@@ -614,7 +661,7 @@ fn raw_emitted_single_assignment_loop_seed_literals_inline_into_next_vector_expr
 }
 
 #[test]
-fn raw_emitted_sym210_loop_seed_literal_inlines_into_laplacian_expr() {
+pub(crate) fn raw_emitted_sym210_loop_seed_literal_inlines_into_laplacian_expr() {
     let input = [
     "Sym_210 <- function(field, w, h) ",
     "{",
@@ -637,7 +684,7 @@ fn raw_emitted_sym210_loop_seed_literal_inlines_into_laplacian_expr() {
 }
 
 #[test]
-fn raw_emitted_unreachable_helper_definitions_prune_after_probe_energy_reuse() {
+pub(crate) fn raw_emitted_unreachable_helper_definitions_prune_after_probe_energy_reuse() {
     let input = [
         "Sym_49 <- function(a, b) ",
         "{",
@@ -674,7 +721,7 @@ fn raw_emitted_unreachable_helper_definitions_prune_after_probe_energy_reuse() {
 }
 
 #[test]
-fn raw_emitted_unreachable_helper_prune_keeps_unquoted_symbol_references() {
+pub(crate) fn raw_emitted_unreachable_helper_prune_keeps_unquoted_symbol_references() {
     let input = [
     "Sym_49 <- function(a, b) ",
     "{",
@@ -715,7 +762,7 @@ fn raw_emitted_unreachable_helper_prune_keeps_unquoted_symbol_references() {
 }
 
 #[test]
-fn raw_emitted_shadowed_simple_scalar_seed_assigns_prune_before_first_use() {
+pub(crate) fn raw_emitted_shadowed_simple_scalar_seed_assigns_prune_before_first_use() {
     let input = [
         "Sym_303 <- function(adj_l, adj_r, TOTAL) ",
         "{",
@@ -748,7 +795,7 @@ fn raw_emitted_shadowed_simple_scalar_seed_assigns_prune_before_first_use() {
 }
 
 #[test]
-fn raw_emitted_dead_weno_topology_seed_i_prunes_before_direct_adj_gather() {
+pub(crate) fn raw_emitted_dead_weno_topology_seed_i_prunes_before_direct_adj_gather() {
     let input = [
         "Sym_303 <- function(adj_l, adj_r, TOTAL) ",
         "{",

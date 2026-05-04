@@ -1,10 +1,10 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.OptimizerPipelineSoundness.
-Require Import RRProofs.PhaseOrderClusterSoundness.
-Require Import RRProofs.PhaseOrderGuardSoundness.
-Require Import RRProofs.PhaseOrderFeatureGateSoundness.
-Require Import RRProofs.PhaseOrderIterationSoundness.
-Require Import RRProofs.PhaseOrderFallbackSoundness.
+Require Import MirInvariantBundle.
+Require Import OptimizerPipelineSoundness.
+Require Import PhaseOrderClusterSoundness.
+Require Import PhaseOrderGuardSoundness.
+Require Import PhaseOrderFeatureGateSoundness.
+Require Import PhaseOrderIterationSoundness.
+Require Import PhaseOrderFallbackSoundness.
 
 Module RRPhaseOrderOptimizerSoundness.
 

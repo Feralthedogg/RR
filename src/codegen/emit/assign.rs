@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn try_resolve_whole_range_self_assign_rhs(
+pub(crate) fn try_resolve_whole_range_self_assign_rhs(
     this: &RBackend,
     dst: &str,
     src: usize,
@@ -34,7 +34,7 @@ pub(super) fn try_resolve_whole_range_self_assign_rhs(
     ))
 }
 
-pub(super) fn try_render_constant_safe_partial_self_assign(
+pub(crate) fn try_render_constant_safe_partial_self_assign(
     this: &RBackend,
     dst: &str,
     src: usize,
@@ -129,7 +129,7 @@ pub(super) fn try_render_constant_safe_partial_self_assign(
     Some(format!("{dst}[{start}:{end}] <- {rhs}"))
 }
 
-pub(super) fn try_render_safe_idx_cube_row_slice_assign(
+pub(crate) fn try_render_safe_idx_cube_row_slice_assign(
     this: &RBackend,
     dst: &str,
     src: usize,
@@ -156,7 +156,7 @@ pub(super) fn try_render_safe_idx_cube_row_slice_assign(
     Some(format!("{dst}[{start_expr}:{end_expr}] <- {rhs}"))
 }
 
-pub(super) fn try_resolve_whole_range_call_map_rhs(
+pub(crate) fn try_resolve_whole_range_call_map_rhs(
     this: &RBackend,
     dst: &str,
     src: usize,
@@ -212,7 +212,7 @@ pub(super) fn try_resolve_whole_range_call_map_rhs(
     ))
 }
 
-pub(super) fn try_resolve_whole_auto_call_map_rhs(
+pub(crate) fn try_resolve_whole_auto_call_map_rhs(
     this: &RBackend,
     dst: &str,
     src: usize,
@@ -257,7 +257,7 @@ pub(super) fn try_resolve_whole_auto_call_map_rhs(
     ))
 }
 
-pub(super) fn try_resolve_mutated_whole_range_copy_alias(
+pub(crate) fn try_resolve_mutated_whole_range_copy_alias(
     this: &RBackend,
     src: usize,
     values: &[Value],
@@ -292,7 +292,7 @@ pub(super) fn try_resolve_mutated_whole_range_copy_alias(
         .filter(|var| var != &base_var && var != &rhs)
 }
 
-pub(super) fn resolve_bound_temp_expr(
+pub(crate) fn resolve_bound_temp_expr(
     this: &RBackend,
     val_id: usize,
     values: &[Value],
@@ -329,7 +329,7 @@ pub(super) fn resolve_bound_temp_expr(
     this.rewrite_live_readonly_arg_aliases(this.resolve_val(val_id, values, params, true), values)
 }
 
-pub(super) fn resolve_expanded_scalar_expr_for_equivalence(
+pub(crate) fn resolve_expanded_scalar_expr_for_equivalence(
     this: &RBackend,
     val_id: usize,
     values: &[Value],
@@ -359,7 +359,7 @@ pub(super) fn resolve_expanded_scalar_expr_for_equivalence(
     }
 }
 
-pub(super) fn resolve_named_mutable_base_var(
+pub(crate) fn resolve_named_mutable_base_var(
     this: &RBackend,
     val_id: usize,
     values: &[Value],
@@ -377,7 +377,7 @@ pub(super) fn resolve_named_mutable_base_var(
     is_plain_symbol_expr(rendered.as_str()).then_some(rendered)
 }
 
-pub(super) fn resolve_mutated_descendant_var(this: &RBackend, val_id: usize) -> Option<String> {
+pub(crate) fn resolve_mutated_descendant_var(this: &RBackend, val_id: usize) -> Option<String> {
     let mut candidate: Option<String> = None;
     for (var, (bound_val_id, version)) in &this.value_tracker.var_value_bindings {
         if *bound_val_id != val_id {
@@ -394,14 +394,14 @@ pub(super) fn resolve_mutated_descendant_var(this: &RBackend, val_id: usize) -> 
     candidate
 }
 
-pub(super) fn is_plain_symbol_expr(expr: &str) -> bool {
+pub(crate) fn is_plain_symbol_expr(expr: &str) -> bool {
     !expr.is_empty()
         && expr
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'))
 }
 
-pub(super) fn direct_call_map_slots_supported(
+pub(crate) fn direct_call_map_slots_supported(
     this: &RBackend,
     callee_name: &str,
     arg_count: usize,
@@ -423,7 +423,7 @@ pub(super) fn direct_call_map_slots_supported(
     }
 }
 
-pub(super) fn const_int_vector_values(
+pub(crate) fn const_int_vector_values(
     this: &RBackend,
     val_id: usize,
     values: &[Value],
@@ -440,11 +440,11 @@ pub(super) fn const_int_vector_values(
     }
 }
 
-pub(super) fn const_int_value(this: &RBackend, val_id: usize, values: &[Value]) -> Option<i64> {
+pub(crate) fn const_int_value(this: &RBackend, val_id: usize, values: &[Value]) -> Option<i64> {
     const_int_value_impl(this, val_id, values, &mut FxHashSet::default())
 }
 
-pub(super) fn const_int_value_impl(
+pub(crate) fn const_int_value_impl(
     this: &RBackend,
     val_id: usize,
     values: &[Value],
@@ -486,7 +486,7 @@ pub(super) fn const_int_value_impl(
     }
 }
 
-pub(super) fn const_index_int_value(
+pub(crate) fn const_index_int_value(
     this: &RBackend,
     val_id: usize,
     values: &[Value],
@@ -494,7 +494,7 @@ pub(super) fn const_index_int_value(
     const_int_value(this, val_id, values)
 }
 
-pub(super) fn value_requires_runtime_auto_profit_guard(
+pub(crate) fn value_requires_runtime_auto_profit_guard(
     this: &RBackend,
     val_id: usize,
     values: &[Value],
@@ -552,7 +552,7 @@ pub(super) fn value_requires_runtime_auto_profit_guard(
     }
 }
 
-pub(super) fn direct_whole_range_call_map_expr(
+pub(crate) fn direct_whole_range_call_map_expr(
     this: &RBackend,
     callee_name: &str,
     rendered_args: &[String],
@@ -580,7 +580,7 @@ pub(super) fn direct_whole_range_call_map_expr(
     }
 }
 
-pub(super) fn render_call_map_whole_auto_expr(
+pub(crate) fn render_call_map_whole_auto_expr(
     _this: &RBackend,
     dest: &str,
     callee_name: &str,
@@ -597,7 +597,7 @@ pub(super) fn render_call_map_whole_auto_expr(
     format!("rr_call_map_whole_auto({})", args.join(", "))
 }
 
-pub(super) fn const_string_value(
+pub(crate) fn const_string_value(
     this: &RBackend,
     val_id: usize,
     values: &[Value],
@@ -611,7 +611,7 @@ pub(super) fn const_string_value(
     }
 }
 
-pub(super) fn normalize_whole_range_vector_expr(
+pub(crate) fn normalize_whole_range_vector_expr(
     this: &RBackend,
     expr: String,
     start: usize,
@@ -628,7 +628,7 @@ pub(super) fn normalize_whole_range_vector_expr(
     normalized
 }
 
-pub(super) fn wrap_backend_builtin_expr(this: &RBackend, expr: &str) -> String {
+pub(crate) fn wrap_backend_builtin_expr(this: &RBackend, expr: &str) -> String {
     if this.analysis.direct_builtin_vector_math {
         return expr.trim().to_string();
     }
@@ -654,7 +654,7 @@ pub(super) fn wrap_backend_builtin_expr(this: &RBackend, expr: &str) -> String {
     trimmed.to_string()
 }
 
-pub(super) fn rewrite_known_one_based_full_range_alias_reads(
+pub(crate) fn rewrite_known_one_based_full_range_alias_reads(
     this: &RBackend,
     expr: &str,
     values: &[Value],
@@ -699,7 +699,7 @@ pub(super) fn rewrite_known_one_based_full_range_alias_reads(
     .to_string()
 }
 
-pub(super) fn expr_is_one_based_full_range_for_end(idx_expr: &str, end_expr: &str) -> bool {
+pub(crate) fn expr_is_one_based_full_range_for_end(idx_expr: &str, end_expr: &str) -> bool {
     let idx = idx_expr
         .chars()
         .filter(|c| !c.is_whitespace())
@@ -713,7 +713,7 @@ pub(super) fn expr_is_one_based_full_range_for_end(idx_expr: &str, end_expr: &st
     })
 }
 
-pub(super) fn extract_one_based_alias_name(idx_expr: &str) -> Option<String> {
+pub(crate) fn extract_one_based_alias_name(idx_expr: &str) -> Option<String> {
     let trimmed = idx_expr.trim();
     if let Some(re) = compile_regex(format!(r"^{}$", IDENT_PATTERN))
         && re.is_match(trimmed)
@@ -731,7 +731,7 @@ pub(super) fn extract_one_based_alias_name(idx_expr: &str) -> Option<String> {
     None
 }
 
-pub(super) fn whole_dest_end_matches_known_var(
+pub(crate) fn whole_dest_end_matches_known_var(
     this: &RBackend,
     var: &str,
     end: usize,
@@ -744,7 +744,7 @@ pub(super) fn whole_dest_end_matches_known_var(
         .is_some_and(|known| known == end_rendered || end_canonical.as_deref() == Some(known))
 }
 
-pub(super) fn known_full_end_bound_for_var(
+pub(crate) fn known_full_end_bound_for_var(
     this: &RBackend,
     var: &str,
     values: &[Value],
@@ -753,7 +753,7 @@ pub(super) fn known_full_end_bound_for_var(
         .and_then(|bound| this.known_full_end_bound_for_value(bound, values))
 }
 
-pub(super) fn idx_cube_row_size_expr(
+pub(crate) fn idx_cube_row_size_expr(
     this: &RBackend,
     start: usize,
     end: usize,
@@ -816,7 +816,7 @@ pub(super) fn idx_cube_row_size_expr(
     Some(start_size)
 }
 
-pub(super) fn value_matches_known_length_expr(
+pub(crate) fn value_matches_known_length_expr(
     this: &RBackend,
     val_id: usize,
     target_end_expr: &str,
@@ -853,7 +853,7 @@ pub(super) fn value_matches_known_length_expr(
     }
 }
 
-pub(super) fn rep_int_matches_slice_len(
+pub(crate) fn rep_int_matches_slice_len(
     this: &RBackend,
     val_id: usize,
     start: i64,
@@ -872,7 +872,7 @@ pub(super) fn rep_int_matches_slice_len(
     }
 }
 
-pub(super) fn value_is_full_dest_end(
+pub(crate) fn value_is_full_dest_end(
     this: &RBackend,
     base: usize,
     end: usize,

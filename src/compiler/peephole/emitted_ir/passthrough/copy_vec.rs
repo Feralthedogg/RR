@@ -1,4 +1,5 @@
-fn apply_collapse_inlined_copy_vec_sequences_ir(program: &mut EmittedProgram) {
+use super::*;
+pub(crate) fn apply_collapse_inlined_copy_vec_sequences_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -84,7 +85,7 @@ fn apply_collapse_inlined_copy_vec_sequences_ir(program: &mut EmittedProgram) {
     }
 }
 
-fn has_inlined_copy_vec_sequence_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_inlined_copy_vec_sequence_candidates_ir(lines: &[String]) -> bool {
     build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .any(|func| {

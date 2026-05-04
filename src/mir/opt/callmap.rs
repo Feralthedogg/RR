@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn collect_callmap_user_whitelist(
+pub(crate) fn collect_callmap_user_whitelist(
     all_fns: &FxHashMap<String, FnIR>,
 ) -> FxHashSet<String> {
     let mut whitelist: FxHashSet<String> = FxHashSet::default();
@@ -25,7 +25,7 @@ pub(super) fn collect_callmap_user_whitelist(
     whitelist
 }
 
-pub(super) fn is_callmap_vector_safe_user_fn(
+pub(crate) fn is_callmap_vector_safe_user_fn(
     name: &str,
     fn_ir: &FnIR,
     user_whitelist: &FxHashSet<String>,
@@ -44,7 +44,8 @@ pub(super) fn is_callmap_vector_safe_user_fn(
                 Instr::Eval { .. } => return false,
                 Instr::StoreIndex1D { .. }
                 | Instr::StoreIndex2D { .. }
-                | Instr::StoreIndex3D { .. } => return false,
+                | Instr::StoreIndex3D { .. }
+                | Instr::UnsafeRBlock { .. } => return false,
             }
         }
         match bb.term {
@@ -67,7 +68,7 @@ pub(super) fn is_callmap_vector_safe_user_fn(
     saw_return
 }
 
-pub(super) fn is_vector_safe_user_expr(
+pub(crate) fn is_vector_safe_user_expr(
     fn_ir: &FnIR,
     vid: ValueId,
     user_whitelist: &FxHashSet<String>,
@@ -119,7 +120,7 @@ pub(super) fn is_vector_safe_user_expr(
     }
 }
 
-pub(super) fn resolve_load_alias_value(fn_ir: &FnIR, vid: ValueId) -> ValueId {
+pub(crate) fn resolve_load_alias_value(fn_ir: &FnIR, vid: ValueId) -> ValueId {
     fn unique_assign_source(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
         let mut src: Option<ValueId> = None;
         for bb in &fn_ir.blocks {

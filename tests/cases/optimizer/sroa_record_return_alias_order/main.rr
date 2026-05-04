@@ -1,0 +1,13 @@
+fn make_pair(a, b) {
+  return {x: a + 1L, y: b + 2L}
+}
+
+fn combine() {
+  let pair = make_pair(3L, 4L)
+  let x = pair.x
+  let y = pair.y
+  print(x + y)
+  return x + y
+}
+
+print(combine())

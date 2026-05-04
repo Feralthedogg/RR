@@ -1,4 +1,7 @@
-fn find_matching_open_brace_line_local(lines: &[String], close_idx: usize) -> Option<usize> {
+pub(crate) fn find_matching_open_brace_line_local(
+    lines: &[String],
+    close_idx: usize,
+) -> Option<usize> {
     let mut stack: Vec<usize> = Vec::new();
     for (idx, line) in lines.iter().enumerate().take(close_idx + 1) {
         for ch in line.chars() {
@@ -17,7 +20,7 @@ fn find_matching_open_brace_line_local(lines: &[String], close_idx: usize) -> Op
     None
 }
 
-pub(super) fn strip_terminal_repeat_nexts(output: &mut String) {
+pub(crate) fn strip_terminal_repeat_nexts(output: &mut String) {
     let lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.len() < 2 {
         return;

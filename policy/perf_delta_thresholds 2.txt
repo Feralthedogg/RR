@@ -1,5 +1,0 @@
-# name|max_ratio|max_abs_seconds
-perf_regression_gate|1.25|20
-benchmark_vectorization|1.25|20
-commercial_determinism|1.20|30
-example_perf_smoke|1.20|120

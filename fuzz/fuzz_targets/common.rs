@@ -1,15 +1,15 @@
 #![allow(dead_code)]
 
-use RR::codegen::mir_emit::MirEmitter;
-use RR::hir::def::{HirItem, HirProgram, ModuleId};
-use RR::hir::desugar::Desugarer;
-use RR::hir::lower::Lowerer;
-use RR::mir::lower_hir::MirLowerer;
-use RR::mir::opt::TachyonEngine;
-use RR::mir::{self, FnIR};
-use RR::syntax::parse::Parser;
-use RR::typeck::TypeConfig;
-use RR::typeck::solver::analyze_program;
+use rr::codegen::mir_emit::MirEmitter;
+use rr::hir::def::{HirItem, HirProgram, ModuleId};
+use rr::hir::desugar::Desugarer;
+use rr::hir::lower::Lowerer;
+use rr::mir::lower_hir::MirLowerer;
+use rr::mir::opt::TachyonEngine;
+use rr::mir::{self, FnIR};
+use rr::syntax::parse::Parser;
+use rr::typeck::TypeConfig;
+use rr::typeck::solver::analyze_program;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -143,23 +143,23 @@ pub fn build_mir(src: &str) -> Option<FxHashMap<String, FnIR>> {
         }
         if !top_level_stmts.is_empty() {
             let top_name = format!("Sym_top_{}", module.id.0);
-            let top_fn = RR::hir::def::HirFn {
-                id: RR::hir::def::FnId(1_000_000 + module.id.0),
-                name: RR::hir::def::SymbolId(1_000_000 + module.id.0),
+            let top_fn = rr::hir::def::HirFn {
+                id: rr::hir::def::FnId(1_000_000 + module.id.0),
+                name: rr::hir::def::SymbolId(1_000_000 + module.id.0),
                 params: Vec::new(),
                 type_params: Vec::new(),
                 where_bounds: Vec::new(),
                 has_varargs: false,
                 ret_ty: None,
-                body: RR::hir::def::HirBlock {
+                body: rr::hir::def::HirBlock {
                     stmts: top_level_stmts,
-                    span: RR::utils::Span::default(),
+                    span: rr::utils::Span::default(),
                 },
-                attrs: RR::hir::def::HirFnAttrs {
-                    inline_hint: RR::hir::def::InlineHint::Never,
+                attrs: rr::hir::def::HirFnAttrs {
+                    inline_hint: rr::hir::def::InlineHint::Never,
                     tidy_safe: false,
                 },
-                span: RR::utils::Span::default(),
+                span: rr::utils::Span::default(),
                 local_names: FxHashMap::default(),
                 public: false,
             };

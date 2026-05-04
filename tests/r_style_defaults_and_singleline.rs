@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use RR::hir::def::{HirItem, ModuleId, Ty};
-use RR::hir::lower::Lowerer;
-use RR::syntax::parse::Parser;
+use rr::compiler::internal::hir::def::{HirItem, ModuleId, Ty};
+use rr::compiler::internal::hir::lower::Lowerer;
+use rr::compiler::internal::syntax::parse::Parser;
 
 fn rscript_path() -> Option<String> {
     if let Ok(path) = std::env::var("RRSCRIPT")

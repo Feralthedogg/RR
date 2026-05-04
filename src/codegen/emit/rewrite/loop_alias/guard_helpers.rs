@@ -1,11 +1,12 @@
-fn rhs_is_simple_scalar_alias_or_literal_local(rhs: &str) -> bool {
+use super::*;
+pub(crate) fn rhs_is_simple_scalar_alias_or_literal_local(rhs: &str) -> bool {
     let rhs = strip_outer_parens_local(rhs);
     rhs.chars().all(RBackend::is_symbol_char)
         || rhs.trim_end_matches('L').parse::<f64>().is_ok()
         || matches!(rhs, "TRUE" | "FALSE" | "NA" | "NULL")
 }
 
-fn rhs_is_simple_dead_expr_local(rhs: &str) -> bool {
+pub(crate) fn rhs_is_simple_dead_expr_local(rhs: &str) -> bool {
     let rhs = strip_outer_parens_local(rhs);
     !rhs.is_empty()
         && !rhs.contains("<-")
@@ -22,19 +23,29 @@ fn rhs_is_simple_dead_expr_local(rhs: &str) -> bool {
         && !rhs.contains(',')
 }
 
-fn parse_repeat_guard_cmp_line_local(line: &str) -> Option<(String, String, String)> {
+pub(crate) fn parse_repeat_guard_cmp_line_local(line: &str) -> Option<(String, String, String)> {
     let trimmed = line.trim();
-    let inner = trimmed
-        .strip_prefix("if (!(")
-        .or_else(|| trimmed.strip_prefix("if !("))?
-        .strip_suffix(")) break")
-        .or_else(|| {
-            trimmed
-                .strip_prefix("if (!(")
-                .or_else(|| trimmed.strip_prefix("if !("))
-                .and_then(|s| s.strip_suffix(") break"))
-        })?
-        .trim();
+    let inner = if let Some(inner) = trimmed
+        .strip_prefix("if (!rr_truthy1(")
+        .and_then(|s| s.strip_suffix(")) break"))
+    {
+        let args = crate::compiler::pipeline::split_top_level_args(inner)?;
+        args.first()?.trim().to_string()
+    } else {
+        trimmed
+            .strip_prefix("if (!(")
+            .or_else(|| trimmed.strip_prefix("if !("))?
+            .strip_suffix(")) break")
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("if (!(")
+                    .or_else(|| trimmed.strip_prefix("if !("))
+                    .and_then(|s| s.strip_suffix(") break"))
+            })?
+            .trim()
+            .to_string()
+    };
+    let inner = strip_outer_parens_local(&inner).trim();
     for op in ["<=", "<"] {
         let needle = format!(" {op} ");
         let Some((lhs, rhs)) = inner.split_once(&needle) else {
@@ -49,7 +60,7 @@ fn parse_repeat_guard_cmp_line_local(line: &str) -> Option<(String, String, Stri
     None
 }
 
-fn plain_ident_local(text: &str) -> bool {
+pub(crate) fn plain_ident_local(text: &str) -> bool {
     let mut chars = text.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -60,7 +71,7 @@ fn plain_ident_local(text: &str) -> bool {
     chars.all(RBackend::is_symbol_char)
 }
 
-fn raw_enclosing_repeat_guard_mentions_symbol_local(
+pub(crate) fn raw_enclosing_repeat_guard_mentions_symbol_local(
     lines: &[String],
     idx: usize,
     symbol: &str,
@@ -88,7 +99,7 @@ fn raw_enclosing_repeat_guard_mentions_symbol_local(
     false
 }
 
-fn raw_enclosing_repeat_body_reads_symbol_before_local(
+pub(crate) fn raw_enclosing_repeat_body_reads_symbol_before_local(
     lines: &[String],
     idx: usize,
     symbol: &str,

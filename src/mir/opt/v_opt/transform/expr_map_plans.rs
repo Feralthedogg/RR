@@ -1,18 +1,22 @@
-#[allow(clippy::too_many_arguments)]
-pub(super) fn try_apply_expr_call_map_auto(
+use super::*;
+pub(crate) struct ExprCallMapAutoApply<'a> {
+    pub(crate) site: VectorApplySite,
+    pub(crate) dest: ValueId,
+    pub(crate) expr: ValueId,
+    pub(crate) iv_phi: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
+    pub(crate) whole_dest: bool,
+    pub(crate) shadow_vars: &'a [VarId],
+}
+
+pub(crate) fn try_apply_expr_call_map_auto(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
-    site: VectorApplySite,
-    dest: ValueId,
-    expr: ValueId,
-    iv_phi: ValueId,
-    start: ValueId,
-    end: ValueId,
-    whole_dest: bool,
-    shadow_vars: &[VarId],
+    plan: ExprCallMapAutoApply<'_>,
 ) -> Option<bool> {
-    let whole_dest = whole_dest && lp.limit_adjust == 0;
-    let root = canonical_value(fn_ir, expr);
+    let whole_dest = plan.whole_dest && lp.limit_adjust == 0;
+    let root = canonical_value(fn_ir, plan.expr);
     let (callee, args) = match &fn_ir.values[root].kind {
         ValueKind::Call {
             callee,
@@ -31,17 +35,17 @@ pub(super) fn try_apply_expr_call_map_auto(
         .iter()
         .map(|arg| CallMapArg {
             value: *arg,
-            vectorized: expr_has_iv_dependency(fn_ir, *arg, iv_phi),
+            vectorized: expr_has_iv_dependency(fn_ir, *arg, plan.iv_phi),
         })
         .collect();
     let CallMapLoweringMode::RuntimeAuto { helper_cost } =
-        choose_call_map_lowering(fn_ir, &callee, &call_args, whole_dest, shadow_vars)
+        choose_call_map_lowering(fn_ir, &callee, &call_args, whole_dest, plan.shadow_vars)
     else {
         return None;
     };
 
-    let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
-    let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
+    let end = adjusted_loop_limit(fn_ir, plan.end, lp.limit_adjust);
+    let Some(dest_var) = resolve_base_var(fn_ir, plan.dest) else {
         return Some(false);
     };
     let idx_vec = build_loop_index_vector(fn_ir, lp)?;
@@ -54,20 +58,21 @@ pub(super) fn try_apply_expr_call_map_auto(
         let out = if arg.vectorized {
             materialize_vector_expr(
                 fn_ir,
-                arg.value,
-                iv_phi,
-                idx_vec,
-                lp,
+                VectorMaterializeRequest {
+                    root: arg.value,
+                    iv_phi: plan.iv_phi,
+                    idx_vec,
+                    lp,
+                    policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+                },
                 &mut memo,
                 &mut interner,
-                true,
-                false,
             )?
         } else {
             materialize_loop_invariant_scalar_expr(
                 fn_ir,
                 arg.value,
-                iv_phi,
+                plan.iv_phi,
                 lp,
                 &mut memo,
                 &mut interner,
@@ -75,7 +80,7 @@ pub(super) fn try_apply_expr_call_map_auto(
             .unwrap_or_else(|| resolve_materialized_value(fn_ir, arg.value))
         };
         let out = if arg.vectorized {
-            maybe_hoist_callmap_arg_expr(fn_ir, site.preheader, out, arg_i)
+            maybe_hoist_callmap_arg_expr(fn_ir, plan.site.preheader, out, arg_i)
         } else {
             out
         };
@@ -87,8 +92,8 @@ pub(super) fn try_apply_expr_call_map_auto(
 
     emit_call_map_argument_guards(
         fn_ir,
-        site.preheader,
-        dest,
+        plan.site.preheader,
+        plan.dest,
         whole_dest,
         &mapped_args,
         &vector_args,
@@ -101,59 +106,62 @@ pub(super) fn try_apply_expr_call_map_auto(
     }
     let out_val = build_call_map_auto_value(
         fn_ir,
-        dest,
-        start,
-        end,
-        &callee,
-        helper_cost,
-        &mapped_args,
-        whole_dest,
+        CallMapAutoValue {
+            dest: plan.dest,
+            start: plan.start,
+            end,
+            callee: &callee,
+            helper_cost,
+            mapped_args: &mapped_args,
+            whole_dest,
+        },
     );
     Some(finish_vector_assignment_with_shadow_states(
         fn_ir,
-        site,
+        plan.site,
         dest_var,
         out_val,
-        shadow_vars,
+        plan.shadow_vars,
         Some(end),
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct ExprMapApplyPlan {
+    pub(crate) site: VectorApplySite,
+    pub(crate) dest: ValueId,
+    pub(crate) expr: ValueId,
+    pub(crate) iv_phi: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
+    pub(crate) whole_dest: bool,
+    pub(crate) shadow_vars: Vec<VarId>,
+}
+
 /// Lower a canonical expr-map vectorization plan into preheader materialization
 /// plus a single assignment that preserves partial-slice semantics when the
 /// original scalar loop did not cover the full destination.
-pub(super) fn apply_expr_map_plan(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    dest: ValueId,
-    expr: ValueId,
-    iv_phi: ValueId,
-    start: ValueId,
-    end: ValueId,
-    whole_dest: bool,
-    shadow_vars: Vec<VarId>,
-) -> bool {
-    let whole_dest = whole_dest && lp.limit_adjust == 0;
+pub(crate) fn apply_expr_map_plan(fn_ir: &mut FnIR, lp: &LoopInfo, plan: ExprMapApplyPlan) -> bool {
+    let whole_dest = plan.whole_dest && lp.limit_adjust == 0;
     if let Some(applied) = try_apply_expr_call_map_auto(
         fn_ir,
         lp,
-        site,
-        dest,
-        expr,
-        iv_phi,
-        start,
-        end,
-        whole_dest,
-        &shadow_vars,
+        ExprCallMapAutoApply {
+            site: plan.site,
+            dest: plan.dest,
+            expr: plan.expr,
+            iv_phi: plan.iv_phi,
+            start: plan.start,
+            end: plan.end,
+            whole_dest,
+            shadow_vars: &plan.shadow_vars,
+        },
     ) {
         return applied;
     }
 
     let trace_enabled = vectorize_trace_enabled();
-    let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
-    let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
+    let end = adjusted_loop_limit(fn_ir, plan.end, lp.limit_adjust);
+    let Some(dest_var) = resolve_base_var(fn_ir, plan.dest) else {
         if trace_enabled {
             eprintln!(
                 "   [vec-apply-expr] {} fail: destination has no base var",
@@ -178,21 +186,22 @@ pub(super) fn apply_expr_map_plan(
     let mut interner = FxHashMap::default();
     let expr_vec = match materialize_vector_expr(
         fn_ir,
-        expr,
-        iv_phi,
-        idx_vec,
-        lp,
+        VectorMaterializeRequest {
+            root: plan.expr,
+            iv_phi: plan.iv_phi,
+            idx_vec,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => v,
         None => {
             if trace_enabled {
                 eprintln!(
                     "   [vec-apply-expr] {} fail: materialize_vector_expr({:?})",
-                    fn_ir.name, fn_ir.values[expr].kind
+                    fn_ir.name, fn_ir.values[plan.expr].kind
                 );
             }
             return false;
@@ -200,24 +209,24 @@ pub(super) fn apply_expr_map_plan(
     };
     let out_val = build_expr_map_output_value(
         fn_ir,
-        site.preheader,
-        dest,
+        plan.site.preheader,
+        plan.dest,
         expr_vec,
-        start,
+        plan.start,
         end,
         whole_dest,
     );
     finish_vector_assignment_with_shadow_states(
         fn_ir,
-        site,
+        plan.site,
         dest_var,
         out_val,
-        &shadow_vars,
+        &plan.shadow_vars,
         Some(end),
     )
 }
 
-pub(super) fn build_expr_map_output_value(
+pub(crate) fn build_expr_map_output_value(
     fn_ir: &mut FnIR,
     preheader: BlockId,
     dest: ValueId,
@@ -250,23 +259,26 @@ pub(super) fn build_expr_map_output_value(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn stage_multi_expr_map_entry(
+pub(crate) struct MultiExprMapStage<'a> {
+    pub(crate) lp: &'a LoopInfo,
+    pub(crate) site: VectorApplySite,
+    pub(crate) entry_index: usize,
+    pub(crate) entry: &'a ExprMapEntry,
+    pub(crate) iv_phi: ValueId,
+    pub(crate) idx_vec: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
+    pub(crate) memo: &'a mut FxHashMap<ValueId, ValueId>,
+    pub(crate) interner: &'a mut FxHashMap<MaterializedExprKey, ValueId>,
+    pub(crate) trace_enabled: bool,
+}
+
+pub(crate) fn stage_multi_expr_map_entry(
     fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    entry_index: usize,
-    entry: &ExprMapEntry,
-    iv_phi: ValueId,
-    idx_vec: ValueId,
-    start: ValueId,
-    end: ValueId,
-    memo: &mut FxHashMap<ValueId, ValueId>,
-    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
-    trace_enabled: bool,
+    stage: MultiExprMapStage<'_>,
 ) -> Option<PreparedVectorAssignment> {
-    let dest_var = resolve_base_var(fn_ir, entry.dest).or_else(|| {
-        if trace_enabled {
+    let dest_var = resolve_base_var(fn_ir, stage.entry.dest).or_else(|| {
+        if stage.trace_enabled {
             eprintln!(
                 "   [vec-apply-expr] {} fail: destination has no base var",
                 fn_ir.name
@@ -275,33 +287,42 @@ pub(super) fn stage_multi_expr_map_entry(
         None
     })?;
     let expr_vec = materialize_vector_expr(
-        fn_ir, entry.expr, iv_phi, idx_vec, lp, memo, interner, true, false,
+        fn_ir,
+        VectorMaterializeRequest {
+            root: stage.entry.expr,
+            iv_phi: stage.iv_phi,
+            idx_vec: stage.idx_vec,
+            lp: stage.lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
+        stage.memo,
+        stage.interner,
     )
     .or_else(|| {
-        if trace_enabled {
+        if stage.trace_enabled {
             eprintln!(
                 "   [vec-apply-expr] {} fail: materialize_vector_expr({:?})",
-                fn_ir.name, fn_ir.values[entry.expr].kind
+                fn_ir.name, fn_ir.values[stage.entry.expr].kind
             );
         }
         None
     })?;
     let expr_vec = hoist_vector_expr_temp(
         fn_ir,
-        site.preheader,
+        stage.site.preheader,
         expr_vec,
-        &format!("exprmap{}", entry_index),
+        &format!("exprmap{}", stage.entry_index),
     );
     let out_val = build_expr_map_output_value(
         fn_ir,
-        site.preheader,
-        entry.dest,
+        stage.site.preheader,
+        stage.entry.dest,
         expr_vec,
-        start,
-        end,
-        entry.whole_dest && lp.limit_adjust == 0,
+        stage.start,
+        stage.end,
+        stage.entry.whole_dest && stage.lp.limit_adjust == 0,
     );
-    let shadow_idx = if entry.whole_dest && lp.limit_adjust == 0 {
+    let shadow_idx = if stage.entry.whole_dest && stage.lp.limit_adjust == 0 {
         Some(fn_ir.add_value(
             ValueKind::Len { base: out_val },
             crate::utils::Span::dummy(),
@@ -309,18 +330,18 @@ pub(super) fn stage_multi_expr_map_entry(
             None,
         ))
     } else {
-        Some(end)
+        Some(stage.end)
     };
 
     Some(PreparedVectorAssignment {
         dest_var,
         out_val,
-        shadow_vars: entry.shadow_vars.clone(),
+        shadow_vars: stage.entry.shadow_vars.clone(),
         shadow_idx,
     })
 }
 
-pub(super) fn apply_multi_expr_map_plan(
+pub(crate) fn apply_multi_expr_map_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -362,17 +383,19 @@ pub(super) fn apply_multi_expr_map_plan(
     for (entry_index, entry) in entries.iter().enumerate() {
         let Some(assignment) = stage_multi_expr_map_entry(
             fn_ir,
-            lp,
-            site,
-            entry_index,
-            entry,
-            iv_phi,
-            idx_vec,
-            start,
-            end,
-            &mut memo,
-            &mut interner,
-            trace_enabled,
+            MultiExprMapStage {
+                lp,
+                site,
+                entry_index,
+                entry,
+                iv_phi,
+                idx_vec,
+                start,
+                end,
+                memo: &mut memo,
+                interner: &mut interner,
+                trace_enabled,
+            },
         ) else {
             return false;
         };
@@ -381,23 +404,26 @@ pub(super) fn apply_multi_expr_map_plan(
     emit_prepared_vector_assignments(fn_ir, site, staged)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn stage_multi_expr_map_3d_entry(
+pub(crate) struct MultiExprMap3DStage<'a> {
+    pub(crate) lp: &'a LoopInfo,
+    pub(crate) site: VectorApplySite,
+    pub(crate) entry_index: usize,
+    pub(crate) entry: &'a ExprMapEntry3D,
+    pub(crate) iv_phi: ValueId,
+    pub(crate) idx_vec: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
+    pub(crate) memo: &'a mut FxHashMap<ValueId, ValueId>,
+    pub(crate) interner: &'a mut FxHashMap<MaterializedExprKey, ValueId>,
+    pub(crate) trace_enabled: bool,
+}
+
+pub(crate) fn stage_multi_expr_map_3d_entry(
     fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    entry_index: usize,
-    entry: &ExprMapEntry3D,
-    iv_phi: ValueId,
-    idx_vec: ValueId,
-    start: ValueId,
-    end: ValueId,
-    memo: &mut FxHashMap<ValueId, ValueId>,
-    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
-    trace_enabled: bool,
+    stage: MultiExprMap3DStage<'_>,
 ) -> Option<PreparedVectorAssignment> {
-    let dest_var = resolve_base_var(fn_ir, entry.dest).or_else(|| {
-        if trace_enabled {
+    let dest_var = resolve_base_var(fn_ir, stage.entry.dest).or_else(|| {
+        if stage.trace_enabled {
             eprintln!(
                 "   [vec-apply-expr3d] {} fail: destination has no base var",
                 fn_ir.name
@@ -406,34 +432,50 @@ pub(super) fn stage_multi_expr_map_3d_entry(
         None
     })?;
     let expr_vec = materialize_vector_expr(
-        fn_ir, entry.expr, iv_phi, idx_vec, lp, memo, interner, true, false,
+        fn_ir,
+        VectorMaterializeRequest {
+            root: stage.entry.expr,
+            iv_phi: stage.iv_phi,
+            idx_vec: stage.idx_vec,
+            lp: stage.lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
+        stage.memo,
+        stage.interner,
     )
     .or_else(|| {
-        if trace_enabled {
+        if stage.trace_enabled {
             eprintln!(
                 "   [vec-apply-expr3d] {} fail: materialize_vector_expr({:?})",
-                fn_ir.name, fn_ir.values[entry.expr].kind
+                fn_ir.name, fn_ir.values[stage.entry.expr].kind
             );
         }
         None
     })?;
     let expr_vec = hoist_vector_expr_temp(
         fn_ir,
-        site.preheader,
+        stage.site.preheader,
         expr_vec,
-        &format!("exprmap3d{}", entry_index),
+        &format!("exprmap3d{}", stage.entry_index),
     );
-    let helper = match entry.axis {
+    let helper = match stage.entry.axis {
         Axis3D::Dim1 => "rr_dim1_assign_values",
         Axis3D::Dim2 => "rr_dim2_assign_values",
         Axis3D::Dim3 => "rr_dim3_assign_values",
     };
-    let fixed_a = resolve_materialized_value(fn_ir, entry.fixed_a);
-    let fixed_b = resolve_materialized_value(fn_ir, entry.fixed_b);
+    let fixed_a = resolve_materialized_value(fn_ir, stage.entry.fixed_a);
+    let fixed_b = resolve_materialized_value(fn_ir, stage.entry.fixed_b);
     let out_val = fn_ir.add_value(
         ValueKind::Call {
             callee: helper.to_string(),
-            args: vec![entry.dest, expr_vec, fixed_a, fixed_b, start, end],
+            args: vec![
+                stage.entry.dest,
+                expr_vec,
+                fixed_a,
+                fixed_b,
+                stage.start,
+                stage.end,
+            ],
             names: vec![None, None, None, None, None, None],
         },
         crate::utils::Span::dummy(),
@@ -444,12 +486,12 @@ pub(super) fn stage_multi_expr_map_3d_entry(
     Some(PreparedVectorAssignment {
         dest_var,
         out_val,
-        shadow_vars: entry.shadow_vars.clone(),
-        shadow_idx: Some(end),
+        shadow_vars: stage.entry.shadow_vars.clone(),
+        shadow_idx: Some(stage.end),
     })
 }
 
-pub(super) fn apply_multi_expr_map_3d_plan(
+pub(crate) fn apply_multi_expr_map_3d_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -479,17 +521,19 @@ pub(super) fn apply_multi_expr_map_3d_plan(
     for (entry_index, entry) in entries.iter().enumerate() {
         let Some(assignment) = stage_multi_expr_map_3d_entry(
             fn_ir,
-            lp,
-            site,
-            entry_index,
-            entry,
-            iv_phi,
-            idx_vec,
-            start,
-            end,
-            &mut memo,
-            &mut interner,
-            trace_enabled,
+            MultiExprMap3DStage {
+                lp,
+                site,
+                entry_index,
+                entry,
+                iv_phi,
+                idx_vec,
+                start,
+                end,
+                memo: &mut memo,
+                interner: &mut interner,
+                trace_enabled,
+            },
         ) else {
             return false;
         };

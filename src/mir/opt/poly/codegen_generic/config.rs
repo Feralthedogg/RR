@@ -1,4 +1,5 @@
-const GENERATED_LOOP_IV_PREFIX: &str = ".__poly_gen_iv_";
+use super::*;
+pub(crate) const GENERATED_LOOP_IV_PREFIX: &str = ".__poly_gen_iv_";
 
 pub fn generic_mir_enabled() -> bool {
     std::env::var("RR_POLY_GENERIC_MIR")
@@ -15,15 +16,15 @@ pub fn generic_mir_effective_for_schedule(scop: &ScopRegion, schedule: &Schedule
     generic_mir_enabled() || default_generic_schedule(scop, schedule)
 }
 
-fn generic_mir_effective(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
+pub(crate) fn generic_mir_effective(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
     generic_mir_effective_for_schedule(scop, schedule)
 }
 
-fn default_generic_schedule(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
+pub(crate) fn default_generic_schedule(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
     default_generic_single_dim(scop, schedule) || default_generic_full_rank_nested(scop, schedule)
 }
 
-fn default_generic_single_dim(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
+pub(crate) fn default_generic_single_dim(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
     if scop.dimensions.len() != 1 {
         return false;
     }
@@ -37,7 +38,7 @@ fn default_generic_single_dim(scop: &ScopRegion, schedule: &SchedulePlan) -> boo
     )
 }
 
-fn default_generic_full_rank_nested(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
+pub(crate) fn default_generic_full_rank_nested(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
     if scop.dimensions.iter().any(|dim| dim.step != 1) {
         return false;
     }
@@ -63,7 +64,7 @@ pub fn generic_fission_enabled() -> bool {
     enabled("RR_POLY_GENERIC_FISSION") || enabled("RR_POLY_FISSION")
 }
 
-fn generic_fission_effective(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
+pub(crate) fn generic_fission_effective(scop: &ScopRegion, schedule: &SchedulePlan) -> bool {
     generic_fission_enabled() || default_generic_schedule(scop, schedule)
 }
 

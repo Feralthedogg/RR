@@ -7,6 +7,7 @@ RUNS="${RUNS:-3}"
 WARMUP="${WARMUP:-0}"
 RR_BIN_OVERRIDE="${RR_BIN:-}"
 SKIP_RENJIN=0
+INCLUDE_MEMORY_PROFILE=0
 
 usage() {
   cat <<EOF
@@ -17,6 +18,8 @@ Options:
   --runs <n>            Timed runs per benchmark script. Default: ${RUNS}
   --warmup <n>          Warmup runs per benchmark script. Default: ${WARMUP}
   --skip-renjin         Skip Renjin rows when refreshing benchmark assets.
+  --include-memory-profile
+                        Also refresh signal-pipeline Rprofmem CSV/SVG assets.
   --help                Show this help.
 
 Environment overrides:
@@ -43,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-renjin)
       SKIP_RENJIN=1
+      shift
+      ;;
+    --include-memory-profile)
+      INCLUDE_MEMORY_PROFILE=1
       shift
       ;;
     --help|-h)
@@ -128,6 +135,19 @@ copy_backend_candidate_assets() {
     "$ROOT/docs/assets/backend-candidate-runtime-${DATE_TAG}.svg"
 }
 
+refresh_signal_memory_assets() {
+  local memory_cmd
+  memory_cmd=(
+    python3 "$ROOT/scripts/bench_signal_pipeline_memory.py"
+    --csv-out "$ROOT/docs/assets/signal-pipeline-memory-${DATE_TAG}.csv"
+    --svg-out "$ROOT/docs/assets/signal-pipeline-memory-${DATE_TAG}.svg"
+  )
+  if [[ -n "$RR_BIN_OVERRIDE" ]]; then
+    memory_cmd+=(--rr-bin "$RR_BIN_OVERRIDE")
+  fi
+  "${memory_cmd[@]}"
+}
+
 update_docs_optimization_snapshot() {
   python3 - \
     "$ROOT/docs/compiler/optimization.md" \
@@ -135,7 +155,8 @@ update_docs_optimization_snapshot() {
     "$SKIP_RENJIN" \
     "$ROOT/docs/assets/signal-pipeline-runtime-${DATE_TAG}.csv" \
     "$ROOT/docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv" \
-    "$ROOT/docs/assets/backend-candidate-runtime-${DATE_TAG}.csv" <<'PY'
+    "$ROOT/docs/assets/backend-candidate-runtime-${DATE_TAG}.csv" \
+    "$ROOT/docs/assets/signal-pipeline-memory-${DATE_TAG}.csv" <<'PY'
 import csv
 import sys
 from pathlib import Path
@@ -146,6 +167,7 @@ skip_renjin = sys.argv[3] == "1"
 signal_csv = Path(sys.argv[4])
 diffusion_csv = Path(sys.argv[5])
 backend_csv = Path(sys.argv[6])
+memory_csv = Path(sys.argv[7])
 
 start_marker = "<!-- BEGIN GENERATED BENCHMARK SNAPSHOT -->"
 end_marker = "<!-- END GENERATED BENCHMARK SNAPSHOT -->"
@@ -156,6 +178,11 @@ end = text.index(end_marker, start) + len(end_marker)
 signal_rows = {row["id"]: row for row in csv.DictReader(signal_csv.open())}
 diffusion_rows = {row["id"]: row for row in csv.DictReader(diffusion_csv.open())}
 backend_rows = {row["id"]: row for row in csv.DictReader(backend_csv.open())}
+memory_rows = (
+    {row["id"]: row for row in csv.DictReader(memory_csv.open())}
+    if memory_csv.exists()
+    else {}
+)
 
 def format_stdev(raw: str) -> str:
     return raw.rstrip("0").rstrip(".") if "." in raw else raw
@@ -172,12 +199,30 @@ def ratio(row_map: dict[str, dict[str, str]], o0_id: str, other_id: str) -> str:
 refresh_cmd = f"scripts/refresh_benchmark_assets.sh --date {date_tag}"
 if skip_renjin:
     refresh_cmd += " --skip-renjin"
+if memory_rows:
+    refresh_cmd += " --include-memory-profile"
 
 renjin_note = (
     "Renjin rows were skipped for this snapshot."
     if skip_renjin
     else "This refresh used the local GNU R, Julia, NumPy, and Renjin environments."
 )
+
+memory_section = ""
+if memory_rows:
+    rr_memory = memory_rows["rr_o2_gnur_warm"]
+    direct_memory = memory_rows["direct_r_vector_warm"]
+    memory_section = f"""
+#### Signal Pipeline Memory Slice
+
+[CSV](../assets/signal-pipeline-memory-{date_tag}.csv) · [SVG](../assets/signal-pipeline-memory-{date_tag}.svg)
+
+![Signal Pipeline Memory Profile](../assets/signal-pipeline-memory-{date_tag}.svg)
+
+- RR O2 GNU R warm allocation pressure: `{rr_memory['alloc_mb']} MB` across `{rr_memory['alloc_events']}` Rprofmem allocation events
+- direct vectorized GNU R warm allocation pressure: `{direct_memory['alloc_mb']} MB` across `{direct_memory['alloc_events']}` Rprofmem allocation events
+- memory rows are Rprofmem allocation-pressure snapshots, not a portable exact GC-count guarantee
+"""
 
 block = f"""<!-- BEGIN GENERATED BENCHMARK SNAPSHOT -->
 ### Benchmark Snapshots
@@ -194,6 +239,7 @@ Refreshed with `{refresh_cmd}`.
 - direct vectorized GNU R baseline: `{signal_rows['direct_r_vector']['mean_ms']} ms` cold / `{signal_rows['direct_r_vector_warm']['mean_ms']} ms` warm
 - NumPy: `{signal_rows['numpy']['mean_ms']} ms`; C O3 native: `{signal_rows['c_o3']['mean_ms']} ms`
 - emitted RR O2 artifact on this snapshot: `{signal_rows['rr_o2_gnur']['emit_lines']}` lines, `{signal_rows['rr_o2_gnur']['emit_repeat_loops']}` repeat loop, `{signal_rows['rr_o2_gnur']['pulse_vectorized']}` vectorized loops
+{memory_section}
 
 #### Diffusion Optimizer Slice
 
@@ -234,7 +280,11 @@ PY
 
 prune_old_assets() {
   local pattern
-  for pattern in signal-pipeline-runtime diffusion-backend-runtime backend-candidate-runtime; do
+  local patterns=(signal-pipeline-runtime diffusion-backend-runtime backend-candidate-runtime)
+  if [[ $INCLUDE_MEMORY_PROFILE -eq 1 ]]; then
+    patterns+=(signal-pipeline-memory)
+  fi
+  for pattern in "${patterns[@]}"; do
     find "$ROOT/docs/assets" -maxdepth 1 -type f \
       \( -name "${pattern}-*.csv" -o -name "${pattern}-*.svg" \) \
       ! -name "${pattern}-${DATE_TAG}.csv" \
@@ -251,6 +301,11 @@ if [[ $SKIP_RENJIN -eq 1 ]]; then
   echo "renjin: skipped"
 else
   echo "renjin: included when available"
+fi
+if [[ $INCLUDE_MEMORY_PROFILE -eq 1 ]]; then
+  echo "memory profile: included"
+else
+  echo "memory profile: skipped"
 fi
 
 echo "-- refreshing signal pipeline assets"
@@ -280,6 +335,11 @@ fi
 "${backend_cmd[@]}"
 copy_backend_candidate_assets
 
+if [[ $INCLUDE_MEMORY_PROFILE -eq 1 ]]; then
+  echo "-- refreshing signal pipeline memory assets"
+  refresh_signal_memory_assets
+fi
+
 update_docs_optimization_snapshot
 prune_old_assets
 
@@ -290,4 +350,8 @@ echo "  docs/assets/diffusion-backend-runtime-${DATE_TAG}.csv"
 echo "  docs/assets/diffusion-backend-runtime-${DATE_TAG}.svg"
 echo "  docs/assets/backend-candidate-runtime-${DATE_TAG}.csv"
 echo "  docs/assets/backend-candidate-runtime-${DATE_TAG}.svg"
+if [[ $INCLUDE_MEMORY_PROFILE -eq 1 ]]; then
+  echo "  docs/assets/signal-pipeline-memory-${DATE_TAG}.csv"
+  echo "  docs/assets/signal-pipeline-memory-${DATE_TAG}.svg"
+fi
 echo "  docs/compiler/optimization.md"

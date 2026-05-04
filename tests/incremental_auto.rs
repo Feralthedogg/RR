@@ -1,10 +1,10 @@
 mod common;
 
-use RR::compiler::{
+use common::unique_dir;
+use rr::compiler::{
     IncrementalOptions, IncrementalSession, OptLevel, compile_with_configs_incremental,
     default_parallel_config, default_type_config,
 };
-use common::unique_dir;
 use std::fs;
 use std::path::PathBuf;
 

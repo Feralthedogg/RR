@@ -1,16 +1,16 @@
+use super::*;
 use crate::diagnostic::DiagnosticBuilder;
 use crate::error::{RRCode, RRException, Stage};
-use crate::mir::*;
 use crate::utils::Span;
 use rustc_hash::FxHashSet;
 
-pub(super) struct RuntimeSafetyNeeds {
-    pub(super) needs_na: bool,
-    pub(super) needs_range: bool,
-    pub(super) needs_dataflow: bool,
+pub(crate) struct RuntimeSafetyNeeds {
+    pub(crate) needs_na: bool,
+    pub(crate) needs_range: bool,
+    pub(crate) needs_dataflow: bool,
 }
 
-pub(super) fn runtime_safety_needs(fn_ir: &FnIR) -> RuntimeSafetyNeeds {
+pub(crate) fn runtime_safety_needs(fn_ir: &FnIR) -> RuntimeSafetyNeeds {
     let mut needs = RuntimeSafetyNeeds {
         needs_na: false,
         needs_range: false,
@@ -59,7 +59,7 @@ pub(super) fn runtime_safety_needs(fn_ir: &FnIR) -> RuntimeSafetyNeeds {
     needs
 }
 
-pub(super) fn division_by_zero_diagnostic(
+pub(crate) fn division_by_zero_diagnostic(
     use_span: Span,
     origin_span: Span,
     message: &str,
@@ -81,7 +81,7 @@ pub(super) fn division_by_zero_diagnostic(
     .build()
 }
 
-pub(super) fn seq_len_negative_diagnostic(use_span: Span, origin_span: Span) -> RRException {
+pub(crate) fn seq_len_negative_diagnostic(use_span: Span, origin_span: Span) -> RRException {
     DiagnosticBuilder::new(
         "RR.RuntimeError",
         RRCode::E2007,
@@ -105,19 +105,19 @@ pub(super) fn seq_len_negative_diagnostic(use_span: Span, origin_span: Span) -> 
 // from exact field-read intervals to concrete hazards. These helpers are the
 // Rust-side projection from those interval facts into the `< 1` / `< 0`
 // predicates consumed by runtime-safety diagnostics.
-pub(super) fn interval_guarantees_below_one(
+pub(crate) fn interval_guarantees_below_one(
     intv: &crate::mir::analyze::range::RangeInterval,
 ) -> bool {
     upper_const(intv).is_some_and(|hi| hi < 1)
 }
 
-pub(super) fn interval_guarantees_negative(
+pub(crate) fn interval_guarantees_negative(
     intv: &crate::mir::analyze::range::RangeInterval,
 ) -> bool {
     upper_const(intv).is_some_and(|hi| hi < 0)
 }
 
-pub(super) fn interval_guarantees_above_base_len(
+pub(crate) fn interval_guarantees_above_base_len(
     intv: &crate::mir::analyze::range::RangeInterval,
     base: ValueId,
 ) -> bool {
@@ -127,32 +127,32 @@ pub(super) fn interval_guarantees_above_base_len(
     )
 }
 
-pub(super) fn upper_const(intv: &crate::mir::analyze::range::RangeInterval) -> Option<i64> {
+pub(crate) fn upper_const(intv: &crate::mir::analyze::range::RangeInterval) -> Option<i64> {
     match intv.hi {
         crate::mir::analyze::range::SymbolicBound::Const(v) => Some(v),
         _ => None,
     }
 }
 
-pub(super) fn lower_const(intv: &crate::mir::analyze::range::RangeInterval) -> Option<i64> {
+pub(crate) fn lower_const(intv: &crate::mir::analyze::range::RangeInterval) -> Option<i64> {
     match intv.lo {
         crate::mir::analyze::range::SymbolicBound::Const(v) => Some(v),
         _ => None,
     }
 }
 
-pub(super) fn interval_guarantees_above_const(
+pub(crate) fn interval_guarantees_above_const(
     intv: &crate::mir::analyze::range::RangeInterval,
     limit: i64,
 ) -> bool {
     lower_const(intv).is_some_and(|lo| lo > limit)
 }
 
-pub(super) fn format_interval(intv: &crate::mir::analyze::range::RangeInterval) -> String {
+pub(crate) fn format_interval(intv: &crate::mir::analyze::range::RangeInterval) -> String {
     format!("[{}, {}]", format_bound(&intv.lo), format_bound(&intv.hi))
 }
 
-pub(super) fn format_bound(bound: &crate::mir::analyze::range::SymbolicBound) -> String {
+pub(crate) fn format_bound(bound: &crate::mir::analyze::range::SymbolicBound) -> String {
     match bound {
         crate::mir::analyze::range::SymbolicBound::NegInf => "-inf".to_string(),
         crate::mir::analyze::range::SymbolicBound::PosInf => "+inf".to_string(),
@@ -166,23 +166,23 @@ pub(super) fn format_bound(bound: &crate::mir::analyze::range::SymbolicBound) ->
     }
 }
 
-pub(super) fn interval_guarantees_zero(interval: Option<crate::mir::flow::Interval>) -> bool {
+pub(crate) fn interval_guarantees_zero(interval: Option<crate::mir::flow::Interval>) -> bool {
     interval.is_some_and(|intv| intv.min == 0 && intv.max == 0)
 }
 
-pub(super) fn flow_interval_guarantees_negative(
+pub(crate) fn flow_interval_guarantees_negative(
     interval: Option<crate::mir::flow::Interval>,
 ) -> bool {
     interval.is_some_and(|intv| !intv.is_empty() && intv.max < 0)
 }
 
-pub(super) fn flow_interval_guarantees_below_one(
+pub(crate) fn flow_interval_guarantees_below_one(
     interval: Option<crate::mir::flow::Interval>,
 ) -> bool {
     interval.is_some_and(|intv| !intv.is_empty() && intv.max < 1)
 }
 
-pub(super) fn range_interval_to_fact_interval(
+pub(crate) fn range_interval_to_fact_interval(
     range_in: &[crate::mir::analyze::range::RangeFacts],
     bid: BlockId,
     vid: ValueId,
@@ -193,7 +193,7 @@ pub(super) fn range_interval_to_fact_interval(
     Some(crate::mir::flow::Interval::new(lo, hi))
 }
 
-pub(super) fn upper_const_from_bound(
+pub(crate) fn upper_const_from_bound(
     bound: &crate::mir::analyze::range::SymbolicBound,
 ) -> Option<i64> {
     match bound {
@@ -202,7 +202,7 @@ pub(super) fn upper_const_from_bound(
     }
 }
 
-pub(super) fn bid_for_value(fn_ir: &FnIR, vid: ValueId) -> BlockId {
+pub(crate) fn bid_for_value(fn_ir: &FnIR, vid: ValueId) -> BlockId {
     let mut seen = FxHashSet::default();
     for (bid, block) in fn_ir.blocks.iter().enumerate() {
         for ins in &block.instrs {
@@ -243,6 +243,7 @@ pub(super) fn bid_for_value(fn_ir: &FnIR, vid: ValueId) -> BlockId {
                         return bid;
                     }
                 }
+                Instr::UnsafeRBlock { .. } => {}
             }
         }
         match block.term {
@@ -262,7 +263,7 @@ pub(super) fn bid_for_value(fn_ir: &FnIR, vid: ValueId) -> BlockId {
     fn_ir.entry
 }
 
-pub(super) fn root_depends_on_value(
+pub(crate) fn root_depends_on_value(
     fn_ir: &FnIR,
     root: ValueId,
     target: ValueId,

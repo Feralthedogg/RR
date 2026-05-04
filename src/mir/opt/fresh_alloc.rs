@@ -1,5 +1,5 @@
 use crate::mir::def::EscapeStatus;
-use crate::mir::opt::loop_analysis::{LoopAnalyzer, build_pred_map};
+use crate::mir::opt::loop_analysis::{LoopAnalyzer, LoopInfo, build_pred_map};
 use crate::mir::*;
 use crate::syntax::ast::Lit;
 
@@ -8,11 +8,21 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
     // This populates the `escape` field on all values.
     crate::mir::analyze::escape::EscapeAnalysis::analyze_function(fn_ir);
 
+    let analyzer = LoopAnalyzer::new(fn_ir);
+    let loops = analyzer.find_loops();
+    optimize_with_analyzed_loops(fn_ir, &loops)
+}
+
+pub fn optimize_with_loop_info(fn_ir: &mut FnIR, loops: &[LoopInfo]) -> bool {
+    // Keep the escape precondition local even when Chronos supplies loops.
+    crate::mir::analyze::escape::EscapeAnalysis::analyze_function(fn_ir);
+    optimize_with_analyzed_loops(fn_ir, loops)
+}
+
+fn optimize_with_analyzed_loops(fn_ir: &mut FnIR, loops: &[LoopInfo]) -> bool {
     let mut changed = false;
 
     // 2. Pre-allocation for simple map-style loops
-    let analyzer = LoopAnalyzer::new(fn_ir);
-    let loops = analyzer.find_loops();
     let preds = build_pred_map(fn_ir);
 
     for lp in loops {

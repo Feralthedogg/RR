@@ -1,4 +1,5 @@
-fn collect_passthrough_helpers_from_program_ir(
+use super::*;
+pub(crate) fn collect_passthrough_helpers_from_program_ir(
     program: &EmittedProgram,
 ) -> FxHashMap<String, String> {
     let mut out = FxHashMap::default();
@@ -38,7 +39,7 @@ fn collect_passthrough_helpers_from_program_ir(
     out
 }
 
-fn has_passthrough_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
+pub(crate) fn has_passthrough_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
     let candidate_names: Vec<String> = build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .filter_map(|func| {
@@ -69,16 +70,16 @@ fn has_passthrough_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
         })
 }
 
-fn has_passthrough_helper_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_passthrough_helper_candidates_ir(lines: &[String]) -> bool {
     has_passthrough_helper_definitions_with_calls_ir(lines)
 }
 
-fn line_has_helper_callsite_ir(line: &str, helper_name: &str) -> bool {
+pub(crate) fn line_has_helper_callsite_ir(line: &str, helper_name: &str) -> bool {
     line.contains(&format!("{helper_name}("))
         && !line.contains(&format!("{helper_name} <- function("))
 }
 
-fn has_metric_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
+pub(crate) fn has_metric_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
     let candidate_names: Vec<String> = build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .filter_map(|func| {
@@ -125,7 +126,7 @@ fn has_metric_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
         })
 }
 
-fn has_simple_expr_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
+pub(crate) fn has_simple_expr_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
     let candidate_names: Vec<String> = build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .filter_map(|func| {
@@ -154,6 +155,11 @@ fn has_simple_expr_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
                     simple = false;
                     break;
                 }
+                let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("").trim();
+                if expr_idents(rhs).iter().any(|ident| ident == lhs) {
+                    simple = false;
+                    break;
+                }
             }
             (simple && !return_expr.contains(&format!("{fn_name}("))).then_some(fn_name)
         })
@@ -167,18 +173,18 @@ fn has_simple_expr_helper_definitions_with_calls_ir(lines: &[String]) -> bool {
         })
 }
 
-fn has_metric_helper_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_metric_helper_candidates_ir(lines: &[String]) -> bool {
     has_metric_helper_definitions_with_calls_ir(lines)
 }
 
-fn has_literal_field_get_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_literal_field_get_candidates_ir(lines: &[String]) -> bool {
     let Some(re) = literal_field_get_re() else {
         return false;
     };
     lines.iter().any(|line| re.is_match(line))
 }
 
-fn has_literal_named_list_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_literal_named_list_candidates_ir(lines: &[String]) -> bool {
     lines.iter().any(|line| {
         line.contains("rr_named_list(")
             && !line.contains("rr_named_list <- function")
@@ -186,11 +192,11 @@ fn has_literal_named_list_candidates_ir(lines: &[String]) -> bool {
     })
 }
 
-fn has_simple_expr_helper_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_simple_expr_helper_candidates_ir(lines: &[String]) -> bool {
     has_simple_expr_helper_definitions_with_calls_ir(lines)
 }
 
-fn apply_rewrite_passthrough_helper_calls_ir(
+pub(crate) fn apply_rewrite_passthrough_helper_calls_ir(
     program: &mut EmittedProgram,
     passthrough: &FxHashMap<String, String>,
 ) {

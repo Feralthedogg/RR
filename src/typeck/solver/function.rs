@@ -1,4 +1,9 @@
-fn analyze_function(fn_ir: &mut FnIR, fn_ret: &FxHashMap<String, TypeState>) -> RR<TypeState> {
+use super::*;
+pub(crate) fn analyze_function(
+    fn_ir: &mut FnIR,
+    fn_ret: &FxHashMap<String, TypeState>,
+) -> RR<TypeState> {
+    seed_index_param_demands(fn_ir);
     seed_param_len_symbols(fn_ir);
     let mut changed = true;
     let mut guard = 0usize;
@@ -18,28 +23,81 @@ fn analyze_function(fn_ir: &mut FnIR, fn_ret: &FxHashMap<String, TypeState>) -> 
         }
     }
 
-    let mut ret_ty = TypeState::unknown();
-    let reachable = compute_reachable(fn_ir);
-    for (bid, bb) in fn_ir.blocks.iter().enumerate() {
-        if !reachable.get(bid).copied().unwrap_or(false) {
-            continue;
-        }
-        if let Terminator::Return(Some(v)) = bb.term {
-            ret_ty = ret_ty.join(fn_ir.values[v].value_ty);
-        }
-    }
-
-    // Use return hint only when no return value was observed in reachable blocks.
-    if ret_ty == TypeState::unknown()
-        && let Some(h) = fn_ir.ret_ty_hint
-    {
-        ret_ty = h;
-    }
+    let path_na = analyze_path_sensitive_na(fn_ir);
+    apply_path_sensitive_na_refinements(fn_ir, &path_na);
+    let ret_ty = path_refined_return_type(fn_ir, &path_na);
 
     Ok(ret_ty)
 }
 
-fn seed_param_len_symbols(fn_ir: &mut FnIR) {
+pub(crate) fn seed_index_param_demands(fn_ir: &mut FnIR) {
+    let reachable = compute_reachable(fn_ir);
+    let mut demanded_slots = FxHashSet::default();
+
+    for (bid, bb) in fn_ir.blocks.iter().enumerate() {
+        if !reachable.get(bid).copied().unwrap_or(false) {
+            continue;
+        }
+        for ins in &bb.instrs {
+            match ins {
+                Instr::StoreIndex1D { idx, .. } => {
+                    if let Some(slot) = param_slot_for_value(fn_ir, *idx) {
+                        demanded_slots.insert(slot);
+                    }
+                }
+                Instr::StoreIndex2D { r, c, .. } => {
+                    for idx in [r, c] {
+                        if let Some(slot) = param_slot_for_value(fn_ir, *idx) {
+                            demanded_slots.insert(slot);
+                        }
+                    }
+                }
+                Instr::StoreIndex3D { i, j, k, .. } => {
+                    for idx in [i, j, k] {
+                        if let Some(slot) = param_slot_for_value(fn_ir, *idx) {
+                            demanded_slots.insert(slot);
+                        }
+                    }
+                }
+                Instr::Assign { .. } | Instr::Eval { .. } | Instr::UnsafeRBlock { .. } => {}
+            }
+        }
+    }
+
+    for value in &fn_ir.values {
+        match &value.kind {
+            ValueKind::Index2D { r, c, .. } => {
+                for idx in [r, c] {
+                    if let Some(slot) = param_slot_for_value(fn_ir, *idx) {
+                        demanded_slots.insert(slot);
+                    }
+                }
+            }
+            ValueKind::Index3D { i, j, k, .. } => {
+                for idx in [i, j, k] {
+                    if let Some(slot) = param_slot_for_value(fn_ir, *idx) {
+                        demanded_slots.insert(slot);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for slot in demanded_slots {
+        if param_slot_has_user_type_contract(fn_ir, slot) {
+            continue;
+        }
+        if let Some(hint) = fn_ir.param_ty_hints.get_mut(slot) {
+            *hint = coerce_index_scalar_return(*hint);
+        }
+        if let Some(term) = fn_ir.param_term_hints.get_mut(slot) {
+            *term = TypeTerm::Int;
+        }
+    }
+}
+
+pub(crate) fn seed_param_len_symbols(fn_ir: &mut FnIR) {
     for (idx, hint) in fn_ir.param_ty_hints.iter_mut().enumerate() {
         if hint.len_sym.is_none() && matches!(hint.shape, ShapeTy::Vector | ShapeTy::Matrix) {
             *hint = hint.with_len(Some(LenSym((idx as u32).saturating_add(1))));
@@ -47,7 +105,7 @@ fn seed_param_len_symbols(fn_ir: &mut FnIR) {
     }
 }
 
-fn collect_var_types(fn_ir: &FnIR) -> FxHashMap<String, TypeState> {
+pub(crate) fn collect_var_types(fn_ir: &FnIR) -> FxHashMap<String, TypeState> {
     let mut out: FxHashMap<String, TypeState> = FxHashMap::default();
     for bb in &fn_ir.blocks {
         for ins in &bb.instrs {
@@ -106,7 +164,7 @@ fn collect_var_types(fn_ir: &FnIR) -> FxHashMap<String, TypeState> {
                         .and_modify(|acc| *acc = acc.join(container_ty))
                         .or_insert(container_ty);
                 }
-                Instr::Eval { .. } => {}
+                Instr::Eval { .. } | Instr::UnsafeRBlock { .. } => {}
             }
         }
     }

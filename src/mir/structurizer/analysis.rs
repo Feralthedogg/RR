@@ -1,8 +1,8 @@
+use super::*;
 use crate::mir::opt::loop_analysis::LoopAnalyzer;
-use crate::mir::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-pub(super) fn compute_reachable(fn_ir: &FnIR) -> FxHashSet<BlockId> {
+pub(crate) fn compute_reachable(fn_ir: &FnIR) -> FxHashSet<BlockId> {
     let mut reachable = FxHashSet::default();
     let mut queue = vec![fn_ir.entry];
     reachable.insert(fn_ir.entry);
@@ -13,10 +13,8 @@ pub(super) fn compute_reachable(fn_ir: &FnIR) -> FxHashSet<BlockId> {
         head += 1;
         if let Some(blk) = fn_ir.blocks.get(bid) {
             match &blk.term {
-                Terminator::Goto(t) => {
-                    if reachable.insert(*t) {
-                        queue.push(*t);
-                    }
+                Terminator::Goto(t) if reachable.insert(*t) => {
+                    queue.push(*t);
                 }
                 Terminator::If {
                     then_bb, else_bb, ..
@@ -36,7 +34,7 @@ pub(super) fn compute_reachable(fn_ir: &FnIR) -> FxHashSet<BlockId> {
     reachable
 }
 
-pub(super) fn compute_loop_headers(
+pub(crate) fn compute_loop_headers(
     fn_ir: &FnIR,
     reachable: &FxHashSet<BlockId>,
 ) -> FxHashMap<BlockId, FxHashSet<BlockId>> {
@@ -56,7 +54,7 @@ pub(super) fn compute_loop_headers(
     grouped
 }
 
-pub(super) fn compute_postdoms(
+pub(crate) fn compute_postdoms(
     fn_ir: &FnIR,
     reachable: &FxHashSet<BlockId>,
 ) -> FxHashMap<BlockId, FxHashSet<BlockId>> {
@@ -116,7 +114,7 @@ pub(super) fn compute_postdoms(
     postdoms
 }
 
-pub(super) fn compute_postdom_depth(
+pub(crate) fn compute_postdom_depth(
     postdoms: &FxHashMap<BlockId, FxHashSet<BlockId>>,
     reachable: &FxHashSet<BlockId>,
 ) -> FxHashMap<BlockId, usize> {
@@ -176,7 +174,7 @@ pub(super) fn compute_postdom_depth(
     depth
 }
 
-pub(super) fn successors(fn_ir: &FnIR, bid: BlockId) -> Vec<BlockId> {
+pub(crate) fn successors(fn_ir: &FnIR, bid: BlockId) -> Vec<BlockId> {
     match &fn_ir.blocks[bid].term {
         Terminator::Goto(t) => vec![*t],
         Terminator::If {

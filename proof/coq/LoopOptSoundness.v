@@ -3,7 +3,7 @@ From Stdlib Require Import List.
 From Stdlib Require Import String.
 From Stdlib Require Import ZArith.
 
-Require Import RRProofs.MirInvariantBundle.
+Require Import MirInvariantBundle.
 
 Import ListNotations.
 Open Scope string_scope.

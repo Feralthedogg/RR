@@ -24,6 +24,8 @@ import RRProofs.ProgramOptPlanSoundness
 import RRProofs.ProgramPhasePipelineSoundness
 import RRProofs.ProgramTierExecutionSoundness
 import RRProofs.ProgramPostTierStagesSoundness
+import RRProofs.ChronosPassManagerSoundness
+import RRProofs.PeepholeLineSemantics
 import RRProofs.ProgramRunProfileInnerSoundness
 import RRProofs.ProgramApiWrapperSoundness
 import RRProofs.CompilerEndToEndSoundness
@@ -50,6 +52,7 @@ import RRProofs.VectorizeApplySubset
 import RRProofs.VectorizeRewriteSubset
 import RRProofs.VectorizeMirRewriteSubset
 import RRProofs.VectorizeValueRewriteSubset
+import RRProofs.SroaRecordReturnSubset
 import RRProofs.VectorizeOriginMemoSubset
 import RRProofs.VectorizeUseRewriteSubset
 import RRProofs.VectorizeDecisionSubset

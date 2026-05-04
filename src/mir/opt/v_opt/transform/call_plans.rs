@@ -1,5 +1,5 @@
-#[allow(clippy::too_many_arguments)]
-pub(super) fn apply_recurrence_add_const_plan(
+use super::*;
+pub(crate) fn apply_recurrence_add_const_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -35,7 +35,7 @@ pub(super) fn apply_recurrence_add_const_plan(
     finish_vector_assignment(fn_ir, site, base_var, recur_val)
 }
 
-pub(super) fn apply_recurrence_add_const_3d_plan(
+pub(crate) fn apply_recurrence_add_const_3d_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -85,7 +85,7 @@ pub(super) fn apply_recurrence_add_const_3d_plan(
     finish_vector_assignment(fn_ir, site, base_var, recur_val)
 }
 
-pub(super) fn apply_shifted_map_plan(
+pub(crate) fn apply_shifted_map_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -117,7 +117,7 @@ pub(super) fn apply_shifted_map_plan(
     finish_vector_assignment(fn_ir, site, dest_var, shifted_val)
 }
 
-pub(super) fn apply_shifted_map_3d_plan(
+pub(crate) fn apply_shifted_map_3d_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -158,7 +158,7 @@ pub(super) fn apply_shifted_map_3d_plan(
     finish_vector_assignment(fn_ir, site, dest_var, shifted_val)
 }
 
-pub(super) fn emit_call_map_argument_guards(
+pub(crate) fn emit_call_map_argument_guards(
     fn_ir: &mut FnIR,
     preheader: BlockId,
     dest: ValueId,
@@ -225,7 +225,7 @@ pub(super) fn emit_call_map_argument_guards(
     }
 }
 
-pub(super) fn build_int_vector_literal(fn_ir: &mut FnIR, items: &[i64]) -> ValueId {
+pub(crate) fn build_int_vector_literal(fn_ir: &mut FnIR, items: &[i64]) -> ValueId {
     let args: Vec<ValueId> = items
         .iter()
         .map(|item| {
@@ -249,49 +249,50 @@ pub(super) fn build_int_vector_literal(fn_ir: &mut FnIR, items: &[i64]) -> Value
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_call_map_auto_value(
-    fn_ir: &mut FnIR,
-    dest: ValueId,
-    start: ValueId,
-    end: ValueId,
-    callee: &str,
-    helper_cost: u32,
-    mapped_args: &[(ValueId, bool)],
-    whole_dest: bool,
-) -> ValueId {
+pub(crate) struct CallMapAutoValue<'a> {
+    pub(crate) dest: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
+    pub(crate) callee: &'a str,
+    pub(crate) helper_cost: u32,
+    pub(crate) mapped_args: &'a [(ValueId, bool)],
+    pub(crate) whole_dest: bool,
+}
+
+pub(crate) fn build_call_map_auto_value(fn_ir: &mut FnIR, plan: CallMapAutoValue<'_>) -> ValueId {
     let callee_val = fn_ir.add_value(
-        ValueKind::Const(Lit::Str(callee.to_string())),
+        ValueKind::Const(Lit::Str(plan.callee.to_string())),
         crate::utils::Span::dummy(),
         crate::mir::def::Facts::empty(),
         None,
     );
     let helper_cost_val = fn_ir.add_value(
-        ValueKind::Const(Lit::Int(helper_cost as i64)),
+        ValueKind::Const(Lit::Int(plan.helper_cost as i64)),
         crate::utils::Span::dummy(),
         crate::mir::def::Facts::empty(),
         None,
     );
-    let vector_slots: Vec<i64> = mapped_args
+    let vector_slots: Vec<i64> = plan
+        .mapped_args
         .iter()
         .enumerate()
         .filter_map(|(index, (_, is_vec))| is_vec.then_some((index + 1) as i64))
         .collect();
     let vector_slots_val = build_int_vector_literal(fn_ir, &vector_slots);
-    let mut args = if whole_dest {
-        vec![dest, callee_val, helper_cost_val, vector_slots_val]
+    let mut args = if plan.whole_dest {
+        vec![plan.dest, callee_val, helper_cost_val, vector_slots_val]
     } else {
         vec![
-            dest,
-            start,
-            end,
+            plan.dest,
+            plan.start,
+            plan.end,
             callee_val,
             helper_cost_val,
             vector_slots_val,
         ]
     };
-    args.extend(mapped_args.iter().map(|(arg, _)| *arg));
-    let callee_name = if whole_dest {
+    args.extend(plan.mapped_args.iter().map(|(arg, _)| *arg));
+    let callee_name = if plan.whole_dest {
         "rr_call_map_whole_auto"
     } else {
         "rr_call_map_slice_auto"
@@ -300,7 +301,7 @@ pub(super) fn build_call_map_auto_value(
         ValueKind::Call {
             callee: callee_name.to_string(),
             args,
-            names: vec![None; mapped_args.len() + if whole_dest { 4 } else { 6 }],
+            names: vec![None; plan.mapped_args.len() + if plan.whole_dest { 4 } else { 6 }],
         },
         crate::utils::Span::dummy(),
         crate::mir::def::Facts::empty(),
@@ -308,25 +309,34 @@ pub(super) fn build_call_map_auto_value(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn apply_call_map_plan(
+pub(crate) struct CallMapApplyPlan {
+    pub(crate) dest: ValueId,
+    pub(crate) callee: String,
+    pub(crate) args: Vec<CallMapArg>,
+    pub(crate) iv_phi: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
+    pub(crate) whole_dest: bool,
+    pub(crate) shadow_vars: Vec<VarId>,
+}
+
+pub(crate) fn apply_call_map_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
-    dest: ValueId,
-    callee: String,
-    args: Vec<CallMapArg>,
-    iv_phi: ValueId,
-    start: ValueId,
-    end: ValueId,
-    whole_dest: bool,
-    shadow_vars: Vec<VarId>,
+    plan: CallMapApplyPlan,
 ) -> bool {
-    let whole_dest = whole_dest && lp.limit_adjust == 0;
+    let whole_dest = plan.whole_dest && lp.limit_adjust == 0;
     let trace_enabled = vectorize_trace_enabled();
-    let lowering_mode = choose_call_map_lowering(fn_ir, &callee, &args, whole_dest, &shadow_vars);
-    let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
-    let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
+    let lowering_mode = choose_call_map_lowering(
+        fn_ir,
+        &plan.callee,
+        &plan.args,
+        whole_dest,
+        &plan.shadow_vars,
+    );
+    let end = adjusted_loop_limit(fn_ir, plan.end, lp.limit_adjust);
+    let Some(dest_var) = resolve_base_var(fn_ir, plan.dest) else {
         return false;
     };
     let idx_vec = match build_loop_index_vector(fn_ir, lp) {
@@ -335,20 +345,21 @@ pub(super) fn apply_call_map_plan(
     };
     let mut memo = FxHashMap::default();
     let mut interner = FxHashMap::default();
-    let mut mapped_args = Vec::with_capacity(args.len());
+    let mut mapped_args = Vec::with_capacity(plan.args.len());
     let mut vector_args = Vec::new();
-    for (arg_i, arg) in args.into_iter().enumerate() {
+    for (arg_i, arg) in plan.args.into_iter().enumerate() {
         let out = if arg.vectorized {
             match materialize_vector_expr(
                 fn_ir,
-                arg.value,
-                iv_phi,
-                idx_vec,
-                lp,
+                VectorMaterializeRequest {
+                    root: arg.value,
+                    iv_phi: plan.iv_phi,
+                    idx_vec,
+                    lp,
+                    policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+                },
                 &mut memo,
                 &mut interner,
-                true,
-                false,
             ) {
                 Some(v) => v,
                 None => return false,
@@ -370,7 +381,7 @@ pub(super) fn apply_call_map_plan(
     emit_call_map_argument_guards(
         fn_ir,
         site.preheader,
-        dest,
+        plan.dest,
         whole_dest,
         &mapped_args,
         &vector_args,
@@ -381,31 +392,33 @@ pub(super) fn apply_call_map_plan(
             if trace_enabled {
                 eprintln!(
                     "   [vec-profit] {} call_map runtime-auto callee={} helper_cost={} whole_dest={}",
-                    fn_ir.name, callee, helper_cost, whole_dest
+                    fn_ir.name, plan.callee, helper_cost, whole_dest
                 );
             }
             build_call_map_auto_value(
                 fn_ir,
-                dest,
-                start,
-                end,
-                &callee,
-                helper_cost,
-                &mapped_args,
-                whole_dest,
+                CallMapAutoValue {
+                    dest: plan.dest,
+                    start: plan.start,
+                    end,
+                    callee: &plan.callee,
+                    helper_cost,
+                    mapped_args: &mapped_args,
+                    whole_dest,
+                },
             )
         }
         CallMapLoweringMode::DirectVector => {
             let mapped_args_vals: Vec<ValueId> = mapped_args.iter().map(|(arg, _)| *arg).collect();
             let mapped_val = fn_ir.add_value(
-                if let Some(op) = intrinsic_for_call(&callee, mapped_args_vals.len()) {
+                if let Some(op) = intrinsic_for_call(&plan.callee, mapped_args_vals.len()) {
                     ValueKind::Intrinsic {
                         op,
                         args: mapped_args_vals,
                     }
                 } else {
                     ValueKind::Call {
-                        callee,
+                        callee: plan.callee,
                         args: mapped_args_vals,
                         names: vec![None; mapped_args.len()],
                     }
@@ -417,11 +430,12 @@ pub(super) fn apply_call_map_plan(
             if whole_dest {
                 mapped_val
             } else {
-                let mapped_val = prepare_partial_slice_value(fn_ir, dest, mapped_val, start, end);
+                let mapped_val =
+                    prepare_partial_slice_value(fn_ir, plan.dest, mapped_val, plan.start, end);
                 fn_ir.add_value(
                     ValueKind::Call {
                         callee: "rr_assign_slice".to_string(),
-                        args: vec![dest, start, end, mapped_val],
+                        args: vec![plan.dest, plan.start, end, mapped_val],
                         names: vec![None, None, None, None],
                     },
                     crate::utils::Span::dummy(),
@@ -436,12 +450,12 @@ pub(super) fn apply_call_map_plan(
         site,
         dest_var,
         out_val,
-        &shadow_vars,
+        &plan.shadow_vars,
         Some(end),
     )
 }
 
-pub(super) fn apply_call_map_3d_plan(
+pub(crate) fn apply_call_map_3d_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -485,14 +499,15 @@ pub(super) fn apply_call_map_3d_plan(
         let out = if arg.vectorized {
             match materialize_vector_expr(
                 fn_ir,
-                arg.value,
-                iv_phi,
-                idx_vec,
-                lp,
+                VectorMaterializeRequest {
+                    root: arg.value,
+                    iv_phi,
+                    idx_vec,
+                    lp,
+                    policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+                },
                 &mut memo,
                 &mut interner,
-                true,
-                false,
             ) {
                 Some(v) => v,
                 None => return false,
@@ -520,7 +535,7 @@ pub(super) fn apply_call_map_3d_plan(
     finish_vector_assignment(fn_ir, site, dest_var, out_val)
 }
 
-pub(super) fn apply_call_map_3d_general_plan(
+pub(crate) fn apply_call_map_3d_general_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,

@@ -1,6 +1,6 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.PhasePlanSoundness.
-Require Import RRProofs.PhasePlanCollectionSoundness.
+Require Import MirInvariantBundle.
+Require Import PhasePlanSoundness.
+Require Import PhasePlanCollectionSoundness.
 From Stdlib Require Import List Bool.
 From Stdlib Require Import PeanoNat.
 Import ListNotations.

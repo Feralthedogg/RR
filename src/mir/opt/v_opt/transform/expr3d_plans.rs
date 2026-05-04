@@ -1,4 +1,5 @@
-pub(super) fn apply_expr_map_3d_plan(
+use super::*;
+pub(crate) fn apply_expr_map_3d_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -15,14 +16,15 @@ pub(super) fn apply_expr_map_3d_plan(
     let mut interner = FxHashMap::default();
     let expr_vec = match materialize_vector_expr(
         fn_ir,
-        plan.expr,
-        plan.iv_phi,
-        idx_vec,
-        lp,
+        VectorMaterializeRequest {
+            root: plan.expr,
+            iv_phi: plan.iv_phi,
+            idx_vec,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => v,
         None => return false,
@@ -48,7 +50,7 @@ pub(super) fn apply_expr_map_3d_plan(
     finish_vector_assignment(fn_ir, site, dest_var, out_val)
 }
 
-pub(super) fn same_load_leaf_var_in_phi_tree(
+pub(crate) fn same_load_leaf_var_in_phi_tree(
     fn_ir: &FnIR,
     root: ValueId,
     seen: &mut FxHashSet<ValueId>,
@@ -77,7 +79,7 @@ pub(super) fn same_load_leaf_var_in_phi_tree(
     out
 }
 
-pub(super) fn recover_cube_slice_snapshot_scalar(
+pub(crate) fn recover_cube_slice_snapshot_scalar(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     value: ValueId,
@@ -134,7 +136,7 @@ pub(super) fn recover_cube_slice_snapshot_scalar(
     Some(resolve_materialized_value(fn_ir, load))
 }
 
-pub(super) fn cube_slice_expr_has_complex_loop_local_axes(
+pub(crate) fn cube_slice_expr_has_complex_loop_local_axes(
     fn_ir: &FnIR,
     lp: &LoopInfo,
     expr: ValueId,
@@ -167,25 +169,28 @@ pub(super) fn cube_slice_expr_has_complex_loop_local_axes(
     false
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn apply_cube_slice_expr_map_plan(
+pub(crate) struct CubeSliceExprMapApplyPlan {
+    pub(crate) site: VectorApplySite,
+    pub(crate) dest: ValueId,
+    pub(crate) expr: ValueId,
+    pub(crate) iv_phi: ValueId,
+    pub(crate) face: ValueId,
+    pub(crate) row: ValueId,
+    pub(crate) size: ValueId,
+    pub(crate) ctx: Option<ValueId>,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
+    pub(crate) shadow_vars: Vec<VarId>,
+}
+
+pub(crate) fn apply_cube_slice_expr_map_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
-    site: VectorApplySite,
-    dest: ValueId,
-    expr: ValueId,
-    iv_phi: ValueId,
-    face: ValueId,
-    row: ValueId,
-    size: ValueId,
-    ctx: Option<ValueId>,
-    start: ValueId,
-    end: ValueId,
-    shadow_vars: Vec<VarId>,
+    plan: CubeSliceExprMapApplyPlan,
 ) -> bool {
     let trace_enabled = vectorize_trace_enabled();
-    let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
-    let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
+    let end = adjusted_loop_limit(fn_ir, plan.end, lp.limit_adjust);
+    let Some(dest_var) = resolve_base_var(fn_ir, plan.dest) else {
         if trace_enabled {
             eprintln!(
                 "   [vec-apply-expr] {} fail: destination has no base var",
@@ -215,12 +220,24 @@ pub(super) fn apply_cube_slice_expr_map_plan(
          fn_ir: &mut FnIR,
          memo: &mut FxHashMap<ValueId, ValueId>,
          interner: &mut FxHashMap<MaterializedExprKey, ValueId>| {
-            match materialize_loop_invariant_scalar_expr(fn_ir, value, iv_phi, lp, memo, interner) {
+            match materialize_loop_invariant_scalar_expr(
+                fn_ir,
+                value,
+                plan.iv_phi,
+                lp,
+                memo,
+                interner,
+            ) {
                 Some(v) => Some(resolve_materialized_value(fn_ir, v)),
                 None => {
-                    if let Some(v) =
-                        recover_cube_slice_snapshot_scalar(fn_ir, lp, value, iv_phi, memo, interner)
-                    {
+                    if let Some(v) = recover_cube_slice_snapshot_scalar(
+                        fn_ir,
+                        lp,
+                        value,
+                        plan.iv_phi,
+                        memo,
+                        interner,
+                    ) {
                         return Some(v);
                     }
                     if trace_enabled {
@@ -234,16 +251,16 @@ pub(super) fn apply_cube_slice_expr_map_plan(
             }
         };
 
-    let Some(face) = materialize_scalar(face, "face", fn_ir, &mut memo, &mut interner) else {
+    let Some(face) = materialize_scalar(plan.face, "face", fn_ir, &mut memo, &mut interner) else {
         return false;
     };
-    let Some(row) = materialize_scalar(row, "row", fn_ir, &mut memo, &mut interner) else {
+    let Some(row) = materialize_scalar(plan.row, "row", fn_ir, &mut memo, &mut interner) else {
         return false;
     };
-    let Some(size) = materialize_scalar(size, "size", fn_ir, &mut memo, &mut interner) else {
+    let Some(size) = materialize_scalar(plan.size, "size", fn_ir, &mut memo, &mut interner) else {
         return false;
     };
-    let ctx = match ctx {
+    let ctx = match plan.ctx {
         Some(ctx_val) => {
             match materialize_scalar(ctx_val, "ctx", fn_ir, &mut memo, &mut interner) {
                 Some(v) => Some(v),
@@ -253,35 +270,36 @@ pub(super) fn apply_cube_slice_expr_map_plan(
         None => None,
     };
 
-    if cube_slice_expr_has_complex_loop_local_axes(fn_ir, lp, expr, iv_phi) {
+    if cube_slice_expr_has_complex_loop_local_axes(fn_ir, lp, plan.expr, plan.iv_phi) {
         if trace_enabled {
             eprintln!(
                 "   [vec-apply-expr] {} fail: cube-slice rhs has complex loop-local axes ({:?})",
                 fn_ir.name,
-                fn_ir.values[canonical_value(fn_ir, expr)].kind
+                fn_ir.values[canonical_value(fn_ir, plan.expr)].kind
             );
         }
         return false;
     }
 
-    let expr_vec = if expr_has_iv_dependency(fn_ir, expr, iv_phi) {
+    let expr_vec = if expr_has_iv_dependency(fn_ir, plan.expr, plan.iv_phi) {
         match materialize_vector_expr(
             fn_ir,
-            expr,
-            iv_phi,
-            idx_vec,
-            lp,
+            VectorMaterializeRequest {
+                root: plan.expr,
+                iv_phi: plan.iv_phi,
+                idx_vec,
+                lp,
+                policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+            },
             &mut memo,
             &mut interner,
-            true,
-            false,
         ) {
             Some(v) => v,
             None => {
                 if trace_enabled {
                     eprintln!(
                         "   [vec-apply-expr] {} fail: materialize_vector_expr({:?})",
-                        fn_ir.name, fn_ir.values[expr].kind
+                        fn_ir.name, fn_ir.values[plan.expr].kind
                     );
                 }
                 return false;
@@ -290,8 +308,8 @@ pub(super) fn apply_cube_slice_expr_map_plan(
     } else {
         match materialize_loop_invariant_scalar_expr(
             fn_ir,
-            expr,
-            iv_phi,
+            plan.expr,
+            plan.iv_phi,
             lp,
             &mut memo,
             &mut interner,
@@ -300,21 +318,22 @@ pub(super) fn apply_cube_slice_expr_map_plan(
             None => {
                 if let Some(v) = materialize_vector_expr(
                     fn_ir,
-                    expr,
-                    iv_phi,
-                    idx_vec,
-                    lp,
+                    VectorMaterializeRequest {
+                        root: plan.expr,
+                        iv_phi: plan.iv_phi,
+                        idx_vec,
+                        lp,
+                        policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+                    },
                     &mut memo,
                     &mut interner,
-                    true,
-                    false,
                 ) {
                     v
                 } else {
                     if trace_enabled {
                         eprintln!(
                             "   [vec-apply-expr] {} fail: invariant scalar expr materialization ({:?})",
-                            fn_ir.name, fn_ir.values[expr].kind
+                            fn_ir.name, fn_ir.values[plan.expr].kind
                         );
                     }
                     return false;
@@ -323,10 +342,10 @@ pub(super) fn apply_cube_slice_expr_map_plan(
         }
     };
 
-    let expr_vec = broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, start, end);
+    let expr_vec = broadcast_scalar_expr_to_slice_len(fn_ir, expr_vec, plan.start, end);
 
     let has_ctx = ctx.is_some();
-    let mut start_args = vec![face, row, start, size];
+    let mut start_args = vec![face, row, plan.start, size];
     let mut end_args = vec![face, row, end, size];
     if let Some(ctx) = ctx {
         start_args.push(ctx);
@@ -356,7 +375,7 @@ pub(super) fn apply_cube_slice_expr_map_plan(
     let out_val = fn_ir.add_value(
         ValueKind::Call {
             callee: "rr_assign_slice".to_string(),
-            args: vec![dest, slice_start, slice_end, expr_vec],
+            args: vec![plan.dest, slice_start, slice_end, expr_vec],
             names: vec![None, None, None, None],
         },
         crate::utils::Span::dummy(),
@@ -365,10 +384,10 @@ pub(super) fn apply_cube_slice_expr_map_plan(
     );
     finish_vector_assignment_with_shadow_states(
         fn_ir,
-        site,
+        plan.site,
         dest_var,
         out_val,
-        &shadow_vars,
+        &plan.shadow_vars,
         Some(slice_end),
     )
 }

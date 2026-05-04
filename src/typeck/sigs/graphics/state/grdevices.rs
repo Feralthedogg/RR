@@ -1,7 +1,7 @@
 use crate::typeck::builtin_sigs::vectorized_scalar_or_vector_double_type;
 use crate::typeck::lattice::{PrimTy, TypeState};
 
-pub(super) fn infer_grdevices_state(callee: &str, arg_tys: &[TypeState]) -> Option<TypeState> {
+pub(crate) fn infer_grdevices_state(callee: &str, arg_tys: &[TypeState]) -> Option<TypeState> {
     match callee {
         "grDevices::jpeg" | "grDevices::bmp" | "grDevices::tiff" => Some(TypeState::null()),
         "grDevices::dev.size" => Some(TypeState::vector(PrimTy::Double, false)),

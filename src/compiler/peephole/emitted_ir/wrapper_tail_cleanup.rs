@@ -1,4 +1,5 @@
-fn has_assignment_to_one_before_ir(lines: &[String], idx: usize, var: &str) -> bool {
+use super::*;
+pub(crate) fn has_assignment_to_one_before_ir(lines: &[String], idx: usize, var: &str) -> bool {
     (0..idx).rev().any(|i| {
         assign_re()
             .and_then(|re| re.captures(lines[i].trim()))
@@ -11,7 +12,7 @@ fn has_assignment_to_one_before_ir(lines: &[String], idx: usize, var: &str) -> b
     })
 }
 
-fn function_has_matching_exprmap_whole_assign_ir(
+pub(crate) fn function_has_matching_exprmap_whole_assign_ir(
     lines: &[String],
     dest_var: &str,
     end_expr: &str,
@@ -72,7 +73,7 @@ fn function_has_matching_exprmap_whole_assign_ir(
     false
 }
 
-fn function_has_non_empty_repeat_whole_assign_ir(
+pub(crate) fn function_has_non_empty_repeat_whole_assign_ir(
     lines: &[String],
     dest_var: &str,
     end_expr: &str,
@@ -165,9 +166,7 @@ fn function_has_non_empty_repeat_whole_assign_ir(
         && has_assignment_to_one_before_ir(lines, guard_idx, iter_var.trim())
 }
 
-pub(in super::super) fn strip_redundant_tail_assign_slice_return_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn strip_redundant_tail_assign_slice_return_ir(lines: Vec<String>) -> Vec<String> {
     if !has_tail_assign_slice_return_candidates_ir(&lines) {
         return lines;
     }
@@ -176,7 +175,7 @@ pub(in super::super) fn strip_redundant_tail_assign_slice_return_ir(
     program.into_lines()
 }
 
-fn apply_strip_redundant_tail_assign_slice_return_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_strip_redundant_tail_assign_slice_return_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -252,9 +251,7 @@ fn apply_strip_redundant_tail_assign_slice_return_ir(program: &mut EmittedProgra
     }
 }
 
-pub(in super::super) fn strip_redundant_nested_temp_reassigns_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn strip_redundant_nested_temp_reassigns_ir(lines: Vec<String>) -> Vec<String> {
     if !scan_basic_cleanup_candidates_ir(&lines).needs_nested_temp {
         return lines;
     }
@@ -263,13 +260,13 @@ pub(in super::super) fn strip_redundant_nested_temp_reassigns_ir(
     program.into_lines()
 }
 
-fn apply_strip_redundant_nested_temp_reassigns_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_strip_redundant_nested_temp_reassigns_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
         };
         let mut remove = vec![false; function.body.len()];
-        for idx in 0..function.body.len() {
+        for (idx, remove_slot) in remove.iter_mut().enumerate().take(function.body.len()) {
             let Some((lhs, rhs)) = function.body[idx].assign_parts() else {
                 continue;
             };
@@ -305,7 +302,7 @@ fn apply_strip_redundant_nested_temp_reassigns_ir(program: &mut EmittedProgram) 
                         }
                         let prev_indent = function.body[j].indent().len();
                         if prev_rhs == rhs && prev_indent < cur_indent {
-                            remove[idx] = true;
+                            *remove_slot = true;
                         }
                         break;
                     }
@@ -324,7 +321,7 @@ fn apply_strip_redundant_nested_temp_reassigns_ir(program: &mut EmittedProgram) 
     }
 }
 
-pub(in super::super) fn run_exact_pre_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_exact_pre_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
     let scan = scan_basic_cleanup_candidates_ir(&lines);
     let needs_dead_eval = scan.needs_dead_eval;
     let needs_noop_assign = scan.needs_noop_assign;

@@ -1,7 +1,7 @@
-use super::common::*;
+use super::*;
 
 #[test]
-fn keeps_repeat_preheader_and_induction_assignments() {
+pub(crate) fn keeps_repeat_preheader_and_induction_assignments() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -32,7 +32,7 @@ next\n\
 }
 
 #[test]
-fn keeps_generated_i_temp_induction_update_inside_repeat() {
+pub(crate) fn keeps_generated_i_temp_induction_update_inside_repeat() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -62,7 +62,7 @@ next\n\
 }
 
 #[test]
-fn keeps_nested_loop_reseed_inside_outer_repeat() {
+pub(crate) fn keeps_nested_loop_reseed_inside_outer_repeat() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -89,7 +89,7 @@ next\n\
 }
 
 #[test]
-fn removes_dead_parenthesized_eval_lines() {
+pub(crate) fn removes_dead_parenthesized_eval_lines() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -107,7 +107,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn removes_dead_plain_identifier_eval_lines() {
+pub(crate) fn removes_dead_plain_identifier_eval_lines() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -123,7 +123,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn removes_noop_self_assignments() {
+pub(crate) fn removes_noop_self_assignments() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -142,7 +142,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn forwards_exact_scalar_expr_into_following_if_chain() {
+pub(crate) fn forwards_exact_scalar_expr_into_following_if_chain() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -169,7 +169,7 @@ lat <- (45 + ((1 - (((((((floor((((k - 1) %% grid_sq) / 40)) + 1) / N) + ((floor
 }
 
 #[test]
-fn exact_expr_reuse_does_not_rewrite_same_lhs_reassignment_to_self_copy() {
+pub(crate) fn exact_expr_reuse_does_not_rewrite_same_lhs_reassignment_to_self_copy() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -185,7 +185,7 @@ z <- ((.__rr_cse_1 + .__rr_cse_1) - 1)\n\
 }
 
 #[test]
-fn exact_expr_reuse_does_not_leak_branch_local_temp_into_sibling_branch() {
+pub(crate) fn exact_expr_reuse_does_not_leak_branch_local_temp_into_sibling_branch() {
     let input = "\
 Sym_37 <- function(f, x, y, size) \n\
 {\n\
@@ -207,7 +207,7 @@ lat <- ((.__rr_cse_13 - 1) * 45)\n\
 }
 
 #[test]
-fn boundary_alias_rewrite_does_not_corrupt_following_if_condition() {
+pub(crate) fn boundary_alias_rewrite_does_not_corrupt_following_if_condition() {
     let input = "\
 Sym_20 <- function(x, lo, hi) \n\
 {\n\
@@ -234,7 +234,7 @@ y <- hi\n\
 }
 
 #[test]
-fn exact_expr_reuse_tolerates_prologue_arg_aliases_for_same_rhs_dep_write() {
+pub(crate) fn exact_expr_reuse_tolerates_prologue_arg_aliases_for_same_rhs_dep_write() {
     let input = "\
 Sym_37 <- function(f, x, y, size) \n\
 {\n\
@@ -259,7 +259,7 @@ lat <- (((.__rr_cse_11 + .__rr_cse_11) - 1) * 45)\n\
 }
 
 #[test]
-fn inlines_immediate_single_use_scalar_temp_into_following_assignment() {
+pub(crate) fn inlines_immediate_single_use_scalar_temp_into_following_assignment() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -285,7 +285,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn inlines_immediate_single_use_index_temp_into_following_assignment() {
+pub(crate) fn inlines_immediate_single_use_index_temp_into_following_assignment() {
     let input = "\
 Sym_1 <- function(size) \n\
 {\n\
@@ -300,7 +300,7 @@ Sym_1 <- function(size) \n\
 }
 
 #[test]
-fn inlines_single_use_scalar_temp_across_adjacent_temp_setup() {
+pub(crate) fn inlines_single_use_scalar_temp_across_adjacent_temp_setup() {
     let input = "\
 Sym_244 <- function(v_m2, v_m1, v_c, v_p1, v_p2) \n\
 {\n\
@@ -319,7 +319,7 @@ Sym_244 <- function(v_m2, v_m1, v_c, v_p1, v_p2) \n\
 }
 
 #[test]
-fn inlines_two_use_scalar_temp_within_straight_line_region() {
+pub(crate) fn inlines_two_use_scalar_temp_within_straight_line_region() {
     let input = "\
 Sym_244 <- function(v_m2, v_m1, v_c, v_p1, v_p2) \n\
 {\n\
@@ -335,7 +335,7 @@ Sym_244 <- function(v_m2, v_m1, v_c, v_p1, v_p2) \n\
 }
 
 #[test]
-fn strips_unused_arg_aliases_but_keeps_used_ones() {
+pub(crate) fn strips_unused_arg_aliases_but_keeps_used_ones() {
     let input = "\
 Sym_37 <- function(f, x, y, size) \n\
 {\n\
@@ -367,7 +367,7 @@ Sym_186 <- function(px, py, pf, u, v, dt, N) \n\
 }
 
 #[test]
-fn rewrites_immediate_ii_alias_to_i_in_loop_body() {
+pub(crate) fn rewrites_immediate_ii_alias_to_i_in_loop_body() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -390,7 +390,7 @@ next\n\
 }
 
 #[test]
-fn rewrites_temp_uses_after_named_copy() {
+pub(crate) fn rewrites_temp_uses_after_named_copy() {
     let input = "\
 Sym_287 <- function() \n\
 {\n\
@@ -422,7 +422,7 @@ melt_rate <- (melt_rate + (qg * 0.02))\n\
 }
 
 #[test]
-fn branch_local_scalar_hoist_does_not_corrupt_guard_self_compare() {
+pub(crate) fn branch_local_scalar_hoist_does_not_corrupt_guard_self_compare() {
     let input = "\
 Sym_303 <- function() \n\
 {\n\
@@ -446,7 +446,7 @@ next\n\
 }
 
 #[test]
-fn branch_local_named_scalar_index_read_does_not_leak_past_if() {
+pub(crate) fn branch_local_named_scalar_index_read_does_not_leak_past_if() {
     let input = "\
 Sym_303 <- function() \n\
 {\n\
@@ -463,7 +463,7 @@ max_u <- u_new[i]\n\
 }
 
 #[test]
-fn simple_alias_guard_rewrite_does_not_leak_branch_local_alias_to_outer_guard() {
+pub(crate) fn simple_alias_guard_rewrite_does_not_leak_branch_local_alias_to_outer_guard() {
     let input = "\
 Sym_207 <- function(x, y, w, h) \n\
 {\n\
@@ -493,10 +493,9 @@ yy <- 1\n\
 }\n";
     let (out, _) = optimize_emitted_r_with_context_and_fresh_with_options(
         input,
-        true,
         &FxHashSet::default(),
         &FxHashSet::default(),
-        true,
+        PeepholeOptions::new(true).preserving_all_defs(true),
     );
     assert!(out.contains("yy <- y"));
     assert!(out.contains("xx <- w"));

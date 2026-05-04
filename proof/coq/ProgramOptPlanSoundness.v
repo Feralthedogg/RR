@@ -1,4 +1,4 @@
-Require Import RRProofs.MirInvariantBundle.
+Require Import MirInvariantBundle.
 From Stdlib Require Import List Bool PeanoNat.
 Import ListNotations.
 Open Scope bool_scope.

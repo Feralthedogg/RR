@@ -5,13 +5,13 @@ mod common;
 #[path = "../../tests/common/random_rr.rs"]
 mod random_rr;
 
-use RR::compiler::{
-    CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel, ParallelBackend,
-    ParallelConfig, ParallelMode, compile_with_configs_incremental_with_output_options,
-};
-use RR::error::{RRCode, RRException};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use libfuzzer_sys::{Corpus, fuzz_target};
+use rr::compiler::{
+    CompileOutputOptions, IncrementalCompileRequest, IncrementalOptions, IncrementalSession,
+    OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_incremental_request,
+};
+use rr::error::{RRCode, RRException};
+use rr::typeck::{NativeBackend, TypeConfig, TypeMode};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -196,17 +196,19 @@ fn compile_once(
     cfg: CompileConfig,
     scenario: IncrementalScenario,
     session: Option<&mut IncrementalSession>,
-) -> RR::error::RR<RR::compiler::IncrementalCompileOutput> {
-    compile_with_configs_incremental_with_output_options(
-        &entry_path.to_string_lossy(),
-        entry_src,
-        cfg.opt_level,
-        cfg.type_cfg,
-        cfg.parallel_cfg,
-        scenario.options,
-        scenario.output_opts,
+) -> rr::error::RR<rr::compiler::IncrementalCompileOutput> {
+    compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &entry_path.to_string_lossy(),
+        entry_input: entry_src,
+        opt_level: cfg.opt_level,
+        type_cfg: cfg.type_cfg,
+        parallel_cfg: cfg.parallel_cfg,
+        compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+        options: scenario.options,
+        output_options: scenario.output_opts,
         session,
-    )
+        profile: None,
+    })
 }
 
 fn assert_helper_mode(output: &str, inject_runtime: bool) {
@@ -241,7 +243,7 @@ fn initial_incremental_compile(
     cfg: CompileConfig,
     scenario: IncrementalScenario,
     session: Option<&mut IncrementalSession>,
-) -> Option<RR::compiler::IncrementalCompileOutput> {
+) -> Option<rr::compiler::IncrementalCompileOutput> {
     match compile_once(entry_path, entry_src, cfg, scenario, session) {
         Ok(output) => Some(output),
         Err(err) => {
@@ -265,7 +267,7 @@ fn replay_incremental_compile(
     cfg: CompileConfig,
     scenario: IncrementalScenario,
     session: Option<&mut IncrementalSession>,
-) -> RR::compiler::IncrementalCompileOutput {
+) -> rr::compiler::IncrementalCompileOutput {
     compile_once(entry_path, entry_src, cfg, scenario, session).unwrap_or_else(|err| {
         panic!(
             "incremental replay failed for accepted scenario {} at {}: {:?}\nsource:\n{}",

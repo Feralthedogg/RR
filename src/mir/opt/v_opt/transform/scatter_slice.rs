@@ -1,4 +1,5 @@
-pub(super) fn apply_scatter_expr_map_plan(
+use super::*;
+pub(crate) fn apply_scatter_expr_map_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -18,28 +19,30 @@ pub(super) fn apply_scatter_expr_map_plan(
     let mut interner = FxHashMap::default();
     let idx_vec = match materialize_vector_expr(
         fn_ir,
-        idx,
-        iv_phi,
-        idx_seed,
-        lp,
+        VectorMaterializeRequest {
+            root: idx,
+            iv_phi,
+            idx_vec: idx_seed,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => hoist_vector_expr_temp(fn_ir, site.preheader, v, "scatter_idx"),
         None => return false,
     };
     let expr_vec = match materialize_vector_expr(
         fn_ir,
-        expr,
-        iv_phi,
-        idx_seed,
-        lp,
+        VectorMaterializeRequest {
+            root: expr,
+            iv_phi,
+            idx_vec: idx_seed,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => hoist_vector_expr_temp(fn_ir, site.preheader, v, "scatter_val"),
         None => return false,
@@ -57,7 +60,7 @@ pub(super) fn apply_scatter_expr_map_plan(
     finish_vector_assignment(fn_ir, site, dest_var, out_val)
 }
 
-pub(super) fn apply_scatter_expr_map_3d_plan(
+pub(crate) fn apply_scatter_expr_map_3d_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -74,28 +77,30 @@ pub(super) fn apply_scatter_expr_map_3d_plan(
     let mut interner = FxHashMap::default();
     let idx_vec = match materialize_vector_expr(
         fn_ir,
-        plan.idx,
-        plan.iv_phi,
-        idx_seed,
-        lp,
+        VectorMaterializeRequest {
+            root: plan.idx,
+            iv_phi: plan.iv_phi,
+            idx_vec: idx_seed,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => hoist_vector_expr_temp(fn_ir, site.preheader, v, "scatter3d_idx"),
         None => return false,
     };
     let expr_vec = match materialize_vector_expr(
         fn_ir,
-        plan.expr,
-        plan.iv_phi,
-        idx_seed,
-        lp,
+        VectorMaterializeRequest {
+            root: plan.expr,
+            iv_phi: plan.iv_phi,
+            idx_vec: idx_seed,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => hoist_vector_expr_temp(fn_ir, site.preheader, v, "scatter3d_val"),
         None => return false,
@@ -120,28 +125,47 @@ pub(super) fn apply_scatter_expr_map_3d_plan(
     finish_vector_assignment(fn_ir, site, dest_var, out_val)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn materialize_3d_index_operand_for_scatter(
+pub(crate) struct ScatterIndexMaterialize<'a> {
+    pub(crate) lp: &'a LoopInfo,
+    pub(crate) site: VectorApplySite,
+    pub(crate) iv_phi: ValueId,
+    pub(crate) idx_seed: ValueId,
+    pub(crate) memo: &'a mut FxHashMap<ValueId, ValueId>,
+    pub(crate) interner: &'a mut FxHashMap<MaterializedExprKey, ValueId>,
+}
+
+pub(crate) fn materialize_3d_index_operand_for_scatter(
     fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
     operand: VectorAccessOperand3D,
-    iv_phi: ValueId,
-    idx_seed: ValueId,
-    memo: &mut FxHashMap<ValueId, ValueId>,
-    interner: &mut FxHashMap<MaterializedExprKey, ValueId>,
+    request: &mut ScatterIndexMaterialize<'_>,
 ) -> Option<ValueId> {
     match operand {
         VectorAccessOperand3D::Scalar(value) => Some(
-            materialize_loop_invariant_scalar_expr(fn_ir, value, iv_phi, lp, memo, interner)
-                .unwrap_or_else(|| resolve_materialized_value(fn_ir, value)),
+            materialize_loop_invariant_scalar_expr(
+                fn_ir,
+                value,
+                request.iv_phi,
+                request.lp,
+                request.memo,
+                request.interner,
+            )
+            .unwrap_or_else(|| resolve_materialized_value(fn_ir, value)),
         ),
         VectorAccessOperand3D::Vector(value) => {
-            let mut materialized = if is_iv_equivalent(fn_ir, value, iv_phi) {
-                idx_seed
+            let mut materialized = if is_iv_equivalent(fn_ir, value, request.iv_phi) {
+                request.idx_seed
             } else {
                 materialize_vector_expr(
-                    fn_ir, value, iv_phi, idx_seed, lp, memo, interner, true, false,
+                    fn_ir,
+                    VectorMaterializeRequest {
+                        root: value,
+                        iv_phi: request.iv_phi,
+                        idx_vec: request.idx_seed,
+                        lp: request.lp,
+                        policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+                    },
+                    request.memo,
+                    request.interner,
                 )?
             };
             if !is_int_index_vector_value(fn_ir, materialized) {
@@ -158,7 +182,7 @@ pub(super) fn materialize_3d_index_operand_for_scatter(
             }
             Some(hoist_vector_expr_temp(
                 fn_ir,
-                site.preheader,
+                request.site.preheader,
                 materialized,
                 "scatter3d_axis",
             ))
@@ -166,7 +190,7 @@ pub(super) fn materialize_3d_index_operand_for_scatter(
     }
 }
 
-pub(super) fn apply_scatter_expr_map_3d_general_plan(
+pub(crate) fn apply_scatter_expr_map_3d_general_plan(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     site: VectorApplySite,
@@ -181,55 +205,43 @@ pub(super) fn apply_scatter_expr_map_3d_general_plan(
     };
     let mut memo = FxHashMap::default();
     let mut interner = FxHashMap::default();
-    let i_vec = match materialize_3d_index_operand_for_scatter(
-        fn_ir,
-        lp,
-        site,
-        plan.i,
-        plan.iv_phi,
-        idx_seed,
-        &mut memo,
-        &mut interner,
-    ) {
-        Some(v) => v,
-        None => return false,
-    };
-    let j_vec = match materialize_3d_index_operand_for_scatter(
-        fn_ir,
-        lp,
-        site,
-        plan.j,
-        plan.iv_phi,
-        idx_seed,
-        &mut memo,
-        &mut interner,
-    ) {
-        Some(v) => v,
-        None => return false,
-    };
-    let k_vec = match materialize_3d_index_operand_for_scatter(
-        fn_ir,
-        lp,
-        site,
-        plan.k,
-        plan.iv_phi,
-        idx_seed,
-        &mut memo,
-        &mut interner,
-    ) {
-        Some(v) => v,
-        None => return false,
+    let (i_vec, j_vec, k_vec) = {
+        let mut index_materialize = ScatterIndexMaterialize {
+            lp,
+            site,
+            iv_phi: plan.iv_phi,
+            idx_seed,
+            memo: &mut memo,
+            interner: &mut interner,
+        };
+        let i_vec =
+            match materialize_3d_index_operand_for_scatter(fn_ir, plan.i, &mut index_materialize) {
+                Some(v) => v,
+                None => return false,
+            };
+        let j_vec =
+            match materialize_3d_index_operand_for_scatter(fn_ir, plan.j, &mut index_materialize) {
+                Some(v) => v,
+                None => return false,
+            };
+        let k_vec =
+            match materialize_3d_index_operand_for_scatter(fn_ir, plan.k, &mut index_materialize) {
+                Some(v) => v,
+                None => return false,
+            };
+        (i_vec, j_vec, k_vec)
     };
     let expr_vec = match materialize_vector_expr(
         fn_ir,
-        plan.expr,
-        plan.iv_phi,
-        idx_seed,
-        lp,
+        VectorMaterializeRequest {
+            root: plan.expr,
+            iv_phi: plan.iv_phi,
+            idx_vec: idx_seed,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => hoist_vector_expr_temp(fn_ir, site.preheader, v, "scatter3d_val"),
         None => return false,
@@ -247,7 +259,7 @@ pub(super) fn apply_scatter_expr_map_3d_general_plan(
     finish_vector_assignment(fn_ir, site, dest_var, out_val)
 }
 
-pub(super) fn broadcast_scalar_expr_to_slice_len(
+pub(crate) fn broadcast_scalar_expr_to_slice_len(
     fn_ir: &mut FnIR,
     expr_vec: ValueId,
     start: ValueId,
@@ -297,7 +309,7 @@ pub(super) fn broadcast_scalar_expr_to_slice_len(
     )
 }
 
-pub(super) fn narrow_vector_expr_to_slice_range(
+pub(crate) fn narrow_vector_expr_to_slice_range(
     fn_ir: &mut FnIR,
     expr_vec: ValueId,
     start: ValueId,

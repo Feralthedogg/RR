@@ -1,4 +1,5 @@
-fn build_2d_col_map_assignment(
+use super::*;
+pub(crate) fn build_2d_col_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
     dest: ValueId,
@@ -73,7 +74,7 @@ fn build_2d_col_map_assignment(
     ))
 }
 
-fn build_multi_2d_col_map_assignments(
+pub(crate) fn build_multi_2d_col_map_assignments(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(Vec<PreparedVectorAssignment>, Vec<MatrixMapOperands>)> {
@@ -111,7 +112,7 @@ fn build_multi_2d_col_map_assignments(
     (assignments.len() >= 2).then_some((assignments, guards))
 }
 
-fn build_single_2d_col_map_assignment(
+pub(crate) fn build_single_2d_col_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(PreparedVectorAssignment, MatrixMapOperands)> {
@@ -143,7 +144,7 @@ fn build_single_2d_col_map_assignment(
     build_2d_col_map_assignment(fn_ir, scop, dest, subscripts[1], expr_root)
 }
 
-fn build_3d_dim1_map_assignment(
+pub(crate) fn build_3d_dim1_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
     dest: ValueId,
@@ -221,7 +222,7 @@ fn build_3d_dim1_map_assignment(
     ))
 }
 
-fn build_multi_3d_dim1_map_assignments(
+pub(crate) fn build_multi_3d_dim1_map_assignments(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(Vec<PreparedVectorAssignment>, Vec<Array3MapOperands>)> {
@@ -265,7 +266,7 @@ fn build_multi_3d_dim1_map_assignments(
     (assignments.len() >= 2).then_some((assignments, guards))
 }
 
-fn build_single_3d_dim1_map_assignment(
+pub(crate) fn build_single_3d_dim1_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(PreparedVectorAssignment, Array3MapOperands)> {
@@ -297,7 +298,7 @@ fn build_single_3d_dim1_map_assignment(
     build_3d_dim1_map_assignment(fn_ir, scop, dest, subscripts[1], subscripts[2], expr_root)
 }
 
-fn build_2d_col_reduce_assignment(
+pub(crate) fn build_2d_col_reduce_assignment(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -436,7 +437,7 @@ fn build_2d_col_reduce_assignment(
     ))
 }
 
-fn build_multi_2d_col_reduce_assignments(
+pub(crate) fn build_multi_2d_col_reduce_assignments(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -466,7 +467,7 @@ fn build_multi_2d_col_reduce_assignments(
     (!assignments.is_empty()).then_some((assignments, guards))
 }
 
-fn build_3d_dim1_reduce_assignment(
+pub(crate) fn build_3d_dim1_reduce_assignment(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -606,7 +607,7 @@ fn build_3d_dim1_reduce_assignment(
     ))
 }
 
-fn build_multi_3d_dim1_reduce_assignments(
+pub(crate) fn build_multi_3d_dim1_reduce_assignments(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -636,7 +637,7 @@ fn build_multi_3d_dim1_reduce_assignments(
     (!assignments.is_empty()).then_some((assignments, guards))
 }
 
-fn build_nested_2d_full_matrix_map_value(
+pub(crate) fn build_nested_2d_full_matrix_map_value(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(ValueId, String, MatrixMapOperands)> {
@@ -750,7 +751,7 @@ fn build_nested_2d_full_matrix_map_value(
     ))
 }
 
-fn build_nested_2d_full_matrix_map_assignment(
+pub(crate) fn build_nested_2d_full_matrix_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
     dest: ValueId,
@@ -837,7 +838,7 @@ fn build_nested_2d_full_matrix_map_assignment(
     ))
 }
 
-fn build_multi_nested_2d_full_matrix_map_assignments(
+pub(crate) fn build_multi_nested_2d_full_matrix_map_assignments(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(Vec<PreparedVectorAssignment>, Vec<MatrixMapOperands>)> {
