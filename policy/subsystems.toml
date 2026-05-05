@@ -94,6 +94,7 @@ owners = [
   "@Feralthedogg",
 ]
 paths = [
+  ".lineignore",
   ".gitignore",
   "Cargo.lock",
   "Cargo.toml",
@@ -260,6 +261,8 @@ owners = [
 ]
 paths = [
   "src/codegen/",
+  "src/compiler/pipeline/cache_and_ir.rs",
+  "src/compiler/pipeline/source_fingerprint.rs",
   "src/compiler/pipeline/phases/source_emit.rs",
   "src/compiler/pipeline/late_raw_rewrites",
   "src/compiler/pipeline/raw_rewrites.rs",

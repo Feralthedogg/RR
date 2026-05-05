@@ -9,118 +9,44 @@ fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
 }
 
-fn rust_files_under(path: &Path) -> Vec<PathBuf> {
-    let mut pending = vec![path.to_path_buf()];
-    let mut files = Vec::new();
-
-    while let Some(dir) = pending.pop() {
-        for entry in fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("failed to read directory {}: {e}", dir.display()))
-        {
-            let entry = entry.unwrap_or_else(|e| panic!("failed to read directory entry: {e}"));
-            let path = entry.path();
-            let file_type = entry
-                .file_type()
-                .unwrap_or_else(|e| panic!("failed to read file type for {}: {e}", path.display()));
-            if file_type.is_dir() {
-                pending.push(path);
-                continue;
-            }
-            if path.extension().and_then(|ext| ext.to_str()) == Some("rs")
-                && path.file_name().and_then(|name| name.to_str()) != Some("tests.rs")
-            {
-                files.push(path);
-            }
-        }
-    }
-
-    files.sort();
-    files
-}
-
-fn slash_relative(path: &Path, base: &Path) -> String {
-    path.strip_prefix(base)
-        .unwrap_or_else(|e| {
-            panic!(
-                "failed to strip {} from {}: {e}",
-                base.display(),
-                path.display()
-            )
-        })
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn pipeline_salt_source(compiler_root: &Path) -> String {
-    let mut source = read(&compiler_root.join("pipeline.rs"));
-    let pipeline_root = compiler_root.join("pipeline");
-    if pipeline_root.is_dir() {
-        for path in rust_files_under(&pipeline_root) {
-            source.push('\n');
-            source.push_str(&read(&path));
-        }
-    }
-    source
-}
-
 #[test]
-fn split_raw_rewrite_modules_are_part_of_compile_cache_salt() {
+fn compile_cache_salt_uses_build_hash_instead_of_manual_include_list() {
     let root = repo_root();
-    let compiler_root = root.join("src").join("compiler");
-    let codegen_emit_root = root.join("src").join("codegen").join("emit");
-    let pipeline = pipeline_salt_source(&compiler_root);
-
-    let mut missing = Vec::new();
-
-    let mut codegen_paths = vec![codegen_emit_root.join("rewrite.rs")];
-    codegen_paths.extend(rust_files_under(&codegen_emit_root.join("rewrite")));
-    for path in codegen_paths {
-        let rel = slash_relative(&path, &codegen_emit_root);
-        let needle = format!("../codegen/emit/{rel}");
-        if !pipeline.contains(&needle) {
-            missing.push(needle);
-        }
-    }
-
-    let mut emitted_ir_paths = vec![compiler_root.join("peephole").join("emitted_ir.rs")];
-    emitted_ir_paths.extend(rust_files_under(
-        &compiler_root.join("peephole").join("emitted_ir"),
-    ));
-    emitted_ir_paths.push(compiler_root.join("peephole").join("stage_catalog.rs"));
-    for path in emitted_ir_paths {
-        let needle = slash_relative(&path, &compiler_root);
-        if !pipeline.contains(&needle) {
-            missing.push(needle);
-        }
-    }
-
-    let raw_emit_root = compiler_root
-        .join("pipeline")
-        .join("phases")
-        .join("source_emit")
-        .join("raw_emit");
-    let mut raw_emit_paths = vec![
-        compiler_root
+    let build_script = read(&root.join("build.rs"));
+    let source_fingerprint = read(
+        &root
+            .join("src")
+            .join("compiler")
             .join("pipeline")
-            .join("phases")
-            .join("source_emit")
-            .join("raw_emit.rs"),
-    ];
-    raw_emit_paths.extend(rust_files_under(&raw_emit_root));
-    for path in raw_emit_paths {
-        let compiler_relative = slash_relative(&path, &compiler_root);
-        let pipeline_relative = slash_relative(&path, &compiler_root.join("pipeline"));
-        if !pipeline.contains(&compiler_relative) && !pipeline.contains(&pipeline_relative) {
-            missing.push(compiler_relative);
-        }
-    }
+            .join("source_fingerprint.rs"),
+    );
+    let cache_and_ir = read(
+        &root
+            .join("src")
+            .join("compiler")
+            .join("pipeline")
+            .join("cache_and_ir.rs"),
+    );
 
     assert!(
-        missing.is_empty(),
-        "split raw rewrite modules are missing from compiler cache salt: {:?}",
-        missing
+        build_script.contains("collect_rs_files(&manifest_dir.join(\"src\")"),
+        "build.rs must keep recursively hashing src/**/*.rs for compiler cache invalidation"
+    );
+    assert!(
+        build_script.contains("cargo:rustc-env=RR_COMPILER_BUILD_HASH="),
+        "build.rs must export the compiler source fingerprint"
+    );
+    assert!(
+        source_fingerprint.contains("RR_COMPILER_BUILD_HASH"),
+        "function emit cache salt must use the build-level compiler source fingerprint"
+    );
+    assert!(
+        cache_and_ir.contains("crate::runtime::R_RUNTIME"),
+        "output cache salt must still include the generated R runtime contents"
+    );
+    assert!(
+        !source_fingerprint.contains("include_str!(") && !cache_and_ir.contains("include_str!("),
+        "cache salts must not manually enumerate compiler source files with include_str!"
     );
 }
 
