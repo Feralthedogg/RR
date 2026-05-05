@@ -81,9 +81,11 @@ Use this when you want one emitted artifact.
 RR run . -O2
 ```
 
-`run .` resolves the current directory to `main.rr`.
-For project entry files, RR expects `fn main()` and automatically appends a
-top-level `main()` call during `run` if the file does not already contain one.
+`run .` resolves the current directory to `src/main.rr` for managed projects.
+Root-level `main.rr` is no longer a directory fallback in RR 2.0; pass it as an
+explicit file path when compiling older single-file programs. For project entry
+files, RR expects `fn main()` and automatically appends a top-level `main()`
+call during `run` if the file does not already contain one.
 
 ### Build a Project
 
@@ -91,8 +93,9 @@ top-level `main()` call during `run` if the file does not already contain one.
 RR build . -O2
 ```
 
-Use this when you want the project entry compiled into `Build/debug/` without
-executing it.
+Use this when you want the `src/main.rr` project entry compiled into
+`Build/debug/` without executing it. If a directory has no `src/main.rr`, use an
+explicit `.rr` file path or tree-build behavior instead.
 
 ## What RR Emits
 

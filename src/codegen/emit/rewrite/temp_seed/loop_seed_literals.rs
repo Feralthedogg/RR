@@ -1,4 +1,5 @@
-pub(super) fn rewrite_single_assignment_loop_seed_literals(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_single_assignment_loop_seed_literals(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;
@@ -59,7 +60,7 @@ pub(super) fn rewrite_single_assignment_loop_seed_literals(output: &mut String) 
     *output = rewritten;
 }
 
-pub(super) fn rewrite_sym210_loop_seed(output: &mut String) {
+pub(crate) fn rewrite_sym210_loop_seed(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

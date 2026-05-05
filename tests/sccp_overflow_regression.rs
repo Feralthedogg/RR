@@ -1,7 +1,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, compile_with_config};
 
 fn compile_o2_gradual_no_panic(name: &str, src: &str) -> String {
     let run = catch_unwind(AssertUnwindSafe(|| {
@@ -60,6 +60,26 @@ main()
     assert!(
         code.contains("9223372036854775807L + 1L"),
         "overflowing add should stay as runtime expression"
+    );
+}
+
+#[test]
+fn semantic_const_eval_integer_add_overflow_does_not_panic() {
+    let src = r#"
+fn main() {
+  if ((9223372036854775807L + 1L) == 0L) {
+    print(1L)
+  } else {
+    print(2L)
+  }
+}
+
+main()
+"#;
+    let code = compile_o2_gradual_no_panic("const_eval_add_overflow_regression.rr", src);
+    assert!(
+        code.contains("9223372036854775807L + 1L"),
+        "semantic const eval should leave overflowing integer add for runtime evaluation"
     );
 }
 

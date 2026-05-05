@@ -1,15 +1,15 @@
 use super::*;
 
 #[path = "late_raw_rewrites/buffer_swap.rs"]
-mod buffer_swap;
+pub(crate) mod buffer_swap;
 #[path = "late_raw_rewrites/cg.rs"]
-mod cg;
+pub(crate) mod cg;
 #[path = "late_raw_rewrites/clamp.rs"]
-mod clamp;
+pub(crate) mod clamp;
 #[path = "late_raw_rewrites/melt_rate.rs"]
-mod melt_rate;
+pub(crate) mod melt_rate;
 #[path = "late_raw_rewrites/prune.rs"]
-mod prune;
+pub(crate) mod prune;
 
 pub(crate) use self::buffer_swap::restore_buffer_swaps_after_temp_copy_in_raw_emitted_r;
 pub(crate) use self::cg::restore_cg_loop_carried_updates_in_raw_emitted_r;

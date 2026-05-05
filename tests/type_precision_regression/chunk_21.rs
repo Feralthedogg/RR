@@ -1,7 +1,7 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn base_direct_linear_algebra_helpers_have_builtin_types() {
+pub(crate) fn base_direct_linear_algebra_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec![
@@ -11,10 +11,13 @@ fn base_direct_linear_algebra_helpers_have_builtin_types() {
             "mat".to_string(),
         ],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[2] = RR::typeck::TypeState::matrix(PrimTy::Any, false);
-    fn_ir.param_ty_hints[3] = RR::typeck::TypeState::matrix(PrimTy::Double, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[2] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Any, false);
+    fn_ir.param_ty_hints[3] =
+        rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Double, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
     fn_ir.param_term_hints[1] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[2] = TypeTerm::DataFrame(Vec::new());
@@ -210,13 +213,14 @@ fn base_direct_linear_algebra_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_format_helpers_have_builtin_types() {
+pub(crate) fn base_direct_format_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["chars".to_string(), "df".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::matrix(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[1] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
     fn_ir.param_term_hints[1] = TypeTerm::DataFrame(Vec::new());
 
@@ -323,13 +327,14 @@ fn base_direct_format_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_print_summary_method_helpers_have_builtin_types() {
+pub(crate) fn base_direct_print_summary_method_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["chars".to_string(), "df".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::matrix(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[1] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
     fn_ir.param_term_hints[1] = TypeTerm::DataFrame(Vec::new());
 

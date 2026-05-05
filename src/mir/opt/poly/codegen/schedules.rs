@@ -1,3 +1,4 @@
+use super::*;
 pub fn lower_identity_schedule(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,

@@ -1,7 +1,33 @@
 use super::common::*;
 
 #[test]
-fn whole_dest_end_known_var_matches_param_alias_expr() {
+pub(crate) fn mutable_base_prefers_origin_over_read_alias_binding() {
+    let mut backend = backend_with_sym17_fresh();
+    let values = vec![Value {
+        id: 0,
+        kind: ValueKind::Load {
+            var: "out".to_string(),
+        },
+        span: Span::dummy(),
+        facts: Facts::empty(),
+        origin_var: Some("out".to_string()),
+        phi_block: None,
+        value_ty: TypeState::unknown(),
+        value_term: TypeTerm::Any,
+        escape: EscapeStatus::Unknown,
+    }];
+
+    backend.bind_value_to_var(0, "a");
+
+    assert_eq!(
+        backend.resolve_mutable_base(0, &values, &[]),
+        "out",
+        "write bases must not be redirected through read aliases"
+    );
+}
+
+#[test]
+pub(crate) fn whole_dest_end_known_var_matches_param_alias_expr() {
     let mut backend = backend_with_sym17_fresh();
     let values = vec![
         Value {
@@ -105,7 +131,7 @@ fn whole_dest_end_known_var_matches_param_alias_expr() {
 }
 
 #[test]
-fn whole_range_copy_wrapper_finds_mutated_descendant_alias() {
+pub(crate) fn whole_range_copy_wrapper_finds_mutated_descendant_alias() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -255,7 +281,7 @@ fn whole_range_copy_wrapper_finds_mutated_descendant_alias() {
 }
 
 #[test]
-fn stale_fresh_aggregate_call_arg_is_not_hoisted_to_cse_temp() {
+pub(crate) fn stale_fresh_aggregate_call_arg_is_not_hoisted_to_cse_temp() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -390,7 +416,7 @@ fn stale_fresh_aggregate_call_arg_is_not_hoisted_to_cse_temp() {
 }
 
 #[test]
-fn scalar_stage_assignment_reuses_live_origin_var() {
+pub(crate) fn scalar_stage_assignment_reuses_live_origin_var() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -485,7 +511,7 @@ fn scalar_stage_assignment_reuses_live_origin_var() {
 }
 
 #[test]
-fn scalar_stage_assignment_reuses_same_value_id_bound_var() {
+pub(crate) fn scalar_stage_assignment_reuses_same_value_id_bound_var() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -558,7 +584,7 @@ fn scalar_stage_assignment_reuses_same_value_id_bound_var() {
 }
 
 #[test]
-fn same_origin_assignment_uses_expr_instead_of_stale_bound_var() {
+pub(crate) fn same_origin_assignment_uses_expr_instead_of_stale_bound_var() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -636,7 +662,7 @@ fn same_origin_assignment_uses_expr_instead_of_stale_bound_var() {
 }
 
 #[test]
-fn binary_expr_prefers_shared_origin_var_over_literal_clone() {
+pub(crate) fn binary_expr_prefers_shared_origin_var_over_literal_clone() {
     let backend = RBackend::new();
     let values = vec![
         Value {
@@ -685,7 +711,7 @@ fn binary_expr_prefers_shared_origin_var_over_literal_clone() {
 }
 
 #[test]
-fn binary_expr_prefers_live_scalar_origin_var_over_literal_clone() {
+pub(crate) fn binary_expr_prefers_live_scalar_origin_var_over_literal_clone() {
     let mut backend = RBackend::new();
     backend
         .value_tracker
@@ -760,7 +786,7 @@ fn binary_expr_prefers_live_scalar_origin_var_over_literal_clone() {
 }
 
 #[test]
-fn binary_expr_does_not_replace_literal_with_nonlive_origin_var_name() {
+pub(crate) fn binary_expr_does_not_replace_literal_with_nonlive_origin_var_name() {
     let backend = RBackend::new();
     let values = vec![
         Value {
@@ -809,7 +835,7 @@ fn binary_expr_does_not_replace_literal_with_nonlive_origin_var_name() {
 }
 
 #[test]
-fn const_seed_assignment_does_not_alias_to_mutable_bound_var() {
+pub(crate) fn const_seed_assignment_does_not_alias_to_mutable_bound_var() {
     let mut backend = RBackend::new();
     let values = vec![Value {
         id: 0,
@@ -849,4 +875,107 @@ fn const_seed_assignment_does_not_alias_to_mutable_bound_var() {
     assert!(backend.output.contains("acc <- 1L"));
     assert!(backend.output.contains("i <- 1L"));
     assert!(!backend.output.contains("i <- acc"));
+}
+
+#[test]
+pub(crate) fn indexed_store_invalidates_call_aliases_that_read_base() {
+    let mut backend = RBackend::with_analysis_options(
+        FxHashSet::default(),
+        FxHashSet::from_iter([String::from("Sym_pure")]),
+        FxHashMap::default(),
+        true,
+    );
+    let values = vec![
+        binding_test_value(
+            0,
+            ValueKind::Load {
+                var: "u_stage".to_string(),
+            },
+            Some("u_stage"),
+        ),
+        binding_test_value(
+            1,
+            ValueKind::Load {
+                var: "v".to_string(),
+            },
+            Some("v"),
+        ),
+        binding_test_value(2, ValueKind::Const(Lit::Int(1)), None),
+        binding_test_value(3, ValueKind::Const(Lit::Int(7)), None),
+        binding_test_value(
+            4,
+            ValueKind::Call {
+                callee: "Sym_pure".to_string(),
+                args: vec![0, 1],
+                names: vec![],
+            },
+            Some("visc2"),
+        ),
+        binding_test_value(
+            5,
+            ValueKind::Call {
+                callee: "Sym_pure".to_string(),
+                args: vec![0, 1],
+                names: vec![],
+            },
+            Some("visc3"),
+        ),
+    ];
+
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "visc2".to_string(),
+                src: 4,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("first pure call should emit");
+    backend
+        .emit_instr(
+            &Instr::StoreIndex1D {
+                base: 0,
+                idx: 2,
+                val: 3,
+                is_vector: false,
+                is_safe: true,
+                is_na_safe: true,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("indexed store should emit");
+    backend
+        .emit_instr(
+            &Instr::Assign {
+                dst: "visc3".to_string(),
+                src: 5,
+                span: Span::dummy(),
+            },
+            &values,
+            &[],
+        )
+        .expect("second pure call should emit");
+
+    assert!(backend.output.contains("visc2 <- Sym_pure(u_stage, v)"));
+    assert!(backend.output.contains("u_stage[1L] <- 7L"));
+    assert!(backend.output.contains("visc3 <- Sym_pure(u_stage, v)"));
+    assert!(!backend.output.contains("visc3 <- visc2"));
+}
+
+pub(crate) fn binding_test_value(id: usize, kind: ValueKind, origin_var: Option<&str>) -> Value {
+    Value {
+        id,
+        kind,
+        span: Span::dummy(),
+        facts: Facts::empty(),
+        origin_var: origin_var.map(str::to_string),
+        phi_block: None,
+        value_ty: TypeState::unknown(),
+        value_term: TypeTerm::Any,
+        escape: EscapeStatus::Unknown,
+    }
 }

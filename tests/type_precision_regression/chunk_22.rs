@@ -1,9 +1,10 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn base_package_wide_fallback_keeps_remaining_exports_on_direct_surface() {
+pub(crate) fn base_package_wide_fallback_keeps_remaining_exports_on_direct_surface() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["arg".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();
@@ -65,13 +66,15 @@ fn base_package_wide_fallback_keeps_remaining_exports_on_direct_surface() {
 }
 
 #[test]
-fn base_direct_runtime_helper_batch_have_builtin_types() {
+pub(crate) fn base_direct_runtime_helper_batch_have_builtin_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["chars".to_string(), "nums".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
     fn_ir.param_term_hints[1] = TypeTerm::Vector(Box::new(TypeTerm::Double));
 
@@ -213,7 +216,7 @@ fn base_direct_runtime_helper_batch_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_bitwise_coercion_helpers_have_builtin_types() {
+pub(crate) fn base_direct_bitwise_coercion_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec![
@@ -224,11 +227,13 @@ fn base_direct_bitwise_coercion_helpers_have_builtin_types() {
             "mat".to_string(),
         ],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::vector(PrimTy::Int, false);
-    fn_ir.param_ty_hints[2] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[3] = RR::typeck::TypeState::unknown();
-    fn_ir.param_ty_hints[4] = RR::typeck::TypeState::matrix(PrimTy::Int, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[1] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Int, false);
+    fn_ir.param_ty_hints[2] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[3] = rr::compiler::internal::typeck::TypeState::unknown();
+    fn_ir.param_ty_hints[4] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Int, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
     fn_ir.param_term_hints[1] = TypeTerm::Vector(Box::new(TypeTerm::Int));
     fn_ir.param_term_hints[2] = TypeTerm::Vector(Box::new(TypeTerm::Double));

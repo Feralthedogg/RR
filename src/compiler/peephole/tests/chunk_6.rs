@@ -1,9 +1,8 @@
 //! Regression tests for late peephole cleanup and control-flow rewrites.
-
-use super::common::*;
+use super::*;
 
 #[test]
-fn strips_empty_else_blocks() {
+pub(crate) fn strips_empty_else_blocks() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -21,7 +20,7 @@ x <- 1\n\
 }
 
 #[test]
-fn collapses_common_if_else_tail_assignments() {
+pub(crate) fn collapses_common_if_else_tail_assignments() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -40,7 +39,7 @@ lat <- 2\n\
 }
 
 #[test]
-fn collapses_common_if_else_tail_assignment_sequences() {
+pub(crate) fn collapses_common_if_else_tail_assignment_sequences() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -61,7 +60,7 @@ b <- bar\n\
 }
 
 #[test]
-fn collapses_common_if_else_tail_assignments_for_sym287_shape() {
+pub(crate) fn collapses_common_if_else_tail_assignments_for_sym287_shape() {
     let input = "\
 Sym_287 <- function() \n\
 {\n\
@@ -109,7 +108,7 @@ qg <- .__pc_src_tmp4\n\
 }
 
 #[test]
-fn rewrites_if_truthy_scalar_guards() {
+pub(crate) fn rewrites_if_truthy_scalar_guards() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -125,7 +124,7 @@ x <- 1\n\
 }
 
 #[test]
-fn forwards_simple_alias_into_following_guards_only() {
+pub(crate) fn forwards_simple_alias_into_following_guards_only() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -148,7 +147,7 @@ lat <- 2\n\
 }
 
 #[test]
-fn removes_dead_pure_helper_call_assignment() {
+pub(crate) fn removes_dead_pure_helper_call_assignment() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -163,7 +162,7 @@ Sym_top_0 <- function() \n\
 }
 
 #[test]
-fn removes_simple_init_overwritten_before_first_read() {
+pub(crate) fn removes_simple_init_overwritten_before_first_read() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -187,7 +186,7 @@ Sym_1 <- function() \n\
 }
 
 #[test]
-fn indexed_write_invalidates_stale_return_rhs_rewrite() {
+pub(crate) fn indexed_write_invalidates_stale_return_rhs_rewrite() {
     let input = "\
 Sym_183 <- function(n) \n\
 {\n\
@@ -207,7 +206,7 @@ next\n\
 }
 
 #[test]
-fn nested_field_write_invalidates_alias_before_later_helper_call() {
+pub(crate) fn nested_field_write_invalidates_alias_before_later_helper_call() {
     let input = "\
 Sym_1 <- function(state) \n\
 {\n\
@@ -229,7 +228,7 @@ Sym_1 <- function(state) \n\
 }
 
 #[test]
-fn removes_branch_local_init_overwritten_before_first_read_in_loop() {
+pub(crate) fn removes_branch_local_init_overwritten_before_first_read_in_loop() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -258,7 +257,7 @@ next\n\
 }
 
 #[test]
-fn keeps_loop_accumulator_init_used_after_inner_repeat() {
+pub(crate) fn keeps_loop_accumulator_init_used_after_inner_repeat() {
     let input = "\
 Sym_1 <- function() \n\
 {\n\
@@ -290,7 +289,7 @@ out <- (sum1 / count1)\n\
 }
 
 #[test]
-fn removes_redundant_tail_assign_slice_after_non_empty_repeat() {
+pub(crate) fn removes_redundant_tail_assign_slice_after_non_empty_repeat() {
     let input = "\
 Sym_123 <- function() \n\
 {\n\
@@ -313,7 +312,7 @@ next\n\
 }
 
 #[test]
-fn removes_redundant_tail_assign_slice_for_sym123_shape() {
+pub(crate) fn removes_redundant_tail_assign_slice_for_sym123_shape() {
     let input = "\
 Sym_123 <- function(b, n_l, n_r, n_d, n_u, size) \n\
 {\n\
@@ -361,7 +360,7 @@ next\n\
 }
 
 #[test]
-fn removes_redundant_tail_assign_slice_for_actual_sym123_raw_shape() {
+pub(crate) fn removes_redundant_tail_assign_slice_for_actual_sym123_raw_shape() {
     let input = "\
 Sym_123 <- function(b, n_l, n_r, n_d, n_u, size) \n\
 {\n\
@@ -410,7 +409,7 @@ next\n\
 }
 
 #[test]
-fn removes_redundant_tail_assign_slice_for_actual_sym123_raw_shape_with_context() {
+pub(crate) fn removes_redundant_tail_assign_slice_for_actual_sym123_raw_shape_with_context() {
     let input = "\
 Sym_123 <- function(b, n_l, n_r, n_d, n_u, size) \n\
 {\n\
@@ -461,7 +460,7 @@ next\n\
 }
 
 #[test]
-fn removes_branch_local_identical_pure_rebind_after_same_outer_init() {
+pub(crate) fn removes_branch_local_identical_pure_rebind_after_same_outer_init() {
     let input = "\
 Sym_123 <- function(b, size) \n\
 {\n\
@@ -481,7 +480,7 @@ x <- (rep.int(0, size))\n\
 }
 
 #[test]
-fn removes_redundant_tail_assign_after_runtime_trycatch_helper() {
+pub(crate) fn removes_redundant_tail_assign_after_runtime_trycatch_helper() {
     let input = "\
 rr_native_try_load <- function() {\n\
   ok <- tryCatch({\n\
@@ -533,7 +532,7 @@ next\n\
 }
 
 #[test]
-fn preserves_local_binding_used_by_inlined_helper_calls() {
+pub(crate) fn preserves_local_binding_used_by_inlined_helper_calls() {
     let input = "\
 Sym_21 <- function(default_capacity)\n\
 {\n\
@@ -569,7 +568,7 @@ Sym_1 <- function(chunks)\n\
 }
 
 #[test]
-fn hoists_repeated_vector_helper_calls_within_single_assignment_rhs() {
+pub(crate) fn hoists_repeated_vector_helper_calls_within_single_assignment_rhs() {
     let input = vec![String::from(
         "  .tachyon_exprmap0_0 <- (((rr_index1_read_vec(x, rr_index_vec_floor(i:n)) + rr_index1_read_vec(x, rr_index_vec_floor(i:n))) + rr_index1_read_vec(x, rr_index_vec_floor(i:n))) + ((rr_index1_read_vec(y, rr_index_vec_floor(i:n)) * rr_index1_read_vec(y, rr_index_vec_floor(i:n))) + rr_index1_read_vec(y, rr_index_vec_floor(i:n))))",
     )];
@@ -601,7 +600,7 @@ fn hoists_repeated_vector_helper_calls_within_single_assignment_rhs() {
 }
 
 #[test]
-fn forward_exact_vector_helper_reuse_rewrites_later_lines() {
+pub(crate) fn forward_exact_vector_helper_reuse_rewrites_later_lines() {
     let input = vec![
         String::from("  .__rr_cse_3 <- rr_index1_read_vec(a, idx)"),
         String::from("  .tachyon_exprmap0_0 <- (rr_index1_read_vec(a, idx) + 1)"),
@@ -619,7 +618,7 @@ fn forward_exact_vector_helper_reuse_rewrites_later_lines() {
 }
 
 #[test]
-fn forward_temp_aliases_rewrite_later_uses_to_original_temp() {
+pub(crate) fn forward_temp_aliases_rewrite_later_uses_to_original_temp() {
     let input = vec![
         String::from("  .__rr_cse_0 <- rr_index1_read_vec(a, idx)"),
         String::from("  .__rr_cse_3 <- .__rr_cse_0"),
@@ -632,7 +631,7 @@ fn forward_temp_aliases_rewrite_later_uses_to_original_temp() {
 }
 
 #[test]
-fn does_not_hoist_two_use_vector_helper_calls_within_single_assignment_rhs() {
+pub(crate) fn does_not_hoist_two_use_vector_helper_calls_within_single_assignment_rhs() {
     let input = vec![String::from(
         "  score <- (rr_index1_read_vec(x, rr_index_vec_floor(i:n)) + rr_index1_read_vec(x, rr_index_vec_floor(i:n)))",
     )];

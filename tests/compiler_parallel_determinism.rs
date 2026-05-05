@@ -1,13 +1,12 @@
 mod common;
 
-use RR::codegen::mir_emit::MapEntry;
-use RR::compiler::{
-    CompileMode, CompileOutputOptions, CompileProfile, CompilerParallelConfig,
-    CompilerParallelMode, OptLevel,
-    compile_with_configs_with_options_and_compiler_parallel_and_profile, default_parallel_config,
-    default_type_config,
-};
 use common::unique_dir;
+use rr::compiler::internal::codegen::mir_emit::MapEntry;
+use rr::compiler::{
+    CompileMode, CompileOutputOptions, CompileProfile, CompileWithProfileRequest,
+    CompilerParallelConfig, CompilerParallelMode, OptLevel, compile_with_profile_request,
+    default_parallel_config, default_type_config,
+};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -23,16 +22,16 @@ fn compile_with_profile(
 ) -> (String, Vec<MapEntry>, CompileProfile) {
     common::set_env_var_for_test(env_guard, "RR_INCREMENTAL_CACHE_DIR", cache_dir);
     let mut profile = CompileProfile::default();
-    let (code, map) = compile_with_configs_with_options_and_compiler_parallel_and_profile(
+    let (code, map) = compile_with_profile_request(CompileWithProfileRequest {
         entry_path,
-        source,
-        OptLevel::O1,
-        default_type_config(),
-        default_parallel_config(),
+        entry_input: source,
+        opt_level: OptLevel::O1,
+        type_cfg: default_type_config(),
+        parallel_cfg: default_parallel_config(),
         compiler_parallel_cfg,
         output_opts,
-        Some(&mut profile),
-    )
+        profile: Some(&mut profile),
+    })
     .expect("compile failed");
     common::remove_env_var_for_test(env_guard, "RR_INCREMENTAL_CACHE_DIR");
     (code, map, profile)
@@ -48,7 +47,7 @@ fn output_opts(compile_mode: CompileMode) -> CompileOutputOptions {
 fn profile_stage<'a>(
     profile: &'a CompileProfile,
     stage: &str,
-) -> &'a RR::compiler::CompilerParallelStageProfile {
+) -> &'a rr::compiler::CompilerParallelStageProfile {
     profile
         .compiler_parallel
         .stage(stage)

@@ -161,7 +161,7 @@ fn evaluate_isl_candidate(
     let direct_conditional_validity = safe_reduction_conditional_validity_direct(scop, deps, plan);
     let conditional_validity_candidate =
         safe_reduction_conditional_validity_candidate(scop, deps, plan);
-    let (artifacts, conditional_validity_helper_fallback) = if reduction_sensitive {
+    let (artifacts, conditional_validity_fallback) = if reduction_sensitive {
         let materialized = materialize_schedule_artifacts(
             scop,
             plan,
@@ -171,7 +171,10 @@ fn evaluate_isl_candidate(
             direct_conditional_validity,
             conditional_validity_candidate,
         );
-        let helper_fallback = direct_conditional_validity.is_some() && materialized.is_none();
+        let fallback = direct_conditional_validity.is_some()
+            && materialized
+                .as_ref()
+                .is_none_or(|artifact| !artifact.conditional_validity_applied);
         (
             materialized.or_else(|| {
                 Some(snapshot_schedule_artifacts(
@@ -184,7 +187,7 @@ fn evaluate_isl_candidate(
                     conditional_validity_candidate,
                 ))
             }),
-            helper_fallback,
+            fallback,
         )
     } else {
         (
@@ -205,17 +208,17 @@ fn evaluate_isl_candidate(
         .map(|artifact| infer_transform_hints(scop, PolyBackendUsed::Isl, artifact))
         .map(|hints| normalize_hints_for_candidate(scop, plan, artifacts.as_ref(), hints))
         .unwrap_or_default();
-    if conditional_validity_helper_fallback
+    if conditional_validity_fallback
         && !hints
             .reason
-            .contains("hint_conditional_validity_helper_fallback=1")
+            .contains("hint_conditional_validity_fallback=1")
     {
         if !hints.reason.is_empty() {
             hints.reason.push(',');
         }
         hints
             .reason
-            .push_str("hint_conditional_validity_helper_fallback=1");
+            .push_str("hint_conditional_validity_fallback=1");
     }
     if artifacts
         .as_ref()
@@ -417,7 +420,7 @@ mod tests {
     use crate::mir::opt::poly::{LoopDimension, PolyStmt, PolyStmtKind, ScopRegion};
 
     #[test]
-    fn env_backend_factory_defaults_to_heuristic() {
+    fn backend_types_report_used_backend() {
         let backend = HeuristicBackend;
         assert_eq!(backend.used_backend(), PolyBackendUsed::Heuristic);
         let backend = IslBackend;

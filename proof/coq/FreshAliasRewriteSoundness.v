@@ -1,4 +1,4 @@
-Require Import RRProofs.MirSemanticsLite.
+Require Import MirSemanticsLite.
 From Stdlib Require Import String Bool.
 Open Scope string_scope.
 Open Scope bool_scope.

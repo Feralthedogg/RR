@@ -1,5 +1,5 @@
-use RR::compiler::{OptLevel, compile_with_configs, default_parallel_config, default_type_config};
-use RR::error::RRCode;
+use rr::compiler::{OptLevel, compile_with_configs, default_parallel_config, default_type_config};
+use rr::error::RRCode;
 
 #[test]
 fn non_exhaustive_match_is_rejected_during_lowering() {

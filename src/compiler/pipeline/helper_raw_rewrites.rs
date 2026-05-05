@@ -332,12 +332,14 @@ pub(crate) fn rewrite_dot_product_helper_calls_in_raw_emitted_r(output: &str) ->
     if helpers.is_empty() {
         return output.to_string();
     }
+    let mut helper_summaries = helpers.values().collect::<Vec<_>>();
+    helper_summaries.sort_by(|lhs, rhs| lhs.helper.cmp(&rhs.helper));
 
     for line in lines.iter_mut() {
         if line.contains("<- function") {
             continue;
         }
-        for summary in helpers.values() {
+        for summary in &helper_summaries {
             let Some(call_idx) = find_symbol_call(line, &summary.helper, 0) else {
                 continue;
             };
@@ -369,12 +371,41 @@ pub(crate) fn rewrite_dot_product_helper_calls_in_raw_emitted_r(output: &str) ->
     out
 }
 
-pub(crate) fn rewrite_sym119_helper_calls_in_raw_emitted_r(output: &str) -> String {
-    let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
-    if lines.is_empty() {
-        return output.to_string();
+pub(crate) fn helper_raw_lines_to_output(original: &str, lines: Vec<String>) -> String {
+    let mut out = lines.join("\n");
+    if original.ends_with('\n') || !out.is_empty() {
+        out.push('\n');
     }
+    out
+}
 
+pub(crate) fn raw_function_body_signature(
+    lines: &[String],
+    fn_start: usize,
+    fn_end: usize,
+) -> Vec<String> {
+    lines
+        .iter()
+        .take(fn_end)
+        .skip(fn_start + 1)
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty() && line != "# rr-cse-pruned")
+        .collect()
+}
+
+pub(crate) fn collect_raw_helpers_with_signature(
+    lines: &[String],
+    expected_params: &[&str],
+    expected_body: &[&str],
+) -> FxHashSet<String> {
+    let expected_params = expected_params
+        .iter()
+        .map(|param| (*param).to_string())
+        .collect::<Vec<_>>();
+    let expected_body = expected_body
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect::<Vec<_>>();
     let mut helper_names = FxHashSet::default();
     let mut fn_start = 0usize;
     while fn_start < lines.len() {
@@ -384,36 +415,75 @@ pub(crate) fn rewrite_sym119_helper_calls_in_raw_emitted_r(output: &str) -> Stri
         if fn_start >= lines.len() {
             break;
         }
-        let Some(fn_end) = find_raw_block_end(&lines, fn_start) else {
+        let Some(fn_end) = find_raw_block_end(lines, fn_start) else {
             break;
         };
         let Some((name, params)) = parse_raw_function_header(&lines[fn_start]) else {
             fn_start = fn_end + 1;
             continue;
         };
-        let body: Vec<String> = lines
-            .iter()
-            .take(fn_end)
-            .skip(fn_start + 1)
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty() && line != "# rr-cse-pruned")
-            .collect();
-        if params == vec!["x", "n_l", "n_r", "n_d", "n_u"]
-            && body
-                == vec![
-                    "{".to_string(),
-                    "n_d <- rr_index_vec_floor(n_d)".to_string(),
-                    "n_l <- rr_index_vec_floor(n_l)".to_string(),
-                    "n_r <- rr_index_vec_floor(n_r)".to_string(),
-                    "n_u <- rr_index_vec_floor(n_u)".to_string(),
-                    "y <- ((4.0001 * x) - (((rr_gather(x, n_l) + rr_gather(x, n_r)) + rr_gather(x, n_d)) + rr_gather(x, n_u)))".to_string(),
-                    "return(y)".to_string(),
-                ]
+        if params == expected_params
+            && raw_function_body_signature(lines, fn_start, fn_end) == expected_body
         {
             helper_names.insert(name);
         }
         fn_start = fn_end + 1;
     }
+    helper_names
+}
+
+pub(crate) fn sym119_inline_replacement(args: &[String]) -> String {
+    format!(
+        "((4.0001 * {}) - (((rr_gather({}, rr_index_vec_floor({})) + rr_gather({}, rr_index_vec_floor({}))) + rr_gather({}, rr_index_vec_floor({}))) + rr_gather({}, rr_index_vec_floor({}))))",
+        args[0].trim(),
+        args[0].trim(),
+        args[1].trim(),
+        args[0].trim(),
+        args[2].trim(),
+        args[0].trim(),
+        args[3].trim(),
+        args[0].trim(),
+        args[4].trim(),
+    )
+}
+
+pub(crate) fn replace_sym119_call_in_line(line: &mut String, helper: &str) {
+    let Some(call_idx) = find_symbol_call(line, helper, 0) else {
+        return;
+    };
+    let open = call_idx + helper.len();
+    let Some(close) = find_matching_call_close(line, open) else {
+        return;
+    };
+    let Some(args) = split_top_level_args(&line[open + 1..close]) else {
+        return;
+    };
+    if args.len() != 5 {
+        return;
+    }
+    let replacement = sym119_inline_replacement(&args);
+    line.replace_range(call_idx..=close, &replacement);
+}
+
+pub(crate) fn rewrite_sym119_helper_calls_in_raw_emitted_r(output: &str) -> String {
+    let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
+    if lines.is_empty() {
+        return output.to_string();
+    }
+
+    let helper_names = collect_raw_helpers_with_signature(
+        &lines,
+        &["x", "n_l", "n_r", "n_d", "n_u"],
+        &[
+            "{",
+            "n_d <- rr_index_vec_floor(n_d)",
+            "n_l <- rr_index_vec_floor(n_l)",
+            "n_r <- rr_index_vec_floor(n_r)",
+            "n_u <- rr_index_vec_floor(n_u)",
+            "y <- ((4.0001 * x) - (((rr_gather(x, n_l) + rr_gather(x, n_r)) + rr_gather(x, n_d)) + rr_gather(x, n_u)))",
+            "return(y)",
+        ],
+    );
     if helper_names.is_empty() {
         return output.to_string();
     }
@@ -423,40 +493,11 @@ pub(crate) fn rewrite_sym119_helper_calls_in_raw_emitted_r(output: &str) -> Stri
             continue;
         }
         for helper in &helper_names {
-            let Some(call_idx) = find_symbol_call(line, helper, 0) else {
-                continue;
-            };
-            let open = call_idx + helper.len();
-            let Some(close) = find_matching_call_close(line, open) else {
-                continue;
-            };
-            let Some(args) = split_top_level_args(&line[open + 1..close]) else {
-                continue;
-            };
-            if args.len() != 5 {
-                continue;
-            }
-            let replacement = format!(
-                "((4.0001 * {}) - (((rr_gather({}, rr_index_vec_floor({})) + rr_gather({}, rr_index_vec_floor({}))) + rr_gather({}, rr_index_vec_floor({}))) + rr_gather({}, rr_index_vec_floor({}))))",
-                args[0].trim(),
-                args[0].trim(),
-                args[1].trim(),
-                args[0].trim(),
-                args[2].trim(),
-                args[0].trim(),
-                args[3].trim(),
-                args[0].trim(),
-                args[4].trim(),
-            );
-            line.replace_range(call_idx..=close, &replacement);
+            replace_sym119_call_in_line(line, helper);
         }
     }
 
-    let mut out = lines.join("\n");
-    if output.ends_with('\n') || !out.is_empty() {
-        out.push('\n');
-    }
-    out
+    helper_raw_lines_to_output(output, lines)
 }
 
 pub(crate) fn rewrite_trivial_fill_helper_calls_in_raw_emitted_r(output: &str) -> String {
@@ -549,11 +590,25 @@ pub(crate) fn rewrite_identical_zero_fill_pairs_to_aliases_in_raw_emitted_r(
             vec!["adj_ll <- rep.int(0, TOTAL)", "adj_ll <- qr"],
             "adj_rr <- rep.int(0, TOTAL)",
             "adj_rr <- adj_ll",
+            true,
         ),
         (
             vec!["u_stage <- rep.int(0, TOTAL)", "u_stage <- qr"],
             "u_new <- rep.int(0, TOTAL)",
             "u_new <- u_stage",
+            true,
+        ),
+        (
+            vec!["u_stage <- v"],
+            "u_new <- u_stage",
+            "u_new <- v",
+            false,
+        ),
+        (
+            vec!["u_stage <- qr"],
+            "u_new <- u_stage",
+            "u_new <- qr",
+            false,
         ),
     ];
 
@@ -572,10 +627,10 @@ pub(crate) fn rewrite_identical_zero_fill_pairs_to_aliases_in_raw_emitted_r(
         let fn_end = fn_start
             .and_then(|start| find_raw_block_end(&lines, start))
             .unwrap_or(lines.len().saturating_sub(1));
-        for (lhs_lines, rhs_line, replacement) in &replacements {
+        for (lhs_lines, rhs_line, replacement, requires_no_later_diverging_write) in &replacements {
             if lhs_lines.iter().any(|lhs_line| first == *lhs_line) && second == *rhs_line {
-                let later_diverging_write =
-                    lines.iter().take(fn_end + 1).skip(idx + 2).any(|line| {
+                let later_diverging_write = *requires_no_later_diverging_write
+                    && lines.iter().take(fn_end + 1).skip(idx + 2).any(|line| {
                         raw_line_writes_symbol(line, first_lhs)
                             || raw_line_writes_symbol(line, second_lhs)
                     });
@@ -657,10 +712,9 @@ pub(crate) fn strip_dead_zero_loop_seeds_before_for_in_raw_emitted_r(output: &st
             continue;
         };
 
-        let var_re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(var))).ok();
         let used_before_for = lines[(idx + 1)..for_idx]
             .iter()
-            .any(|line| var_re.as_ref().is_some_and(|re| re.is_match(line)));
+            .any(|line| raw_expr_idents(line).iter().any(|ident| ident == var));
         if used_before_for {
             idx += 1;
             continue;

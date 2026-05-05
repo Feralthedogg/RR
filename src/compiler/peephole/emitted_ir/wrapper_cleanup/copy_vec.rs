@@ -1,4 +1,5 @@
-pub(in super::super) fn collapse_inlined_copy_vec_sequences_ir(lines: Vec<String>) -> Vec<String> {
+use super::*;
+pub(crate) fn collapse_inlined_copy_vec_sequences_ir(lines: Vec<String>) -> Vec<String> {
     if !has_inlined_copy_vec_sequence_candidates_ir(&lines) {
         return lines;
     }

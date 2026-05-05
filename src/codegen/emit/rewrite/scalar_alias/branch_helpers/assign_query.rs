@@ -1,4 +1,5 @@
-fn branch_body_writes_symbol_before_local(
+use super::*;
+pub(crate) fn branch_body_writes_symbol_before_local(
     lines: &[String],
     start: usize,
     end_exclusive: usize,
@@ -12,7 +13,7 @@ fn branch_body_writes_symbol_before_local(
         .any(|(lhs, _)| lhs == symbol)
 }
 
-fn previous_outer_assign_before_branch_local<'a>(
+pub(crate) fn previous_outer_assign_before_branch_local<'a>(
     lines: &'a [String],
     branch_start: usize,
     lhs: &str,

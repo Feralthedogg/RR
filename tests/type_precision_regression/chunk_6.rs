@@ -1,9 +1,9 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn field_write_updates_dataframe_schema_term() {
+pub(crate) fn field_write_updates_dataframe_schema_term() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["df".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::matrix(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::DataFrameNamed(vec![
         (
             "left".to_string(),
@@ -26,31 +26,33 @@ fn field_write_updates_dataframe_schema_term() {
         None,
     );
     let right_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("right".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "right".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -113,14 +115,14 @@ fn field_write_updates_dataframe_schema_term() {
 }
 
 #[test]
-fn matrix_builtins_preserve_matrix_and_vector_shapes() {
+pub(crate) fn matrix_builtins_preserve_matrix_and_vector_shapes() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
     let b0 = fn_ir.add_block();
     fn_ir.entry = b0;
     fn_ir.body_head = b0;
 
     let six = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(6)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(6)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -136,13 +138,13 @@ fn matrix_builtins_preserve_matrix_and_vector_shapes() {
         None,
     );
     let rows = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let cols = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(3)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(3)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -221,26 +223,26 @@ fn matrix_builtins_preserve_matrix_and_vector_shapes() {
 }
 
 #[test]
-fn matrix_shape_builtins_are_known_to_type_layer() {
+pub(crate) fn matrix_shape_builtins_are_known_to_type_layer() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
     let b0 = fn_ir.add_block();
     fn_ir.entry = b0;
     fn_ir.body_head = b0;
 
     let six = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(6)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(6)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let rows = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let cols = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(3)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(3)),
         Span::dummy(),
         Facts::empty(),
         None,

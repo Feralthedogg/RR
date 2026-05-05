@@ -84,6 +84,7 @@ pub struct EmitBreakdownProfile {
     pub peephole_secondary_helper_simple_expr_elapsed_ns: u128,
     pub peephole_secondary_helper_full_range_elapsed_ns: u128,
     pub peephole_secondary_helper_named_copy_elapsed_ns: u128,
+    pub peephole_secondary_record_sroa_elapsed_ns: u128,
     pub peephole_secondary_finalize_cleanup_elapsed_ns: u128,
     pub peephole_secondary_finalize_bundle_elapsed_ns: u128,
     pub peephole_secondary_finalize_dead_temp_elapsed_ns: u128,
@@ -187,7 +188,7 @@ impl CompileProfile {
         let mut out = String::new();
         out.push_str("{\n");
         out.push_str("  \"schema\": \"rr-compile-profile\",\n");
-        out.push_str("  \"version\": 2,\n");
+        out.push_str("  \"version\": 4,\n");
         let _ = writeln!(
             out,
             "  \"compile_mode\": \"{}\",",
@@ -334,6 +335,12 @@ impl CompileProfile {
         out.push_str("    \"passes\": ");
         out.push_str(&self.tachyon.pass_timings.to_json_string());
         out.push_str(",\n");
+        out.push_str("    \"pass_decisions\": ");
+        out.push_str(&self.tachyon.pass_timings.decisions_to_json_string());
+        out.push_str(",\n");
+        out.push_str("    \"optimization_opportunities\": ");
+        out.push_str(&self.tachyon.pass_timings.opportunities_to_json_string());
+        out.push_str(",\n");
         out.push_str("    \"pulse_stats\": ");
         out.push_str(&indent_json_block(
             &self.tachyon.pulse_stats.to_json_string(),
@@ -342,7 +349,7 @@ impl CompileProfile {
         out.push_str("\n  },\n");
         let _ = writeln!(
             out,
-            "  \"emit\": {{\"elapsed_ns\": {}, \"emitted_functions\": {}, \"cache_hits\": {}, \"cache_misses\": {}, \"breakdown\": {{\"fragment_build_elapsed_ns\": {}, \"cache_load_elapsed_ns\": {}, \"emitter_elapsed_ns\": {}, \"cache_store_elapsed_ns\": {}, \"optimized_fragment_cache_hits\": {}, \"optimized_fragment_cache_misses\": {}, \"optimized_fragment_final_artifact_hits\": {}, \"optimized_fragment_fast_path_direct_hits\": {}, \"optimized_fragment_fast_path_raw_hits\": {}, \"optimized_fragment_fast_path_peephole_hits\": {}, \"quote_wrap_elapsed_ns\": {}, \"fragment_assembly_elapsed_ns\": {}, \"raw_rewrite_elapsed_ns\": {}, \"peephole_elapsed_ns\": {}, \"peephole_linear_scan_elapsed_ns\": {}, \"peephole_primary_rewrite_elapsed_ns\": {}, \"peephole_primary_flow_elapsed_ns\": {}, \"peephole_primary_inline_elapsed_ns\": {}, \"peephole_primary_reuse_elapsed_ns\": {}, \"peephole_primary_loop_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_dead_zero_elapsed_ns\": {}, \"peephole_primary_loop_normalize_elapsed_ns\": {}, \"peephole_primary_loop_hoist_elapsed_ns\": {}, \"peephole_primary_loop_repeat_to_for_elapsed_ns\": {}, \"peephole_primary_loop_tail_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_guard_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_helper_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_exact_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_exact_pre_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_prepare_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_forward_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_pure_call_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_expr_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_vector_alias_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_rebind_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_prepare_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_forward_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_pure_call_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_expr_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_rebind_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_rounds\": {}, \"peephole_primary_loop_exact_finalize_elapsed_ns\": {}, \"peephole_primary_loop_dead_temp_cleanup_elapsed_ns\": {}, \"peephole_secondary_rewrite_elapsed_ns\": {}, \"peephole_secondary_inline_elapsed_ns\": {}, \"peephole_secondary_inline_branch_hoist_elapsed_ns\": {}, \"peephole_secondary_inline_immediate_scalar_elapsed_ns\": {}, \"peephole_secondary_inline_named_index_elapsed_ns\": {}, \"peephole_secondary_inline_named_expr_elapsed_ns\": {}, \"peephole_secondary_inline_scalar_region_elapsed_ns\": {}, \"peephole_secondary_inline_immediate_index_elapsed_ns\": {}, \"peephole_secondary_inline_adjacent_dedup_elapsed_ns\": {}, \"peephole_secondary_exact_elapsed_ns\": {}, \"peephole_secondary_helper_cleanup_elapsed_ns\": {}, \"peephole_secondary_helper_wrapper_elapsed_ns\": {}, \"peephole_secondary_helper_metric_elapsed_ns\": {}, \"peephole_secondary_helper_alias_elapsed_ns\": {}, \"peephole_secondary_helper_simple_expr_elapsed_ns\": {}, \"peephole_secondary_helper_full_range_elapsed_ns\": {}, \"peephole_secondary_helper_named_copy_elapsed_ns\": {}, \"peephole_secondary_finalize_cleanup_elapsed_ns\": {}, \"peephole_secondary_finalize_bundle_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_facts_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_mark_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_reverse_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_compact_elapsed_ns\": {}, \"peephole_finalize_elapsed_ns\": {}, \"source_map_remap_elapsed_ns\": {}, \"quoted_wrapped_functions\": {}}}}},",
+            "  \"emit\": {{\"elapsed_ns\": {}, \"emitted_functions\": {}, \"cache_hits\": {}, \"cache_misses\": {}, \"breakdown\": {{\"fragment_build_elapsed_ns\": {}, \"cache_load_elapsed_ns\": {}, \"emitter_elapsed_ns\": {}, \"cache_store_elapsed_ns\": {}, \"optimized_fragment_cache_hits\": {}, \"optimized_fragment_cache_misses\": {}, \"optimized_fragment_final_artifact_hits\": {}, \"optimized_fragment_fast_path_direct_hits\": {}, \"optimized_fragment_fast_path_raw_hits\": {}, \"optimized_fragment_fast_path_peephole_hits\": {}, \"quote_wrap_elapsed_ns\": {}, \"fragment_assembly_elapsed_ns\": {}, \"raw_rewrite_elapsed_ns\": {}, \"peephole_elapsed_ns\": {}, \"peephole_linear_scan_elapsed_ns\": {}, \"peephole_primary_rewrite_elapsed_ns\": {}, \"peephole_primary_flow_elapsed_ns\": {}, \"peephole_primary_inline_elapsed_ns\": {}, \"peephole_primary_reuse_elapsed_ns\": {}, \"peephole_primary_loop_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_dead_zero_elapsed_ns\": {}, \"peephole_primary_loop_normalize_elapsed_ns\": {}, \"peephole_primary_loop_hoist_elapsed_ns\": {}, \"peephole_primary_loop_repeat_to_for_elapsed_ns\": {}, \"peephole_primary_loop_tail_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_guard_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_helper_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_exact_cleanup_elapsed_ns\": {}, \"peephole_primary_loop_exact_pre_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_prepare_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_forward_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_pure_call_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_expr_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_vector_alias_elapsed_ns\": {}, \"peephole_primary_loop_exact_reuse_rebind_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_prepare_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_forward_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_pure_call_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_expr_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_rebind_elapsed_ns\": {}, \"peephole_primary_loop_exact_fixpoint_rounds\": {}, \"peephole_primary_loop_exact_finalize_elapsed_ns\": {}, \"peephole_primary_loop_dead_temp_cleanup_elapsed_ns\": {}, \"peephole_secondary_rewrite_elapsed_ns\": {}, \"peephole_secondary_inline_elapsed_ns\": {}, \"peephole_secondary_inline_branch_hoist_elapsed_ns\": {}, \"peephole_secondary_inline_immediate_scalar_elapsed_ns\": {}, \"peephole_secondary_inline_named_index_elapsed_ns\": {}, \"peephole_secondary_inline_named_expr_elapsed_ns\": {}, \"peephole_secondary_inline_scalar_region_elapsed_ns\": {}, \"peephole_secondary_inline_immediate_index_elapsed_ns\": {}, \"peephole_secondary_inline_adjacent_dedup_elapsed_ns\": {}, \"peephole_secondary_exact_elapsed_ns\": {}, \"peephole_secondary_helper_cleanup_elapsed_ns\": {}, \"peephole_secondary_helper_wrapper_elapsed_ns\": {}, \"peephole_secondary_helper_metric_elapsed_ns\": {}, \"peephole_secondary_helper_alias_elapsed_ns\": {}, \"peephole_secondary_helper_simple_expr_elapsed_ns\": {}, \"peephole_secondary_helper_full_range_elapsed_ns\": {}, \"peephole_secondary_helper_named_copy_elapsed_ns\": {}, \"peephole_secondary_record_sroa_elapsed_ns\": {}, \"peephole_secondary_finalize_cleanup_elapsed_ns\": {}, \"peephole_secondary_finalize_bundle_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_facts_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_mark_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_reverse_elapsed_ns\": {}, \"peephole_secondary_finalize_dead_temp_compact_elapsed_ns\": {}, \"peephole_finalize_elapsed_ns\": {}, \"source_map_remap_elapsed_ns\": {}, \"quoted_wrapped_functions\": {}}}}},",
             self.emit.elapsed_ns,
             self.emit.emitted_functions,
             self.emit.cache_hits,
@@ -489,6 +496,9 @@ impl CompileProfile {
                 .peephole_secondary_helper_named_copy_elapsed_ns,
             self.emit
                 .breakdown
+                .peephole_secondary_record_sroa_elapsed_ns,
+            self.emit
+                .breakdown
                 .peephole_secondary_finalize_cleanup_elapsed_ns,
             self.emit
                 .breakdown
@@ -518,7 +528,7 @@ impl CompileProfile {
             self.runtime_injection.elapsed_ns, self.runtime_injection.inject_runtime
         );
         let _ = writeln!(out, "  \"total_elapsed_ns\": {}", self.total_elapsed_ns);
-        out.push_str("}");
+        out.push('}');
         out
     }
 }
@@ -538,7 +548,7 @@ pub fn json_escape(raw: &str) -> String {
     out
 }
 
-fn indent_json_block(raw: &str, spaces: usize) -> String {
+pub(crate) fn indent_json_block(raw: &str, spaces: usize) -> String {
     let indent = " ".repeat(spaces);
     let mut out = String::new();
     for (idx, line) in raw.lines().enumerate() {

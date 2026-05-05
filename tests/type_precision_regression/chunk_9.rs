@@ -1,14 +1,17 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn grdevices_tail_package_calls_have_direct_types() {
+pub(crate) fn grdevices_tail_package_calls_have_direct_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["xs".to_string(), "ys".to_string(), "mat".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[2] = RR::typeck::TypeState::matrix(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[2] =
+        rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[1] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[2] = TypeTerm::Matrix(Box::new(TypeTerm::Char));
@@ -36,25 +39,27 @@ fn grdevices_tail_package_calls_have_direct_types() {
         None,
     );
     let zero = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(0.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(0.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(4)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(4)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let pdf_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("pdf".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "pdf".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -448,9 +453,9 @@ fn grdevices_tail_package_calls_have_direct_types() {
 }
 
 #[test]
-fn tcltk_tail_helpers_have_direct_types() {
+pub(crate) fn tcltk_tail_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["obj".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Any;
 
     let b0 = fn_ir.add_block();
@@ -464,7 +469,7 @@ fn tcltk_tail_helpers_have_direct_types() {
         None,
     );
 
-    let mut add_call = |callee: &str, args: Vec<RR::mir::ValueId>| {
+    let mut add_call = |callee: &str, args: Vec<rr::compiler::internal::mir::ValueId>| {
         let arg_len = args.len();
         fn_ir.add_value(
             ValueKind::Call {
@@ -506,9 +511,9 @@ fn tcltk_tail_helpers_have_direct_types() {
 }
 
 #[test]
-fn tcltk_proxy_helpers_have_direct_types() {
+pub(crate) fn tcltk_proxy_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["obj".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Any;
 
     let b0 = fn_ir.add_block();
@@ -522,7 +527,7 @@ fn tcltk_proxy_helpers_have_direct_types() {
         None,
     );
 
-    let mut add_call = |callee: &str, args: Vec<RR::mir::ValueId>| {
+    let mut add_call = |callee: &str, args: Vec<rr::compiler::internal::mir::ValueId>| {
         let arg_len = args.len();
         fn_ir.add_value(
             ValueKind::Call {

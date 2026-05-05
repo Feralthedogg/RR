@@ -1,4 +1,5 @@
-fn helper_ident_is_start_ir(expr: &str, idx: usize) -> bool {
+use super::*;
+pub(crate) fn helper_ident_is_start_ir(expr: &str, idx: usize) -> bool {
     let rest = &expr[idx..];
     let mut chars = rest.chars();
     let Some(first) = chars.next() else {
@@ -13,7 +14,7 @@ fn helper_ident_is_start_ir(expr: &str, idx: usize) -> bool {
             .is_some_and(|next| next.is_ascii_alphabetic() || next == '_')
 }
 
-fn helper_ident_end_ir(expr: &str, start: usize) -> usize {
+pub(crate) fn helper_ident_end_ir(expr: &str, start: usize) -> usize {
     let mut end = start;
     for (off, ch) in expr[start..].char_indices() {
         if !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.')) {
@@ -24,7 +25,7 @@ fn helper_ident_end_ir(expr: &str, start: usize) -> usize {
     end
 }
 
-fn helper_ident_is_named_label_ir(expr: &str, end: usize) -> bool {
+pub(crate) fn helper_ident_is_named_label_ir(expr: &str, end: usize) -> bool {
     let rest = &expr[end..];
     for (off, ch) in rest.char_indices() {
         if ch.is_ascii_whitespace() {
@@ -40,7 +41,10 @@ fn helper_ident_is_named_label_ir(expr: &str, end: usize) -> bool {
     false
 }
 
-fn substitute_helper_expr_ir(expr: &str, bindings: &FxHashMap<String, String>) -> String {
+pub(crate) fn substitute_helper_expr_ir(
+    expr: &str,
+    bindings: &FxHashMap<String, String>,
+) -> String {
     let mut out = String::with_capacity(expr.len());
     let bytes = expr.as_bytes();
     let mut idx = 0usize;
@@ -85,7 +89,7 @@ fn substitute_helper_expr_ir(expr: &str, bindings: &FxHashMap<String, String>) -
     out
 }
 
-fn helper_arg_is_trivial_to_duplicate_ir(arg: &str) -> bool {
+pub(crate) fn helper_arg_is_trivial_to_duplicate_ir(arg: &str) -> bool {
     let trimmed = arg.trim();
     plain_ident_re().is_some_and(|re| re.is_match(trimmed))
         || scalar_lit_re().is_some_and(|re| re.is_match(trimmed))
@@ -93,7 +97,7 @@ fn helper_arg_is_trivial_to_duplicate_ir(arg: &str) -> bool {
             || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
 }
 
-fn helper_param_use_counts_ir(
+pub(crate) fn helper_param_use_counts_ir(
     expr: &str,
     params: &[String],
 ) -> FxHashMap<String, usize> {
@@ -107,7 +111,7 @@ fn helper_param_use_counts_ir(
     counts
 }
 
-fn helper_arg_is_bloat_sensitive_ir(arg: &str) -> bool {
+pub(crate) fn helper_arg_is_bloat_sensitive_ir(arg: &str) -> bool {
     let trimmed = arg.trim();
     !helper_arg_is_trivial_to_duplicate_ir(trimmed)
         && (trimmed.len() > 48
@@ -117,55 +121,85 @@ fn helper_arg_is_bloat_sensitive_ir(arg: &str) -> bool {
             || trimmed.contains("rr_field_set("))
 }
 
-fn helper_expr_is_aggregate_like_ir(expr: &str) -> bool {
+pub(crate) fn helper_expr_is_aggregate_like_ir(expr: &str) -> bool {
     expr.contains("list(")
         || expr.contains("rr_field_set(")
         || expr.contains("rr_named_list(")
         || expr.contains("[[")
 }
 
-fn simple_expr_inline_would_bloat_ir(
+pub(crate) fn helper_expr_paren_depth_ir(expr: &str) -> usize {
+    let mut depth = 0usize;
+    let mut max_depth = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    for ch in expr.chars() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '(' if !in_single && !in_double => {
+                depth = depth.saturating_add(1);
+                max_depth = max_depth.max(depth);
+            }
+            ')' if !in_single && !in_double => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    max_depth
+}
+
+pub(crate) fn simple_expr_inline_would_bloat_ir(
     helper: &SimpleExprHelperIr,
     args: &[String],
     original_call: &str,
     expanded: &str,
     allowed_helpers: Option<&FxHashSet<String>>,
+    size_controlled: bool,
 ) -> bool {
     if allowed_helpers.is_some() {
         return false;
     }
 
+    if size_controlled {
+        let expanded_limit = std::env::var("RR_O3_SIMPLE_EXPR_INLINE_MAX_CHARS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .unwrap_or(900);
+        let depth_limit = std::env::var("RR_O3_SIMPLE_EXPR_INLINE_MAX_DEPTH")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .unwrap_or(14);
+        let growth_limit = original_call.len().saturating_mul(8).max(360);
+        if expanded.len() > expanded_limit
+            || expanded.len() > growth_limit
+            || helper_expr_paren_depth_ir(expanded) > depth_limit
+        {
+            return true;
+        }
+    }
+
     let param_uses = helper_param_use_counts_ir(&helper.expr, &helper.params);
-    if helper
-        .params
-        .iter()
-        .zip(args.iter())
-        .any(|(param, arg)| {
-            param_uses.get(param).copied().unwrap_or(0) > 1
-                && helper_arg_is_bloat_sensitive_ir(arg)
-        })
-    {
+    if helper.params.iter().zip(args.iter()).any(|(param, arg)| {
+        param_uses.get(param).copied().unwrap_or(0) > 1 && helper_arg_is_bloat_sensitive_ir(arg)
+    }) {
         return true;
     }
 
     let aggregate_heavy = expanded.contains("rr_field_set(")
         || expanded.matches("list(").count() >= 2
         || expanded.matches("[[").count() >= 4;
-    aggregate_heavy
-        && expanded.len()
-            > original_call
-                .len()
-                .saturating_mul(4)
-                .max(160)
+    aggregate_heavy && expanded.len() > original_call.len().saturating_mul(4).max(160)
 }
 
-fn next_simple_expr_inline_temp_ir(counter: &mut usize) -> String {
+pub(crate) fn next_simple_expr_inline_temp_ir(counter: &mut usize) -> String {
     let name = format!(".__rr_inline_expr_{}", *counter);
     *counter += 1;
     name
 }
 
-fn next_simple_expr_inline_temp_index_ir(body: &[EmittedStmt]) -> usize {
+pub(crate) fn next_simple_expr_inline_temp_index_ir(body: &[EmittedStmt]) -> usize {
     body.iter()
         .flat_map(|stmt| expr_idents(&stmt.text))
         .filter_map(|ident| {
@@ -177,7 +211,7 @@ fn next_simple_expr_inline_temp_index_ir(body: &[EmittedStmt]) -> usize {
         .map_or(0, |idx| idx + 1)
 }
 
-fn collect_simple_expr_helpers_ir(
+pub(crate) fn collect_simple_expr_helpers_ir(
     lines: &[String],
     _pure_user_calls: &FxHashSet<String>,
 ) -> FxHashMap<String, SimpleExprHelperIr> {
@@ -217,6 +251,12 @@ fn collect_simple_expr_helpers_ir(
                 simple = false;
                 break;
             }
+            if expr_idents(rhs).iter().any(|ident| ident == lhs)
+                && !simple_helper_allows_self_use_param_normalization_ir(lhs, rhs, params)
+            {
+                simple = false;
+                break;
+            }
             let expanded = substitute_helper_expr_ir(rhs, &bindings);
             bindings.insert(lhs.to_string(), expanded);
             locals.insert(lhs.to_string());
@@ -246,7 +286,15 @@ fn collect_simple_expr_helpers_ir(
     out
 }
 
-fn collect_simple_expr_helpers_from_program_ir(
+pub(crate) fn simple_helper_allows_self_use_param_normalization_ir(
+    lhs: &str,
+    rhs: &str,
+    params: &[String],
+) -> bool {
+    params.iter().any(|param| param == lhs) && rhs.trim() == format!("rr_index_vec_floor({lhs})")
+}
+
+pub(crate) fn collect_simple_expr_helpers_from_program_ir(
     program: &EmittedProgram,
     _pure_user_calls: &FxHashSet<String>,
 ) -> FxHashMap<String, SimpleExprHelperIr> {
@@ -292,6 +340,10 @@ fn collect_simple_expr_helpers_from_program_ir(
                 simple = false;
                 break;
             }
+            if expr_idents(rhs).iter().any(|ident| ident == lhs) {
+                simple = false;
+                break;
+            }
             let expanded = substitute_helper_expr_ir(rhs, &bindings);
             bindings.insert(lhs.to_string(), expanded);
             locals.insert(lhs.to_string());
@@ -321,10 +373,11 @@ fn collect_simple_expr_helpers_from_program_ir(
     out
 }
 
-fn rewrite_simple_expr_helper_calls_in_text_ir(
+pub(crate) fn rewrite_simple_expr_helper_calls_in_text_ir(
     text: &str,
     helpers: &FxHashMap<String, SimpleExprHelperIr>,
     allowed_helpers: Option<&FxHashSet<String>>,
+    size_controlled: bool,
 ) -> String {
     let mut rewritten = text.to_string();
     loop {
@@ -405,6 +458,7 @@ fn rewrite_simple_expr_helper_calls_in_text_ir(
                 original_call,
                 &expanded,
                 allowed_helpers,
+                size_controlled,
             ) {
                 next.push_str(original_call);
                 idx = call_end + 1;
@@ -423,13 +477,28 @@ fn rewrite_simple_expr_helper_calls_in_text_ir(
     }
 }
 
-fn rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
+#[derive(Clone, Copy)]
+pub(crate) struct LetLiftRewriteConfig<'a> {
+    pub(crate) allowed_helpers: Option<&'a FxHashSet<String>>,
+    pub(crate) allow_lift_result: bool,
+    pub(crate) indent: &'a str,
+    pub(crate) size_controlled: bool,
+}
+
+impl<'a> LetLiftRewriteConfig<'a> {
+    pub(crate) fn with_lift_enabled(self) -> Self {
+        Self {
+            allow_lift_result: true,
+            ..self
+        }
+    }
+}
+
+pub(crate) fn rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
     expr: &str,
     helpers: &FxHashMap<String, SimpleExprHelperIr>,
-    allowed_helpers: Option<&FxHashSet<String>>,
     temp_counter: &mut usize,
-    allow_lift_result: bool,
-    indent: &str,
+    config: LetLiftRewriteConfig<'_>,
 ) -> (Vec<String>, String) {
     let mut rewritten = expr.to_string();
     let mut hoisted = Vec::new();
@@ -456,7 +525,10 @@ fn rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
                 idx = ident_end;
                 continue;
             };
-            if allowed_helpers.is_some_and(|allowed| !allowed.contains(ident)) {
+            if config
+                .allowed_helpers
+                .is_some_and(|allowed| !allowed.contains(ident))
+            {
                 next.push_str(ident);
                 idx = ident_end;
                 continue;
@@ -506,10 +578,8 @@ fn rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
                     rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
                         &arg,
                         helpers,
-                        allowed_helpers,
                         temp_counter,
-                        true,
-                        indent,
+                        config.with_lift_enabled(),
                     );
                 hoisted.append(&mut arg_hoists);
                 processed_args.push(rewritten_arg);
@@ -526,26 +596,27 @@ fn rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
                 rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
                     &expanded,
                     helpers,
-                    allowed_helpers,
                     temp_counter,
-                    allow_lift_result,
-                    indent,
+                    config,
                 );
             hoisted.append(&mut expanded_hoists);
 
-            let should_lift = allowed_helpers.is_none()
-                && allow_lift_result
-                && (helper_expr_is_aggregate_like_ir(&expanded)
-                    || simple_expr_inline_would_bloat_ir(
-                        helper,
-                        &processed_args,
-                        original_call,
-                        &expanded,
-                        allowed_helpers,
-                    ));
-            if should_lift {
+            let would_bloat = simple_expr_inline_would_bloat_ir(
+                helper,
+                &processed_args,
+                original_call,
+                &expanded,
+                config.allowed_helpers,
+                config.size_controlled,
+            );
+            let should_lift = config.allowed_helpers.is_none()
+                && config.allow_lift_result
+                && (helper_expr_is_aggregate_like_ir(&expanded) || would_bloat);
+            if config.size_controlled && would_bloat && !config.allow_lift_result {
+                next.push_str(original_call);
+            } else if should_lift {
                 let temp = next_simple_expr_inline_temp_ir(temp_counter);
-                hoisted.push(format!("{indent}{temp} <- {expanded}"));
+                hoisted.push(format!("{}{temp} <- {expanded}", config.indent));
                 next.push_str(&temp);
             } else {
                 next.push('(');
@@ -563,11 +634,12 @@ fn rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
     (hoisted, rewritten)
 }
 
-fn rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
+pub(crate) fn rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
     stmt: &EmittedStmt,
     helpers: &FxHashMap<String, SimpleExprHelperIr>,
     allowed_helpers: Option<&FxHashSet<String>>,
     temp_counter: &mut usize,
+    size_controlled: bool,
 ) -> Vec<EmittedStmt> {
     match &stmt.kind {
         EmittedStmtKind::Assign { lhs, rhs } => {
@@ -575,10 +647,13 @@ fn rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
             let (hoists, rewritten_rhs) = rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
                 rhs,
                 helpers,
-                allowed_helpers,
                 temp_counter,
-                false,
-                &indent,
+                LetLiftRewriteConfig {
+                    allowed_helpers,
+                    allow_lift_result: false,
+                    indent: &indent,
+                    size_controlled,
+                },
             );
             let mut out = hoists
                 .into_iter()
@@ -601,10 +676,13 @@ fn rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
             let (hoists, rewritten_inner) = rewrite_simple_expr_helper_calls_expr_with_let_lift_ir(
                 inner,
                 helpers,
-                allowed_helpers,
                 temp_counter,
-                false,
-                &indent,
+                LetLiftRewriteConfig {
+                    allowed_helpers,
+                    allow_lift_result: false,
+                    indent: &indent,
+                    size_controlled,
+                },
             );
             let mut out = hoists
                 .into_iter()
@@ -620,16 +698,18 @@ fn rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
                 &stmt.text,
                 helpers,
                 allowed_helpers,
+                size_controlled,
             );
             vec![EmittedStmt::parse(&rewritten)]
         }
     }
 }
 
-pub(in super::super) fn rewrite_simple_expr_helper_calls_ir(
+pub(crate) fn rewrite_simple_expr_helper_calls_ir(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     allowed_helpers: Option<&FxHashSet<String>>,
+    size_controlled: bool,
 ) -> Vec<String> {
     if !has_simple_expr_helper_candidates_ir(&lines) {
         return lines;
@@ -645,22 +725,23 @@ pub(in super::super) fn rewrite_simple_expr_helper_calls_ir(
         &helpers,
         &helper_names,
         allowed_helpers,
+        size_controlled,
     );
     program.into_lines()
 }
 
-fn apply_rewrite_simple_expr_helper_calls_ir(
+pub(crate) fn apply_rewrite_simple_expr_helper_calls_ir(
     program: &mut EmittedProgram,
     helpers: &FxHashMap<String, SimpleExprHelperIr>,
     helper_names: &[&str],
     allowed_helpers: Option<&FxHashSet<String>>,
+    size_controlled: bool,
 ) {
     for item in &mut program.items {
         match item {
             EmittedItem::Function(function) => {
                 if allowed_helpers.is_none() {
-                    let mut temp_counter =
-                        next_simple_expr_inline_temp_index_ir(&function.body);
+                    let mut temp_counter = next_simple_expr_inline_temp_index_ir(&function.body);
                     let mut rewritten_body = Vec::with_capacity(function.body.len());
                     for stmt in &function.body {
                         if !stmt.text.contains('(')
@@ -670,12 +751,15 @@ fn apply_rewrite_simple_expr_helper_calls_ir(
                             rewritten_body.push(stmt.clone());
                             continue;
                         }
-                        rewritten_body.extend(rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
-                            stmt,
-                            helpers,
-                            allowed_helpers,
-                            &mut temp_counter,
-                        ));
+                        rewritten_body.extend(
+                            rewrite_simple_expr_helper_calls_stmt_with_let_lift_ir(
+                                stmt,
+                                helpers,
+                                allowed_helpers,
+                                &mut temp_counter,
+                                size_controlled,
+                            ),
+                        );
                     }
                     function.body = rewritten_body;
                     continue;
@@ -690,8 +774,9 @@ fn apply_rewrite_simple_expr_helper_calls_ir(
                     }
                     let rewritten = rewrite_simple_expr_helper_calls_in_text_ir(
                         &stmt.text,
-                        &helpers,
+                        helpers,
                         allowed_helpers,
+                        size_controlled,
                     );
                     if rewritten != stmt.text {
                         stmt.replace_text(rewritten);
@@ -705,8 +790,12 @@ fn apply_rewrite_simple_expr_helper_calls_ir(
                 {
                     continue;
                 }
-                let rewritten =
-                    rewrite_simple_expr_helper_calls_in_text_ir(line, &helpers, allowed_helpers);
+                let rewritten = rewrite_simple_expr_helper_calls_in_text_ir(
+                    line,
+                    helpers,
+                    allowed_helpers,
+                    size_controlled,
+                );
                 if rewritten != *line {
                     *line = rewritten;
                 }

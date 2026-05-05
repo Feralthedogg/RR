@@ -1,11 +1,10 @@
 mod common;
 
-use RR::compiler::{
-    CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel,
-    compile_with_configs_incremental_with_output_options_and_compiler_parallel,
-    default_parallel_config, default_type_config,
-};
 use common::unique_dir;
+use rr::compiler::{
+    CompileOutputOptions, IncrementalCompileRequest, IncrementalOptions, IncrementalSession,
+    OptLevel, compile_incremental_request, default_parallel_config, default_type_config,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -40,17 +39,18 @@ main()
     let opts = IncrementalOptions::auto();
     let mut session = IncrementalSession::default();
 
-    let first = compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-        &path_str,
-        source,
-        OptLevel::O1,
-        default_type_config(),
-        default_parallel_config(),
-        RR::compiler::default_compiler_parallel_config(),
-        opts,
-        CompileOutputOptions::default(),
-        Some(&mut session),
-    )
+    let first = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
+        type_cfg: default_type_config(),
+        parallel_cfg: default_parallel_config(),
+        compiler_parallel_cfg: rr::compiler::default_compiler_parallel_config(),
+        options: opts,
+        output_options: CompileOutputOptions::default(),
+        session: Some(&mut session),
+        profile: None,
+    })
     .expect("first session compile failed");
     assert!(
         !first.stats.phase3_memory_hit,
@@ -61,17 +61,18 @@ main()
         "first session compile should report cold_start miss reason"
     );
 
-    let second = compile_with_configs_incremental_with_output_options_and_compiler_parallel(
-        &path_str,
-        source,
-        OptLevel::O1,
-        default_type_config(),
-        default_parallel_config(),
-        RR::compiler::default_compiler_parallel_config(),
-        opts,
-        CompileOutputOptions::default(),
-        Some(&mut session),
-    )
+    let second = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
+        type_cfg: default_type_config(),
+        parallel_cfg: default_parallel_config(),
+        compiler_parallel_cfg: rr::compiler::default_compiler_parallel_config(),
+        options: opts,
+        output_options: CompileOutputOptions::default(),
+        session: Some(&mut session),
+        profile: None,
+    })
     .expect("second session compile failed");
     assert!(
         second.stats.phase3_memory_hit,

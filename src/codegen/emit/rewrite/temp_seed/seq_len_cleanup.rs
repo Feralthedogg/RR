@@ -1,4 +1,5 @@
-pub(super) fn strip_dead_seq_len_locals(output: &mut String) {
+use super::*;
+pub(crate) fn strip_dead_seq_len_locals(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

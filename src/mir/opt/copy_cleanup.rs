@@ -1,4 +1,4 @@
-use crate::mir::*;
+use super::*;
 use rustc_hash::FxHashMap;
 
 pub fn optimize(fn_ir: &mut FnIR) -> bool {
@@ -34,6 +34,7 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
                     }
                 }
                 Instr::Eval { .. } => {}
+                Instr::UnsafeRBlock { .. } => aliases.clear(),
             }
 
             new_instrs.push(instr);
@@ -48,7 +49,7 @@ pub fn optimize(fn_ir: &mut FnIR) -> bool {
     changed
 }
 
-fn build_pred_map(fn_ir: &FnIR) -> FxHashMap<BlockId, Vec<BlockId>> {
+pub(crate) fn build_pred_map(fn_ir: &FnIR) -> FxHashMap<BlockId, Vec<BlockId>> {
     let mut preds: FxHashMap<BlockId, Vec<BlockId>> = FxHashMap::default();
     for (bid, block) in fn_ir.blocks.iter().enumerate() {
         match block.term {
@@ -65,7 +66,7 @@ fn build_pred_map(fn_ir: &FnIR) -> FxHashMap<BlockId, Vec<BlockId>> {
     preds
 }
 
-fn intersect_alias_maps(
+pub(crate) fn intersect_alias_maps(
     left: &FxHashMap<String, String>,
     right: &FxHashMap<String, String>,
 ) -> FxHashMap<String, String> {
@@ -78,7 +79,7 @@ fn intersect_alias_maps(
     out
 }
 
-fn transfer_alias_state(
+pub(crate) fn transfer_alias_state(
     fn_ir: &FnIR,
     bid: BlockId,
     start: &FxHashMap<String, String>,
@@ -103,12 +104,13 @@ fn transfer_alias_state(
                 }
             }
             Instr::Eval { .. } => {}
+            Instr::UnsafeRBlock { .. } => aliases.clear(),
         }
     }
     aliases
 }
 
-fn compute_in_states(
+pub(crate) fn compute_in_states(
     fn_ir: &FnIR,
     preds: &FxHashMap<BlockId, Vec<BlockId>>,
 ) -> Vec<FxHashMap<String, String>> {
@@ -154,7 +156,7 @@ fn compute_in_states(
     in_states
 }
 
-fn resolve_alias(var: &str, aliases: &FxHashMap<String, String>) -> String {
+pub(crate) fn resolve_alias(var: &str, aliases: &FxHashMap<String, String>) -> String {
     let mut cur = var;
     let mut steps = 0usize;
     while let Some(next) = aliases.get(cur) {
@@ -167,7 +169,11 @@ fn resolve_alias(var: &str, aliases: &FxHashMap<String, String>) -> String {
     cur.to_string()
 }
 
-fn alias_chain_contains(aliases: &FxHashMap<String, String>, start: &str, needle: &str) -> bool {
+pub(crate) fn alias_chain_contains(
+    aliases: &FxHashMap<String, String>,
+    start: &str,
+    needle: &str,
+) -> bool {
     let mut cur = start;
     let mut steps = 0usize;
     while let Some(next) = aliases.get(cur) {
@@ -183,7 +189,7 @@ fn alias_chain_contains(aliases: &FxHashMap<String, String>, start: &str, needle
     false
 }
 
-fn invalidate_aliases(var: &str, aliases: &mut FxHashMap<String, String>) {
+pub(crate) fn invalidate_aliases(var: &str, aliases: &mut FxHashMap<String, String>) {
     aliases.remove(var);
     let doomed: Vec<String> = aliases
         .keys()
@@ -195,7 +201,7 @@ fn invalidate_aliases(var: &str, aliases: &mut FxHashMap<String, String>) {
     }
 }
 
-fn written_base_var(fn_ir: &FnIR, base: ValueId) -> Option<String> {
+pub(crate) fn written_base_var(fn_ir: &FnIR, base: ValueId) -> Option<String> {
     if let Some(var) = fn_ir.values[base].origin_var.as_ref() {
         return Some(var.clone());
     }
@@ -205,7 +211,11 @@ fn written_base_var(fn_ir: &FnIR, base: ValueId) -> Option<String> {
     }
 }
 
-fn clone_value_with_kind(fn_ir: &mut FnIR, old_vid: ValueId, kind: ValueKind) -> ValueId {
+pub(crate) fn clone_value_with_kind(
+    fn_ir: &mut FnIR,
+    old_vid: ValueId,
+    kind: ValueKind,
+) -> ValueId {
     let old = fn_ir.values[old_vid].clone();
     let new_id = fn_ir.add_value(kind, old.span, old.facts, old.origin_var.clone());
     fn_ir.values[new_id].value_ty = old.value_ty;
@@ -215,7 +225,7 @@ fn clone_value_with_kind(fn_ir: &mut FnIR, old_vid: ValueId, kind: ValueKind) ->
     new_id
 }
 
-fn rewrite_value_aliases(
+pub(crate) fn rewrite_value_aliases(
     fn_ir: &mut FnIR,
     vid: ValueId,
     aliases: &FxHashMap<String, String>,
@@ -452,7 +462,7 @@ fn rewrite_value_aliases(
     }
 }
 
-fn rewrite_instr_values(
+pub(crate) fn rewrite_instr_values(
     fn_ir: &mut FnIR,
     instr: &mut Instr,
     aliases: &FxHashMap<String, String>,
@@ -465,32 +475,26 @@ fn rewrite_instr_values(
         Instr::Eval { val, .. } => {
             *val = rewrite_value_aliases(fn_ir, *val, aliases, changed);
         }
-        Instr::StoreIndex1D { base, idx, val, .. } => {
-            *base = rewrite_value_aliases(fn_ir, *base, aliases, changed);
+        Instr::StoreIndex1D { idx, val, .. } => {
             *idx = rewrite_value_aliases(fn_ir, *idx, aliases, changed);
             *val = rewrite_value_aliases(fn_ir, *val, aliases, changed);
         }
-        Instr::StoreIndex2D {
-            base, r, c, val, ..
-        } => {
-            *base = rewrite_value_aliases(fn_ir, *base, aliases, changed);
+        Instr::StoreIndex2D { r, c, val, .. } => {
             *r = rewrite_value_aliases(fn_ir, *r, aliases, changed);
             *c = rewrite_value_aliases(fn_ir, *c, aliases, changed);
             *val = rewrite_value_aliases(fn_ir, *val, aliases, changed);
         }
-        Instr::StoreIndex3D {
-            base, i, j, k, val, ..
-        } => {
-            *base = rewrite_value_aliases(fn_ir, *base, aliases, changed);
+        Instr::StoreIndex3D { i, j, k, val, .. } => {
             *i = rewrite_value_aliases(fn_ir, *i, aliases, changed);
             *j = rewrite_value_aliases(fn_ir, *j, aliases, changed);
             *k = rewrite_value_aliases(fn_ir, *k, aliases, changed);
             *val = rewrite_value_aliases(fn_ir, *val, aliases, changed);
         }
+        Instr::UnsafeRBlock { .. } => {}
     }
 }
 
-fn rewrite_term_values(
+pub(crate) fn rewrite_term_values(
     fn_ir: &mut FnIR,
     term: &mut Terminator,
     aliases: &FxHashMap<String, String>,
@@ -602,6 +606,69 @@ mod tests {
             panic!("expected first instruction to remain assignment");
         };
         assert_eq!(dst, "y");
+    }
+
+    #[test]
+    fn store_index_base_is_not_rewritten_through_read_alias() {
+        let mut fn_ir = FnIR::new("copy_cleanup_store_base".to_string(), vec![]);
+        let b0 = fn_ir.add_block();
+        fn_ir.entry = b0;
+        fn_ir.body_head = b0;
+
+        let load_a = fn_ir.add_value(
+            ValueKind::Load {
+                var: "a".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            Some("a".to_string()),
+        );
+        let load_out = fn_ir.add_value(
+            ValueKind::Load {
+                var: "out".to_string(),
+            },
+            Span::dummy(),
+            Facts::empty(),
+            Some("out".to_string()),
+        );
+        let idx = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(1)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+        let val = fn_ir.add_value(
+            ValueKind::Const(Lit::Int(42)),
+            Span::dummy(),
+            Facts::empty(),
+            None,
+        );
+
+        fn_ir.blocks[b0].instrs.push(Instr::Assign {
+            dst: "out".to_string(),
+            src: load_a,
+            span: Span::dummy(),
+        });
+        fn_ir.blocks[b0].instrs.push(Instr::StoreIndex1D {
+            base: load_out,
+            idx,
+            val,
+            is_vector: false,
+            is_safe: true,
+            is_na_safe: true,
+            span: Span::dummy(),
+        });
+        fn_ir.blocks[b0].term = Terminator::Return(None);
+
+        optimize(&mut fn_ir);
+
+        let Instr::StoreIndex1D { base, .. } = &fn_ir.blocks[b0].instrs[1] else {
+            panic!("expected store-index instruction to remain");
+        };
+        match &fn_ir.values[*base].kind {
+            ValueKind::Load { var } => assert_eq!(var, "out"),
+            other => panic!("expected store base to remain load(out), got {:?}", other),
+        }
     }
 
     #[test]

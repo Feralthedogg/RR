@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn collect_index_vector_param_slots_by_function(
+pub(crate) fn collect_index_vector_param_slots_by_function(
     all_fns: &FxHashMap<String, FnIR>,
 ) -> FxHashMap<String, FxHashSet<usize>> {
     let mut out: FxHashMap<String, FxHashSet<usize>> = FxHashMap::default();
@@ -18,7 +18,7 @@ pub(super) fn collect_index_vector_param_slots_by_function(
     out
 }
 
-fn symbol_callee_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+pub(crate) fn symbol_callee_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
     fn resolve_var(
         fn_ir: &FnIR,
         var: &str,
@@ -91,7 +91,7 @@ fn symbol_callee_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
     )
 }
 
-pub(super) fn collect_scalar_index_return_demands(
+pub(crate) fn collect_scalar_index_return_demands(
     all_fns: &FxHashMap<String, FnIR>,
 ) -> FxHashSet<String> {
     let mut out = FxHashSet::default();
@@ -107,10 +107,10 @@ pub(super) fn collect_scalar_index_return_demands(
                 ValueKind::Index1D { idx, .. } => {
                     scalar_indices.insert(*idx);
                 }
-                ValueKind::Call { callee, args, .. } if callee == "rr_index1_read_idx" => {
-                    if args.len() >= 2 {
-                        scalar_indices.insert(args[1]);
-                    }
+                ValueKind::Call { callee, args, .. }
+                    if callee == "rr_index1_read_idx" && args.len() >= 2 =>
+                {
+                    scalar_indices.insert(args[1]);
                 }
                 _ => {}
             }
@@ -143,7 +143,7 @@ pub(super) fn collect_scalar_index_return_demands(
     out
 }
 
-pub(super) fn collect_vector_index_return_demands(
+pub(crate) fn collect_vector_index_return_demands(
     all_fns: &FxHashMap<String, FnIR>,
     index_param_slots: &FxHashMap<String, FxHashSet<usize>>,
 ) -> FxHashSet<String> {
@@ -176,7 +176,7 @@ pub(super) fn collect_vector_index_return_demands(
     out
 }
 
-pub(super) fn can_apply_index_return_override(
+pub(crate) fn can_apply_index_return_override(
     all_fns: &FxHashMap<String, FnIR>,
     fname: &str,
     demanded_shape: ShapeTy,
@@ -204,7 +204,7 @@ pub(super) fn can_apply_index_return_override(
     true
 }
 
-pub(super) fn coerce_index_scalar_return(ty: TypeState) -> TypeState {
+pub(crate) fn coerce_index_scalar_return(ty: TypeState) -> TypeState {
     let mut out = if ty == TypeState::unknown() {
         TypeState::scalar(PrimTy::Int, false)
     } else {
@@ -216,7 +216,7 @@ pub(super) fn coerce_index_scalar_return(ty: TypeState) -> TypeState {
     out
 }
 
-pub(super) fn coerce_index_vector_return(ty: TypeState) -> TypeState {
+pub(crate) fn coerce_index_vector_return(ty: TypeState) -> TypeState {
     let mut out = if ty == TypeState::unknown() {
         TypeState::vector(PrimTy::Int, false)
     } else {
@@ -227,7 +227,7 @@ pub(super) fn coerce_index_vector_return(ty: TypeState) -> TypeState {
     out
 }
 
-pub(super) fn apply_index_return_demands(
+pub(crate) fn apply_index_return_demands(
     all_fns: &FxHashMap<String, FnIR>,
     fn_ret: &mut FxHashMap<String, TypeState>,
     fn_ret_term: &mut FxHashMap<String, TypeTerm>,

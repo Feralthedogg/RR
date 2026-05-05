@@ -1,4 +1,5 @@
-pub(super) fn restore_constant_one_guard_repeat_loop_counters(output: &mut String) {
+use super::*;
+pub(crate) fn restore_constant_one_guard_repeat_loop_counters(output: &mut String) {
     fn parse_constant_guard_local(line: &str) -> Option<(String, String, String)> {
         let trimmed = line.trim();
         let inner = trimmed

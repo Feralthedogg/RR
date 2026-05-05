@@ -29,6 +29,7 @@ pub enum TokenKind {
     Int(i64),
     Float(f64),
     String(String),
+    UnsafeRBlock { code: String, read_only: bool },
 
     // Operators
     Assign, // = or <-
@@ -73,7 +74,7 @@ pub enum TokenKind {
     DoubleColon, // , : ::
 
     Invalid(String),
-    EOF,
+    Eof,
 }
 
 #[derive(Debug, Clone)]

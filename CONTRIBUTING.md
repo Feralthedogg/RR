@@ -32,7 +32,7 @@ Think Power-of-Ten discipline, practical compiler edition.
 ### 4) Hot Path Discipline
 - `MUST` keep hot paths free of hidden allocation such as `to_string()` or `clone()` in loops, and `#[inline(always)]` still `MUST` carry benchmark evidence.
 ### 5) Unsafe Code Policy
-- `MUST` keep `unsafe` adjacent to `// SAFETY:` with a real reason safe alternatives are insufficient and a narrow/local scope.
+- `MUST` keep `unsafe` directly adjacent to `// SAFETY:` with the invariant, why safe alternatives are insufficient, and the narrow/local scope.
 ### 6) Commenting Rules
 - `MUST` explain why, use structured `TODO/FIXME/NOTE`, and `SHOULD` delete stale comments immediately.
 ## Exception Process

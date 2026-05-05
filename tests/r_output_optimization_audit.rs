@@ -1,8 +1,8 @@
 mod common;
 
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use common::{RunResult, normalize, rscript_available, rscript_path, run_rscript, unique_dir};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, compile_with_config};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,6 +39,103 @@ fn run_rscript_with_env(path: &str, script: &Path, env_kv: &[(&str, &str)]) -> R
 
 fn count_occurrences(haystack: &str, needle: &str) -> usize {
     haystack.match_indices(needle).count()
+}
+
+#[test]
+fn o3_prints_folded_constant_after_inlining_and_dead_call_elim() {
+    let rr_src = r#"
+fn add(x) {
+  return x
+}
+
+fn scale(v, k) {
+  return v * k
+}
+
+let v <- 10
+let value <- add(1)
+scale(v, 2)
+print(value)
+"#;
+
+    let code = compile_code(
+        "o3_folded_constant_print.rr",
+        rr_src,
+        OptLevel::O3,
+        TypeMode::Strict,
+        NativeBackend::Off,
+    );
+
+    assert!(
+        code.contains("return(print(1L))") || code.contains("return(print((1L)))"),
+        "O3 should inline add(1), forward the constant into print, and emit only the folded print:\n{code}"
+    );
+    assert!(
+        !code.contains("value <-"),
+        "O3 should eliminate the temporary binding for the printed constant:\n{code}"
+    );
+    assert!(
+        !code.contains("return(x)") && !code.contains("v * k"),
+        "O3 should remove the now-unused add/scale helper bodies:\n{code}"
+    );
+    assert!(
+        !code.contains("rr_mark("),
+        "O3 folded top-level print should not retain debug mark calls:\n{code}"
+    );
+
+    let rscript = match rscript_path() {
+        Some(p) if rscript_available(&p) => p,
+        _ => {
+            eprintln!("Skipping O3 folded-constant runtime audit: Rscript unavailable.");
+            return;
+        }
+    };
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root
+        .join("target")
+        .join("tests")
+        .join("r_output_optimization_audit");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj = unique_dir(&sandbox_root, "o3_folded_constant_print");
+    fs::create_dir_all(&proj).expect("failed to create project dir");
+
+    let out_path = proj.join("out.R");
+    fs::write(&out_path, code).expect("failed to write O3 output");
+
+    let run = run_rscript(&rscript, &out_path);
+    assert_eq!(run.status, 0, "O3 output failed: {}", run.stderr);
+    assert_eq!(normalize("[1] 1\n"), normalize(&run.stdout));
+    assert_eq!("", normalize(&run.stderr));
+}
+
+#[test]
+fn o3_folds_integer_binary_exposed_by_inlining() {
+    let rr_src = r#"
+fn add(a, b) {
+  return a + b
+}
+
+let value <- add(1L, 10L)
+print(value)
+"#;
+
+    let code = compile_code(
+        "o3_folded_integer_binary_after_inline.rr",
+        rr_src,
+        OptLevel::O3,
+        TypeMode::Strict,
+        NativeBackend::Off,
+    );
+
+    assert!(
+        code.contains("print(11L)") || code.contains("print((11L))"),
+        "O3 should fold integer binary ops exposed by inlining:\n{code}"
+    );
+    assert!(
+        !code.contains("1L + 10L"),
+        "post-inline cleanup should not leave the inlined integer add for runtime R:\n{code}"
+    );
 }
 
 #[test]

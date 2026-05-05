@@ -1,4 +1,5 @@
-pub(super) fn rewrite_safe_scalar_loop_index_helpers(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_safe_scalar_loop_index_helpers(output: &mut String) {
     let Some(assign_re) = compile_regex(format!(r"^(?P<lhs>{}) <- (?P<rhs>.+)$", IDENT_PATTERN))
     else {
         return;

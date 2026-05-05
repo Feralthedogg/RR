@@ -1,6 +1,5 @@
-#![allow(dead_code)]
-
 pub mod analyze;
+pub(crate) mod const_fold;
 pub mod def;
 pub mod flow;
 pub mod lower_hir;

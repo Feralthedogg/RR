@@ -1,11 +1,11 @@
 use super::*;
 
 impl RBackend {
-    pub(super) fn current_var_version(&self, var: &str) -> u64 {
+    pub(crate) fn current_var_version(&self, var: &str) -> u64 {
         *self.value_tracker.var_versions.get(var).unwrap_or(&0)
     }
 
-    pub(super) fn resolve_raw_generated_loop_expr(
+    pub(crate) fn resolve_raw_generated_loop_expr(
         &self,
         val_id: usize,
         values: &[Value],
@@ -37,7 +37,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn note_var_write(&mut self, var: &str) {
+    pub(crate) fn note_var_write(&mut self, var: &str) {
         let next = self.current_var_version(var) + 1;
         self.log_var_version_change(var);
         self.value_tracker
@@ -45,7 +45,7 @@ impl RBackend {
             .insert(var.to_string(), next);
     }
 
-    pub(super) fn bind_value_to_var(&mut self, val_id: usize, var: &str) {
+    pub(crate) fn bind_value_to_var(&mut self, val_id: usize, var: &str) {
         let version = self.current_var_version(var);
         self.log_value_binding_change(val_id);
         self.value_tracker
@@ -53,7 +53,7 @@ impl RBackend {
             .insert(val_id, (var.to_string(), version));
     }
 
-    pub(super) fn bind_var_to_value(&mut self, var: &str, val_id: usize) {
+    pub(crate) fn bind_var_to_value(&mut self, var: &str, val_id: usize) {
         let version = self.current_var_version(var);
         self.log_var_value_binding_change(var);
         self.value_tracker
@@ -61,7 +61,7 @@ impl RBackend {
             .insert(var.to_string(), (val_id, version));
     }
 
-    pub(super) fn resolve_bound_value(&self, val_id: usize) -> Option<String> {
+    pub(crate) fn resolve_bound_value(&self, val_id: usize) -> Option<String> {
         if let Some((var, version)) = self.value_tracker.value_bindings.get(&val_id)
             && self.current_var_version(var) == *version
         {
@@ -70,7 +70,7 @@ impl RBackend {
         None
     }
 
-    pub(super) fn resolve_bound_value_id(&self, var: &str) -> Option<usize> {
+    pub(crate) fn resolve_bound_value_id(&self, var: &str) -> Option<usize> {
         self.value_tracker
             .var_value_bindings
             .get(var)
@@ -78,7 +78,7 @@ impl RBackend {
             .map(|(val_id, _)| *val_id)
     }
 
-    pub(super) fn can_elide_index_expr(
+    pub(crate) fn can_elide_index_expr(
         &self,
         idx: usize,
         values: &[Value],
@@ -107,7 +107,7 @@ impl RBackend {
             .is_some_and(|bound| Self::can_elide_index_wrapper(bound, values))
     }
 
-    pub(super) fn resolve_temp_bound_value_id(&self, var: &str) -> Option<usize> {
+    pub(crate) fn resolve_temp_bound_value_id(&self, var: &str) -> Option<usize> {
         self.resolve_bound_value_id(var).or_else(|| {
             (var.starts_with(".__rr_cse_") || var.starts_with(".tachyon_exprmap"))
                 .then(|| {
@@ -120,7 +120,7 @@ impl RBackend {
         })
     }
 
-    pub(super) fn resolve_readonly_arg_alias_name(
+    pub(crate) fn resolve_readonly_arg_alias_name(
         &self,
         var: &str,
         values: &[Value],
@@ -137,7 +137,7 @@ impl RBackend {
         .then(|| stripped.to_string())
     }
 
-    pub(super) fn rewrite_live_readonly_arg_aliases(
+    pub(crate) fn rewrite_live_readonly_arg_aliases(
         &self,
         expr: String,
         values: &[Value],
@@ -152,7 +152,7 @@ impl RBackend {
                     .map(|alias| (var.clone(), alias))
             })
             .collect();
-        aliases.sort_by(|(lhs_a, _), (lhs_b, _)| lhs_b.len().cmp(&lhs_a.len()));
+        aliases.sort_by_key(|(lhs, _)| std::cmp::Reverse(lhs.len()));
         for (from, to) in aliases {
             let Some(re) = compile_regex(format!(r"\b{}\b", regex::escape(&from))) else {
                 continue;
@@ -162,7 +162,7 @@ impl RBackend {
         out
     }
 
-    pub(super) fn known_full_end_expr_for_var(&self, var: &str) -> Option<&str> {
+    pub(crate) fn known_full_end_expr_for_var(&self, var: &str) -> Option<&str> {
         self.loop_analysis
             .known_full_end_exprs
             .get(var)
@@ -176,7 +176,7 @@ impl RBackend {
             })
     }
 
-    pub(super) fn remember_known_full_end_expr(
+    pub(crate) fn remember_known_full_end_expr(
         &mut self,
         var: &str,
         val_id: usize,
@@ -195,7 +195,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn known_full_end_expr_for_value(
+    pub(crate) fn known_full_end_expr_for_value(
         &self,
         val_id: usize,
         values: &[Value],
@@ -204,7 +204,7 @@ impl RBackend {
         self.known_full_end_expr_for_value_impl(val_id, values, params, &mut FxHashSet::default())
     }
 
-    pub(super) fn resolve_known_full_end_expr_with_seen(
+    pub(crate) fn resolve_known_full_end_expr_with_seen(
         &self,
         val_id: usize,
         values: &[Value],
@@ -219,7 +219,7 @@ impl RBackend {
             })
     }
 
-    pub(super) fn known_full_end_expr_for_value_impl(
+    pub(crate) fn known_full_end_expr_for_value_impl(
         &self,
         val_id: usize,
         values: &[Value],
@@ -355,7 +355,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn resolve_known_full_end_expr(
+    pub(crate) fn resolve_known_full_end_expr(
         &self,
         val_id: usize,
         values: &[Value],
@@ -369,7 +369,7 @@ impl RBackend {
             })
     }
 
-    pub(super) fn fresh_allocation_len_arg_index(
+    pub(crate) fn fresh_allocation_len_arg_index(
         &self,
         callee: &str,
         args: &[usize],
@@ -393,7 +393,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn merge_known_full_end_exprs(
+    pub(crate) fn merge_known_full_end_exprs(
         &self,
         lhs_end: Option<String>,
         rhs_end: Option<String>,
@@ -419,7 +419,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn value_is_scalar_shape(&self, value_id: usize, values: &[Value]) -> bool {
+    pub(crate) fn value_is_scalar_shape(&self, value_id: usize, values: &[Value]) -> bool {
         values.get(value_id).is_some_and(|value| {
             value.value_ty.shape == ShapeTy::Scalar
                 || value.facts.has(Facts::INT_SCALAR)
@@ -428,7 +428,7 @@ impl RBackend {
         })
     }
 
-    pub(super) fn value_can_be_allocator_scalar_arg(
+    pub(crate) fn value_can_be_allocator_scalar_arg(
         &self,
         value_id: usize,
         values: &[Value],
@@ -455,7 +455,7 @@ impl RBackend {
         })
     }
 
-    pub(super) fn whole_dest_end_matches_known_var(
+    pub(crate) fn whole_dest_end_matches_known_var(
         &self,
         var: &str,
         end: usize,
@@ -465,11 +465,11 @@ impl RBackend {
         assign::whole_dest_end_matches_known_var(self, var, end, values, params)
     }
 
-    pub(super) fn known_full_end_bound_for_var(&self, var: &str, values: &[Value]) -> Option<i64> {
+    pub(crate) fn known_full_end_bound_for_var(&self, var: &str, values: &[Value]) -> Option<i64> {
         assign::known_full_end_bound_for_var(self, var, values)
     }
 
-    pub(super) fn known_full_end_bound_for_value(
+    pub(crate) fn known_full_end_bound_for_value(
         &self,
         val_id: usize,
         values: &[Value],
@@ -502,11 +502,130 @@ impl RBackend {
         }
     }
 
-    pub(super) fn invalidate_var_binding(&mut self, var: &str) {
+    pub(crate) fn invalidate_var_binding(&mut self, var: &str) {
         self.loop_analysis.recent_whole_assign_bases.remove(var);
     }
 
-    pub(super) fn invalidate_var_bindings<'a, I>(&mut self, vars: I)
+    pub(crate) fn invalidate_alias_bindings_depending_on_var(
+        &mut self,
+        var: &str,
+        values: &[Value],
+    ) {
+        let stale_values = self
+            .value_tracker
+            .value_bindings
+            .keys()
+            .copied()
+            .filter(|val_id| self.value_mentions_written_var(*val_id, values, var))
+            .collect::<Vec<_>>();
+        for val_id in stale_values {
+            self.log_value_binding_change(val_id);
+            self.value_tracker.value_bindings.remove(&val_id);
+        }
+
+        let stale_vars = self
+            .value_tracker
+            .var_value_bindings
+            .iter()
+            .filter(|(_, (val_id, _))| self.value_mentions_written_var(*val_id, values, var))
+            .map(|(bound_var, _)| bound_var.clone())
+            .collect::<Vec<_>>();
+        for bound_var in stale_vars {
+            self.log_var_value_binding_change(&bound_var);
+            self.value_tracker.var_value_bindings.remove(&bound_var);
+        }
+
+        let stale_last_assigned = self
+            .value_tracker
+            .last_assigned_value_ids
+            .iter()
+            .filter(|(_, val_id)| self.value_mentions_written_var(**val_id, values, var))
+            .map(|(bound_var, _)| bound_var.clone())
+            .collect::<Vec<_>>();
+        for bound_var in stale_last_assigned {
+            self.log_last_assigned_value_change(&bound_var);
+            self.value_tracker
+                .last_assigned_value_ids
+                .remove(&bound_var);
+        }
+
+        self.invalidate_var_binding(var);
+    }
+
+    pub(crate) fn invalidate_alias_bindings_depending_on_vars<'a, I>(
+        &mut self,
+        vars: I,
+        values: &[Value],
+    ) where
+        I: IntoIterator<Item = &'a String>,
+    {
+        for var in vars {
+            self.invalidate_alias_bindings_depending_on_var(var, values);
+        }
+    }
+
+    pub(crate) fn clear_expression_alias_bindings(&mut self) {
+        for val_id in self
+            .value_tracker
+            .value_bindings
+            .keys()
+            .copied()
+            .collect::<Vec<_>>()
+        {
+            self.log_value_binding_change(val_id);
+        }
+        for var in self
+            .value_tracker
+            .var_value_bindings
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            self.log_var_value_binding_change(&var);
+        }
+        for var in self
+            .value_tracker
+            .last_assigned_value_ids
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            self.log_last_assigned_value_change(&var);
+        }
+
+        self.value_tracker.value_bindings.clear();
+        self.value_tracker.var_value_bindings.clear();
+        self.value_tracker.last_assigned_value_ids.clear();
+    }
+
+    pub(crate) fn value_mentions_written_var(
+        &self,
+        val_id: usize,
+        values: &[Value],
+        var: &str,
+    ) -> bool {
+        let mut stack = vec![val_id];
+        let mut seen = FxHashSet::default();
+        while let Some(next) = stack.pop() {
+            if !seen.insert(next) {
+                continue;
+            }
+            let Some(value) = values.get(next) else {
+                continue;
+            };
+            match &value.kind {
+                ValueKind::Load { var: load_var } if load_var == var => return true,
+                ValueKind::Param { .. } if value.origin_var.as_deref() == Some(var) => {
+                    return true;
+                }
+                _ => {}
+            }
+            stack.extend(value_dependencies(&value.kind));
+        }
+        false
+    }
+
+    pub(crate) fn invalidate_var_bindings<'a, I>(&mut self, vars: I)
     where
         I: IntoIterator<Item = &'a String>,
     {
@@ -515,7 +634,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn resolve_stale_origin_var(
+    pub(crate) fn resolve_stale_origin_var(
         &self,
         val_id: usize,
         val: &Value,
@@ -555,7 +674,7 @@ impl RBackend {
         None
     }
 
-    pub(super) fn resolve_stale_fresh_clone_var(
+    pub(crate) fn resolve_stale_fresh_clone_var(
         &self,
         val_id: usize,
         val: &Value,
@@ -590,14 +709,14 @@ impl RBackend {
         best.map(|(var, _)| var.to_string())
     }
 
-    pub(super) fn call_is_known_fresh_allocation(&self, callee: &str) -> bool {
+    pub(crate) fn call_is_known_fresh_allocation(&self, callee: &str) -> bool {
         matches!(
             callee,
-            "rep.int" | "numeric" | "vector" | "matrix" | "seq_len"
+            "rep.int" | "numeric" | "vector" | "matrix" | "seq_len" | "seq_along"
         ) || self.analysis.known_fresh_result_calls.contains(callee)
     }
 
-    pub(super) fn is_fresh_mutable_aggregate_value(&self, val: &Value) -> bool {
+    pub(crate) fn is_fresh_mutable_aggregate_value(&self, val: &Value) -> bool {
         matches!(
             &val.kind,
             ValueKind::Call { callee, .. }
@@ -605,7 +724,7 @@ impl RBackend {
         )
     }
 
-    pub(super) fn should_prefer_stale_var_over_expr(val: &Value) -> bool {
+    pub(crate) fn should_prefer_stale_var_over_expr(val: &Value) -> bool {
         !matches!(val.value_ty.shape, ShapeTy::Scalar)
             || matches!(
                 val.value_term,
@@ -625,28 +744,28 @@ impl RBackend {
             )
     }
 
-    pub(super) fn bump_base_version_if_named(&mut self, base: usize, values: &[Value]) {
+    pub(crate) fn bump_base_version_if_named(&mut self, base: usize, values: &[Value]) {
         if let Some(var) = values[base].origin_var.as_ref() {
             self.note_var_write(var);
         }
     }
 
-    pub(super) fn resolve_mutable_base(
+    pub(crate) fn resolve_mutable_base(
         &self,
         val_id: usize,
         values: &[Value],
         params: &[String],
     ) -> String {
-        if let Some(bound) = self.resolve_bound_value(val_id) {
-            return bound;
-        }
         if let Some(origin_var) = values[val_id].origin_var.as_ref() {
             return origin_var.clone();
+        }
+        if let Some(bound) = self.resolve_bound_value(val_id) {
+            return bound;
         }
         self.resolve_val(val_id, values, params, false)
     }
 
-    pub(super) fn resolve_read_base(
+    pub(crate) fn resolve_read_base(
         &self,
         val_id: usize,
         values: &[Value],

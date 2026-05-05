@@ -1,7 +1,7 @@
 use super::*;
 
 impl TachyonEngine {
-    pub(super) fn value_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+    pub(crate) fn value_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         if let ValueKind::Load { var } = &fn_ir.values[v].kind {
             return Some(var.clone());
@@ -9,7 +9,7 @@ impl TachyonEngine {
         fn_ir.values[v].origin_var.clone()
     }
 
-    pub(super) fn value_non_param_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+    pub(crate) fn value_non_param_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
         let var = Self::value_var_name(fn_ir, vid)?;
         if Self::param_index_for_var(fn_ir, &var).is_some() {
             None
@@ -18,7 +18,7 @@ impl TachyonEngine {
         }
     }
 
-    pub(super) fn param_index_for_var(fn_ir: &FnIR, var: &str) -> Option<usize> {
+    pub(crate) fn param_index_for_var(fn_ir: &FnIR, var: &str) -> Option<usize> {
         if let Some(idx) = fn_ir.params.iter().position(|p| p == var) {
             return Some(idx);
         }
@@ -31,7 +31,7 @@ impl TachyonEngine {
         None
     }
 
-    pub(super) fn value_param_index(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
+    pub(crate) fn value_param_index(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         match fn_ir.values[v].kind {
             ValueKind::Param { index } => Some(index),
@@ -42,7 +42,7 @@ impl TachyonEngine {
         }
     }
 
-    pub(super) fn value_is_const_one(fn_ir: &FnIR, vid: ValueId) -> bool {
+    pub(crate) fn value_is_const_one(fn_ir: &FnIR, vid: ValueId) -> bool {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         match fn_ir.values[v].kind {
             ValueKind::Const(Lit::Int(n)) => n == 1,
@@ -51,7 +51,7 @@ impl TachyonEngine {
         }
     }
 
-    pub(super) fn value_is_const_zero(fn_ir: &FnIR, vid: ValueId) -> bool {
+    pub(crate) fn value_is_const_zero(fn_ir: &FnIR, vid: ValueId) -> bool {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         match fn_ir.values[v].kind {
             ValueKind::Const(Lit::Int(n)) => n == 0,
@@ -60,7 +60,7 @@ impl TachyonEngine {
         }
     }
 
-    pub(super) fn value_is_const_six(fn_ir: &FnIR, vid: ValueId) -> bool {
+    pub(crate) fn value_is_const_six(fn_ir: &FnIR, vid: ValueId) -> bool {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         match fn_ir.values[v].kind {
             ValueKind::Const(Lit::Int(n)) => n == 6,
@@ -69,7 +69,7 @@ impl TachyonEngine {
         }
     }
 
-    pub(super) fn value_is_const_half(fn_ir: &FnIR, vid: ValueId) -> bool {
+    pub(crate) fn value_is_const_half(fn_ir: &FnIR, vid: ValueId) -> bool {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         match fn_ir.values[v].kind {
             ValueKind::Const(Lit::Float(f)) => (f - 0.5).abs() < f64::EPSILON,
@@ -77,8 +77,8 @@ impl TachyonEngine {
         }
     }
 
-    pub(super) fn resolve_load_alias_value(fn_ir: &FnIR, vid: ValueId) -> ValueId {
-        fn unique_assign_source(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
+    pub(crate) fn resolve_load_alias_value(fn_ir: &FnIR, vid: ValueId) -> ValueId {
+        pub(crate) fn unique_assign_source(fn_ir: &FnIR, var: &str) -> Option<ValueId> {
             let mut src: Option<ValueId> = None;
             for bb in &fn_ir.blocks {
                 for ins in &bb.instrs {
@@ -112,7 +112,7 @@ impl TachyonEngine {
         cur
     }
 
-    pub(super) fn flatten_assoc_binop(
+    pub(crate) fn flatten_assoc_binop(
         fn_ir: &FnIR,
         vid: ValueId,
         op: BinOp,
@@ -128,7 +128,7 @@ impl TachyonEngine {
         }
     }
 
-    pub(super) fn parse_var_minus_one(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+    pub(crate) fn parse_var_minus_one(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
         let v = Self::resolve_load_alias_value(fn_ir, vid);
         let ValueKind::Binary {
             op: BinOp::Sub,
@@ -144,7 +144,7 @@ impl TachyonEngine {
         Self::value_var_name(fn_ir, *lhs)
     }
 
-    pub(super) fn block_assignments(fn_ir: &FnIR, bid: BlockId) -> Option<Vec<(String, ValueId)>> {
+    pub(crate) fn block_assignments(fn_ir: &FnIR, bid: BlockId) -> Option<Vec<(String, ValueId)>> {
         let mut out = Vec::new();
         for ins in &fn_ir.blocks[bid].instrs {
             let Instr::Assign { dst, src, .. } = ins else {

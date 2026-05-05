@@ -17,12 +17,16 @@ mod always_tier;
 mod callmap;
 #[path = "opt/cfg_cleanup.rs"]
 mod cfg_cleanup;
+#[path = "opt/chronos.rs"]
+mod chronos;
 #[path = "opt/config.rs"]
 mod config;
 #[path = "opt/copy_cleanup.rs"]
 mod copy_cleanup;
 #[path = "opt/engine.rs"]
 mod engine;
+#[path = "opt/fuel.rs"]
+mod fuel;
 #[path = "opt/helpers.rs"]
 mod helpers;
 #[path = "opt/index_canonicalization.rs"]
@@ -45,6 +49,8 @@ mod types;
 mod value_utils;
 #[path = "opt/verify_gate.rs"]
 mod verify_gate;
+#[path = "opt/worklist.rs"]
+mod worklist;
 
 pub mod bce;
 pub mod de_ssa;
@@ -58,6 +64,7 @@ pub mod intrinsics;
 pub mod licm;
 pub mod loop_analysis;
 pub mod loop_opt;
+pub mod outline;
 pub mod parallel_copy;
 #[path = "opt/poly/mod.rs"]
 pub mod poly;
@@ -65,13 +72,17 @@ pub mod sccp;
 pub mod simplify;
 pub mod tco;
 pub mod type_specialize;
+pub mod unroll;
 #[path = "opt/v_opt/mod.rs"]
 pub mod v_opt;
 
-pub use self::engine::{MirOptimizer, TachyonEngine, TachyonRunProfile};
+pub use self::engine::TachyonEngine;
+pub(crate) use self::engine::TachyonRunProfile;
+pub(crate) use self::fuel::OptimizationFuel;
+use self::phase_order::HeavyPhaseIterationRequest;
 use self::types::{FunctionBudgetProfile, FunctionPhasePlan, PhaseScheduleId, ProgramOptPlan};
-pub use self::types::{
-    TachyonPassTiming, TachyonPassTimings, TachyonProgress, TachyonProgressTier, TachyonPulseStats,
+pub(crate) use self::types::{
+    TachyonPassTimings, TachyonProgress, TachyonProgressTier, TachyonPulseStats,
 };
 
 #[cfg(test)]
@@ -142,7 +153,7 @@ mod tests {
         all.insert("a".to_string(), dummy_fn("a", 120));
         all.insert("b".to_string(), dummy_fn("b", 180));
 
-        let plan = TachyonEngine::build_opt_plan(&all);
+        let plan = TachyonEngine::new().build_opt_plan(&all);
         assert!(!plan.selective_mode);
         assert_eq!(plan.selected_functions.len(), all.len());
     }
@@ -155,7 +166,7 @@ mod tests {
             all.insert(name.clone(), dummy_fn(&name, 2_100));
         }
 
-        let plan = TachyonEngine::build_opt_plan(&all);
+        let plan = TachyonEngine::new().build_opt_plan(&all);
         assert!(plan.selective_mode);
         assert!(!plan.selected_functions.is_empty());
         assert!(plan.selected_functions.len() < all.len());
@@ -172,7 +183,7 @@ mod tests {
 
         let mut profile = FxHashMap::default();
         profile.insert("hot".to_string(), 1000usize);
-        let plan = TachyonEngine::build_opt_plan_with_profile(&all, &profile);
+        let plan = TachyonEngine::new().build_opt_plan_with_profile(&all, &profile);
         assert!(plan.selected_functions.contains("hot"));
     }
 
@@ -588,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn phase_ordering_opt_level_default_maps_o1_and_o2() {
+    fn phase_ordering_opt_level_default_maps_opt_levels() {
         assert_eq!(
             TachyonEngine::phase_ordering_opt_level_default(crate::compiler::OptLevel::O0),
             super::types::PhaseOrderingMode::Off
@@ -601,5 +612,39 @@ mod tests {
             TachyonEngine::phase_ordering_opt_level_default(crate::compiler::OptLevel::O2),
             super::types::PhaseOrderingMode::Auto
         );
+        assert_eq!(
+            TachyonEngine::phase_ordering_opt_level_default(crate::compiler::OptLevel::O3),
+            super::types::PhaseOrderingMode::Auto
+        );
+        assert_eq!(
+            TachyonEngine::phase_ordering_opt_level_default(crate::compiler::OptLevel::Oz),
+            super::types::PhaseOrderingMode::Balanced
+        );
+    }
+
+    #[test]
+    fn opt_level_specific_budget_policy_splits_o3_and_oz() {
+        let o2 = TachyonEngine::with_phase_ordering_default_mode_compile_mode_and_opt_level(
+            super::types::PhaseOrderingMode::Auto,
+            crate::compiler::CompileMode::Standard,
+            crate::compiler::OptLevel::O2,
+        );
+        let o3 = TachyonEngine::with_phase_ordering_default_mode_compile_mode_and_opt_level(
+            super::types::PhaseOrderingMode::Auto,
+            crate::compiler::CompileMode::Standard,
+            crate::compiler::OptLevel::O3,
+        );
+        let oz = TachyonEngine::with_phase_ordering_default_mode_compile_mode_and_opt_level(
+            super::types::PhaseOrderingMode::Balanced,
+            crate::compiler::CompileMode::Standard,
+            crate::compiler::OptLevel::Oz,
+        );
+
+        assert!(o3.configured_max_inline_rounds() > o2.configured_max_inline_rounds());
+        assert!(o3.configured_max_full_opt_ir() > o2.configured_max_full_opt_ir());
+        assert!(o3.configured_heavy_pass_fn_ir() > o2.configured_heavy_pass_fn_ir());
+        assert!(!oz.inline_tier_enabled());
+        assert!(oz.configured_max_full_opt_ir() < o2.configured_max_full_opt_ir());
+        assert!(oz.configured_max_full_opt_fn_ir() < o2.configured_max_full_opt_fn_ir());
     }
 }

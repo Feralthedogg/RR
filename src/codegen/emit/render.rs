@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn build_named_arg_list(
+pub(crate) fn build_named_arg_list(
     this: &RBackend,
     args: &[usize],
     names: &[Option<String>],
@@ -24,7 +24,7 @@ pub(super) fn build_named_arg_list(
     out
 }
 
-pub(super) fn build_plain_arg_list(
+pub(crate) fn build_plain_arg_list(
     this: &RBackend,
     args: &[usize],
     values: &[Value],
@@ -40,7 +40,7 @@ pub(super) fn build_plain_arg_list(
     out
 }
 
-pub(super) fn intrinsic_helper(op: IntrinsicOp) -> &'static str {
+pub(crate) fn intrinsic_helper(op: IntrinsicOp) -> &'static str {
     match op {
         IntrinsicOp::VecAddF64 => "rr_intrinsic_vec_add_f64",
         IntrinsicOp::VecSubF64 => "rr_intrinsic_vec_sub_f64",
@@ -56,7 +56,7 @@ pub(super) fn intrinsic_helper(op: IntrinsicOp) -> &'static str {
     }
 }
 
-pub(super) fn binary_op_str(op: BinOp) -> &'static str {
+pub(crate) fn binary_op_str(op: BinOp) -> &'static str {
     match op {
         BinOp::Add => "+",
         BinOp::Sub => "-",
@@ -75,7 +75,7 @@ pub(super) fn binary_op_str(op: BinOp) -> &'static str {
     }
 }
 
-pub(super) fn unary_op_str(op: UnaryOp) -> &'static str {
+pub(crate) fn unary_op_str(op: UnaryOp) -> &'static str {
     match op {
         UnaryOp::Neg => "-",
         UnaryOp::Not => "!",
@@ -83,7 +83,7 @@ pub(super) fn unary_op_str(op: UnaryOp) -> &'static str {
     }
 }
 
-pub(super) fn emit_lit(this: &RBackend, lit: &Lit) -> String {
+pub(crate) fn emit_lit(this: &RBackend, lit: &Lit) -> String {
     match lit {
         Lit::Int(i) => format!("{}L", i),
         Lit::Float(f) => emit_float_lit(this, *f),
@@ -95,7 +95,7 @@ pub(super) fn emit_lit(this: &RBackend, lit: &Lit) -> String {
     }
 }
 
-pub(super) fn emit_lit_with_value(this: &RBackend, lit: &Lit, value: &Value) -> String {
+pub(crate) fn emit_lit_with_value(this: &RBackend, lit: &Lit, value: &Value) -> String {
     match lit {
         Lit::Float(f)
             if value.value_ty.prim == PrimTy::Double
@@ -107,7 +107,7 @@ pub(super) fn emit_lit_with_value(this: &RBackend, lit: &Lit, value: &Value) -> 
     }
 }
 
-pub(super) fn emit_float_lit(_this: &RBackend, value: f64) -> String {
+pub(crate) fn emit_float_lit(_this: &RBackend, value: f64) -> String {
     let mut rendered = value.to_string();
     if value.is_finite() && !rendered.contains(['.', 'e', 'E']) {
         rendered.push_str(".0");
@@ -115,7 +115,7 @@ pub(super) fn emit_float_lit(_this: &RBackend, value: f64) -> String {
     rendered
 }
 
-pub(super) fn emit_mark(this: &mut RBackend, span: Span, label: Option<&str>) {
+pub(crate) fn emit_mark(this: &mut RBackend, span: Span, label: Option<&str>) {
     if span.start_line == 0 {
         return;
     }

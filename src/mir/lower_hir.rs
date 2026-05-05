@@ -46,13 +46,23 @@ pub struct MirLowerer<'a> {
     known_functions: &'a FxHashMap<String, usize>,
     loop_stack: Vec<LoopTargets>,
     tidy_mask_depth: usize,
+    unsafe_r_seen: bool,
 }
 
-include!("lower_hir/default_args.rs");
-include!("lower_hir/construction.rs");
-include!("lower_hir/lower_entry.rs");
-include!("lower_hir/lower_stmt.rs");
-include!("lower_hir/lower_expr.rs");
-include!("lower_hir/value_helpers.rs");
-include!("lower_hir/interop.rs");
-include!("lower_hir/tests.rs");
+#[path = "lower_hir/construction.rs"]
+mod construction;
+#[path = "lower_hir/default_args.rs"]
+mod default_args;
+#[path = "lower_hir/interop.rs"]
+mod interop;
+#[path = "lower_hir/lower_entry.rs"]
+mod lower_entry;
+#[path = "lower_hir/lower_expr.rs"]
+mod lower_expr;
+#[path = "lower_hir/lower_stmt.rs"]
+mod lower_stmt;
+#[cfg(test)]
+#[path = "lower_hir/tests.rs"]
+mod tests;
+#[path = "lower_hir/value_helpers.rs"]
+mod value_helpers;

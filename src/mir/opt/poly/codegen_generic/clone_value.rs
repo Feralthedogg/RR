@@ -1,4 +1,5 @@
-fn clone_value_for_generic(
+use super::*;
+pub(crate) fn clone_value_for_generic(
     fn_ir: &mut FnIR,
     root: ValueId,
     loop_var_map: &FxHashMap<String, String>,

@@ -1,4 +1,5 @@
-pub(in super::super) fn strip_terminal_repeat_nexts_ir(lines: Vec<String>) -> Vec<String> {
+use super::*;
+pub(crate) fn strip_terminal_repeat_nexts_ir(lines: Vec<String>) -> Vec<String> {
     if !has_terminal_repeat_next_candidates_ir(&lines) {
         return lines;
     }
@@ -7,7 +8,7 @@ pub(in super::super) fn strip_terminal_repeat_nexts_ir(lines: Vec<String>) -> Ve
     program.into_lines()
 }
 
-fn apply_strip_terminal_repeat_nexts_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_strip_terminal_repeat_nexts_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -40,13 +41,11 @@ fn apply_strip_terminal_repeat_nexts_ir(program: &mut EmittedProgram) {
                             .iter()
                             .rfind(|prev| !matches!(prev.kind, EmittedStmtKind::Blank))
                             .is_some_and(|prev| matches!(prev.kind, EmittedStmtKind::Next))
-                    {
-                        if let Some(remove_idx) = out
+                        && let Some(remove_idx) = out
                             .iter()
                             .rposition(|prev| !matches!(prev.kind, EmittedStmtKind::Blank))
-                        {
-                            out.remove(remove_idx);
-                        }
+                    {
+                        out.remove(remove_idx);
                     }
                     out.push(stmt);
                 }

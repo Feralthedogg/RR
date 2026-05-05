@@ -1,4 +1,5 @@
-fn split_top_level_compare_local(expr: &str) -> Option<(&str, &str, &str)> {
+use super::*;
+pub(crate) fn split_top_level_compare_local(expr: &str) -> Option<(&str, &str, &str)> {
     let mut depth = 0i32;
     let bytes = expr.as_bytes();
     let mut idx = 0usize;
@@ -23,7 +24,7 @@ fn split_top_level_compare_local(expr: &str) -> Option<(&str, &str, &str)> {
     None
 }
 
-fn extract_ifelse_range_expr_local(line: &str) -> Option<String> {
+pub(crate) fn extract_ifelse_range_expr_local(line: &str) -> Option<String> {
     let start = line.find("rr_ifelse_strict((")? + "rr_ifelse_strict((".len();
     let rest = &line[start..];
     let mut depth = 0i32;
@@ -51,7 +52,7 @@ fn extract_ifelse_range_expr_local(line: &str) -> Option<String> {
     None
 }
 
-pub(super) fn repair_missing_cse_range_aliases(output: &mut String) {
+pub(crate) fn repair_missing_cse_range_aliases(output: &mut String) {
     let Some(floor_temp_re) = compile_regex(r"rr_index_vec_floor\(\.__rr_cse_\d+\)".to_string())
     else {
         return;

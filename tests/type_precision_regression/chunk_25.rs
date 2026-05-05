@@ -1,9 +1,10 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn base_direct_system_helpers_have_builtin_types() {
+pub(crate) fn base_direct_system_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["path".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();
@@ -171,9 +172,9 @@ fn base_direct_system_helpers_have_builtin_types() {
 }
 
 #[test]
-fn readr_tidyr_tail_helpers_have_direct_types() {
+pub(crate) fn readr_tidyr_tail_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["arg".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Any;
 
     let b0 = fn_ir.add_block();
@@ -229,9 +230,9 @@ fn readr_tidyr_tail_helpers_have_direct_types() {
 }
 
 #[test]
-fn dplyr_tail_helpers_have_direct_types() {
+pub(crate) fn dplyr_tail_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["arg".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Any;
 
     let b0 = fn_ir.add_block();

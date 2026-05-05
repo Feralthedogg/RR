@@ -183,7 +183,15 @@ def render_rr_warm_driver(rr_r: pathlib.Path) -> str:
         bench_env <- new.env(parent = baseenv())
         bench_env$print <- function(...) invisible(NULL)
         bench_env$rr_mark <- function(...) invisible(NULL)
-        source("{rr_path}", local = bench_env, chdir = TRUE)
+        rr_code <- readLines("{rr_path}", warn = FALSE)
+        entry_marker <- "# --- RR synthesized entrypoints (auto-generated) ---"
+        entry_idx <- match(entry_marker, rr_code)
+        if (!is.na(entry_idx)) {{
+          rr_code <- rr_code[seq_len(entry_idx - 1L)]
+        }}
+        rr_conn <- textConnection(rr_code)
+        on.exit(close(rr_conn), add = TRUE)
+        source(rr_conn, local = bench_env)
 
         kernel_name <- if (exists("Sym_1", envir = bench_env, inherits = FALSE)) "Sym_1" else "Sym_top_0"
         body_name <- paste0(".__rr_body_", kernel_name)

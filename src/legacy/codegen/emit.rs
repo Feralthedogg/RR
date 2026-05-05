@@ -89,103 +89,132 @@ impl Emitter {
         out
     }
 
-    fn emit_stmt(&mut self, stmt: IRStmt) -> RR<()> {
-        self.record_span(stmt.span);
-
-        // Emit source marker for runtime diagnostics.
-        if self.with_runtime && stmt.span.start_line != 0 {
+    fn emit_source_marker(&mut self, span: Span) {
+        if self.with_runtime && span.start_line != 0 {
             self.write_indent();
-            self.write(&format!("rr_mark({}, {});", stmt.span.start_line, stmt.span.start_col));
+            self.write(&format!("rr_mark({}, {});", span.start_line, span.start_col));
             self.newline();
         }
+    }
+
+    fn emit_stmt(&mut self, stmt: IRStmt) -> RR<()> {
+        self.record_span(stmt.span);
+        self.emit_source_marker(stmt.span);
 
         match stmt.kind {
-            IRStmtKind::Assign { target, value } => {
-                self.write_indent();
-                self.emit_lvalue(target)?;
-                self.write(" <- ");
-                self.emit_expr(value)?;
-                self.write(";");
-                self.newline();
-            }
-            IRStmtKind::ExprStmt { expr } => {
-                self.write_indent();
-                self.emit_expr(expr)?;
-                self.write(";");
-                self.newline();
-            }
-            IRStmtKind::FnDecl { name, params, body } => {
-                self.write_indent();
-                self.write(&format!("{} <- function({}) {{", name, params.join(", ")));
-                self.newline();
-                self.indent += 1;
-                for s in body {
-                    self.emit_stmt(s)?;
-                }
-                self.indent -= 1;
-                self.write_indent();
-                self.write("};");
-                self.newline();
-            }
-            IRStmtKind::If { cond, then_blk, else_blk } => {
-                self.write_indent();
-                self.write("if (rr_truthy1(");
-                self.emit_expr(cond)?;
-                self.write(")) {");
-                self.newline();
-                self.indent += 1;
-                for s in then_blk { self.emit_stmt(s)?; }
-                self.indent -= 1;
-                if let Some(eb) = else_blk {
-                    self.write_indent();
-                    self.write("} else {");
-                    self.newline();
-                    self.indent += 1;
-                    for s in eb { self.emit_stmt(s)?; }
-                    self.indent -= 1;
-                }
-                self.write_indent();
-                self.write("}");
-                self.newline();
-            }
-            IRStmtKind::While { cond, body } => {
-                self.write_indent();
-                self.write("while (rr_truthy1(");
-                self.emit_expr(cond)?;
-                self.write(")) {");
-                self.newline();
-                self.indent += 1;
-                for s in body { self.emit_stmt(s)?; }
-                self.indent -= 1;
-                self.write_indent();
-                self.write("}");
-                self.newline();
-            }
-            IRStmtKind::For { var, seq, body } => {
-                self.write_indent();
-                self.write(&format!("for ({} in ", var));
-                self.emit_expr(seq)?;
-                self.write(") {");
-                self.newline();
-                self.indent += 1;
-                for s in body { self.emit_stmt(s)?; }
-                self.indent -= 1;
-                self.write_indent();
-                self.write("}");
-                self.newline();
-            }
-            IRStmtKind::Return { value } => {
-                self.write_indent();
-                self.write("return(");
-                if let Some(v) = value {
-                    self.emit_expr(v)?;
-                } else {
-                    self.write("NULL");
-                }
-                self.write(");");
-                self.newline();
-            }
+            IRStmtKind::Assign { target, value } => self.emit_assign_stmt(target, value)?,
+            IRStmtKind::ExprStmt { expr } => self.emit_expr_stmt(expr)?,
+            IRStmtKind::FnDecl { name, params, body } => self.emit_fn_decl(name, params, body)?,
+            IRStmtKind::If {
+                cond,
+                then_blk,
+                else_blk,
+            } => self.emit_if_stmt(cond, then_blk, else_blk)?,
+            IRStmtKind::While { cond, body } => self.emit_while_stmt(cond, body)?,
+            IRStmtKind::For { var, seq, body } => self.emit_for_stmt(var, seq, body)?,
+            IRStmtKind::Return { value } => self.emit_return_stmt(value)?,
         }
+        Ok(())
+    }
+
+    fn emit_stmt_block(&mut self, body: Vec<IRStmt>) -> RR<()> {
+        self.indent += 1;
+        for stmt in body {
+            self.emit_stmt(stmt)?;
+        }
+        self.indent -= 1;
+        Ok(())
+    }
+
+    fn emit_assign_stmt(&mut self, target: IRLValue, value: IRExpr) -> RR<()> {
+        self.write_indent();
+        self.emit_lvalue(target)?;
+        self.write(" <- ");
+        self.emit_expr(value)?;
+        self.write(";");
+        self.newline();
+        Ok(())
+    }
+
+    fn emit_expr_stmt(&mut self, expr: IRExpr) -> RR<()> {
+        self.write_indent();
+        self.emit_expr(expr)?;
+        self.write(";");
+        self.newline();
+        Ok(())
+    }
+
+    fn emit_fn_decl(&mut self, name: String, params: Vec<String>, body: Vec<IRStmt>) -> RR<()> {
+        self.write_indent();
+        self.write(&format!("{} <- function({}) {{", name, params.join(", ")));
+        self.newline();
+        self.emit_stmt_block(body)?;
+        self.write_indent();
+        self.write("};");
+        self.newline();
+        Ok(())
+    }
+
+    fn emit_if_stmt(
+        &mut self,
+        cond: IRExpr,
+        then_blk: Vec<IRStmt>,
+        else_blk: Option<Vec<IRStmt>>,
+    ) -> RR<()> {
+        self.write_indent();
+        self.write("if (rr_truthy1(");
+        self.emit_expr(cond)?;
+        self.write(")) {");
+        self.newline();
+        self.emit_stmt_block(then_blk)?;
+        if let Some(else_body) = else_blk {
+            self.write_indent();
+            self.write("} else {");
+            self.newline();
+            self.emit_stmt_block(else_body)?;
+        }
+        self.write_indent();
+        self.write("}");
+        self.newline();
+        Ok(())
+    }
+
+    fn emit_while_stmt(&mut self, cond: IRExpr, body: Vec<IRStmt>) -> RR<()> {
+        self.write_indent();
+        self.write("while (rr_truthy1(");
+        self.emit_expr(cond)?;
+        self.write(")) {");
+        self.newline();
+        self.emit_stmt_block(body)?;
+        self.write_indent();
+        self.write("}");
+        self.newline();
+        Ok(())
+    }
+
+    fn emit_for_stmt(&mut self, var: String, seq: IRExpr, body: Vec<IRStmt>) -> RR<()> {
+        self.write_indent();
+        self.write(&format!("for ({} in ", var));
+        self.emit_expr(seq)?;
+        self.write(") {");
+        self.newline();
+        self.emit_stmt_block(body)?;
+        self.write_indent();
+        self.write("}");
+        self.newline();
+        Ok(())
+    }
+
+    fn emit_return_stmt(&mut self, value: Option<IRExpr>) -> RR<()> {
+        self.write_indent();
+        self.write("return(");
+        if let Some(value) = value {
+            self.emit_expr(value)?;
+        } else {
+            self.write("NULL");
+        }
+        self.write(");");
+        self.newline();
         Ok(())
     }
 

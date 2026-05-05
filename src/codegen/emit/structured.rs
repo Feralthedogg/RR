@@ -1,7 +1,7 @@
 use super::*;
 
 impl RBackend {
-    fn structured_contains_loop(node: &StructuredBlock) -> bool {
+    pub(crate) fn structured_contains_loop(node: &StructuredBlock) -> bool {
         match node {
             StructuredBlock::Sequence(items) => items.iter().any(Self::structured_contains_loop),
             StructuredBlock::If {
@@ -22,7 +22,44 @@ impl RBackend {
         }
     }
 
-    pub(super) fn emit_structured(
+    pub(crate) fn block_contains_indexed_store(block_id: usize, fn_ir: &FnIR) -> bool {
+        fn_ir.blocks.get(block_id).is_some_and(|block| {
+            block.instrs.iter().any(|instr| {
+                matches!(
+                    instr,
+                    Instr::StoreIndex1D { .. }
+                        | Instr::StoreIndex2D { .. }
+                        | Instr::StoreIndex3D { .. }
+                )
+            })
+        })
+    }
+
+    pub(crate) fn structured_contains_indexed_store(node: &StructuredBlock, fn_ir: &FnIR) -> bool {
+        match node {
+            StructuredBlock::Sequence(items) => items
+                .iter()
+                .any(|item| Self::structured_contains_indexed_store(item, fn_ir)),
+            StructuredBlock::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                Self::structured_contains_indexed_store(then_body, fn_ir)
+                    || else_body.as_deref().is_some_and(|else_body| {
+                        Self::structured_contains_indexed_store(else_body, fn_ir)
+                    })
+            }
+            StructuredBlock::Loop { header, body, .. } => {
+                Self::block_contains_indexed_store(*header, fn_ir)
+                    || Self::structured_contains_indexed_store(body, fn_ir)
+            }
+            StructuredBlock::BasicBlock(bid) => Self::block_contains_indexed_store(*bid, fn_ir),
+            StructuredBlock::Break | StructuredBlock::Next | StructuredBlock::Return(_) => false,
+        }
+    }
+
+    pub(crate) fn emit_structured(
         &mut self,
         node: &StructuredBlock,
         fn_ir: &FnIR,
@@ -108,7 +145,13 @@ impl RBackend {
                 let cond_span = fn_ir.values[*cond].span;
                 self.emit_mark(cond_span, Some("if"));
                 self.record_span(cond_span);
-                let c = self.resolve_cond(*cond, &fn_ir.values, &fn_ir.params);
+                let c = self.resolve_cond(
+                    *cond,
+                    &fn_ir.values,
+                    &fn_ir.params,
+                    &fn_ir.param_term_hints,
+                    &fn_ir.param_hint_spans,
+                );
                 self.write_stmt(&format!("if ({}) {{", c));
                 self.indent += 1;
                 self.emit_structured(then_body, fn_ir)?;
@@ -162,7 +205,9 @@ impl RBackend {
                 let pre_loop_value_bindings = self.value_tracker.value_bindings.clone();
                 let pre_loop_var_value_bindings = self.value_tracker.var_value_bindings.clone();
                 let mut loop_mutated_vars = FxHashSet::default();
-                Self::collect_mutated_vars(body, fn_ir, &mut loop_mutated_vars);
+                let loop_has_indexed_store = Self::block_contains_indexed_store(*header, fn_ir)
+                    || Self::structured_contains_indexed_store(body, fn_ir);
+                self.collect_mutated_vars(body, fn_ir, &mut loop_mutated_vars);
                 let body_mutated_vars = loop_mutated_vars.clone();
                 for instr in &fn_ir.blocks[*header].instrs {
                     match instr {
@@ -172,9 +217,12 @@ impl RBackend {
                         Instr::StoreIndex1D { base, .. }
                         | Instr::StoreIndex2D { base, .. }
                         | Instr::StoreIndex3D { base, .. } => {
-                            if let Some(var) = Self::named_written_base(*base, &fn_ir.values) {
+                            if let Some(var) = self.named_written_base_in_context(*base, fn_ir) {
                                 loop_mutated_vars.insert(var);
                             }
+                        }
+                        Instr::UnsafeRBlock { .. } => {
+                            loop_mutated_vars.extend(Self::function_frame_vars(fn_ir));
                         }
                         Instr::Eval { .. } => {}
                     }
@@ -186,7 +234,10 @@ impl RBackend {
                             .map(|expr| (var.clone(), expr.to_string()))
                     })
                     .collect::<FxHashMap<_, _>>();
-                self.invalidate_var_bindings(loop_mutated_vars.iter());
+                self.invalidate_alias_bindings_depending_on_vars(
+                    loop_mutated_vars.iter(),
+                    &fn_ir.values,
+                );
                 self.loop_analysis
                     .active_loop_known_full_end_exprs
                     .push(pre_loop_known_full_end_exprs.clone());
@@ -233,7 +284,13 @@ impl RBackend {
                 let cond_span = fn_ir.values[*cond].span;
                 self.emit_mark(cond_span, Some("loop-cond"));
                 self.record_span(cond_span);
-                let c = self.resolve_cond(*cond, &fn_ir.values, &fn_ir.params);
+                let c = self.resolve_cond(
+                    *cond,
+                    &fn_ir.values,
+                    &fn_ir.params,
+                    &fn_ir.param_term_hints,
+                    &fn_ir.param_hint_spans,
+                );
                 if *continue_on_true {
                     self.write_stmt(&format!("if (!{}) break", c));
                 } else {
@@ -264,7 +321,13 @@ impl RBackend {
                 self.value_tracker.value_bindings = pre_loop_value_bindings;
                 self.value_tracker.var_value_bindings = pre_loop_var_value_bindings;
                 self.value_tracker.last_assigned_value_ids.clear();
-                self.invalidate_var_bindings(loop_mutated_vars.iter());
+                self.invalidate_alias_bindings_depending_on_vars(
+                    loop_mutated_vars.iter(),
+                    &fn_ir.values,
+                );
+                if loop_has_indexed_store {
+                    self.clear_expression_alias_bindings();
+                }
                 for var in &loop_mutated_vars {
                     self.loop_analysis.known_full_end_exprs.remove(var);
                 }

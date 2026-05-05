@@ -33,6 +33,11 @@ pub struct AccessRelation {
 }
 
 fn base_name(fn_ir: &FnIR, base: ValueId) -> String {
+    if let Some(origin) = fn_ir.values[base].origin_var.as_deref()
+        && !origin.is_empty()
+    {
+        return origin.to_string();
+    }
     match &fn_ir.values[base].kind {
         ValueKind::Load { var } => var.clone(),
         ValueKind::Param { index } => fn_ir

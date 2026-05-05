@@ -1,8 +1,8 @@
 mod common;
 
-use RR::compiler::{OptLevel, compile};
-use RR::error::{RRCode, Stage};
 use common::{env_lock, set_current_dir_for_test, unique_dir};
+use rr::compiler::{OptLevel, compile};
+use rr::error::{RRCode, Stage};
 use std::fs;
 use std::path::PathBuf;
 

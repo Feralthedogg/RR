@@ -1,7 +1,8 @@
 use super::common::*;
+use super::*;
 
 #[test]
-fn typed_parallel_wrapper_tracks_vector_local_back_to_param_slot() {
+pub(crate) fn typed_parallel_wrapper_tracks_vector_local_back_to_param_slot() {
     let mut fn_ir = FnIR::new("scale".to_string(), vec!["a".to_string()]);
     fn_ir.ret_term_hint = Some(TypeTerm::Vector(Box::new(TypeTerm::Double)));
     let entry = fn_ir.add_block();
@@ -42,7 +43,7 @@ fn typed_parallel_wrapper_tracks_vector_local_back_to_param_slot() {
 }
 
 #[test]
-fn resolve_val_prefers_current_var_after_indexed_store_mutates_origin() {
+pub(crate) fn resolve_val_prefers_current_var_after_indexed_store_mutates_origin() {
     let mut backend = RBackend::new();
     let seq = Value {
         id: 0,
@@ -82,7 +83,55 @@ fn resolve_val_prefers_current_var_after_indexed_store_mutates_origin() {
 }
 
 #[test]
-fn fresh_vector_clone_call_arg_does_not_reuse_live_same_kind_alias_after_mutation() {
+pub(crate) fn seq_along_is_fresh_after_indexed_store_mutates_origin() {
+    let mut backend = RBackend::new();
+    let values = vec![
+        Value {
+            id: 0,
+            kind: ValueKind::Call {
+                callee: "seq_along".to_string(),
+                args: vec![1],
+                names: vec![],
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("y".to_string()),
+            phi_block: None,
+            value_ty: TypeState {
+                prim: PrimTy::Int,
+                shape: ShapeTy::Vector,
+                na: NaTy::Never,
+                len_sym: None,
+            },
+            value_term: TypeTerm::Vector(Box::new(TypeTerm::Int)),
+            escape: EscapeStatus::Unknown,
+        },
+        Value {
+            id: 1,
+            kind: ValueKind::Load {
+                var: "n".to_string(),
+            },
+            span: Span::dummy(),
+            facts: Facts::empty(),
+            origin_var: Some("n".to_string()),
+            phi_block: None,
+            value_ty: TypeState::unknown(),
+            value_term: TypeTerm::Any,
+            escape: EscapeStatus::Unknown,
+        },
+    ];
+
+    backend.note_var_write("y");
+    backend.bind_value_to_var(0, "y");
+    backend.bind_var_to_value("y", 0);
+    backend.note_var_write("y");
+
+    let rendered = backend.resolve_val(0, &values, &[], false);
+    assert_eq!(rendered, "y");
+}
+
+#[test]
+pub(crate) fn fresh_vector_clone_call_arg_does_not_reuse_live_same_kind_alias_after_mutation() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -173,7 +222,7 @@ fn fresh_vector_clone_call_arg_does_not_reuse_live_same_kind_alias_after_mutatio
 }
 
 #[test]
-fn stale_fresh_alloc_is_rendered_as_current_var_in_call_args() {
+pub(crate) fn stale_fresh_alloc_is_rendered_as_current_var_in_call_args() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -300,7 +349,7 @@ fn stale_fresh_alloc_is_rendered_as_current_var_in_call_args() {
 }
 
 #[test]
-fn stale_self_copy_assignment_is_skipped() {
+pub(crate) fn stale_self_copy_assignment_is_skipped() {
     let mut backend = RBackend::new();
     let values = vec![Value {
         id: 0,
@@ -351,7 +400,7 @@ fn stale_self_copy_assignment_is_skipped() {
 }
 
 #[test]
-fn stale_fresh_aggregate_without_live_binding_falls_back_to_origin_var() {
+pub(crate) fn stale_fresh_aggregate_without_live_binding_falls_back_to_origin_var() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -393,7 +442,7 @@ fn stale_fresh_aggregate_without_live_binding_falls_back_to_origin_var() {
 }
 
 #[test]
-fn same_kind_assignment_after_rhs_change_is_not_skipped() {
+pub(crate) fn same_kind_assignment_after_rhs_change_is_not_skipped() {
     let mut backend = RBackend::new();
     let values = vec![
         Value {
@@ -448,7 +497,7 @@ fn same_kind_assignment_after_rhs_change_is_not_skipped() {
 }
 
 #[test]
-fn configured_user_fresh_call_is_treated_as_fresh_aggregate() {
+pub(crate) fn configured_user_fresh_call_is_treated_as_fresh_aggregate() {
     let mut backend =
         RBackend::with_fresh_result_calls(FxHashSet::from_iter([String::from("Sym_custom_alloc")]));
     let values = vec![Value {
@@ -476,7 +525,7 @@ fn configured_user_fresh_call_is_treated_as_fresh_aggregate() {
 }
 
 #[test]
-fn configured_user_fresh_call_counts_as_full_dest_end() {
+pub(crate) fn configured_user_fresh_call_counts_as_full_dest_end() {
     let backend =
         RBackend::with_fresh_result_calls(FxHashSet::from_iter([String::from("Sym_custom_alloc")]));
     let values = vec![

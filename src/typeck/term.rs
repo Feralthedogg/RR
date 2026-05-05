@@ -47,95 +47,161 @@ impl TypeTerm {
             return self.clone();
         }
 
-        match (self, other) {
-            (Self::Int, Self::Double) | (Self::Double, Self::Int) => Self::Double,
-            (Self::Vector(a), Self::Vector(b)) => Self::Vector(Box::new(a.join(b))),
-            (Self::VectorLen(a, alen), Self::VectorLen(b, blen)) => {
-                Self::VectorLen(Box::new(a.join(b)), if alen == blen { *alen } else { None })
-            }
+        if let Some(joined) = Self::join_numeric_terms(self, other) {
+            return joined;
+        }
+        if let Some(joined) = Self::join_vector_terms(self, other) {
+            return joined;
+        }
+        if let Some(joined) = Self::join_matrix_terms(self, other) {
+            return joined;
+        }
+        if let Some(joined) = Self::join_record_terms(self, other) {
+            return joined;
+        }
+        if let Some(joined) = Self::join_wrapped_terms(self, other) {
+            return joined;
+        }
+        Self::join_union_or_fallback(self, other)
+    }
+
+    fn join_numeric_terms(lhs: &Self, rhs: &Self) -> Option<Self> {
+        matches!(
+            (lhs, rhs),
+            (Self::Int, Self::Double) | (Self::Double, Self::Int)
+        )
+        .then_some(Self::Double)
+    }
+
+    fn join_vector_terms(lhs: &Self, rhs: &Self) -> Option<Self> {
+        match (lhs, rhs) {
+            (Self::Vector(a), Self::Vector(b)) => Some(Self::Vector(Box::new(a.join(b)))),
+            (Self::VectorLen(a, alen), Self::VectorLen(b, blen)) => Some(Self::VectorLen(
+                Box::new(a.join(b)),
+                if alen == blen { *alen } else { None },
+            )),
             (Self::Vector(a), Self::VectorLen(b, _)) | (Self::VectorLen(b, _), Self::Vector(a)) => {
-                Self::Vector(Box::new(a.join(b)))
+                Some(Self::Vector(Box::new(a.join(b))))
             }
-            (Self::Matrix(a), Self::Matrix(b)) => Self::Matrix(Box::new(a.join(b))),
-            (Self::MatrixDim(a, ar, ac), Self::MatrixDim(b, br, bc)) => Self::MatrixDim(
+            _ => None,
+        }
+    }
+
+    fn join_matrix_terms(lhs: &Self, rhs: &Self) -> Option<Self> {
+        match (lhs, rhs) {
+            (Self::Matrix(a), Self::Matrix(b)) => Some(Self::Matrix(Box::new(a.join(b)))),
+            (Self::MatrixDim(a, ar, ac), Self::MatrixDim(b, br, bc)) => Some(Self::MatrixDim(
                 Box::new(a.join(b)),
                 if ar == br { *ar } else { None },
                 if ac == bc { *ac } else { None },
-            ),
+            )),
             (Self::ArrayDim(a, adims), Self::ArrayDim(b, bdims)) if adims.len() == bdims.len() => {
-                Self::ArrayDim(
+                Some(Self::ArrayDim(
                     Box::new(a.join(b)),
                     adims
                         .iter()
                         .zip(bdims.iter())
                         .map(|(a, b)| if a == b { *a } else { None })
                         .collect(),
-                )
+                ))
             }
             (Self::Matrix(a), Self::MatrixDim(b, _, _))
             | (Self::MatrixDim(b, _, _), Self::Matrix(a))
             | (Self::Matrix(a), Self::ArrayDim(b, _))
             | (Self::ArrayDim(b, _), Self::Matrix(a))
             | (Self::MatrixDim(a, _, _), Self::ArrayDim(b, _))
-            | (Self::ArrayDim(b, _), Self::MatrixDim(a, _, _)) => Self::Matrix(Box::new(a.join(b))),
+            | (Self::ArrayDim(b, _), Self::MatrixDim(a, _, _)) => {
+                Some(Self::Matrix(Box::new(a.join(b))))
+            }
+            _ => None,
+        }
+    }
+
+    fn join_record_terms(lhs: &Self, rhs: &Self) -> Option<Self> {
+        match (lhs, rhs) {
             (Self::DataFrame(a), Self::DataFrame(b)) if a.len() == b.len() => {
-                Self::DataFrame(a.iter().zip(b.iter()).map(|(x, y)| x.join(y)).collect())
+                Some(Self::DataFrame(Self::join_positional_fields(a, b)))
             }
             (Self::DataFrameNamed(a), Self::DataFrameNamed(b))
-                if a.len() == b.len()
-                    && a.iter().zip(b.iter()).all(|((an, _), (bn, _))| an == bn) =>
+                if Self::named_fields_match(a, b) =>
             {
-                Self::DataFrameNamed(
-                    a.iter()
-                        .zip(b.iter())
-                        .map(|((name, x), (_, y))| (name.clone(), x.join(y)))
-                        .collect(),
-                )
+                Some(Self::DataFrameNamed(Self::join_named_fields(a, b)))
             }
-            (Self::NamedList(a), Self::NamedList(b))
-                if a.len() == b.len()
-                    && a.iter().zip(b.iter()).all(|((an, _), (bn, _))| an == bn) =>
-            {
-                Self::NamedList(
-                    a.iter()
-                        .zip(b.iter())
-                        .map(|((name, x), (_, y))| (name.clone(), x.join(y)))
-                        .collect(),
-                )
+            (Self::NamedList(a), Self::NamedList(b)) if Self::named_fields_match(a, b) => {
+                Some(Self::NamedList(Self::join_named_fields(a, b)))
             }
             (Self::DataFrame(a), Self::DataFrameNamed(b))
             | (Self::DataFrameNamed(b), Self::DataFrame(a))
                 if a.len() == b.len() =>
             {
-                Self::DataFrame(
-                    a.iter()
-                        .zip(b.iter())
-                        .map(|(x, (_, y))| x.join(y))
-                        .collect(),
-                )
+                Some(Self::DataFrame(Self::join_named_rhs_as_positional_fields(
+                    a, b,
+                )))
             }
-            (Self::List(a), Self::List(b)) => Self::List(Box::new(a.join(b))),
-            (Self::Boxed(a), Self::Boxed(b)) => Self::Boxed(Box::new(a.join(b))),
-            (Self::Option(a), Self::Option(b)) => Self::Option(Box::new(a.join(b))),
-            (Self::Union(xs), rhs) => {
-                if xs.iter().any(|x| x == rhs) {
-                    self.clone()
-                } else {
-                    let mut out = xs.clone();
-                    out.push(rhs.clone());
-                    Self::Union(out)
-                }
-            }
-            (lhs, Self::Union(xs)) => {
-                if xs.iter().any(|x| x == lhs) {
-                    other.clone()
-                } else {
-                    let mut out = vec![lhs.clone()];
-                    out.extend(xs.clone());
-                    Self::Union(out)
-                }
-            }
+            _ => None,
+        }
+    }
+
+    fn join_wrapped_terms(lhs: &Self, rhs: &Self) -> Option<Self> {
+        match (lhs, rhs) {
+            (Self::List(a), Self::List(b)) => Some(Self::List(Box::new(a.join(b)))),
+            (Self::Boxed(a), Self::Boxed(b)) => Some(Self::Boxed(Box::new(a.join(b)))),
+            (Self::Option(a), Self::Option(b)) => Some(Self::Option(Box::new(a.join(b)))),
+            _ => None,
+        }
+    }
+
+    fn join_union_or_fallback(lhs: &Self, rhs: &Self) -> Self {
+        match (lhs, rhs) {
+            (Self::Union(xs), rhs) => Self::append_to_union(lhs, xs, rhs),
+            (lhs, Self::Union(xs)) => Self::prepend_to_union(rhs, lhs, xs),
             (lhs, rhs) => Self::Union(vec![lhs.clone(), rhs.clone()]),
+        }
+    }
+
+    fn join_positional_fields(lhs: &[Self], rhs: &[Self]) -> Vec<Self> {
+        lhs.iter().zip(rhs.iter()).map(|(x, y)| x.join(y)).collect()
+    }
+
+    fn named_fields_match(lhs: &[(String, Self)], rhs: &[(String, Self)]) -> bool {
+        lhs.len() == rhs.len()
+            && lhs
+                .iter()
+                .zip(rhs.iter())
+                .all(|((left_name, _), (right_name, _))| left_name == right_name)
+    }
+
+    fn join_named_fields(lhs: &[(String, Self)], rhs: &[(String, Self)]) -> Vec<(String, Self)> {
+        lhs.iter()
+            .zip(rhs.iter())
+            .map(|((name, x), (_, y))| (name.clone(), x.join(y)))
+            .collect()
+    }
+
+    fn join_named_rhs_as_positional_fields(lhs: &[Self], rhs: &[(String, Self)]) -> Vec<Self> {
+        lhs.iter()
+            .zip(rhs.iter())
+            .map(|(x, (_, y))| x.join(y))
+            .collect()
+    }
+
+    fn append_to_union(union_term: &Self, members: &[Self], rhs: &Self) -> Self {
+        if members.iter().any(|term| term == rhs) {
+            union_term.clone()
+        } else {
+            let mut out = members.to_vec();
+            out.push(rhs.clone());
+            Self::Union(out)
+        }
+    }
+
+    fn prepend_to_union(union_term: &Self, lhs: &Self, members: &[Self]) -> Self {
+        if members.iter().any(|term| term == lhs) {
+            union_term.clone()
+        } else {
+            let mut out = vec![lhs.clone()];
+            out.extend(members.to_vec());
+            Self::Union(out)
         }
     }
 

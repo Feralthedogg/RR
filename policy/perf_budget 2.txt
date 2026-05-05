@@ -1,5 +1,0 @@
-# name|max_seconds
-perf_regression_gate|90
-benchmark_vectorization|120
-commercial_determinism|180
-example_perf_smoke|900

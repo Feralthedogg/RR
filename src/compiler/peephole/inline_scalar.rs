@@ -8,32 +8,45 @@ use rustc_hash::FxHashSet;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+#[path = "inline_scalar/branch_hoist.rs"]
+pub(crate) mod branch_hoist;
+
+use self::branch_hoist::{
+    branch_trailing_hoist_assignments, collect_branch_hoists, function_has_branch_hoist_candidate,
+    has_if_block, insert_hoisted_branch_assignments,
+};
+
 #[derive(Default)]
-pub(in super::super) struct ImmediateInlineProfile {
-    pub(super) immediate_scalar_elapsed_ns: u128,
-    pub(super) named_expr_elapsed_ns: u128,
-    pub(super) immediate_index_elapsed_ns: u128,
+pub(crate) struct ImmediateInlineProfile {
+    pub(crate) immediate_scalar_elapsed_ns: u128,
+    pub(crate) named_expr_elapsed_ns: u128,
+    pub(crate) immediate_index_elapsed_ns: u128,
 }
 
 #[derive(Default)]
-pub(in super::super) struct StraightLineInlineProfile {
-    pub(super) named_index_elapsed_ns: u128,
-    pub(super) scalar_region_elapsed_ns: u128,
+pub(crate) struct StraightLineInlineProfile {
+    pub(crate) named_index_elapsed_ns: u128,
+    pub(crate) scalar_region_elapsed_ns: u128,
 }
 
-fn build_line_to_function(facts: &[FunctionFacts], total_lines: usize) -> Vec<Option<usize>> {
+pub(crate) fn build_line_to_function(
+    facts: &[FunctionFacts],
+    total_lines: usize,
+) -> Vec<Option<usize>> {
     let mut line_to_fn = vec![None; total_lines];
     for (fn_idx, function_facts) in facts.iter().enumerate() {
-        for line_idx in function_facts.function.start..=function_facts.function.end {
-            if line_idx < total_lines {
-                line_to_fn[line_idx] = Some(fn_idx);
-            }
+        for slot in line_to_fn
+            .iter_mut()
+            .take(function_facts.function.end.saturating_add(1))
+            .skip(function_facts.function.start)
+        {
+            *slot = Some(fn_idx);
         }
     }
     line_to_fn
 }
 
-fn build_block_end_map(lines: &[String]) -> Vec<Option<usize>> {
+pub(crate) fn build_block_end_map(lines: &[String]) -> Vec<Option<usize>> {
     let mut ends = vec![None; lines.len()];
     let mut stack: Vec<usize> = Vec::new();
     for (idx, line) in lines.iter().enumerate() {
@@ -51,14 +64,17 @@ fn build_block_end_map(lines: &[String]) -> Vec<Option<usize>> {
     ends
 }
 
-fn expr_is_simple_scalar_index_read(rhs: &str) -> bool {
+pub(crate) fn expr_is_simple_scalar_index_read(rhs: &str) -> bool {
     static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
     RE.get_or_init(|| super::compile_regex(format!(r"^{}\[[^\],]+\]$", super::IDENT_PATTERN)))
         .as_ref()
         .is_some_and(|re| re.is_match(rhs.trim()))
 }
 
-fn expr_is_inlineable_named_scalar_rhs(rhs: &str, pure_user_calls: &FxHashSet<String>) -> bool {
+pub(crate) fn expr_is_inlineable_named_scalar_rhs(
+    rhs: &str,
+    pure_user_calls: &FxHashSet<String>,
+) -> bool {
     let rhs = rhs.trim();
     expr_is_simple_scalar_index_read(rhs)
         || (rhs.starts_with("rr_")
@@ -67,7 +83,10 @@ fn expr_is_inlineable_named_scalar_rhs(rhs: &str, pure_user_calls: &FxHashSet<St
             && expr_has_only_pure_calls(rhs, pure_user_calls))
 }
 
-fn expr_is_inlineable_named_scalar_expr(rhs: &str, pure_user_calls: &FxHashSet<String>) -> bool {
+pub(crate) fn expr_is_inlineable_named_scalar_expr(
+    rhs: &str,
+    pure_user_calls: &FxHashSet<String>,
+) -> bool {
     let rhs = rhs.trim();
     if rhs.is_empty()
         || plain_ident_re().is_some_and(|re| re.is_match(rhs))
@@ -82,7 +101,28 @@ fn expr_is_inlineable_named_scalar_expr(rhs: &str, pure_user_calls: &FxHashSet<S
     !rhs.contains("rr_") || expr_has_only_pure_calls(rhs, pure_user_calls)
 }
 
-pub(in super::super) fn rewrite_temp_uses_after_named_copy_with_cache(
+pub(crate) fn next_definition_reads_previous_value(
+    facts: &FunctionFacts,
+    lhs: &str,
+    idx: usize,
+) -> bool {
+    let Some(next_def) = facts
+        .defs
+        .get(lhs)
+        .and_then(|defs| defs.iter().copied().find(|line_idx| *line_idx > idx))
+    else {
+        return false;
+    };
+
+    facts
+        .line_facts
+        .get(next_def.saturating_sub(facts.function.start))
+        .is_some_and(|fact| {
+            fact.lhs.as_deref() == Some(lhs) && fact.idents.iter().any(|ident| ident == lhs)
+        })
+}
+
+pub(crate) fn rewrite_temp_uses_after_named_copy_with_cache(
     lines: Vec<String>,
     cache: &mut PeepholeAnalysisCache,
 ) -> Vec<String> {
@@ -155,12 +195,12 @@ pub(in super::super) fn rewrite_temp_uses_after_named_copy_with_cache(
     out
 }
 
-pub(super) fn rewrite_temp_uses_after_named_copy(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_temp_uses_after_named_copy(lines: Vec<String>) -> Vec<String> {
     let mut analysis_cache = PeepholeAnalysisCache::default();
     rewrite_temp_uses_after_named_copy_with_cache(lines, &mut analysis_cache)
 }
 
-pub(in super::super) fn run_immediate_single_use_inline_bundle_with_cache(
+pub(crate) fn run_immediate_single_use_inline_bundle_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     cache: &mut PeepholeAnalysisCache,
@@ -244,6 +284,9 @@ pub(in super::super) fn run_immediate_single_use_inline_bundle_with_cache(
                 .get(lhs)
                 .and_then(|defs| defs.iter().copied().find(|line_idx| *line_idx > idx))
                 .unwrap_or(facts.function.end + 1);
+            if next_definition_reads_previous_value(facts, lhs, idx) {
+                continue;
+            }
             let use_lines = uses_in_region(facts, lhs, idx, next_def);
             if use_lines != [next_idx] {
                 continue;
@@ -275,19 +318,19 @@ pub(in super::super) fn run_immediate_single_use_inline_bundle_with_cache(
     (out, profile)
 }
 
-pub(in super::super) fn inline_immediate_single_use_scalar_temps_with_cache(
+pub(crate) fn inline_immediate_single_use_scalar_temps_with_cache(
     lines: Vec<String>,
     cache: &mut PeepholeAnalysisCache,
 ) -> Vec<String> {
     run_immediate_single_use_inline_bundle_with_cache(lines, &FxHashSet::default(), cache).0
 }
 
-pub(super) fn inline_immediate_single_use_scalar_temps(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn inline_immediate_single_use_scalar_temps(lines: Vec<String>) -> Vec<String> {
     let mut analysis_cache = PeepholeAnalysisCache::default();
     inline_immediate_single_use_scalar_temps_with_cache(lines, &mut analysis_cache)
 }
 
-fn inline_named_scalar_index_reads_within_straight_line_region_impl(
+pub(crate) fn inline_named_scalar_index_reads_within_straight_line_region_impl(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     min_uses: usize,
@@ -341,6 +384,9 @@ fn inline_named_scalar_index_reads_within_straight_line_region_impl(
                 .get(lhs)
                 .and_then(|defs| defs.iter().copied().find(|line_idx| *line_idx > idx))
                 .unwrap_or(facts.function.end + 1);
+            if next_definition_reads_previous_value(facts, lhs, idx) {
+                continue;
+            }
             let region_end = line_fact.inline_region_end.min(next_def);
             let use_lines = uses_in_region(facts, lhs, idx, region_end);
             let Some(&first_use) = use_lines.first() else {
@@ -386,7 +432,7 @@ fn inline_named_scalar_index_reads_within_straight_line_region_impl(
     out
 }
 
-pub(super) fn inline_single_use_named_scalar_index_reads_within_straight_line_region(
+pub(crate) fn inline_single_use_named_scalar_index_reads_within_straight_line_region(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
@@ -400,7 +446,7 @@ pub(super) fn inline_single_use_named_scalar_index_reads_within_straight_line_re
     )
 }
 
-pub(super) fn inline_one_or_two_use_named_scalar_index_reads_within_straight_line_region(
+pub(crate) fn inline_one_or_two_use_named_scalar_index_reads_within_straight_line_region(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
@@ -414,7 +460,7 @@ pub(super) fn inline_one_or_two_use_named_scalar_index_reads_within_straight_lin
     )
 }
 
-pub(in super::super) fn inline_one_or_two_use_named_scalar_index_reads_within_straight_line_region_with_cache(
+pub(crate) fn inline_one_or_two_use_named_scalar_index_reads_within_straight_line_region_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     cache: &mut PeepholeAnalysisCache,
@@ -428,7 +474,7 @@ pub(in super::super) fn inline_one_or_two_use_named_scalar_index_reads_within_st
     )
 }
 
-pub(in super::super) fn inline_immediate_single_use_named_scalar_exprs_with_cache(
+pub(crate) fn inline_immediate_single_use_named_scalar_exprs_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     cache: &mut PeepholeAnalysisCache,
@@ -436,7 +482,7 @@ pub(in super::super) fn inline_immediate_single_use_named_scalar_exprs_with_cach
     run_immediate_single_use_inline_bundle_with_cache(lines, pure_user_calls, cache).0
 }
 
-pub(super) fn inline_immediate_single_use_named_scalar_exprs(
+pub(crate) fn inline_immediate_single_use_named_scalar_exprs(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
@@ -448,41 +494,21 @@ pub(super) fn inline_immediate_single_use_named_scalar_exprs(
     )
 }
 
-pub(in super::super) fn hoist_branch_local_named_scalar_assigns_used_after_branch_with_cache(
+pub(crate) fn hoist_branch_local_named_scalar_assigns_used_after_branch_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     cache: &mut PeepholeAnalysisCache,
 ) -> Vec<String> {
-    if !lines
-        .iter()
-        .any(|line| line.trim_start().starts_with("if ") && line.trim_end().ends_with('{'))
-    {
+    if !has_if_block(&lines) {
         return lines;
     }
     let mut out = lines;
     let function_facts = cached_function_facts(cache, &out);
-    let line_to_fn = build_line_to_function(&function_facts, out.len());
+    let line_to_fn = build_line_to_function(function_facts, out.len());
     let block_end_map = build_block_end_map(&out);
     let function_has_branch_hoist_candidate = function_facts
         .iter()
-        .map(|facts| {
-            facts.line_facts.iter().any(|fact| {
-                let Some(lhs) = fact.lhs.as_deref() else {
-                    return false;
-                };
-                let Some(rhs) = fact.rhs.as_deref() else {
-                    return false;
-                };
-                plain_ident_re().is_some_and(|re| re.is_match(lhs))
-                    && !lhs.starts_with(".arg_")
-                    && !lhs.starts_with(".__rr_cse_")
-                    && expr_is_inlineable_named_scalar_rhs(rhs, pure_user_calls)
-                    && facts
-                        .uses
-                        .get(lhs)
-                        .is_some_and(|uses| uses.iter().any(|line_idx| *line_idx > fact.line_idx))
-            })
-        })
+        .map(|facts| function_has_branch_hoist_candidate(facts, pure_user_calls))
         .collect::<Vec<_>>();
     let mut idx = 0usize;
     while idx < out.len() {
@@ -506,92 +532,16 @@ pub(in super::super) fn hoist_branch_local_named_scalar_assigns_used_after_branc
         let Some(end_idx) = block_end_map[idx] else {
             break;
         };
-        let mut trailing = Vec::new();
-        let mut scan = end_idx;
-        while scan > idx + 1 {
-            scan -= 1;
-            let trimmed_line = out[scan].trim();
-            if trimmed_line.is_empty() {
-                continue;
-            }
-            let Some(scan_fact) = facts
-                .line_facts
-                .get(scan.saturating_sub(facts.function.start))
-            else {
-                break;
-            };
-            if !scan_fact.is_assign {
-                break;
-            }
-            let Some(lhs) = scan_fact.lhs.as_deref() else {
-                break;
-            };
-            let Some(rhs) = scan_fact.rhs.as_deref() else {
-                break;
-            };
-            if !plain_ident_re().is_some_and(|re| re.is_match(lhs))
-                || lhs.starts_with(".arg_")
-                || lhs.starts_with(".__rr_cse_")
-                || !expr_is_inlineable_named_scalar_rhs(rhs, pure_user_calls)
-            {
-                break;
-            }
-            trailing.push(scan);
-        }
+        let trailing =
+            branch_trailing_hoist_assignments(&out, facts, idx, end_idx, pure_user_calls);
         if trailing.is_empty() {
             idx = end_idx + 1;
             continue;
         }
-        trailing.reverse();
-
-        let mut hoisted = Vec::new();
-        for assign_idx in trailing {
-            let Some(assign_fact) = facts
-                .line_facts
-                .get(assign_idx.saturating_sub(facts.function.start))
-            else {
-                continue;
-            };
-            let Some(lhs) = assign_fact.lhs.as_deref() else {
-                continue;
-            };
-            let Some(_rhs) = assign_fact.rhs.as_deref() else {
-                continue;
-            };
-            if guard_idents.iter().any(|ident| ident == &lhs) {
-                continue;
-            }
-            let dep_written_in_branch = assign_fact.idents.iter().any(|dep| {
-                facts.defs.get(dep).is_some_and(|defs| {
-                    defs.iter()
-                        .copied()
-                        .any(|line_idx| line_idx > idx && line_idx < assign_idx)
-                })
-            });
-            if dep_written_in_branch {
-                continue;
-            }
-
-            let next_def = facts
-                .defs
-                .get(lhs)
-                .and_then(|defs| defs.iter().copied().find(|line_idx| *line_idx > assign_idx))
-                .unwrap_or(facts.function.end + 1);
-            let used_after = facts.uses.get(lhs).is_some_and(|uses| {
-                uses.iter()
-                    .copied()
-                    .any(|line_idx| line_idx > end_idx && line_idx < next_def)
-            });
-            if used_after {
-                hoisted.push(out[assign_idx].clone());
-                out[assign_idx].clear();
-            }
-        }
+        let hoisted = collect_branch_hoists(&mut out, facts, &guard_idents, idx, end_idx, trailing);
 
         if !hoisted.is_empty() {
-            for (offset, line) in hoisted.into_iter().enumerate() {
-                out.insert(idx + offset, line);
-            }
+            insert_hoisted_branch_assignments(&mut out, idx, hoisted);
             idx = end_idx + 1;
             continue;
         }
@@ -601,7 +551,7 @@ pub(in super::super) fn hoist_branch_local_named_scalar_assigns_used_after_branc
     out
 }
 
-pub(super) fn hoist_branch_local_named_scalar_assigns_used_after_branch(
+pub(crate) fn hoist_branch_local_named_scalar_assigns_used_after_branch(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
@@ -613,7 +563,7 @@ pub(super) fn hoist_branch_local_named_scalar_assigns_used_after_branch(
     )
 }
 
-pub(super) fn inline_two_use_named_scalar_index_reads_within_straight_line_region(
+pub(crate) fn inline_two_use_named_scalar_index_reads_within_straight_line_region(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {
@@ -627,7 +577,7 @@ pub(super) fn inline_two_use_named_scalar_index_reads_within_straight_line_regio
     )
 }
 
-fn inline_scalar_temps_within_straight_line_region_impl(
+pub(crate) fn inline_scalar_temps_within_straight_line_region_impl(
     lines: Vec<String>,
     min_uses: usize,
     max_uses: usize,
@@ -662,6 +612,9 @@ fn inline_scalar_temps_within_straight_line_region_impl(
                 .get(lhs)
                 .and_then(|defs| defs.iter().copied().find(|line_idx| *line_idx > idx))
                 .unwrap_or(facts.function.end + 1);
+            if next_definition_reads_previous_value(facts, lhs, idx) {
+                continue;
+            }
             let next_dep_write = line_fact
                 .idents
                 .iter()
@@ -710,21 +663,21 @@ fn inline_scalar_temps_within_straight_line_region_impl(
     out
 }
 
-pub(super) fn inline_one_or_two_use_scalar_temps_within_straight_line_region(
+pub(crate) fn inline_one_or_two_use_scalar_temps_within_straight_line_region(
     lines: Vec<String>,
 ) -> Vec<String> {
     let mut analysis_cache = PeepholeAnalysisCache::default();
     inline_scalar_temps_within_straight_line_region_impl(lines, 1, 2, &mut analysis_cache)
 }
 
-pub(in super::super) fn inline_one_or_two_use_scalar_temps_within_straight_line_region_with_cache(
+pub(crate) fn inline_one_or_two_use_scalar_temps_within_straight_line_region_with_cache(
     lines: Vec<String>,
     cache: &mut PeepholeAnalysisCache,
 ) -> Vec<String> {
     inline_scalar_temps_within_straight_line_region_impl(lines, 1, 2, cache)
 }
 
-pub(in super::super) fn run_named_index_scalar_region_inline_bundle_with_cache(
+pub(crate) fn run_named_index_scalar_region_inline_bundle_with_cache(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
     cache: &mut PeepholeAnalysisCache,
@@ -770,6 +723,9 @@ pub(in super::super) fn run_named_index_scalar_region_inline_bundle_with_cache(
                 .get(lhs)
                 .and_then(|defs| defs.iter().copied().find(|line_idx| *line_idx > idx))
                 .unwrap_or(facts.function.end + 1);
+            if next_definition_reads_previous_value(facts, lhs, idx) {
+                continue;
+            }
             let region_end = line_fact.inline_region_end.min(next_def);
             let use_lines = uses_in_region(facts, lhs, idx, region_end);
             let Some(&first_use) = use_lines.first() else {
@@ -836,6 +792,9 @@ pub(in super::super) fn run_named_index_scalar_region_inline_bundle_with_cache(
                 .get(lhs)
                 .and_then(|defs| defs.iter().copied().find(|line_idx| *line_idx > idx))
                 .unwrap_or(facts.function.end + 1);
+            if next_definition_reads_previous_value(facts, lhs, idx) {
+                continue;
+            }
             let next_dep_write = line_fact
                 .idents
                 .iter()
@@ -886,28 +845,28 @@ pub(in super::super) fn run_named_index_scalar_region_inline_bundle_with_cache(
     (out, profile)
 }
 
-pub(super) fn inline_single_use_scalar_temps_within_straight_line_region(
+pub(crate) fn inline_single_use_scalar_temps_within_straight_line_region(
     lines: Vec<String>,
 ) -> Vec<String> {
     let mut analysis_cache = PeepholeAnalysisCache::default();
     inline_scalar_temps_within_straight_line_region_impl(lines, 1, 1, &mut analysis_cache)
 }
 
-pub(super) fn inline_two_use_scalar_temps_within_straight_line_region(
+pub(crate) fn inline_two_use_scalar_temps_within_straight_line_region(
     lines: Vec<String>,
 ) -> Vec<String> {
     let mut analysis_cache = PeepholeAnalysisCache::default();
     inline_scalar_temps_within_straight_line_region_impl(lines, 2, 2, &mut analysis_cache)
 }
 
-pub(in super::super) fn inline_immediate_single_use_index_temps_with_cache(
+pub(crate) fn inline_immediate_single_use_index_temps_with_cache(
     lines: Vec<String>,
     cache: &mut PeepholeAnalysisCache,
 ) -> Vec<String> {
     run_immediate_single_use_inline_bundle_with_cache(lines, &FxHashSet::default(), cache).0
 }
 
-pub(super) fn inline_immediate_single_use_index_temps(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn inline_immediate_single_use_index_temps(lines: Vec<String>) -> Vec<String> {
     let mut analysis_cache = PeepholeAnalysisCache::default();
     inline_immediate_single_use_index_temps_with_cache(lines, &mut analysis_cache)
 }

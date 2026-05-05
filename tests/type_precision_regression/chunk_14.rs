@@ -1,7 +1,7 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn methods_constructor_exports_have_direct_types() {
+pub(crate) fn methods_constructor_exports_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -64,9 +64,10 @@ fn methods_constructor_exports_have_direct_types() {
 }
 
 #[test]
-fn grid_remaining_helpers_have_direct_types() {
+pub(crate) fn grid_remaining_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["arg".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Char;
 
     let b0 = fn_ir.add_block();
@@ -148,14 +149,16 @@ fn grid_remaining_helpers_have_direct_types() {
 }
 
 #[test]
-fn base_direct_namespace_object_helpers_have_builtin_types() {
+pub(crate) fn base_direct_namespace_object_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["xs".to_string(), "pkg".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Double));
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[1] = TypeTerm::Char;
 
     let b0 = fn_ir.add_block();

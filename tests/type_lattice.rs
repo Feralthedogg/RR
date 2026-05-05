@@ -1,4 +1,4 @@
-use RR::typeck::{NaTy, PrimTy, ShapeTy, TypeState};
+use rr::compiler::internal::typeck::{NaTy, PrimTy, ShapeTy, TypeState};
 
 #[test]
 fn lattice_join_promotes_numeric_and_merges_na() {

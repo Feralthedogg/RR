@@ -8,24 +8,24 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone)]
-pub(in super::super) struct MetricHelper {
-    pub(super) name_param: String,
-    pub(super) value_param: String,
-    pub(super) pre_name_lines: Vec<String>,
-    pub(super) pre_value_lines: Vec<String>,
+pub(crate) struct MetricHelper {
+    pub(crate) name_param: String,
+    pub(crate) value_param: String,
+    pub(crate) pre_name_lines: Vec<String>,
+    pub(crate) pre_value_lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(in super::super) struct MetricHelperCache {
-    signature: Option<u64>,
-    helpers: FxHashMap<String, MetricHelper>,
+pub(crate) struct MetricHelperCache {
+    pub(crate) signature: Option<u64>,
+    pub(crate) helpers: FxHashMap<String, MetricHelper>,
 }
 
-fn has_metric_helper_candidates(lines: &[String]) -> bool {
+pub(crate) fn has_metric_helper_candidates(lines: &[String]) -> bool {
     lines.iter().any(|line| line.contains("print("))
 }
 
-fn function_defs_signature(lines: &[String]) -> u64 {
+pub(crate) fn function_defs_signature(lines: &[String]) -> u64 {
     let mut hasher = DefaultHasher::new();
     for func in build_function_text_index(lines, parse_function_header) {
         for line in lines.iter().take(func.end + 1).skip(func.start) {
@@ -35,9 +35,7 @@ fn function_defs_signature(lines: &[String]) -> u64 {
     hasher.finish()
 }
 
-pub(in super::super) fn collect_metric_helpers(
-    lines: &[String],
-) -> FxHashMap<String, MetricHelper> {
+pub(crate) fn collect_metric_helpers(lines: &[String]) -> FxHashMap<String, MetricHelper> {
     let mut out = FxHashMap::default();
     for func in build_function_text_index(lines, parse_function_header) {
         let Some(fn_name) = func.name.as_ref() else {
@@ -91,7 +89,7 @@ pub(in super::super) fn collect_metric_helpers(
     out
 }
 
-fn cached_metric_helpers(
+pub(crate) fn cached_metric_helpers(
     cache: &mut MetricHelperCache,
     lines: &[String],
 ) -> FxHashMap<String, MetricHelper> {
@@ -103,22 +101,22 @@ fn cached_metric_helpers(
     cache.helpers.clone()
 }
 
-pub(in super::super) fn rewrite_metric_helper_return_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_metric_helper_return_calls(lines: Vec<String>) -> Vec<String> {
     rewrite_metric_helper_return_calls_ir(lines)
 }
 
-pub(in super::super) fn rewrite_metric_helper_return_calls_with_cache(
+pub(crate) fn rewrite_metric_helper_return_calls_with_cache(
     lines: Vec<String>,
     _cache: &mut MetricHelperCache,
 ) -> Vec<String> {
     rewrite_metric_helper_return_calls_ir(lines)
 }
 
-pub(in super::super) fn rewrite_metric_helper_statement_calls(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_metric_helper_statement_calls(lines: Vec<String>) -> Vec<String> {
     rewrite_metric_helper_statement_calls_ir(lines)
 }
 
-pub(in super::super) fn rewrite_metric_helper_statement_calls_with_cache(
+pub(crate) fn rewrite_metric_helper_statement_calls_with_cache(
     lines: Vec<String>,
     _cache: &mut MetricHelperCache,
 ) -> Vec<String> {

@@ -1,39 +1,39 @@
 #[path = "call_model_package_surface/base.rs"]
-mod base;
+pub(crate) mod base;
 #[path = "call_model_package_surface/compiler.rs"]
-mod compiler;
+pub(crate) mod compiler;
 #[path = "call_model_package_surface/dplyr.rs"]
-mod dplyr;
+pub(crate) mod dplyr;
 #[path = "call_model_package_surface/ggplot2.rs"]
-mod ggplot2;
+pub(crate) mod ggplot2;
 #[path = "call_model_package_surface/graphics.rs"]
-mod graphics;
+pub(crate) mod graphics;
 #[path = "call_model_package_surface/grdevices.rs"]
-mod grdevices;
+pub(crate) mod grdevices;
 #[path = "call_model_package_surface/grid.rs"]
-mod grid;
+pub(crate) mod grid;
 #[path = "call_model_package_surface/methods.rs"]
-mod methods;
+pub(crate) mod methods;
 #[path = "call_model_package_surface/parallel.rs"]
-mod parallel;
+pub(crate) mod parallel;
 #[path = "call_model_package_surface/readr.rs"]
-mod readr;
+pub(crate) mod readr;
 #[path = "call_model_package_surface/runtime.rs"]
-mod runtime;
+pub(crate) mod runtime;
 #[path = "call_model_package_surface/splines.rs"]
-mod splines;
+pub(crate) mod splines;
 #[path = "call_model_package_surface/stats.rs"]
-mod stats;
+pub(crate) mod stats;
 #[path = "call_model_package_surface/stats4.rs"]
-mod stats4;
+pub(crate) mod stats4;
 #[path = "call_model_package_surface/tcltk.rs"]
-mod tcltk;
+pub(crate) mod tcltk;
 #[path = "call_model_package_surface/tidyr.rs"]
-mod tidyr;
+pub(crate) mod tidyr;
 #[path = "call_model_package_surface/tools.rs"]
-mod tools;
+pub(crate) mod tools;
 #[path = "call_model_package_surface/utils.rs"]
-mod utils;
+pub(crate) mod utils;
 
 pub(crate) fn is_supported_package_call(name: &str) -> bool {
     base::contains(name)

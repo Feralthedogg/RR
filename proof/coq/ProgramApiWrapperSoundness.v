@@ -1,8 +1,8 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.PhasePlanSoundness.
-Require Import RRProofs.ProgramOptPlanSoundness.
-Require Import RRProofs.ProgramPhasePipelineSoundness.
-Require Import RRProofs.ProgramRunProfileInnerSoundness.
+Require Import MirInvariantBundle.
+Require Import PhasePlanSoundness.
+Require Import ProgramOptPlanSoundness.
+Require Import ProgramPhasePipelineSoundness.
+Require Import ProgramRunProfileInnerSoundness.
 
 Module RRProgramApiWrapperSoundness.
 

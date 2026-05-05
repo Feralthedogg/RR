@@ -1,4 +1,5 @@
-fn emit_matrix_map_guards(
+use super::*;
+pub(crate) fn emit_matrix_map_guards(
     fn_ir: &mut FnIR,
     preheader: crate::mir::BlockId,
     operands: &[MatrixMapOperands],
@@ -9,7 +10,7 @@ fn emit_matrix_map_guards(
     }
 }
 
-fn emit_array3_map_guards(
+pub(crate) fn emit_array3_map_guards(
     fn_ir: &mut FnIR,
     preheader: crate::mir::BlockId,
     operands: &[Array3MapOperands],
@@ -20,7 +21,12 @@ fn emit_array3_map_guards(
     }
 }
 
-fn build_guard_bool(fn_ir: &mut FnIR, callee: &str, lhs: ValueId, rhs: ValueId) -> ValueId {
+pub(crate) fn build_guard_bool(
+    fn_ir: &mut FnIR,
+    callee: &str,
+    lhs: ValueId,
+    rhs: ValueId,
+) -> ValueId {
     fn_ir.add_value(
         ValueKind::Call {
             callee: callee.to_string(),
@@ -33,7 +39,7 @@ fn build_guard_bool(fn_ir: &mut FnIR, callee: &str, lhs: ValueId, rhs: ValueId) 
     )
 }
 
-fn combine_guard_terms(fn_ir: &mut FnIR, terms: Vec<ValueId>) -> Option<ValueId> {
+pub(crate) fn combine_guard_terms(fn_ir: &mut FnIR, terms: Vec<ValueId>) -> Option<ValueId> {
     let mut iter = terms.into_iter();
     let mut acc = iter.next()?;
     for term in iter {
@@ -51,7 +57,7 @@ fn combine_guard_terms(fn_ir: &mut FnIR, terms: Vec<ValueId>) -> Option<ValueId>
     Some(acc)
 }
 
-fn build_matrix_map_guard_cond(
+pub(crate) fn build_matrix_map_guard_cond(
     fn_ir: &mut FnIR,
     operands: &[MatrixMapOperands],
 ) -> Option<ValueId> {
@@ -73,7 +79,7 @@ fn build_matrix_map_guard_cond(
     combine_guard_terms(fn_ir, terms)
 }
 
-fn build_vector_map_guard_cond(
+pub(crate) fn build_vector_map_guard_cond(
     fn_ir: &mut FnIR,
     operands: &[VectorMapOperands],
 ) -> Option<ValueId> {
@@ -95,7 +101,7 @@ fn build_vector_map_guard_cond(
     combine_guard_terms(fn_ir, terms)
 }
 
-fn build_vector_reduce_guard_cond(
+pub(crate) fn build_vector_reduce_guard_cond(
     fn_ir: &mut FnIR,
     operands: &[VectorReduceOperands],
 ) -> Option<ValueId> {
@@ -115,7 +121,7 @@ fn build_vector_reduce_guard_cond(
     combine_guard_terms(fn_ir, terms)
 }
 
-fn build_array3_map_guard_cond(
+pub(crate) fn build_array3_map_guard_cond(
     fn_ir: &mut FnIR,
     operands: &[Array3MapOperands],
 ) -> Option<ValueId> {
@@ -137,7 +143,7 @@ fn build_array3_map_guard_cond(
     combine_guard_terms(fn_ir, terms)
 }
 
-fn build_matrix_rect_reduce_guard_cond(
+pub(crate) fn build_matrix_rect_reduce_guard_cond(
     fn_ir: &mut FnIR,
     operands: &[MatrixRectReduceOperands],
 ) -> Option<ValueId> {
@@ -163,7 +169,7 @@ fn build_matrix_rect_reduce_guard_cond(
     combine_guard_terms(fn_ir, terms)
 }
 
-fn build_matrix_col_reduce_guard_cond(
+pub(crate) fn build_matrix_col_reduce_guard_cond(
     fn_ir: &mut FnIR,
     operands: &[MatrixColReduceOperands],
 ) -> Option<ValueId> {
@@ -183,7 +189,7 @@ fn build_matrix_col_reduce_guard_cond(
     combine_guard_terms(fn_ir, terms)
 }
 
-fn build_array3_dim1_reduce_guard_cond(
+pub(crate) fn build_array3_dim1_reduce_guard_cond(
     fn_ir: &mut FnIR,
     operands: &[Array3Dim1ReduceOperands],
 ) -> Option<ValueId> {
@@ -209,7 +215,7 @@ fn build_array3_dim1_reduce_guard_cond(
     combine_guard_terms(fn_ir, terms)
 }
 
-fn build_array3_cube_reduce_guard_cond(
+pub(crate) fn build_array3_cube_reduce_guard_cond(
     fn_ir: &mut FnIR,
     operands: &[Array3CubeReduceOperands],
 ) -> Option<ValueId> {

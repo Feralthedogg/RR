@@ -1,10 +1,10 @@
 use super::TachyonEngine;
-use crate::mir::*;
+use super::*;
 use crate::syntax::ast::BinOp;
 use rustc_hash::FxHashMap;
 
 impl TachyonEngine {
-    pub(super) fn check_elimination(&self, fn_ir: &mut FnIR) -> bool {
+    pub(crate) fn check_elimination(&self, fn_ir: &mut FnIR) -> bool {
         let mut changed = false;
         let facts = crate::mir::flow::DataflowSolver::analyze_function(fn_ir);
 
@@ -59,7 +59,7 @@ impl TachyonEngine {
         changed
     }
 
-    pub(super) fn is_safe_access(
+    pub(crate) fn is_safe_access(
         &self,
         fn_ir: &FnIR,
         base_id: ValueId,
@@ -73,7 +73,7 @@ impl TachyonEngine {
         false
     }
 
-    pub(super) fn is_derived_from_len(
+    pub(crate) fn is_derived_from_len(
         &self,
         fn_ir: &FnIR,
         val_id: ValueId,
@@ -101,7 +101,7 @@ impl TachyonEngine {
         }
     }
 
-    pub(super) fn is_loop_induction(
+    pub(crate) fn is_loop_induction(
         &self,
         fn_ir: &FnIR,
         val_id: ValueId,

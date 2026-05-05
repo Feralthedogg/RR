@@ -1,7 +1,7 @@
 #[path = "call_model_builtin_surface.rs"]
-mod call_model_builtin_surface;
+pub(crate) mod call_model_builtin_surface;
 #[path = "call_model_package_surface.rs"]
-mod call_model_package_surface;
+pub(crate) mod call_model_package_surface;
 
 pub(crate) use self::call_model_builtin_surface::{
     builtin_arity, is_dynamic_fallback_builtin, is_namespaced_r_call, is_tidy_data_mask_call,

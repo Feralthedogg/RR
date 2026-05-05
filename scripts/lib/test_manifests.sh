@@ -98,12 +98,14 @@ RR_TIER0_FAST_TESTS=(
   type_solver_nested_generic
   lowering_pipe_try_match
   compiler_hardcode_guard
+  fuzz_internal_feature_contract
   compiler_parallel_defaults
   compiler_parallel_determinism
   compiler_parallel_equivalence
   compiler_parallel_thresholds
   tachyon_pass_plan
   parallel_cli_flags
+  cli_compile_surface_matrix
   cli_option_errors
   cli_quiet_log
   compile_profile_smoke
@@ -125,6 +127,7 @@ RR_TIER0_FAST_TESTS=(
   loop_carried_state_regression
   loop_shadow_scoping
   mir_lowering_loop_match
+  unsafe_r
 )
 
 RR_TIER2_EXACT_TESTS=()
@@ -187,6 +190,7 @@ RR_OPTIMIZER_LEGALITY_TESTS=(
   vectorization_loop_state_regression
   vectorization_phi_default_regression
   vectorization_phi_ifelse
+  vectorization_reduction_rebind
   vectorization_same_base_shift
 )
 
@@ -202,6 +206,7 @@ RR_OPTIMIZER_HEAVY_TESTS=(
   poly_for_tile_3d
   poly_generic_mir
   poly_isl_backend
+  poly_r_backend_cost_model
   poly_nested_3d
   poly_nested_3d_interchange
   poly_structured_axes
@@ -276,6 +281,7 @@ RR_TIER2_MAIN_TESTS=(
   unicode_peephole_regression
   module_export_cache_invalidation
   module_export_cache_equivalence
+  mutated_aggregate_assignment_regression
   r_emit_regressions
   watch_incremental_session
   verification_summary_smoke

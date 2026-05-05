@@ -1,5 +1,5 @@
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, compile_with_config};
 
 #[test]
 fn o2_vector_callmap_emits_intrinsic_helpers() {

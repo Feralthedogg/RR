@@ -29,6 +29,55 @@ not listed there, do not assume RR models it deeply even if it still emits runna
 direct surface through a conservative package-wide fallback, but they default to
 opaque/object-like typing unless a more precise rule is documented below.
 
+## Unsafe Raw R Escape Hatch
+
+For code that intentionally needs RR to stop reasoning and emit raw R, use a
+statement-level unsafe block:
+
+```rust
+unsafe r {
+  options(warn = 2)
+  print(getOption("warn"))
+}
+```
+
+Read-only logging/probing code can use the narrower form:
+
+```rust
+unsafe r(read) {
+  print(getOption("warn"))
+}
+```
+
+This is separate from package interop. Package interop still goes through RR's
+direct/opaque/hybrid tiers. `unsafe r { ... }` instead preserves the raw R text,
+marks the containing function as opaque interop, and disables post-emission raw
+text rewrites for that function. Use it for deliberate escape-hatch code, not as
+the default way to call normal R packages.
+
+Raw R runs inside the generated R function frame, so it can read RR parameters
+and locals by name and can assign back to those local bindings. RR intentionally
+does not provide a string-template capture layer yet; compiler temporaries and
+mangled trait/generic helper symbols are outside the stable interop contract.
+After an `unsafe r` block, RR conservatively reloads visible function-frame
+locals so later RR statements observe possible raw-R assignments. This does not
+claim a deeper closure/nested-environment contract; if RR adds richer captured
+environment lowering, `unsafe r` capture and invalidation rules must be audited
+again.
+
+`unsafe r(read)` is the exception for raw R that promises not to assign to RR
+locals. It still emits the raw R statement in place and keeps post-emission raw
+text rewrites disabled for emitted output that contains the raw R escape, but it
+does not mark the MIR function opaque and does not reload RR locals afterward.
+Use the read/write form when raw R assignments must be visible to later RR
+statements.
+
+`unsafe r` is also separate from Rust `unsafe` inside the compiler
+implementation. The user-facing block is an optimization and typechecking
+boundary for raw R; it does not relax the compiler's Rust unsafe policy. See
+[Unsafe Boundaries](compiler/unsafe-boundaries.md) for the implementation-side
+contract.
+
 ## Current Package Status
 
 As of the current RR surface:

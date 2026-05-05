@@ -1,7 +1,7 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn stats_wrapper_helpers_have_direct_types() {
+pub(crate) fn stats_wrapper_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -9,37 +9,41 @@ fn stats_wrapper_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let a = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("a".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "a".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let b = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("b".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "b".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -177,7 +181,7 @@ fn stats_wrapper_helpers_have_direct_types() {
 }
 
 #[test]
-fn stats_termplot_helpers_have_direct_types() {
+pub(crate) fn stats_termplot_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -185,7 +189,9 @@ fn stats_termplot_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("mpg ~ wt + hp".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "mpg ~ wt + hp".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -199,7 +205,7 @@ fn stats_termplot_helpers_have_direct_types() {
         None,
     );
     let false_v = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Bool(false)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Bool(false)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -259,7 +265,7 @@ fn stats_termplot_helpers_have_direct_types() {
 }
 
 #[test]
-fn stats_structure_helpers_have_direct_types() {
+pub(crate) fn stats_structure_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -267,37 +273,37 @@ fn stats_structure_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(1)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -343,7 +349,7 @@ fn stats_structure_helpers_have_direct_types() {
         None,
     );
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str(
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
             "yield ~ block + N*P*K".to_string(),
         )),
         Span::dummy(),
@@ -413,19 +419,25 @@ fn stats_structure_helpers_have_direct_types() {
         None,
     );
     let id_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("id".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "id".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let time_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("time".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "time".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let direction = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("wide".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "wide".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,

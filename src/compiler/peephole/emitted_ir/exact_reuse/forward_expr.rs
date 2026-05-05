@@ -1,4 +1,5 @@
-pub(in super::super) fn rewrite_forward_exact_expr_reuse_ir(lines: Vec<String>) -> Vec<String> {
+use super::*;
+pub(crate) fn rewrite_forward_exact_expr_reuse_ir(lines: Vec<String>) -> Vec<String> {
     if !lines.iter().any(|line| line.contains("<-")) {
         return lines;
     }
@@ -7,7 +8,7 @@ pub(in super::super) fn rewrite_forward_exact_expr_reuse_ir(lines: Vec<String>) 
     program.into_lines()
 }
 
-fn apply_rewrite_forward_exact_expr_reuse_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_rewrite_forward_exact_expr_reuse_ir(program: &mut EmittedProgram) {
     let debug = std::env::var_os("RR_DEBUG_IR_EXACT_EXPR").is_some();
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
@@ -67,25 +68,23 @@ fn apply_rewrite_forward_exact_expr_reuse_ir(program: &mut EmittedProgram) {
                         if next_rhs.contains(&rhs) {
                             if lhs_reassigned_later {
                                 should_continue = true;
-                            } else {
-                                if let Some(new_text) = replace_exact_rhs_occurrence(
-                                    &function.body[line_no],
-                                    &rhs,
-                                    &replacement_symbol,
-                                ) {
-                                    if debug {
-                                        eprintln!(
-                                            "RR_DEBUG_IR_EXACT_EXPR rewrite cand_line={} lhs=`{}` rhs=`{}` target_line={} before=`{}` after=`{}`",
-                                            idx + 1,
-                                            lhs,
-                                            rhs,
-                                            line_no + 1,
-                                            function.body[line_no].text.trim(),
-                                            new_text.trim()
-                                        );
-                                    }
-                                    function.body[line_no].replace_text(new_text);
+                            } else if let Some(new_text) = replace_exact_rhs_occurrence(
+                                &function.body[line_no],
+                                &rhs,
+                                &replacement_symbol,
+                            ) {
+                                if debug {
+                                    eprintln!(
+                                        "RR_DEBUG_IR_EXACT_EXPR rewrite cand_line={} lhs=`{}` rhs=`{}` target_line={} before=`{}` after=`{}`",
+                                        idx + 1,
+                                        lhs,
+                                        rhs,
+                                        line_no + 1,
+                                        function.body[line_no].text.trim(),
+                                        new_text.trim()
+                                    );
                                 }
+                                function.body[line_no].replace_text(new_text);
                             }
                         }
                         if deps.contains(&next_lhs) {
@@ -126,25 +125,25 @@ fn apply_rewrite_forward_exact_expr_reuse_ir(program: &mut EmittedProgram) {
                     }
                 } else {
                     let line_trimmed = current_text.trim().to_string();
-                    if line_trimmed.contains(&rhs) {
-                        if let Some(new_text) = replace_exact_rhs_occurrence(
+                    if line_trimmed.contains(&rhs)
+                        && let Some(new_text) = replace_exact_rhs_occurrence(
                             &function.body[line_no],
                             &rhs,
                             &replacement_symbol,
-                        ) {
-                            if debug {
-                                eprintln!(
-                                    "RR_DEBUG_IR_EXACT_EXPR rewrite cand_line={} lhs=`{}` rhs=`{}` target_line={} before=`{}` after=`{}`",
-                                    idx + 1,
-                                    lhs,
-                                    rhs,
-                                    line_no + 1,
-                                    function.body[line_no].text.trim(),
-                                    new_text.trim()
-                                );
-                            }
-                            function.body[line_no].replace_text(new_text);
+                        )
+                    {
+                        if debug {
+                            eprintln!(
+                                "RR_DEBUG_IR_EXACT_EXPR rewrite cand_line={} lhs=`{}` rhs=`{}` target_line={} before=`{}` after=`{}`",
+                                idx + 1,
+                                lhs,
+                                rhs,
+                                line_no + 1,
+                                function.body[line_no].text.trim(),
+                                new_text.trim()
+                            );
                         }
+                        function.body[line_no].replace_text(new_text);
                     }
                     if line_trimmed == "return(NULL)"
                         || (line_trimmed.starts_with("return(") && line_trimmed.ends_with(')'))

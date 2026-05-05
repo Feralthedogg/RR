@@ -1,7 +1,7 @@
-use super::common::*;
+use super::*;
 
 #[test]
-fn raw_emitted_mountain_dx_temp_inlines_into_dist_expr() {
+pub(crate) fn raw_emitted_mountain_dx_temp_inlines_into_dist_expr() {
     let input = [
         "Sym_303 <- function() ",
         "{",
@@ -25,7 +25,7 @@ fn raw_emitted_mountain_dx_temp_inlines_into_dist_expr() {
 }
 
 #[test]
-fn raw_emitted_mountain_dx_dy_temps_inline_into_dist_expr() {
+pub(crate) fn raw_emitted_mountain_dx_dy_temps_inline_into_dist_expr() {
     let input = [
         "Sym_303 <- function() ",
         "{",
@@ -54,7 +54,7 @@ fn raw_emitted_mountain_dx_dy_temps_inline_into_dist_expr() {
 }
 
 #[test]
-fn raw_emitted_dead_zero_seed_ii_prunes_when_never_used() {
+pub(crate) fn raw_emitted_dead_zero_seed_ii_prunes_when_never_used() {
     let input = [
     "Sym_303 <- function() ",
     "{",
@@ -74,7 +74,7 @@ fn raw_emitted_dead_zero_seed_ii_prunes_when_never_used() {
 }
 
 #[test]
-fn raw_emitted_trivial_fill_helper_calls_inline_to_rep_int() {
+pub(crate) fn raw_emitted_trivial_fill_helper_calls_inline_to_rep_int() {
     let input = [
         "Sym_17 <- function(n, val) ",
         "{",
@@ -101,7 +101,7 @@ fn raw_emitted_trivial_fill_helper_calls_inline_to_rep_int() {
 }
 
 #[test]
-fn raw_emitted_identical_zero_fill_pairs_rewrite_to_aliases() {
+pub(crate) fn raw_emitted_identical_zero_fill_pairs_rewrite_to_aliases() {
     let input = [
         "Sym_303 <- function(TOTAL) ",
         "{",
@@ -124,7 +124,7 @@ fn raw_emitted_identical_zero_fill_pairs_rewrite_to_aliases() {
 }
 
 #[test]
-fn raw_emitted_identical_zero_fill_pairs_do_not_alias_when_buffers_diverge_later() {
+pub(crate) fn raw_emitted_identical_zero_fill_pairs_do_not_alias_when_buffers_diverge_later() {
     let input = [
         "Sym_303 <- function(TOTAL) ",
         "{",
@@ -150,7 +150,33 @@ fn raw_emitted_identical_zero_fill_pairs_do_not_alias_when_buffers_diverge_later
 }
 
 #[test]
-fn raw_emitted_duplicate_sym183_calls_reuse_first_result() {
+pub(crate) fn raw_emitted_zero_fill_alias_chain_rewrites_to_root_alias() {
+    let input = [
+        "Sym_303 <- function(TOTAL, u, dt, du1, adv_u) ",
+        "{",
+        "  v <- rep.int(0, TOTAL)",
+        "  u_stage <- v",
+        "  u_new <- u_stage",
+        "  u_stage <- (u + (dt * (du1 - adv_u)))",
+        "  return(u_new)",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = rewrite_identical_zero_fill_pairs_to_aliases_in_raw_emitted_r(&input);
+
+    assert!(out.contains("u_stage <- v"), "{out}");
+    assert!(out.contains("u_new <- v"), "{out}");
+    assert!(
+        out.contains("u_stage <- (u + (dt * (du1 - adv_u)))"),
+        "{out}"
+    );
+    assert!(!out.contains("u_new <- u_stage"), "{out}");
+}
+
+#[test]
+pub(crate) fn raw_emitted_duplicate_sym183_calls_reuse_first_result() {
     let input = [
         "Sym_303 <- function() ",
         "{",
@@ -170,7 +196,7 @@ fn raw_emitted_duplicate_sym183_calls_reuse_first_result() {
 }
 
 #[test]
-fn raw_emitted_prunes_dead_zero_loop_seeds_before_for() {
+pub(crate) fn raw_emitted_prunes_dead_zero_loop_seeds_before_for() {
     let input = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -192,7 +218,7 @@ for (k in seq_len(TOTAL)) {\n\
 }
 
 #[test]
-fn raw_emitted_duplicate_pure_call_assignments_reuse_first_result() {
+pub(crate) fn raw_emitted_duplicate_pure_call_assignments_reuse_first_result() {
     let input = [
         "Sym_303 <- function(temp, qv, qc, qs, qg, TOTAL) ",
         "{",
@@ -219,7 +245,7 @@ fn raw_emitted_duplicate_pure_call_assignments_reuse_first_result() {
 }
 
 #[test]
-fn raw_emitted_adjacent_duplicate_symbol_assignments_reuse_first_result() {
+pub(crate) fn raw_emitted_adjacent_duplicate_symbol_assignments_reuse_first_result() {
     let input = [
         "Sym_123 <- function(b) ",
         "{",
@@ -239,7 +265,7 @@ fn raw_emitted_adjacent_duplicate_symbol_assignments_reuse_first_result() {
 }
 
 #[test]
-fn raw_emitted_weno_full_range_gather_replay_after_fill_inline_collapses() {
+pub(crate) fn raw_emitted_weno_full_range_gather_replay_after_fill_inline_collapses() {
     let input = [
     "Sym_303 <- function(TOTAL, adj_l, adj_r) ",
     "{",
@@ -275,7 +301,8 @@ fn raw_emitted_weno_full_range_gather_replay_after_fill_inline_collapses() {
 }
 
 #[test]
-fn raw_emitted_weno_full_range_gather_replay_after_fill_inline_collapses_with_following_lines() {
+pub(crate) fn raw_emitted_weno_full_range_gather_replay_after_fill_inline_collapses_with_following_lines()
+ {
     let input = [
     "Sym_303 <- function(TOTAL, adj_l, adj_r) ",
     "{",
@@ -315,7 +342,71 @@ fn raw_emitted_weno_full_range_gather_replay_after_fill_inline_collapses_with_fo
 }
 
 #[test]
-fn raw_emitted_dot_product_helper_calls_inline_to_direct_sum_exprs() {
+pub(crate) fn raw_emitted_weno_full_range_gather_replay_collapses_numeric_folded_shape() {
+    let input = [
+        "print(\"  Building Extended Topology (WENO-5 Order)...\")",
+        "adj_ll <- rep.int(0.0, TOTAL)",
+        "adj_rr <- adj_ll",
+        "i <- 1.0",
+        ".tachyon_exprmap0_0 <- rr_gather(adj_l, rr_index_vec_floor(rr_index1_read_vec(adj_l, rr_index_vec_floor(i:9600.0))))",
+        ".tachyon_exprmap1_0 <- rr_gather(adj_r, rr_index_vec_floor(rr_index1_read_vec(adj_r, rr_index_vec_floor(i:9600.0))))",
+        "adj_ll <- rr_assign_slice(adj_ll, i, 9600.0, .tachyon_exprmap0_0)",
+        "adj_rr <- rr_assign_slice(adj_rr, i, 9600.0, .tachyon_exprmap1_0)",
+        "h_trn <- v",
+        "coriolis <- v",
+        "",
+    ]
+    .join("\n");
+
+    let out = collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_emitted_r(&input);
+
+    assert!(
+        out.contains("adj_ll <- rr_gather(adj_l, rr_index_vec_floor(adj_l))"),
+        "{out}"
+    );
+    assert!(
+        out.contains("adj_rr <- rr_gather(adj_r, rr_index_vec_floor(adj_r))"),
+        "{out}"
+    );
+    assert!(!out.contains(".tachyon_exprmap0_0 <-"), "{out}");
+    assert!(!out.contains("rr_assign_slice(adj_ll"), "{out}");
+    assert!(out.contains("h_trn <- v"), "{out}");
+}
+
+#[test]
+pub(crate) fn raw_emitted_weno_full_range_gather_replay_skips_dead_ii_seed() {
+    let input = [
+        "print(\"  Building Extended Topology (WENO-5 Order)...\")",
+        "adj_ll <- rep.int(0.0, TOTAL)",
+        "adj_rr <- adj_ll",
+        "i <- 1.0",
+        "ii <- 0.0",
+        ".tachyon_exprmap0_0 <- rr_gather(adj_l, rr_index_vec_floor(rr_index1_read_vec(adj_l, rr_index_vec_floor(i:9600.0))))",
+        ".tachyon_exprmap1_0 <- rr_gather(adj_r, rr_index_vec_floor(rr_index1_read_vec(adj_r, rr_index_vec_floor(i:9600.0))))",
+        "adj_ll <- rr_assign_slice(adj_ll, i, 9600.0, .tachyon_exprmap0_0)",
+        "adj_rr <- rr_assign_slice(adj_rr, i, 9600.0, .tachyon_exprmap1_0)",
+        "h_trn <- v",
+        "",
+    ]
+    .join("\n");
+
+    let out = collapse_weno_full_range_gather_replay_after_fill_inline_in_raw_emitted_r(&input);
+
+    assert!(
+        out.contains("adj_ll <- rr_gather(adj_l, rr_index_vec_floor(adj_l))"),
+        "{out}"
+    );
+    assert!(
+        out.contains("adj_rr <- rr_gather(adj_r, rr_index_vec_floor(adj_r))"),
+        "{out}"
+    );
+    assert!(out.contains("ii <- 0.0"), "{out}");
+    assert!(!out.contains(".tachyon_exprmap0_0 <-"), "{out}");
+    assert!(!out.contains("rr_assign_slice(adj_ll"), "{out}");
+}
+
+#[test]
+pub(crate) fn raw_emitted_dot_product_helper_calls_inline_to_direct_sum_exprs() {
     let input = [
         "Sym_117 <- function(a, b, n) ",
         "{",
@@ -353,7 +444,7 @@ fn raw_emitted_dot_product_helper_calls_inline_to_direct_sum_exprs() {
 }
 
 #[test]
-fn raw_emitted_sym119_helper_calls_inline_to_direct_gather_expr() {
+pub(crate) fn raw_emitted_sym119_helper_calls_inline_to_direct_gather_expr() {
     let input = [
     "Sym_119 <- function(x, n_l, n_r, n_d, n_u) ",
     "{",
@@ -389,7 +480,7 @@ fn raw_emitted_sym119_helper_calls_inline_to_direct_gather_expr() {
 }
 
 #[test]
-fn raw_emitted_seq_len_full_overwrite_init_rewrites_to_zero_init() {
+pub(crate) fn raw_emitted_seq_len_full_overwrite_init_rewrites_to_zero_init() {
     let input = [
         "Sym_183 <- function(n) ",
         "{",
@@ -417,7 +508,7 @@ fn raw_emitted_seq_len_full_overwrite_init_rewrites_to_zero_init() {
 }
 
 #[test]
-fn raw_emitted_dead_seq_len_local_keeps_seed_when_rhs_reads_previous_value() {
+pub(crate) fn raw_emitted_dead_seq_len_local_keeps_seed_when_rhs_reads_previous_value() {
     let input = [
     "Sym_1 <- function(n) ",
     "{",
@@ -439,7 +530,7 @@ fn raw_emitted_dead_seq_len_local_keeps_seed_when_rhs_reads_previous_value() {
 }
 
 #[test]
-fn raw_emitted_helper_expr_reuse_calls_rewrite_probe_energy_to_probe_vec() {
+pub(crate) fn raw_emitted_helper_expr_reuse_calls_rewrite_probe_energy_to_probe_vec() {
     let input = [
         "Sym_49 <- function(a, b) ",
         "{",
@@ -479,7 +570,7 @@ fn raw_emitted_helper_expr_reuse_calls_rewrite_probe_energy_to_probe_vec() {
 }
 
 #[test]
-fn raw_emitted_cg_loop_carried_updates_restore_after_fused_rs_new_shape() {
+pub(crate) fn raw_emitted_cg_loop_carried_updates_restore_after_fused_rs_new_shape() {
     let input = [
         "Sym_123 <- function(b, n_l, n_r, n_d, n_u, size) ",
         "{",
@@ -520,7 +611,7 @@ fn raw_emitted_cg_loop_carried_updates_restore_after_fused_rs_new_shape() {
 }
 
 #[test]
-fn raw_emitted_cg_loop_carried_updates_restore_after_direct_sum_rs_new_shape() {
+pub(crate) fn raw_emitted_cg_loop_carried_updates_restore_after_direct_sum_rs_new_shape() {
     let input = [
     "Sym_123 <- function(b, n_l, n_r, n_d, n_u, size) ",
     "{",
@@ -561,7 +652,7 @@ fn raw_emitted_cg_loop_carried_updates_restore_after_direct_sum_rs_new_shape() {
 }
 
 #[test]
-fn raw_emitted_cg_loop_carried_updates_restore_current_repeat_shape() {
+pub(crate) fn raw_emitted_cg_loop_carried_updates_restore_current_repeat_shape() {
     let input = [
     "Sym_123 <- function(b, n_l, n_r, n_d, n_u, size) ",
     "{",
@@ -612,7 +703,54 @@ fn raw_emitted_cg_loop_carried_updates_restore_current_repeat_shape() {
 }
 
 #[test]
-fn raw_emitted_restores_temp_buffer_swap_after_repeat_update_loop() {
+pub(crate) fn raw_emitted_cg_loop_carried_updates_drops_direct_helper_else_recompute() {
+    let input = [
+        "Sym_123 <- function(b, n_l, n_r, n_d, n_u, size) ",
+        "{",
+        "  x <- rep.int(0, size)",
+        "  r <- b",
+        "  p <- r",
+        "  rs_old <- Sym_117(b, b, size)",
+        "  iter <- 1",
+        "  repeat {",
+        "    if (!(iter <= 20)) break",
+        "    alpha <- (rs_old / p_Ap)",
+        "    x <- (x + (alpha * p))",
+        "    r <- (r - (alpha * Ap))",
+        "    rs_new <- Sym_117(r, r, size)",
+        "    if (rr_truthy1(!(is.finite(rs_new)), \"condition\")) {",
+        "      rs_new <- rs_old",
+        "    } else {",
+        "      rs_new <- Sym_117(r, r, size)",
+        "    }",
+        "    beta <- (rs_new / rs_old)",
+        "    iter <- (iter + 1)",
+        "  }",
+        "  return(x)",
+        "}",
+        "",
+    ]
+    .join("\n");
+
+    let out = restore_cg_loop_carried_updates_in_raw_emitted_r(&input);
+
+    assert!(out.contains("rs_new <- Sym_117(r, r, size)"), "{out}");
+    assert!(out.contains("rs_new <- rs_old"), "{out}");
+    assert!(
+        !out.contains("} else {\n      rs_new <- Sym_117(r, r, size)"),
+        "{out}"
+    );
+    assert_eq!(
+        out.matches("rs_new <- Sym_117(r, r, size)").count(),
+        1,
+        "{out}"
+    );
+    assert!(out.contains("p <- (r + (beta * p))"), "{out}");
+    assert!(out.contains("rs_old <- rs_new"), "{out}");
+}
+
+#[test]
+pub(crate) fn raw_emitted_restores_temp_buffer_swap_after_repeat_update_loop() {
     let input = [
         "Sym_303 <- function() ",
         "{",
@@ -641,7 +779,7 @@ fn raw_emitted_restores_temp_buffer_swap_after_repeat_update_loop() {
 }
 
 #[test]
-fn raw_emitted_branch_local_scalar_assigns_hoist_before_later_uses() {
+pub(crate) fn raw_emitted_branch_local_scalar_assigns_hoist_before_later_uses() {
     let input = [
         "Sym_287 <- function(temp, q_v, q_s, q_g, size) ",
         "{",
@@ -691,7 +829,7 @@ fn raw_emitted_branch_local_scalar_assigns_hoist_before_later_uses() {
 }
 
 #[test]
-fn raw_emitted_immediate_single_use_named_scalar_exprs_inline_before_peephole() {
+pub(crate) fn raw_emitted_immediate_single_use_named_scalar_exprs_inline_before_peephole() {
     let input = [
         "Sym_287 <- function(q_c, i) ",
         "{",

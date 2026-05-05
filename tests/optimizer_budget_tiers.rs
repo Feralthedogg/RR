@@ -67,6 +67,7 @@ fn legacy_budget_env_knobs_do_not_disable_current_budget_policy() {
             ("RR_ADAPTIVE_IR_BUDGET", "0"),
             ("RR_MAX_FULL_OPT_IR", TEST_BASE_PROG_LIMIT),
             ("RR_MAX_FULL_OPT_FN_IR", TEST_BASE_FN_LIMIT),
+            ("RR_VERBOSE_LOG", "1"),
         ],
     );
     assert!(
@@ -109,6 +110,7 @@ fn legacy_selective_budget_env_knobs_do_not_force_selective_mode() {
             ("RR_ADAPTIVE_IR_BUDGET", "0"),
             ("RR_MAX_FULL_OPT_IR", TEST_BASE_PROG_LIMIT),
             ("RR_MAX_FULL_OPT_FN_IR", TEST_BASE_FN_LIMIT),
+            ("RR_VERBOSE_LOG", "1"),
         ],
     );
     assert!(
@@ -141,6 +143,7 @@ fn default_budget_policy_uses_raised_caps_for_large_fixture() {
         &[
             ("RR_MAX_FULL_OPT_IR", TEST_BASE_PROG_LIMIT),
             ("RR_MAX_FULL_OPT_FN_IR", TEST_BASE_FN_LIMIT),
+            ("RR_VERBOSE_LOG", "1"),
         ],
     );
     assert!(

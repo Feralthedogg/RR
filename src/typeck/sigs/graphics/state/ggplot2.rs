@@ -1,6 +1,6 @@
 use crate::typeck::lattice::{PrimTy, TypeState};
 
-pub(super) fn infer_ggplot2_state(callee: &str, _arg_tys: &[TypeState]) -> Option<TypeState> {
+pub(crate) fn infer_ggplot2_state(callee: &str, _arg_tys: &[TypeState]) -> Option<TypeState> {
     match callee {
         "ggplot2::ggsave" => Some(TypeState::scalar(PrimTy::Char, false)),
         "ggplot2::aes"

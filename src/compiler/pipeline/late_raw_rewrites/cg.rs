@@ -28,10 +28,12 @@ pub(crate) fn restore_cg_loop_carried_updates_in_raw_emitted_r(output: &str) -> 
             || rs_new_trimmed == "rs_new <- Sym_117(r - (alpha * Ap), r - (alpha * Ap), size)"
             || rs_new_trimmed
                 == "rs_new <- sum(((r - (alpha * Ap))[seq_len(size)] * (r - (alpha * Ap))[seq_len(size)]))"
-            || rs_new_trimmed == "rs_new <- sum((r[seq_len(size)] * r[seq_len(size)]))";
+            || rs_new_trimmed == "rs_new <- sum((r[seq_len(size)] * r[seq_len(size)]))"
+            || rs_new_trimmed == "rs_new <- Sym_117(r, r, size)";
         if !rs_new_matches {
             continue;
         }
+        let rs_new_is_direct_helper = rs_new_trimmed == "rs_new <- Sym_117(r, r, size)";
 
         let indent = lines[idx]
             .chars()
@@ -68,7 +70,10 @@ pub(crate) fn restore_cg_loop_carried_updates_in_raw_emitted_r(output: &str) -> 
             lines.insert(rs_new_idx, format!("{indent}r <- (r - (alpha * Ap))"));
             rs_new_idx += 1;
         }
-        lines[rs_new_idx] = format!("{indent}rs_new <- sum((r[seq_len(size)] * r[seq_len(size)]))");
+        if !rs_new_is_direct_helper {
+            lines[rs_new_idx] =
+                format!("{indent}rs_new <- sum((r[seq_len(size)] * r[seq_len(size)]))");
+        }
 
         if let Some(guard_idx) = next_significant_line(&lines, rs_new_idx + 1)
             && lines[guard_idx].trim().starts_with("if ")
@@ -187,11 +192,11 @@ pub(crate) fn restore_cg_loop_carried_updates_in_raw_emitted_r(output: &str) -> 
     out
 }
 
-fn next_significant_line(lines: &[String], start: usize) -> Option<usize> {
+pub(crate) fn next_significant_line(lines: &[String], start: usize) -> Option<usize> {
     (start..lines.len()).find(|idx| !lines[*idx].trim().is_empty())
 }
 
-fn find_enclosing_repeat_start(lines: &[String], idx: usize) -> Option<usize> {
+pub(crate) fn find_enclosing_repeat_start(lines: &[String], idx: usize) -> Option<usize> {
     (0..idx).rev().find(|line_idx| {
         lines[*line_idx].trim() == "repeat {"
             && find_raw_block_end(lines, *line_idx).is_some_and(|end| idx < end)

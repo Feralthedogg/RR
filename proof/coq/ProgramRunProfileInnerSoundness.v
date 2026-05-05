@@ -1,12 +1,12 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.PhasePlanSoundness.
-Require Import RRProofs.PhasePlanLookupSoundness.
-Require Import RRProofs.PhasePlanSummarySoundness.
-Require Import RRProofs.ProgramOptPlanSoundness.
-Require Import RRProofs.OptimizerPipelineSoundness.
-Require Import RRProofs.ProgramPhasePipelineSoundness.
-Require Import RRProofs.ProgramTierExecutionSoundness.
-Require Import RRProofs.ProgramPostTierStagesSoundness.
+Require Import MirInvariantBundle.
+Require Import PhasePlanSoundness.
+Require Import PhasePlanLookupSoundness.
+Require Import PhasePlanSummarySoundness.
+Require Import ProgramOptPlanSoundness.
+Require Import OptimizerPipelineSoundness.
+Require Import ProgramPhasePipelineSoundness.
+Require Import ProgramTierExecutionSoundness.
+Require Import ProgramPostTierStagesSoundness.
 From Stdlib Require Import List Bool.
 Import ListNotations.
 Open Scope bool_scope.

@@ -4,18 +4,18 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ClampBound {
+pub(crate) enum ClampBound {
     ConstOne,
     ConstSix,
     Var(String),
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct CubeIndexReturnVars {
-    pub(super) face_var: String,
-    pub(super) x_var: String,
-    pub(super) y_var: String,
-    pub(super) size_var: String,
+pub(crate) struct CubeIndexReturnVars {
+    pub(crate) face_var: String,
+    pub(crate) x_var: String,
+    pub(crate) y_var: String,
+    pub(crate) size_var: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -35,7 +35,7 @@ impl PhaseOrderingMode {
         }
     }
 
-    pub(super) const fn initial_schedule(self) -> PhaseScheduleId {
+    pub(crate) const fn initial_schedule(self) -> PhaseScheduleId {
         match self {
             Self::Off | Self::Balanced | Self::Auto => PhaseScheduleId::Balanced,
         }
@@ -43,7 +43,7 @@ impl PhaseOrderingMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum PhaseProfileKind {
+pub(crate) enum PhaseProfileKind {
     #[default]
     Balanced,
     ComputeHeavy,
@@ -51,7 +51,7 @@ pub(super) enum PhaseProfileKind {
 }
 
 impl PhaseProfileKind {
-    pub(super) const fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Balanced => "balanced",
             Self::ComputeHeavy => "compute-heavy",
@@ -61,7 +61,7 @@ impl PhaseProfileKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum PhaseScheduleId {
+pub(crate) enum PhaseScheduleId {
     #[default]
     Balanced,
     ComputeHeavy,
@@ -69,7 +69,7 @@ pub(super) enum PhaseScheduleId {
 }
 
 impl PhaseScheduleId {
-    pub(super) const fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Balanced => "balanced",
             Self::ComputeHeavy => "compute-heavy",
@@ -79,34 +79,34 @@ impl PhaseScheduleId {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(super) struct FunctionPhaseFeatures {
-    pub(super) ir_size: usize,
-    pub(super) block_count: usize,
-    pub(super) loop_count: usize,
-    pub(super) canonical_loop_count: usize,
-    pub(super) branch_terms: usize,
-    pub(super) phi_count: usize,
-    pub(super) arithmetic_values: usize,
-    pub(super) intrinsic_values: usize,
-    pub(super) call_values: usize,
-    pub(super) side_effecting_calls: usize,
-    pub(super) index_values: usize,
-    pub(super) store_instrs: usize,
+pub(crate) struct FunctionPhaseFeatures {
+    pub(crate) ir_size: usize,
+    pub(crate) block_count: usize,
+    pub(crate) loop_count: usize,
+    pub(crate) canonical_loop_count: usize,
+    pub(crate) branch_terms: usize,
+    pub(crate) phi_count: usize,
+    pub(crate) arithmetic_values: usize,
+    pub(crate) intrinsic_values: usize,
+    pub(crate) call_values: usize,
+    pub(crate) side_effecting_calls: usize,
+    pub(crate) index_values: usize,
+    pub(crate) store_instrs: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct FunctionPhasePlan {
-    pub(super) function: String,
-    pub(super) mode: PhaseOrderingMode,
-    pub(super) profile: PhaseProfileKind,
-    pub(super) schedule: PhaseScheduleId,
-    pub(super) pass_groups: Vec<PassGroup>,
-    pub(super) features: Option<FunctionPhaseFeatures>,
-    pub(super) trace_requested: bool,
+pub(crate) struct FunctionPhasePlan {
+    pub(crate) function: String,
+    pub(crate) mode: PhaseOrderingMode,
+    pub(crate) profile: PhaseProfileKind,
+    pub(crate) schedule: PhaseScheduleId,
+    pub(crate) pass_groups: Vec<PassGroup>,
+    pub(crate) features: Option<FunctionPhaseFeatures>,
+    pub(crate) trace_requested: bool,
 }
 
 impl FunctionPhasePlan {
-    pub(super) fn legacy(function: String, mode: PhaseOrderingMode, trace_requested: bool) -> Self {
+    pub(crate) fn legacy(function: String, mode: PhaseOrderingMode, trace_requested: bool) -> Self {
         Self {
             function,
             mode,
@@ -187,8 +187,46 @@ pub struct TachyonPassTiming {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TachyonPassDecision {
+    pub pass: String,
+    pub stage: String,
+    pub scope: String,
+    pub function: Option<String>,
+    pub group: String,
+    pub proof_key: String,
+    pub legality: String,
+    pub profitability: String,
+    pub budget_class: String,
+    pub requires: Vec<String>,
+    pub invalidates: Vec<String>,
+    pub enabled: bool,
+    pub changed: bool,
+    pub changed_count: usize,
+    pub elapsed_ns: u128,
+    pub reason: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TachyonOpportunity {
+    pub pass: String,
+    pub stage: String,
+    pub function: Option<String>,
+    pub ir_size: usize,
+    pub estimated_gain: usize,
+    pub size_pressure: usize,
+    pub hotness: usize,
+    pub risk: usize,
+    pub reason: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TachyonPassTimings {
-    passes: BTreeMap<String, TachyonPassTiming>,
+    #[serde(default)]
+    pub(crate) passes: BTreeMap<String, TachyonPassTiming>,
+    #[serde(default)]
+    pub(crate) decisions: Vec<TachyonPassDecision>,
+    #[serde(default)]
+    pub(crate) opportunities: Vec<TachyonOpportunity>,
 }
 
 impl TachyonPassTimings {
@@ -201,6 +239,14 @@ impl TachyonPassTimings {
         }
     }
 
+    pub fn record_decision(&mut self, decision: TachyonPassDecision) {
+        self.decisions.push(decision);
+    }
+
+    pub fn record_opportunity(&mut self, opportunity: TachyonOpportunity) {
+        self.opportunities.push(opportunity);
+    }
+
     pub fn accumulate(&mut self, other: Self) {
         for (name, timing) in other.passes {
             let entry = self.passes.entry(name).or_default();
@@ -208,6 +254,8 @@ impl TachyonPassTimings {
             entry.changed_invocations += timing.changed_invocations;
             entry.elapsed_ns += timing.elapsed_ns;
         }
+        self.decisions.extend(other.decisions);
+        self.opportunities.extend(other.opportunities);
     }
 
     pub fn to_json_string(&self) -> String {
@@ -228,6 +276,114 @@ impl TachyonPassTimings {
         out.push('}');
         out
     }
+
+    pub fn decisions_to_json_string(&self) -> String {
+        let mut out = String::new();
+        out.push('[');
+        for (idx, decision) in self.decisions.iter().enumerate() {
+            if idx > 0 {
+                out.push_str(", ");
+            }
+            out.push('{');
+            write_json_string_field(&mut out, "pass", &decision.pass, true);
+            write_json_string_field(&mut out, "stage", &decision.stage, false);
+            write_json_string_field(&mut out, "scope", &decision.scope, false);
+            match &decision.function {
+                Some(function) => write_json_string_field(&mut out, "function", function, false),
+                None => out.push_str(", \"function\": null"),
+            }
+            write_json_string_field(&mut out, "group", &decision.group, false);
+            write_json_string_field(&mut out, "proof_key", &decision.proof_key, false);
+            write_json_string_field(&mut out, "legality", &decision.legality, false);
+            write_json_string_field(&mut out, "profitability", &decision.profitability, false);
+            write_json_string_field(&mut out, "budget_class", &decision.budget_class, false);
+            out.push_str(", \"requires\": ");
+            write_json_string_array(&mut out, &decision.requires);
+            out.push_str(", \"invalidates\": ");
+            write_json_string_array(&mut out, &decision.invalidates);
+            let _ = write!(
+                out,
+                ", \"enabled\": {}, \"changed\": {}, \"changed_count\": {}, \"elapsed_ns\": {}",
+                decision.enabled, decision.changed, decision.changed_count, decision.elapsed_ns
+            );
+            write_json_string_field(&mut out, "reason", &decision.reason, false);
+            out.push('}');
+        }
+        out.push(']');
+        out
+    }
+
+    pub fn opportunities_to_json_string(&self) -> String {
+        let mut out = String::new();
+        out.push('[');
+        for (idx, opportunity) in self.opportunities.iter().enumerate() {
+            if idx > 0 {
+                out.push_str(", ");
+            }
+            out.push('{');
+            write_json_string_field(&mut out, "pass", &opportunity.pass, true);
+            write_json_string_field(&mut out, "stage", &opportunity.stage, false);
+            match &opportunity.function {
+                Some(function) => write_json_string_field(&mut out, "function", function, false),
+                None => out.push_str(", \"function\": null"),
+            }
+            let _ = write!(
+                out,
+                ", \"ir_size\": {}, \"estimated_gain\": {}, \"size_pressure\": {}, \"hotness\": {}, \"risk\": {}",
+                opportunity.ir_size,
+                opportunity.estimated_gain,
+                opportunity.size_pressure,
+                opportunity.hotness,
+                opportunity.risk
+            );
+            write_json_string_field(&mut out, "reason", &opportunity.reason, false);
+            out.push('}');
+        }
+        out.push(']');
+        out
+    }
+}
+
+pub(crate) fn write_json_string_field(out: &mut String, key: &str, value: &str, first: bool) {
+    if !first {
+        out.push_str(", ");
+    }
+    out.push('"');
+    out.push_str(key);
+    out.push_str("\": \"");
+    out.push_str(&json_escape_local(value));
+    out.push('"');
+}
+
+pub(crate) fn write_json_string_array(out: &mut String, values: &[String]) {
+    out.push('[');
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            out.push_str(", ");
+        }
+        out.push('"');
+        out.push_str(&json_escape_local(value));
+        out.push('"');
+    }
+    out.push(']');
+}
+
+pub(crate) fn json_escape_local(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
@@ -313,6 +469,16 @@ pub struct TachyonPulseStats {
     pub proof_apply_failed: usize,
     pub proof_fallback_pattern: usize,
     pub proof_fallback_reason_counts: [usize; super::v_opt::PROOF_FALLBACK_REASON_COUNT],
+    pub outline_candidates: usize,
+    pub outline_applied: usize,
+    pub outline_skipped: usize,
+    pub unroll_candidates: usize,
+    pub unroll_applied: usize,
+    pub unroll_skipped: usize,
+    pub fuel_consumed: usize,
+    pub fuel_exhausted_functions: usize,
+    pub optimized_mir_function_hits: usize,
+    pub optimized_mir_function_misses: usize,
     pub simplified_loops: usize,
     pub tco_hits: usize,
     pub sccp_hits: usize,
@@ -342,7 +508,7 @@ pub struct TachyonPulseStats {
 }
 
 impl TachyonPulseStats {
-    pub(super) fn accumulate(&mut self, other: Self) {
+    pub(crate) fn accumulate(&mut self, other: Self) {
         self.vectorized += other.vectorized;
         self.reduced += other.reduced;
         self.vector_loops_seen += other.vector_loops_seen;
@@ -436,6 +602,16 @@ impl TachyonPulseStats {
         {
             *dst += src;
         }
+        self.outline_candidates += other.outline_candidates;
+        self.outline_applied += other.outline_applied;
+        self.outline_skipped += other.outline_skipped;
+        self.unroll_candidates += other.unroll_candidates;
+        self.unroll_applied += other.unroll_applied;
+        self.unroll_skipped += other.unroll_skipped;
+        self.fuel_consumed += other.fuel_consumed;
+        self.fuel_exhausted_functions += other.fuel_exhausted_functions;
+        self.optimized_mir_function_hits += other.optimized_mir_function_hits;
+        self.optimized_mir_function_misses += other.optimized_mir_function_misses;
         self.simplified_loops += other.simplified_loops;
         self.tco_hits += other.tco_hits;
         self.sccp_hits += other.sccp_hits;
@@ -460,7 +636,7 @@ impl TachyonPulseStats {
         self.skipped_functions += other.skipped_functions;
     }
 
-    pub fn to_json_string(&self) -> String {
+    pub fn to_json_string(self) -> String {
         format!(
             concat!(
                 "{{\n",
@@ -544,6 +720,16 @@ impl TachyonPulseStats {
                 "  \"proof_applied\": {},\n",
                 "  \"proof_apply_failed\": {},\n",
                 "  \"proof_fallback_pattern\": {},\n",
+                "  \"outline_candidates\": {},\n",
+                "  \"outline_applied\": {},\n",
+                "  \"outline_skipped\": {},\n",
+                "  \"unroll_candidates\": {},\n",
+                "  \"unroll_applied\": {},\n",
+                "  \"unroll_skipped\": {},\n",
+                "  \"fuel_consumed\": {},\n",
+                "  \"fuel_exhausted_functions\": {},\n",
+                "  \"optimized_mir_function_hits\": {},\n",
+                "  \"optimized_mir_function_misses\": {},\n",
                 "  \"simplified_loops\": {},\n",
                 "  \"tco_hits\": {},\n",
                 "  \"sccp_hits\": {},\n",
@@ -652,6 +838,16 @@ impl TachyonPulseStats {
             self.proof_applied,
             self.proof_apply_failed,
             self.proof_fallback_pattern,
+            self.outline_candidates,
+            self.outline_applied,
+            self.outline_skipped,
+            self.unroll_candidates,
+            self.unroll_applied,
+            self.unroll_skipped,
+            self.fuel_consumed,
+            self.fuel_exhausted_functions,
+            self.optimized_mir_function_hits,
+            self.optimized_mir_function_misses,
             self.simplified_loops,
             self.tco_hits,
             self.sccp_hits,
@@ -683,22 +879,26 @@ impl TachyonPulseStats {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct FunctionBudgetProfile {
-    pub(super) name: String,
-    pub(super) ir_size: usize,
-    pub(super) score: usize,
-    pub(super) weighted_score: usize,
-    pub(super) density: usize,
-    pub(super) hot_weight: usize,
-    pub(super) within_fn_limit: bool,
+pub(crate) struct FunctionBudgetProfile {
+    pub(crate) name: String,
+    pub(crate) ir_size: usize,
+    pub(crate) score: usize,
+    pub(crate) opportunity_score: usize,
+    pub(crate) size_score: usize,
+    pub(crate) risk_score: usize,
+    pub(crate) weighted_score: usize,
+    pub(crate) density: usize,
+    pub(crate) hot_weight: usize,
+    pub(crate) profile_count: usize,
+    pub(crate) within_fn_limit: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ProgramOptPlan {
-    pub(super) program_limit: usize,
-    pub(super) fn_limit: usize,
-    pub(super) total_ir: usize,
-    pub(super) max_fn_ir: usize,
-    pub(super) selective_mode: bool,
-    pub(super) selected_functions: FxHashSet<String>,
+pub(crate) struct ProgramOptPlan {
+    pub(crate) program_limit: usize,
+    pub(crate) fn_limit: usize,
+    pub(crate) total_ir: usize,
+    pub(crate) max_fn_ir: usize,
+    pub(crate) selective_mode: bool,
+    pub(crate) selected_functions: FxHashSet<String>,
 }

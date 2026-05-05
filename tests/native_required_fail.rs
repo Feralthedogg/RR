@@ -1,8 +1,8 @@
 mod common;
 
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use common::{rscript_available, rscript_path};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, compile_with_config};
 use std::fs;
 use std::path::PathBuf;
 

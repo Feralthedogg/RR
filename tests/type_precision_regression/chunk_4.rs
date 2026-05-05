@@ -1,7 +1,7 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn base_direct_factor_helpers_have_builtin_types() {
+pub(crate) fn base_direct_factor_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -9,37 +9,41 @@ fn base_direct_factor_helpers_have_builtin_types() {
     fn_ir.body_head = b0;
 
     let a = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("a".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "a".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let b = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("b".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "b".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -112,9 +116,10 @@ fn base_direct_factor_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_env_file_helpers_have_builtin_types() {
+pub(crate) fn base_direct_env_file_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["path".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();
@@ -128,13 +133,15 @@ fn base_direct_env_file_helpers_have_builtin_types() {
         None,
     );
     let fun = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("f".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "f".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let bool_false = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Bool(false)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Bool(false)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -257,9 +264,10 @@ fn base_direct_env_file_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_eval_io_helpers_have_builtin_types() {
+pub(crate) fn base_direct_eval_io_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["path".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();
@@ -273,19 +281,25 @@ fn base_direct_eval_io_helpers_have_builtin_types() {
         None,
     );
     let expr = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("x <- 1".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "x <- 1".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let width = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("width".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "width".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let fun = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("f".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "f".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,

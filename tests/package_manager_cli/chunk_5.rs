@@ -1,7 +1,7 @@
 use super::package_manager_cli_common::*;
 
 #[test]
-fn registry_policy_lint_and_rotate_key_update_policy_file() {
+pub(crate) fn registry_policy_lint_and_rotate_key_update_policy_file() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -69,7 +69,7 @@ fn registry_policy_lint_and_rotate_key_update_policy_file() {
 }
 
 #[test]
-fn registry_policy_bootstrap_and_approval_flow_gate_latest_install() {
+pub(crate) fn registry_policy_bootstrap_and_approval_flow_gate_latest_install() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -284,7 +284,7 @@ fn registry_policy_bootstrap_and_approval_flow_gate_latest_install() {
 }
 
 #[test]
-fn registry_auto_approve_signer_skips_manual_queue() {
+pub(crate) fn registry_auto_approve_signer_skips_manual_queue() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -380,7 +380,7 @@ fn registry_auto_approve_signer_skips_manual_queue() {
 }
 
 #[test]
-fn registry_onboard_and_policy_show_apply_round_trip() {
+pub(crate) fn registry_onboard_and_policy_show_apply_round_trip() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -487,7 +487,7 @@ fn registry_onboard_and_policy_show_apply_round_trip() {
 }
 
 #[test]
-fn registry_audit_filters_by_action_module_and_text() {
+pub(crate) fn registry_audit_filters_by_action_module_and_text() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -581,7 +581,7 @@ fn registry_audit_filters_by_action_module_and_text() {
 }
 
 #[test]
-fn registry_promote_switches_latest_release_target() {
+pub(crate) fn registry_promote_switches_latest_release_target() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -698,7 +698,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn registry_audit_export_writes_filtered_jsonl_file() {
+pub(crate) fn registry_audit_export_writes_filtered_jsonl_file() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -764,7 +764,7 @@ fn registry_audit_export_writes_filtered_jsonl_file() {
 }
 
 #[test]
-fn registry_report_summarizes_module_state() {
+pub(crate) fn registry_report_summarizes_module_state() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")

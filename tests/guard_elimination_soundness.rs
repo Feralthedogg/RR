@@ -1,5 +1,5 @@
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, compile_with_config};
 
 #[test]
 fn typed_condition_elides_truthy_wrapper_at_branch_site() {

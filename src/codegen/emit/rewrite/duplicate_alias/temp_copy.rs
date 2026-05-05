@@ -1,4 +1,5 @@
-pub(super) fn strip_noop_temp_copy_roundtrips(output: &mut String) {
+use super::*;
+pub(crate) fn strip_noop_temp_copy_roundtrips(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

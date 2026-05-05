@@ -1,7 +1,7 @@
 use super::package_manager_cli_common::*;
 
 #[test]
-fn install_latest_respects_v2_module_path_suffix() {
+pub(crate) fn install_latest_respects_v2_module_path_suffix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -98,7 +98,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn build_fails_when_cached_module_checksum_does_not_match_lock() {
+pub(crate) fn build_fails_when_cached_module_checksum_does_not_match_lock() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -208,7 +208,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn mvs_prefers_highest_transitive_version() {
+pub(crate) fn mvs_prefers_highest_transitive_version() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -407,7 +407,9 @@ main()
     )
     .expect("failed to read built main.R");
     assert!(
-        (built_r.contains("40L + 2L") || built_r.contains("x + 2L"))
+        (built_r.contains("40L + 2L")
+            || built_r.contains("x + 2L")
+            || built_r.contains("return(84L)"))
             && !built_r.contains("40L + 1L")
             && !built_r.contains("x + 1L"),
         "expected highest transitive version logic in built artifact, got:\n{}",
@@ -416,7 +418,7 @@ main()
 }
 
 #[test]
-fn mod_graph_and_mod_why_report_dependency_chain() {
+pub(crate) fn mod_graph_and_mod_why_report_dependency_chain() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -523,7 +525,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn mod_verify_reports_checksum_mismatch() {
+pub(crate) fn mod_verify_reports_checksum_mismatch() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -609,7 +611,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn outdated_and_update_refresh_direct_dependency_version() {
+pub(crate) fn outdated_and_update_refresh_direct_dependency_version() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -744,7 +746,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn install_accepts_ssh_style_github_source() {
+pub(crate) fn install_accepts_ssh_style_github_source() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -818,7 +820,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn publish_creates_tarball_with_project_sources() {
+pub(crate) fn publish_creates_tarball_with_project_sources() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")

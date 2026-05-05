@@ -3,7 +3,7 @@ From Stdlib Require Import String.
 From Stdlib Require Import Bool.
 From Stdlib Require Import Arith.
 
-Require Import RRProofs.MirSemanticsLite.
+Require Import MirSemanticsLite.
 
 Import ListNotations.
 Open Scope string_scope.

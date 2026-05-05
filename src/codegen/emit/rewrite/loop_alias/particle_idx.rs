@@ -1,4 +1,5 @@
-pub(super) fn rewrite_particle_idx_alias(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_particle_idx_alias(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

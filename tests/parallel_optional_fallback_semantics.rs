@@ -1,8 +1,8 @@
 mod common;
 
-use RR::compiler::{OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use common::{normalize, rscript_available, rscript_path};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

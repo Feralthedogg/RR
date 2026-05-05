@@ -1,11 +1,12 @@
+use super::*;
 #[derive(Clone, Debug)]
-struct LocalFunctionSpan {
-    name: String,
-    start: usize,
-    end: usize,
+pub(crate) struct LocalFunctionSpan {
+    pub(crate) name: String,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
-fn local_function_spans(lines: &[String]) -> Vec<LocalFunctionSpan> {
+pub(crate) fn local_function_spans(lines: &[String]) -> Vec<LocalFunctionSpan> {
     let mut funcs = Vec::new();
     let scope_end = lines.len().saturating_sub(1);
     let mut idx = 0usize;

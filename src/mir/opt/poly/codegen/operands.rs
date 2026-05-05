@@ -1,68 +1,69 @@
-struct MatrixMapOperands {
-    dest: ValueId,
-    lhs_src: ValueId,
-    rhs_src: ValueId,
+use super::*;
+pub(crate) struct MatrixMapOperands {
+    pub(crate) dest: ValueId,
+    pub(crate) lhs_src: ValueId,
+    pub(crate) rhs_src: ValueId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct VectorMapOperands {
-    dest: ValueId,
-    lhs_src: ValueId,
-    rhs_src: ValueId,
+pub(crate) struct VectorMapOperands {
+    pub(crate) dest: ValueId,
+    pub(crate) lhs_src: ValueId,
+    pub(crate) rhs_src: ValueId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct VectorReduceOperands {
-    base: ValueId,
-    start: ValueId,
-    end: ValueId,
+pub(crate) struct VectorReduceOperands {
+    pub(crate) base: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct MatrixRectReduceOperands {
-    base: ValueId,
-    r_start: ValueId,
-    r_end: ValueId,
-    c_start: ValueId,
-    c_end: ValueId,
+pub(crate) struct MatrixRectReduceOperands {
+    pub(crate) base: ValueId,
+    pub(crate) r_start: ValueId,
+    pub(crate) r_end: ValueId,
+    pub(crate) c_start: ValueId,
+    pub(crate) c_end: ValueId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct MatrixColReduceOperands {
-    base: ValueId,
-    col: ValueId,
-    start: ValueId,
-    end: ValueId,
+pub(crate) struct MatrixColReduceOperands {
+    pub(crate) base: ValueId,
+    pub(crate) col: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Array3MapOperands {
-    dest: ValueId,
-    lhs_src: ValueId,
-    rhs_src: ValueId,
+pub(crate) struct Array3MapOperands {
+    pub(crate) dest: ValueId,
+    pub(crate) lhs_src: ValueId,
+    pub(crate) rhs_src: ValueId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Array3Dim1ReduceOperands {
-    base: ValueId,
-    fixed_a: ValueId,
-    fixed_b: ValueId,
-    start: ValueId,
-    end: ValueId,
+pub(crate) struct Array3Dim1ReduceOperands {
+    pub(crate) base: ValueId,
+    pub(crate) fixed_a: ValueId,
+    pub(crate) fixed_b: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Array3CubeReduceOperands {
-    base: ValueId,
-    i_start: ValueId,
-    i_end: ValueId,
-    j_start: ValueId,
-    j_end: ValueId,
-    k_start: ValueId,
-    k_end: ValueId,
+pub(crate) struct Array3CubeReduceOperands {
+    pub(crate) base: ValueId,
+    pub(crate) i_start: ValueId,
+    pub(crate) i_end: ValueId,
+    pub(crate) j_start: ValueId,
+    pub(crate) j_end: ValueId,
+    pub(crate) k_start: ValueId,
+    pub(crate) k_end: ValueId,
 }
 
-fn is_loop_iv_subscript(scop: &ScopRegion, expr: &super::affine::AffineExpr) -> bool {
+pub(crate) fn is_loop_iv_subscript(scop: &ScopRegion, expr: &super::affine::AffineExpr) -> bool {
     if scop.dimensions.len() != 1 || expr.constant != 0 || expr.terms.len() != 1 {
         return false;
     }
@@ -73,7 +74,7 @@ fn is_loop_iv_subscript(scop: &ScopRegion, expr: &super::affine::AffineExpr) -> 
     )
 }
 
-fn is_named_loop_iv_subscript(name: &str, expr: &super::affine::AffineExpr) -> bool {
+pub(crate) fn is_named_loop_iv_subscript(name: &str, expr: &super::affine::AffineExpr) -> bool {
     if expr.constant != 0 || expr.terms.len() != 1 {
         return false;
     }
@@ -84,7 +85,7 @@ fn is_named_loop_iv_subscript(name: &str, expr: &super::affine::AffineExpr) -> b
     )
 }
 
-fn is_scalarish_value(fn_ir: &FnIR, value: ValueId) -> bool {
+pub(crate) fn is_scalarish_value(fn_ir: &FnIR, value: ValueId) -> bool {
     matches!(
         fn_ir.values[value].kind,
         ValueKind::Const(Lit::Int(_))
@@ -97,7 +98,7 @@ fn is_scalarish_value(fn_ir: &FnIR, value: ValueId) -> bool {
     )
 }
 
-fn is_same_scalar_value(fn_ir: &FnIR, a: ValueId, b: ValueId) -> bool {
+pub(crate) fn is_same_scalar_value(fn_ir: &FnIR, a: ValueId, b: ValueId) -> bool {
     if fn_ir.values[a].origin_var.is_some()
         && fn_ir.values[a].origin_var == fn_ir.values[b].origin_var
     {
@@ -113,7 +114,7 @@ fn is_same_scalar_value(fn_ir: &FnIR, a: ValueId, b: ValueId) -> bool {
     }
 }
 
-fn same_base_name(fn_ir: &FnIR, a: ValueId, b: ValueId) -> bool {
+pub(crate) fn same_base_name(fn_ir: &FnIR, a: ValueId, b: ValueId) -> bool {
     if fn_ir.values[a].origin_var.is_some()
         && fn_ir.values[a].origin_var == fn_ir.values[b].origin_var
     {
@@ -126,7 +127,7 @@ fn same_base_name(fn_ir: &FnIR, a: ValueId, b: ValueId) -> bool {
     }
 }
 
-fn base_symbol_name(fn_ir: &FnIR, base: ValueId) -> String {
+pub(crate) fn base_symbol_name(fn_ir: &FnIR, base: ValueId) -> String {
     if let Some(origin) = fn_ir.values[base].origin_var.clone() {
         return origin;
     }
@@ -141,7 +142,12 @@ fn base_symbol_name(fn_ir: &FnIR, base: ValueId) -> String {
     }
 }
 
-fn loop_covers_whole_vector(fn_ir: &FnIR, lp: &LoopInfo, scop: &ScopRegion, base: ValueId) -> bool {
+pub(crate) fn loop_covers_whole_vector(
+    fn_ir: &FnIR,
+    lp: &LoopInfo,
+    scop: &ScopRegion,
+    base: ValueId,
+) -> bool {
     if scop.dimensions.len() != 1 {
         return false;
     }
@@ -197,7 +203,7 @@ fn loop_covers_whole_vector(fn_ir: &FnIR, lp: &LoopInfo, scop: &ScopRegion, base
     false
 }
 
-fn resolve_scop_local_source(fn_ir: &FnIR, scop: &ScopRegion, root: ValueId) -> ValueId {
+pub(crate) fn resolve_scop_local_source(fn_ir: &FnIR, scop: &ScopRegion, root: ValueId) -> ValueId {
     let mut current = root;
     let mut seen = rustc_hash::FxHashSet::default();
     loop {
@@ -226,7 +232,11 @@ fn resolve_scop_local_source(fn_ir: &FnIR, scop: &ScopRegion, root: ValueId) -> 
     }
 }
 
-fn index_reads_loop_vector(fn_ir: &FnIR, scop: &ScopRegion, value: ValueId) -> Option<ValueId> {
+pub(crate) fn index_reads_loop_vector(
+    fn_ir: &FnIR,
+    scop: &ScopRegion,
+    value: ValueId,
+) -> Option<ValueId> {
     let value = resolve_scop_local_source(fn_ir, scop, value);
     match &fn_ir.values[value].kind {
         ValueKind::Index1D { base, idx, .. } => {
@@ -247,7 +257,7 @@ fn index_reads_loop_vector(fn_ir: &FnIR, scop: &ScopRegion, value: ValueId) -> O
     }
 }
 
-fn index_reads_2d_col_vector(
+pub(crate) fn index_reads_2d_col_vector(
     fn_ir: &FnIR,
     scop: &ScopRegion,
     value: ValueId,
@@ -272,7 +282,7 @@ fn index_reads_2d_col_vector(
     }
 }
 
-fn index_reads_3d_dim1_vector(
+pub(crate) fn index_reads_3d_dim1_vector(
     fn_ir: &FnIR,
     scop: &ScopRegion,
     value: ValueId,
@@ -301,7 +311,7 @@ fn index_reads_3d_dim1_vector(
     }
 }
 
-fn encode_bound(fn_ir: &mut FnIR, expr: &super::affine::AffineExpr) -> Option<ValueId> {
+pub(crate) fn encode_bound(fn_ir: &mut FnIR, expr: &super::affine::AffineExpr) -> Option<ValueId> {
     if expr.terms.is_empty() {
         return Some(fn_ir.add_value(
             ValueKind::Const(Lit::Int(expr.constant)),

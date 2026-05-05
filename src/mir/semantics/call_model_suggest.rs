@@ -1,4 +1,4 @@
-pub(super) fn function_name_suggestion_candidates() -> &'static [&'static str] {
+pub(crate) fn function_name_suggestion_candidates() -> &'static [&'static str] {
     &[
         "length",
         "seq_len",

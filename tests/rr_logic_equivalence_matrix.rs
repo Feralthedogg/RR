@@ -1,8 +1,8 @@
 mod common;
 
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use common::{normalize, rscript_available, rscript_path, run_rscript, unique_dir};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, compile_with_config};
 use std::fs;
 use std::path::PathBuf;
 
@@ -17,6 +17,8 @@ fn opt_tag(level: OptLevel) -> &'static str {
         OptLevel::O0 => "o0",
         OptLevel::O1 => "o1",
         OptLevel::O2 => "o2",
+        OptLevel::O3 => "o3",
+        OptLevel::Oz => "oz",
     }
 }
 
@@ -235,7 +237,13 @@ print(main())
     let proj_dir = unique_dir(&sandbox_root, "proj");
     fs::create_dir_all(&proj_dir).expect("failed to create project dir");
 
-    let opt_levels = [OptLevel::O0, OptLevel::O1, OptLevel::O2];
+    let opt_levels = [
+        OptLevel::O0,
+        OptLevel::O1,
+        OptLevel::O2,
+        OptLevel::O3,
+        OptLevel::Oz,
+    ];
     let type_modes = [TypeMode::Strict, TypeMode::Gradual];
     let native_backends = [NativeBackend::Off, NativeBackend::Optional];
 

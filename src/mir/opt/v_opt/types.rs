@@ -378,7 +378,7 @@ pub enum ReduceKind {
 
 #[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ProofFallbackReason {
+pub(crate) enum ProofFallbackReason {
     Disabled,
     NotYetImplemented,
     StorelessConditionalLoop,
@@ -509,12 +509,12 @@ pub(crate) fn format_proof_fallback_counts(
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct CertifiedPlan {
-    pub(super) plan: VectorPlan,
+pub(crate) struct CertifiedPlan {
+    pub(crate) plan: VectorPlan,
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum ProofOutcome {
+pub(crate) enum ProofOutcome {
     Certified(CertifiedPlan),
     NotApplicable { reason: ProofFallbackReason },
     FallbackToPattern { reason: ProofFallbackReason },

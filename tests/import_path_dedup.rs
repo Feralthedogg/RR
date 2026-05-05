@@ -1,7 +1,7 @@
 mod common;
 
-use RR::compiler::{OptLevel, compile};
 use common::unique_dir;
+use rr::compiler::{OptLevel, compile};
 use std::fs;
 use std::path::PathBuf;
 

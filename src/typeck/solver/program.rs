@@ -1,3 +1,4 @@
+use super::*;
 pub fn analyze_program(all_fns: &mut FxHashMap<String, FnIR>, cfg: TypeConfig) -> RR<()> {
     let scheduler = CompilerScheduler::new(CompilerParallelConfig::default());
     analyze_program_with_compiler_parallel(all_fns, cfg, &scheduler)
@@ -87,23 +88,23 @@ pub fn analyze_program_with_compiler_parallel(
     finish_type_analysis(all_fns, cfg)
 }
 
-struct TypeSccJob {
-    names: Vec<String>,
-    fns: Vec<(String, FnIR)>,
+pub(crate) struct TypeSccJob {
+    pub(crate) names: Vec<String>,
+    pub(crate) fns: Vec<(String, FnIR)>,
 }
 
-struct TypeSolvedScc {
-    fns: Vec<(String, FnIR)>,
-    summaries: Vec<(String, TypeState, TypeTerm)>,
+pub(crate) struct TypeSolvedScc {
+    pub(crate) fns: Vec<(String, FnIR)>,
+    pub(crate) summaries: Vec<(String, TypeState, TypeTerm)>,
 }
 
-fn type_fn_ir_work_size(fn_ir: &FnIR) -> usize {
+pub(crate) fn type_fn_ir_work_size(fn_ir: &FnIR) -> usize {
     fn_ir.values.len()
         + fn_ir.blocks.len()
         + fn_ir.blocks.iter().map(|bb| bb.instrs.len()).sum::<usize>()
 }
 
-fn type_called_user_fns(fn_ir: &FnIR, all_fns: &FxHashMap<String, FnIR>) -> Vec<String> {
+pub(crate) fn type_called_user_fns(fn_ir: &FnIR, all_fns: &FxHashMap<String, FnIR>) -> Vec<String> {
     let mut out = FxHashSet::default();
     for value in &fn_ir.values {
         let ValueKind::Call { callee, .. } = &value.kind else {
@@ -118,7 +119,7 @@ fn type_called_user_fns(fn_ir: &FnIR, all_fns: &FxHashMap<String, FnIR>) -> Vec<
     out
 }
 
-fn type_solver_scc_waves(all_fns: &FxHashMap<String, FnIR>) -> Vec<Vec<Vec<String>>> {
+pub(crate) fn type_solver_scc_waves(all_fns: &FxHashMap<String, FnIR>) -> Vec<Vec<Vec<String>>> {
     fn dfs_order(
         name: &str,
         graph: &FxHashMap<String, Vec<String>>,
@@ -252,7 +253,7 @@ fn type_solver_scc_waves(all_fns: &FxHashMap<String, FnIR>) -> Vec<Vec<Vec<Strin
     waves
 }
 
-fn can_apply_index_return_override_for_fn(
+pub(crate) fn can_apply_index_return_override_for_fn(
     fn_ir: &FnIR,
     demanded_shape: ShapeTy,
     demanded_term: &TypeTerm,
@@ -276,7 +277,7 @@ fn can_apply_index_return_override_for_fn(
     true
 }
 
-fn solve_type_scc_job(
+pub(crate) fn solve_type_scc_job(
     mut job: TypeSccJob,
     global_ret: &FxHashMap<String, TypeState>,
     global_ret_term: &FxHashMap<String, TypeTerm>,

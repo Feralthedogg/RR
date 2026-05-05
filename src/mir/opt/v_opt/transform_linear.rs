@@ -1,368 +1,13 @@
 //! Reduce/map vectorization rewrites and dispatch helpers.
-
 use super::*;
 
-pub(crate) fn reduce_function_name(kind: ReduceKind) -> &'static str {
-    match kind {
-        ReduceKind::Sum => "sum",
-        ReduceKind::Prod => "prod",
-        ReduceKind::Min => "min",
-        ReduceKind::Max => "max",
-    }
-}
+#[path = "transform_linear/reductions.rs"]
+pub(crate) mod reductions;
 
-pub(crate) fn materialize_vector_expr_once(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    root: ValueId,
-    iv_phi: ValueId,
-    allow_any_base: bool,
-    require_safe_index: bool,
-) -> Option<ValueId> {
-    let idx_vec = build_loop_index_vector(fn_ir, lp)?;
-    let mut memo = FxHashMap::default();
-    let mut interner = FxHashMap::default();
-    materialize_vector_expr(
-        fn_ir,
-        root,
-        iv_phi,
-        idx_vec,
-        lp,
-        &mut memo,
-        &mut interner,
-        allow_any_base,
-        require_safe_index,
-    )
-}
-
-pub(crate) fn apply_reduce_plan(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    kind: ReduceKind,
-    acc_phi: ValueId,
-    vec_expr: ValueId,
-    iv_phi: ValueId,
-) -> bool {
-    let allow_any_base = true;
-    let require_safe_index = false;
-    let reduce_val = if kind == ReduceKind::Sum {
-        if let Some(v) = rewrite_sum_add_const(fn_ir, lp, vec_expr, iv_phi) {
-            v
-        } else {
-            let Some(input_vec) = materialize_vector_expr_once(
-                fn_ir,
-                lp,
-                vec_expr,
-                iv_phi,
-                allow_any_base,
-                require_safe_index,
-            ) else {
-                return false;
-            };
-            fn_ir.add_value(
-                ValueKind::Call {
-                    callee: reduce_function_name(kind).to_string(),
-                    args: vec![input_vec],
-                    names: vec![None],
-                },
-                crate::utils::Span::dummy(),
-                crate::mir::def::Facts::empty(),
-                None,
-            )
-        }
-    } else {
-        let Some(input_vec) = materialize_vector_expr_once(
-            fn_ir,
-            lp,
-            vec_expr,
-            iv_phi,
-            allow_any_base,
-            require_safe_index,
-        ) else {
-            return false;
-        };
-        fn_ir.add_value(
-            ValueKind::Call {
-                callee: reduce_function_name(kind).to_string(),
-                args: vec![input_vec],
-                names: vec![None],
-            },
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        )
-    };
-
-    finish_vector_phi_assignment(fn_ir, site, acc_phi, reduce_val)
-}
-
-pub(crate) fn apply_reduce_cond_plan(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    cond: ValueId,
-    entry: ReduceCondEntry,
-    iv_phi: ValueId,
-) -> bool {
-    let idx_vec = match build_loop_index_vector(fn_ir, lp) {
-        Some(v) => v,
-        None => return false,
-    };
-    let mut memo = FxHashMap::default();
-    let mut interner = FxHashMap::default();
-    let cond_vec = match materialize_vector_expr(
-        fn_ir,
-        cond,
-        iv_phi,
-        idx_vec,
-        lp,
-        &mut memo,
-        &mut interner,
-        true,
-        true,
-    ) {
-        Some(v) => v,
-        None => return false,
-    };
-    let then_vec = match materialize_vector_expr(
-        fn_ir,
-        entry.then_val,
-        iv_phi,
-        idx_vec,
-        lp,
-        &mut memo,
-        &mut interner,
-        true,
-        false,
-    ) {
-        Some(v) => v,
-        None => return false,
-    };
-    let else_vec = match materialize_vector_expr(
-        fn_ir,
-        entry.else_val,
-        iv_phi,
-        idx_vec,
-        lp,
-        &mut memo,
-        &mut interner,
-        true,
-        false,
-    ) {
-        Some(v) => v,
-        None => return false,
-    };
-    emit_same_or_scalar_guard(fn_ir, site.preheader, cond_vec, then_vec);
-    emit_same_or_scalar_guard(fn_ir, site.preheader, cond_vec, else_vec);
-    let ifelse_val = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_ifelse_strict".to_string(),
-            args: vec![cond_vec, then_vec, else_vec],
-            names: vec![None, None, None],
-        },
-        crate::utils::Span::dummy(),
-        crate::mir::def::Facts::empty(),
-        None,
-    );
-    let reduce_val = fn_ir.add_value(
-        ValueKind::Call {
-            callee: reduce_function_name(entry.kind).to_string(),
-            args: vec![ifelse_val],
-            names: vec![None],
-        },
-        crate::utils::Span::dummy(),
-        crate::mir::def::Facts::empty(),
-        None,
-    );
-    finish_vector_phi_assignment(fn_ir, site, entry.acc_phi, reduce_val)
-}
-
-pub(crate) fn apply_multi_reduce_cond_plan(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    cond: ValueId,
-    entries: &[ReduceCondEntry],
-    iv_phi: ValueId,
-) -> bool {
-    let idx_vec = match build_loop_index_vector(fn_ir, lp) {
-        Some(v) => v,
-        None => return false,
-    };
-    let mut memo = FxHashMap::default();
-    let mut interner = FxHashMap::default();
-    let cond_vec = match materialize_vector_expr(
-        fn_ir,
-        cond,
-        iv_phi,
-        idx_vec,
-        lp,
-        &mut memo,
-        &mut interner,
-        true,
-        true,
-    ) {
-        Some(v) => v,
-        None => return false,
-    };
-
-    let mut staged = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let then_vec = match materialize_vector_expr(
-            fn_ir,
-            entry.then_val,
-            iv_phi,
-            idx_vec,
-            lp,
-            &mut memo,
-            &mut interner,
-            true,
-            false,
-        ) {
-            Some(v) => v,
-            None => return false,
-        };
-        let else_vec = match materialize_vector_expr(
-            fn_ir,
-            entry.else_val,
-            iv_phi,
-            idx_vec,
-            lp,
-            &mut memo,
-            &mut interner,
-            true,
-            false,
-        ) {
-            Some(v) => v,
-            None => return false,
-        };
-        emit_same_or_scalar_guard(fn_ir, site.preheader, cond_vec, then_vec);
-        emit_same_or_scalar_guard(fn_ir, site.preheader, cond_vec, else_vec);
-        let ifelse_val = fn_ir.add_value(
-            ValueKind::Call {
-                callee: "rr_ifelse_strict".to_string(),
-                args: vec![cond_vec, then_vec, else_vec],
-                names: vec![None, None, None],
-            },
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        );
-        let reduce_val = fn_ir.add_value(
-            ValueKind::Call {
-                callee: reduce_function_name(entry.kind).to_string(),
-                args: vec![ifelse_val],
-                names: vec![None],
-            },
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        );
-        let Some(dest_var) = fn_ir.values[entry.acc_phi].origin_var.clone() else {
-            return false;
-        };
-        staged.push(PreparedVectorAssignment {
-            dest_var,
-            out_val: reduce_val,
-            shadow_vars: Vec::new(),
-            shadow_idx: None,
-        });
-    }
-
-    emit_prepared_vector_assignments(fn_ir, site, staged)
-}
-
-pub(crate) fn apply_reduce_2d_row_sum_plan(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    plan: Reduce2DApplyPlan,
-) -> bool {
-    let end = adjusted_loop_limit(fn_ir, plan.range.end, lp.limit_adjust);
-    let row_val = resolve_materialized_value(fn_ir, plan.axis);
-    let reduce_val = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_row_sum_range".to_string(),
-            args: vec![plan.base, row_val, plan.range.start, end],
-            names: vec![None, None, None, None],
-        },
-        crate::utils::Span::dummy(),
-        crate::mir::def::Facts::empty(),
-        None,
-    );
-    finish_vector_phi_assignment(fn_ir, site, plan.acc_phi, reduce_val)
-}
-
-pub(crate) fn apply_reduce_2d_col_sum_plan(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    plan: Reduce2DApplyPlan,
-) -> bool {
-    let end = adjusted_loop_limit(fn_ir, plan.range.end, lp.limit_adjust);
-    let col_val = resolve_materialized_value(fn_ir, plan.axis);
-    let reduce_val = fn_ir.add_value(
-        ValueKind::Call {
-            callee: "rr_col_sum_range".to_string(),
-            args: vec![plan.base, col_val, plan.range.start, end],
-            names: vec![None, None, None, None],
-        },
-        crate::utils::Span::dummy(),
-        crate::mir::def::Facts::empty(),
-        None,
-    );
-    finish_vector_phi_assignment(fn_ir, site, plan.acc_phi, reduce_val)
-}
-
-pub(crate) fn apply_reduce_3d_plan(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    plan: Reduce3DApplyPlan,
-) -> bool {
-    let end = adjusted_loop_limit(fn_ir, plan.range.end, lp.limit_adjust);
-    let callee = match (plan.kind, plan.axis) {
-        (ReduceKind::Sum, Axis3D::Dim1) => "rr_dim1_sum_range",
-        (ReduceKind::Sum, Axis3D::Dim2) => "rr_dim2_sum_range",
-        (ReduceKind::Sum, Axis3D::Dim3) => "rr_dim3_sum_range",
-        (_, Axis3D::Dim1) => "rr_dim1_reduce_range",
-        (_, Axis3D::Dim2) => "rr_dim2_reduce_range",
-        (_, Axis3D::Dim3) => "rr_dim3_reduce_range",
-    };
-    let fixed_a = resolve_materialized_value(fn_ir, plan.fixed_a);
-    let fixed_b = resolve_materialized_value(fn_ir, plan.fixed_b);
-    let reduce_val = if plan.kind == ReduceKind::Sum {
-        fn_ir.add_value(
-            ValueKind::Call {
-                callee: callee.to_string(),
-                args: vec![plan.base, fixed_a, fixed_b, plan.range.start, end],
-                names: vec![None, None, None, None, None],
-            },
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        )
-    } else {
-        let op_lit = fn_ir.add_value(
-            ValueKind::Const(Lit::Str(reduce_function_name(plan.kind).to_string())),
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        );
-        fn_ir.add_value(
-            ValueKind::Call {
-                callee: callee.to_string(),
-                args: vec![plan.base, fixed_a, fixed_b, plan.range.start, end, op_lit],
-                names: vec![None, None, None, None, None, None],
-            },
-            crate::utils::Span::dummy(),
-            crate::mir::def::Facts::empty(),
-            None,
-        )
-    };
-    finish_vector_phi_assignment(fn_ir, site, plan.acc_phi, reduce_val)
-}
+pub(crate) use self::reductions::{
+    apply_multi_reduce_cond_plan, apply_reduce_2d_col_sum_plan, apply_reduce_2d_row_sum_plan,
+    apply_reduce_3d_plan, apply_reduce_cond_plan, apply_reduce_plan,
+};
 
 pub(crate) fn apply_map_plan(
     fn_ir: &mut FnIR,
@@ -402,71 +47,73 @@ pub(crate) fn apply_map_plan(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_cond_map_plan(
-    fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    site: VectorApplySite,
-    dest: ValueId,
-    cond: ValueId,
-    then_val: ValueId,
-    else_val: ValueId,
-    iv_phi: ValueId,
-    start: ValueId,
-    end: ValueId,
-    whole_dest: bool,
-    shadow_vars: Vec<VarId>,
-) -> bool {
-    let whole_dest = whole_dest && lp.limit_adjust == 0;
-    let end = adjusted_loop_limit(fn_ir, end, lp.limit_adjust);
+pub(crate) struct CondMapApply {
+    pub(crate) site: VectorApplySite,
+    pub(crate) dest: ValueId,
+    pub(crate) cond: ValueId,
+    pub(crate) then_val: ValueId,
+    pub(crate) else_val: ValueId,
+    pub(crate) iv_phi: ValueId,
+    pub(crate) start: ValueId,
+    pub(crate) end: ValueId,
+    pub(crate) whole_dest: bool,
+    pub(crate) shadow_vars: Vec<VarId>,
+}
+
+pub(crate) fn apply_cond_map_plan(fn_ir: &mut FnIR, lp: &LoopInfo, plan: CondMapApply) -> bool {
+    let whole_dest = plan.whole_dest && lp.limit_adjust == 0;
+    let end = adjusted_loop_limit(fn_ir, plan.end, lp.limit_adjust);
     let idx_vec = match build_loop_index_vector(fn_ir, lp) {
         Some(v) => v,
         None => return false,
     };
-    let dest_ref = resolve_materialized_value(fn_ir, dest);
-    let Some(dest_var) = resolve_base_var(fn_ir, dest) else {
+    let dest_ref = resolve_materialized_value(fn_ir, plan.dest);
+    let Some(dest_var) = resolve_base_var(fn_ir, plan.dest) else {
         return false;
     };
     let mut memo = FxHashMap::default();
     let mut interner = FxHashMap::default();
     let cond_vec = match materialize_vector_expr(
         fn_ir,
-        cond,
-        iv_phi,
-        idx_vec,
-        lp,
+        VectorMaterializeRequest {
+            root: plan.cond,
+            iv_phi: plan.iv_phi,
+            idx_vec,
+            lp,
+            policy: SAFE_INDEX_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        true,
     ) {
         Some(v) => v,
         None => return false,
     };
     let then_vec = match materialize_vector_expr(
         fn_ir,
-        then_val,
-        iv_phi,
-        idx_vec,
-        lp,
+        VectorMaterializeRequest {
+            root: plan.then_val,
+            iv_phi: plan.iv_phi,
+            idx_vec,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => v,
         None => return false,
     };
     let else_vec = match materialize_vector_expr(
         fn_ir,
-        else_val,
-        iv_phi,
-        idx_vec,
-        lp,
+        VectorMaterializeRequest {
+            root: plan.else_val,
+            iv_phi: plan.iv_phi,
+            idx_vec,
+            lp,
+            policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+        },
         &mut memo,
         &mut interner,
-        true,
-        false,
     ) {
         Some(v) => v,
         None => return false,
@@ -474,14 +121,16 @@ pub(crate) fn apply_cond_map_plan(
 
     let (cond_vec, then_vec, else_vec) = prepare_cond_map_operands(
         fn_ir,
-        site.preheader,
-        dest_ref,
-        cond_vec,
-        then_vec,
-        else_vec,
-        start,
-        end,
-        whole_dest,
+        CondMapOperands {
+            preheader: plan.site.preheader,
+            dest_ref,
+            cond_vec,
+            then_vec,
+            else_vec,
+            start: plan.start,
+            end,
+            whole_dest,
+        },
     );
 
     let ifelse_val = fn_ir.add_value(
@@ -497,14 +146,14 @@ pub(crate) fn apply_cond_map_plan(
     let out_val = if whole_dest {
         ifelse_val
     } else {
-        build_slice_assignment_value(fn_ir, dest, start, end, ifelse_val)
+        build_slice_assignment_value(fn_ir, plan.dest, plan.start, end, ifelse_val)
     };
     finish_vector_assignment_with_shadow_states(
         fn_ir,
-        site,
+        plan.site,
         dest_var,
         out_val,
-        &shadow_vars,
+        &plan.shadow_vars,
         Some(end),
     )
 }
@@ -721,7 +370,16 @@ pub(crate) fn materialize_vector_or_scalar_expr(
 ) -> Option<ValueId> {
     if expr_has_iv_dependency(fn_ir, root, iv_phi) {
         materialize_vector_expr(
-            fn_ir, root, iv_phi, idx_seed, lp, memo, interner, true, false,
+            fn_ir,
+            VectorMaterializeRequest {
+                root,
+                iv_phi,
+                idx_vec: idx_seed,
+                lp,
+                policy: RELAXED_VECTOR_MATERIALIZE_POLICY,
+            },
+            memo,
+            interner,
         )
     } else {
         Some(
@@ -968,16 +626,18 @@ pub(crate) fn apply_linear_vector_plan(
         } => apply_cond_map_plan(
             fn_ir,
             lp,
-            site,
-            dest,
-            cond,
-            then_val,
-            else_val,
-            iv_phi,
-            start,
-            end,
-            whole_dest,
-            shadow_vars,
+            CondMapApply {
+                site,
+                dest,
+                cond,
+                then_val,
+                else_val,
+                iv_phi,
+                start,
+                end,
+                whole_dest,
+                shadow_vars,
+            },
         ),
         VectorPlan::CondMap3D {
             dest,
@@ -1132,14 +792,16 @@ pub(crate) fn apply_linear_vector_plan(
             fn_ir,
             lp,
             site,
-            dest,
-            callee,
-            args,
-            iv_phi,
-            start,
-            end,
-            whole_dest,
-            shadow_vars,
+            CallMapApplyPlan {
+                dest,
+                callee,
+                args,
+                iv_phi,
+                start,
+                end,
+                whole_dest,
+                shadow_vars,
+            },
         ),
         VectorPlan::CallMap3D {
             dest,

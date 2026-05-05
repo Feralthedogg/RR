@@ -1,6 +1,6 @@
-use RR::compiler::{OptLevel, compile_with_config};
-use RR::error::RRCode;
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, compile_with_config};
+use rr::error::RRCode;
 
 #[test]
 fn strict_mode_reports_return_type_hint_conflict() {

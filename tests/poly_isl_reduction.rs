@@ -104,7 +104,7 @@ print(poly_isl_reduction_sum(a))
                         || (body.contains("conditional_validity_candidate=")
                             && !body.contains("conditional_validity_candidate=;")))
                     && (body.contains("conditional_validity_applied=1")
-                        || body.contains("hint_conditional_validity_helper_fallback=1"))
+                        || body.contains("hint_conditional_validity_fallback=1"))
             }),
             "expected isl reduction direct conditional-validity attempt surface in one certificate dump, got:\n{}",
             cert_bodies.join("\n---\n")

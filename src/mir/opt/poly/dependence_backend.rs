@@ -1,5 +1,5 @@
 use super::ScopRegion;
-use super::access::AccessKind;
+use super::access::{AccessKind, AccessRelation, MemRef};
 use super::affine::{AffineExpr, AffineSymbol};
 use super::backend::PolySolverBackend;
 use super::isl::{map_roundtrip_if_non_empty, union_maps_roundtrip};
@@ -97,6 +97,36 @@ fn derived_state_from_relation(
     } else {
         DependenceState::IdentityProven
     }
+}
+
+fn memref_origin_key(fn_ir: &FnIR, memref: &MemRef) -> Option<String> {
+    let value = fn_ir.values.get(memref.base)?;
+    if let Some(origin) = value.origin_var.as_deref()
+        && !origin.is_empty()
+    {
+        return Some(format!("origin:{origin}"));
+    }
+    match &value.kind {
+        ValueKind::Load { var } => Some(format!("origin:{var}")),
+        ValueKind::Param { index } => fn_ir
+            .params
+            .get(*index)
+            .map(|name| format!("origin:{name}"))
+            .or_else(|| Some(format!("param:{index}"))),
+        _ => None,
+    }
+}
+
+fn memref_identity_key(fn_ir: &FnIR, access: &AccessRelation) -> String {
+    memref_origin_key(fn_ir, &access.memref)
+        .unwrap_or_else(|| format!("value:{}", access.memref.base))
+}
+
+fn memrefs_may_alias(fn_ir: &FnIR, lhs: &AccessRelation, rhs: &AccessRelation) -> bool {
+    lhs.memref.base == rhs.memref.base
+        || memref_origin_key(fn_ir, &lhs.memref)
+            .zip(memref_origin_key(fn_ir, &rhs.memref))
+            .is_some_and(|(lhs, rhs)| lhs == rhs)
 }
 
 pub trait PolyDependenceBackend {
@@ -235,7 +265,7 @@ fn heuristic_dependence_result(fn_ir: &FnIR, scop: &ScopRegion) -> DependenceRes
         .count();
     let distinct_write_bases = write_accesses
         .iter()
-        .map(|(_, access)| access.memref.base)
+        .map(|(_, access)| memref_identity_key(fn_ir, access))
         .collect::<std::collections::BTreeSet<_>>()
         .len();
 
@@ -389,15 +419,14 @@ fn collect_params_from_expr(expr: &AffineExpr, params: &mut BTreeSet<String>) {
     for symbol in expr.terms.keys() {
         match symbol {
             AffineSymbol::LoopIv(_) => {}
-            AffineSymbol::Param(name)
-            | AffineSymbol::Invariant(name)
-            | AffineSymbol::Length(name) => {
-                params.insert(match symbol {
-                    AffineSymbol::Param(_) => format!("p_{}", sanitize(name)),
-                    AffineSymbol::Invariant(_) => format!("inv_{}", sanitize(name)),
-                    AffineSymbol::Length(_) => format!("len_{}", sanitize(name)),
-                    AffineSymbol::LoopIv(_) => unreachable!(),
-                });
+            AffineSymbol::Param(name) => {
+                params.insert(format!("p_{}", sanitize(name)));
+            }
+            AffineSymbol::Invariant(name) => {
+                params.insert(format!("inv_{}", sanitize(name)));
+            }
+            AffineSymbol::Length(name) => {
+                params.insert(format!("len_{}", sanitize(name)));
             }
         }
     }
@@ -573,7 +602,7 @@ fn isl_dependence_result(fn_ir: &FnIR, scop: &ScopRegion) -> DependenceResult {
 
     for (source_stmt_id, source_access) in &accesses {
         for (sink_stmt_id, sink_access) in &accesses {
-            if source_access.memref.base != sink_access.memref.base
+            if !memrefs_may_alias(fn_ir, source_access, sink_access)
                 || source_access.subscripts.len() != sink_access.subscripts.len()
             {
                 continue;
@@ -768,5 +797,72 @@ mod tests {
         assert_eq!(result.relation.edge_count, 1);
         assert_eq!(result.edges.len(), 1);
         assert_eq!(result.summary.write_count, 1);
+    }
+
+    #[test]
+    fn memref_aliases_by_origin_var_for_mutable_local_base() {
+        let mut fn_ir = FnIR::new("dep_origin_alias".to_string(), vec![]);
+        let x_alloc = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "seq_len".to_string(),
+                args: vec![],
+                names: vec![],
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let x_load = fn_ir.add_value(
+            ValueKind::Load {
+                var: "x".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("x".to_string()),
+        );
+        let out_load = fn_ir.add_value(
+            ValueKind::Load {
+                var: "out".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("out".to_string()),
+        );
+        let read = AccessRelation {
+            statement_id: 0,
+            kind: AccessKind::Read,
+            memref: MemRef {
+                base: x_alloc,
+                name: "v0".to_string(),
+                rank: 1,
+                layout: MemoryLayout::Dense1D,
+            },
+            subscripts: vec![AffineExpr::symbol(AffineSymbol::LoopIv("i".to_string()))],
+        };
+        let write_same_var = AccessRelation {
+            statement_id: 0,
+            kind: AccessKind::Write,
+            memref: MemRef {
+                base: x_load,
+                name: "x".to_string(),
+                rank: 1,
+                layout: MemoryLayout::Dense1D,
+            },
+            subscripts: vec![AffineExpr::symbol(AffineSymbol::LoopIv("i".to_string()))],
+        };
+        let write_other_var = AccessRelation {
+            statement_id: 0,
+            kind: AccessKind::Write,
+            memref: MemRef {
+                base: out_load,
+                name: "out".to_string(),
+                rank: 1,
+                layout: MemoryLayout::Dense1D,
+            },
+            subscripts: vec![AffineExpr::symbol(AffineSymbol::LoopIv("i".to_string()))],
+        };
+
+        assert!(memrefs_may_alias(&fn_ir, &read, &write_same_var));
+        assert!(!memrefs_may_alias(&fn_ir, &read, &write_other_var));
     }
 }

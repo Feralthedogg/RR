@@ -1,5 +1,6 @@
 pub(crate) mod alias;
 pub(crate) mod patterns;
+pub(crate) mod stage_catalog;
 pub(crate) mod vector;
 
 use rustc_hash::FxHashSet;
@@ -54,6 +55,7 @@ pub(crate) struct PeepholeProfile {
     pub(crate) secondary_helper_simple_expr_elapsed_ns: u128,
     pub(crate) secondary_helper_full_range_elapsed_ns: u128,
     pub(crate) secondary_helper_named_copy_elapsed_ns: u128,
+    pub(crate) secondary_record_sroa_elapsed_ns: u128,
     pub(crate) secondary_finalize_cleanup_elapsed_ns: u128,
     pub(crate) secondary_finalize_bundle_elapsed_ns: u128,
     pub(crate) secondary_finalize_dead_temp_elapsed_ns: u128,
@@ -62,6 +64,40 @@ pub(crate) struct PeepholeProfile {
     pub(crate) secondary_finalize_dead_temp_reverse_elapsed_ns: u128,
     pub(crate) secondary_finalize_dead_temp_compact_elapsed_ns: u128,
     pub(crate) finalize_elapsed_ns: u128,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PeepholeOptions {
+    pub(crate) direct_builtin_call_map: bool,
+    pub(crate) preserve_all_defs: bool,
+    pub(crate) fast_dev: bool,
+    pub(crate) opt_level: crate::compiler::OptLevel,
+}
+
+impl PeepholeOptions {
+    pub(crate) fn new(direct_builtin_call_map: bool) -> Self {
+        Self {
+            direct_builtin_call_map,
+            preserve_all_defs: false,
+            fast_dev: false,
+            opt_level: crate::compiler::OptLevel::O2,
+        }
+    }
+
+    pub(crate) fn preserving_all_defs(mut self, preserve_all_defs: bool) -> Self {
+        self.preserve_all_defs = preserve_all_defs;
+        self
+    }
+
+    pub(crate) fn fast_dev(mut self, fast_dev: bool) -> Self {
+        self.fast_dev = fast_dev;
+        self
+    }
+
+    pub(crate) fn opt_level(mut self, opt_level: crate::compiler::OptLevel) -> Self {
+        self.opt_level = opt_level;
+        self
+    }
 }
 
 pub(crate) fn optimize_emitted_r(code: &str, direct_builtin_call_map: bool) -> String {
@@ -103,37 +139,29 @@ pub(crate) fn optimize_emitted_r_with_context_and_fresh(
 
 pub(crate) fn optimize_emitted_r_with_context_and_fresh_with_options(
     code: &str,
-    direct_builtin_call_map: bool,
     pure_user_calls: &FxHashSet<String>,
     fresh_user_calls: &FxHashSet<String>,
-    preserve_all_defs: bool,
+    options: PeepholeOptions,
 ) -> (String, Vec<u32>) {
-    super::r_peephole::optimize_emitted_r_with_context_and_fresh_with_options_and_profile(
+    super::r_peephole::optimize_emitted_r_with_context_and_fresh_with_options(
         code,
-        direct_builtin_call_map,
         pure_user_calls,
         fresh_user_calls,
-        preserve_all_defs,
-        false,
+        options,
     )
-    .0
 }
 
-pub(crate) fn optimize_emitted_r_with_context_and_fresh_with_options_and_profile(
+pub(crate) fn optimize_emitted_r_with_context_and_fresh_with_profile(
     code: &str,
-    direct_builtin_call_map: bool,
     pure_user_calls: &FxHashSet<String>,
     fresh_user_calls: &FxHashSet<String>,
-    preserve_all_defs: bool,
-    fast_dev: bool,
+    options: PeepholeOptions,
 ) -> ((String, Vec<u32>), PeepholeProfile) {
-    super::r_peephole::optimize_emitted_r_with_context_and_fresh_with_options_and_profile(
+    super::r_peephole::optimize_emitted_r_with_context_and_fresh_with_profile(
         code,
-        direct_builtin_call_map,
         pure_user_calls,
         fresh_user_calls,
-        preserve_all_defs,
-        fast_dev,
+        options,
     )
 }
 

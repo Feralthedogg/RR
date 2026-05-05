@@ -1,7 +1,7 @@
 use super::*;
 
 impl<'a> MirLowerer<'a> {
-    pub(super) fn lower_match_expr(
+    pub(crate) fn lower_match_expr(
         &mut self,
         scrut: hir::HirExpr,
         arms: Vec<hir::HirMatchArm>,
@@ -108,17 +108,17 @@ impl<'a> MirLowerer<'a> {
         Ok(phi)
     }
 
-    fn match_has_final_unguarded_catch_all(arms: &[hir::HirMatchArm]) -> bool {
+    pub(crate) fn match_has_final_unguarded_catch_all(arms: &[hir::HirMatchArm]) -> bool {
         arms.last()
             .map(Self::is_unguarded_catch_all_arm)
             .unwrap_or(false)
     }
 
-    fn is_unguarded_catch_all_arm(arm: &hir::HirMatchArm) -> bool {
+    pub(crate) fn is_unguarded_catch_all_arm(arm: &hir::HirMatchArm) -> bool {
         arm.guard.is_none() && matches!(&arm.pat, hir::HirPat::Wild | hir::HirPat::Bind { .. })
     }
 
-    fn lower_match_pat_cond(
+    pub(crate) fn lower_match_pat_cond(
         &mut self,
         scrut: ValueId,
         pat: &hir::HirPat,
@@ -196,7 +196,12 @@ impl<'a> MirLowerer<'a> {
         }
     }
 
-    fn bind_match_pattern(&mut self, scrut: ValueId, pat: &hir::HirPat, span: Span) -> RR<()> {
+    pub(crate) fn bind_match_pattern(
+        &mut self,
+        scrut: ValueId,
+        pat: &hir::HirPat,
+        span: Span,
+    ) -> RR<()> {
         match pat {
             hir::HirPat::Bind { local, .. } => {
                 self.write_var(*local, scrut);
@@ -238,7 +243,7 @@ impl<'a> MirLowerer<'a> {
         }
     }
 
-    fn hir_lit_to_lit(l: &hir::HirLit) -> Lit {
+    pub(crate) fn hir_lit_to_lit(l: &hir::HirLit) -> Lit {
         match l {
             hir::HirLit::Int(i) => Lit::Int(*i),
             hir::HirLit::Double(f) => Lit::Float(*f),
@@ -249,7 +254,7 @@ impl<'a> MirLowerer<'a> {
         }
     }
 
-    pub(super) fn unique_param_local_name(
+    pub(crate) fn unique_param_local_name(
         &self,
         param_name: &str,
         local_id: hir::LocalId,

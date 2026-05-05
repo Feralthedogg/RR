@@ -1,4 +1,5 @@
-fn parse_local_assign_line(line: &str) -> Option<(&str, &str)> {
+use super::*;
+pub(crate) fn parse_local_assign_line(line: &str) -> Option<(&str, &str)> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') {
         return None;

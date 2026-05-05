@@ -1,7 +1,8 @@
 use super::common::*;
+use super::*;
 
 #[test]
-fn raw_literal_rewrites_skip_dynamic_candidates_and_continue() {
+pub(crate) fn raw_literal_rewrites_skip_dynamic_candidates_and_continue() {
     let mut output = "\
 Sym_top_0 <- function() \n\
 {\n\
@@ -24,7 +25,7 @@ Sym_top_0 <- function() \n\
 }
 
 #[test]
-fn init_plus_scalar_conditional_loop_is_emitted_as_vector_ifelse() {
+pub(crate) fn init_plus_scalar_conditional_loop_is_emitted_as_vector_ifelse() {
     let mut fn_ir = FnIR::new("loop_ifelse".to_string(), vec![]);
     let entry = fn_ir.add_block();
     let header = fn_ir.add_block();
@@ -296,7 +297,7 @@ fn init_plus_scalar_conditional_loop_is_emitted_as_vector_ifelse() {
 }
 
 #[test]
-fn stale_fresh_self_replay_after_full_update_is_skipped() {
+pub(crate) fn stale_fresh_self_replay_after_full_update_is_skipped() {
     let mut backend = backend_with_sym17_fresh();
     let values = vec![
         Value {
@@ -419,7 +420,7 @@ fn stale_fresh_self_replay_after_full_update_is_skipped() {
 }
 
 #[test]
-fn earlier_same_origin_fresh_value_is_skipped_after_newer_binding() {
+pub(crate) fn earlier_same_origin_fresh_value_is_skipped_after_newer_binding() {
     let mut backend = backend_with_sym17_fresh();
     let values = vec![
         Value {
@@ -514,7 +515,7 @@ fn earlier_same_origin_fresh_value_is_skipped_after_newer_binding() {
 }
 
 #[test]
-fn loop_carried_scalar_self_update_is_emitted_as_assignment() {
+pub(crate) fn loop_carried_scalar_self_update_is_emitted_as_assignment() {
     let mut backend = RBackend::new();
     backend
         .loop_analysis
@@ -615,7 +616,7 @@ fn loop_carried_scalar_self_update_is_emitted_as_assignment() {
 }
 
 #[test]
-fn float_literals_keep_trailing_decimal_when_integral() {
+pub(crate) fn float_literals_keep_trailing_decimal_when_integral() {
     let backend = RBackend::new();
     let value = Value {
         id: 0,
@@ -633,7 +634,7 @@ fn float_literals_keep_trailing_decimal_when_integral() {
 }
 
 #[test]
-fn unary_neg_constant_float_is_folded_in_emission() {
+pub(crate) fn unary_neg_constant_float_is_folded_in_emission() {
     let backend = RBackend::new();
     let values = vec![Value {
         id: 0,
@@ -654,7 +655,7 @@ fn unary_neg_constant_float_is_folded_in_emission() {
 }
 
 #[test]
-fn marks_emit_integer_suffixes() {
+pub(crate) fn marks_emit_integer_suffixes() {
     let mut backend = RBackend::new();
     backend.emit_mark(
         Span {

@@ -1,7 +1,7 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn stats_model_frame_preserves_named_dataframe_schema() {
+pub(crate) fn stats_model_frame_preserves_named_dataframe_schema() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -9,31 +9,31 @@ fn stats_model_frame_preserves_named_dataframe_schema() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let six = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(6.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(6.0)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -69,7 +69,9 @@ fn stats_model_frame_preserves_named_dataframe_schema() {
         None,
     );
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y ~ x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y ~ x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -95,13 +97,17 @@ fn stats_model_frame_preserves_named_dataframe_schema() {
         None,
     );
     let x_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -157,7 +163,7 @@ fn stats_model_frame_preserves_named_dataframe_schema() {
 }
 
 #[test]
-fn stats_model_frame_from_model_preserves_named_dataframe_schema() {
+pub(crate) fn stats_model_frame_from_model_preserves_named_dataframe_schema() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -165,31 +171,31 @@ fn stats_model_frame_from_model_preserves_named_dataframe_schema() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let six = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(6.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(6.0)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -225,7 +231,9 @@ fn stats_model_frame_from_model_preserves_named_dataframe_schema() {
         None,
     );
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y ~ x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y ~ x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -261,13 +269,17 @@ fn stats_model_frame_from_model_preserves_named_dataframe_schema() {
         None,
     );
     let x_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -323,7 +335,7 @@ fn stats_model_frame_from_model_preserves_named_dataframe_schema() {
 }
 
 #[test]
-fn stats_model_frame_from_glm_preserves_named_dataframe_schema() {
+pub(crate) fn stats_model_frame_from_glm_preserves_named_dataframe_schema() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -331,31 +343,31 @@ fn stats_model_frame_from_glm_preserves_named_dataframe_schema() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let zero = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(0.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(0.0)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -391,7 +403,9 @@ fn stats_model_frame_from_glm_preserves_named_dataframe_schema() {
         None,
     );
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y ~ x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y ~ x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -437,13 +451,17 @@ fn stats_model_frame_from_glm_preserves_named_dataframe_schema() {
         None,
     );
     let x_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,

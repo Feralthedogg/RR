@@ -1,7 +1,7 @@
 use super::*;
 
 impl RBackend {
-    pub(super) fn begin_branch_snapshot(&mut self) -> BranchSnapshot {
+    pub(crate) fn begin_branch_snapshot(&mut self) -> BranchSnapshot {
         self.value_tracker.branch_snapshot_depth += 1;
         BranchSnapshot {
             value_binding_log_len: self.value_tracker.value_binding_log.len(),
@@ -11,7 +11,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn rollback_branch_snapshot(&mut self, snapshot: BranchSnapshot) {
+    pub(crate) fn rollback_branch_snapshot(&mut self, snapshot: BranchSnapshot) {
         while self.value_tracker.value_binding_log.len() > snapshot.value_binding_log_len {
             let Some(undo) = self.value_tracker.value_binding_log.pop() else {
                 break;
@@ -58,13 +58,13 @@ impl RBackend {
         }
     }
 
-    pub(super) fn end_branch_snapshot(&mut self) {
+    pub(crate) fn end_branch_snapshot(&mut self) {
         if self.value_tracker.branch_snapshot_depth > 0 {
             self.value_tracker.branch_snapshot_depth -= 1;
         }
     }
 
-    pub(super) fn join_branch_var_value_bindings(
+    pub(crate) fn join_branch_var_value_bindings(
         &mut self,
         then_var_versions: &FxHashMap<String, u64>,
         then_var_value_bindings: &FxHashMap<String, (usize, u64)>,
@@ -116,7 +116,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn join_branch_last_assigned_values(
+    pub(crate) fn join_branch_last_assigned_values(
         &mut self,
         then_last_assigned: &FxHashMap<String, usize>,
         else_last_assigned: &FxHashMap<String, usize>,
@@ -148,7 +148,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn join_branch_known_full_end_exprs(
+    pub(crate) fn join_branch_known_full_end_exprs(
         &mut self,
         pre_known_full_end_exprs: &FxHashMap<String, String>,
         then_known_full_end_exprs: &FxHashMap<String, String>,
@@ -176,7 +176,7 @@ impl RBackend {
         }
     }
 
-    pub(super) fn log_value_binding_change(&mut self, val_id: usize) {
+    pub(crate) fn log_value_binding_change(&mut self, val_id: usize) {
         if self.value_tracker.branch_snapshot_depth == 0 {
             return;
         }
@@ -186,7 +186,7 @@ impl RBackend {
         });
     }
 
-    pub(super) fn log_var_version_change(&mut self, var: &str) {
+    pub(crate) fn log_var_version_change(&mut self, var: &str) {
         if self.value_tracker.branch_snapshot_depth == 0 {
             return;
         }
@@ -196,7 +196,7 @@ impl RBackend {
         });
     }
 
-    pub(super) fn log_var_value_binding_change(&mut self, var: &str) {
+    pub(crate) fn log_var_value_binding_change(&mut self, var: &str) {
         if self.value_tracker.branch_snapshot_depth == 0 {
             return;
         }
@@ -208,7 +208,7 @@ impl RBackend {
             });
     }
 
-    pub(super) fn log_last_assigned_value_change(&mut self, var: &str) {
+    pub(crate) fn log_last_assigned_value_change(&mut self, var: &str) {
         if self.value_tracker.branch_snapshot_depth == 0 {
             return;
         }

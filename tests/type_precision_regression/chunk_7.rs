@@ -1,26 +1,26 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn matrix_shape_algebra_preserves_dimension_terms() {
+pub(crate) fn matrix_shape_algebra_preserves_dimension_terms() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
     let b0 = fn_ir.add_block();
     fn_ir.entry = b0;
     fn_ir.body_head = b0;
 
     let six = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(6)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(6)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let rows = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let cols = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(3)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(3)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -107,7 +107,7 @@ fn matrix_shape_algebra_preserves_dimension_terms() {
     );
     let mm = fn_ir.add_value(
         ValueKind::Binary {
-            op: RR::syntax::ast::BinOp::MatMul,
+            op: rr::compiler::internal::syntax::ast::BinOp::MatMul,
             lhs: mat,
             rhs: trans,
         },
@@ -158,14 +158,16 @@ fn matrix_shape_algebra_preserves_dimension_terms() {
 }
 
 #[test]
-fn stats_two_digit_tail_helpers_have_direct_types() {
+pub(crate) fn stats_two_digit_tail_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["xs".to_string(), "mat".to_string(), "obj".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::matrix(PrimTy::Double, false);
-    fn_ir.param_ty_hints[2] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Double, false);
+    fn_ir.param_ty_hints[2] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[1] = TypeTerm::Matrix(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[2] = TypeTerm::List(Box::new(TypeTerm::Any));
@@ -193,13 +195,13 @@ fn stats_two_digit_tail_helpers_have_direct_types() {
         None,
     );
     let _one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
 
-    let mut add_call = |callee: &str, args: Vec<RR::mir::ValueId>| {
+    let mut add_call = |callee: &str, args: Vec<rr::compiler::internal::mir::ValueId>| {
         let arg_len = args.len();
         fn_ir.add_value(
             ValueKind::Call {
@@ -378,14 +380,17 @@ fn stats_two_digit_tail_helpers_have_direct_types() {
 }
 
 #[test]
-fn graphics_two_digit_tail_package_calls_have_direct_types() {
+pub(crate) fn graphics_two_digit_tail_package_calls_have_direct_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["xs".to_string(), "ys".to_string(), "mat".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::vector(PrimTy::Double, false);
-    fn_ir.param_ty_hints[2] = RR::typeck::TypeState::matrix(PrimTy::Double, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[1] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Double, false);
+    fn_ir.param_ty_hints[2] =
+        rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Double, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[1] = TypeTerm::Vector(Box::new(TypeTerm::Double));
     fn_ir.param_term_hints[2] = TypeTerm::Matrix(Box::new(TypeTerm::Double));
@@ -413,13 +418,13 @@ fn graphics_two_digit_tail_package_calls_have_direct_types() {
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
 
-    let mut add_call = |callee: &str, args: Vec<RR::mir::ValueId>| {
+    let mut add_call = |callee: &str, args: Vec<rr::compiler::internal::mir::ValueId>| {
         let arg_len = args.len();
         fn_ir.add_value(
             ValueKind::Call {

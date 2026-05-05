@@ -1,4 +1,5 @@
-pub(super) fn strip_redundant_branch_local_vec_fill_rebinds(output: &mut String) {
+use super::*;
+pub(crate) fn strip_redundant_branch_local_vec_fill_rebinds(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

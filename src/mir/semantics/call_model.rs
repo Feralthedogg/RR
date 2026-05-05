@@ -13,7 +13,7 @@ mod call_model_suggest;
 mod call_model_surfaces;
 
 use self::call_model_suggest::function_name_suggestion_candidates;
-pub(super) use self::call_model_surfaces::{
+pub(crate) use self::call_model_surfaces::{
     builtin_arity, is_runtime_helper, is_runtime_reserved_symbol,
 };
 pub(crate) use self::call_model_surfaces::{
@@ -22,13 +22,13 @@ pub(crate) use self::call_model_surfaces::{
 };
 
 #[derive(Debug, Clone)]
-pub(super) struct UserFnSignature {
+pub(crate) struct UserFnSignature {
     pub display_name: String,
     pub param_names: Vec<String>,
     pub has_default: Vec<bool>,
 }
 
-pub(super) fn suggest_function_name(
+pub(crate) fn suggest_function_name(
     callee: &str,
     user_signatures: &FxHashMap<String, UserFnSignature>,
 ) -> Option<String> {
@@ -42,7 +42,7 @@ pub(super) fn suggest_function_name(
     )
 }
 
-pub(super) fn validate_call_target(
+pub(crate) fn validate_call_target(
     callee: &str,
     argc: usize,
     names: &[Option<String>],

@@ -5,12 +5,12 @@ mod common;
 #[path = "../../tests/common/random_rr.rs"]
 mod random_rr;
 
-use RR::compiler::{
+use libfuzzer_sys::{Corpus, fuzz_target};
+use rr::compiler::{
     CompileOutputOptions, OptLevel, ParallelBackend, ParallelConfig, ParallelMode,
     compile_with_configs_with_options,
 };
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
-use libfuzzer_sys::{Corpus, fuzz_target};
+use rr::typeck::{NativeBackend, TypeConfig, TypeMode};
 use std::fs;
 use std::path::Path;
 

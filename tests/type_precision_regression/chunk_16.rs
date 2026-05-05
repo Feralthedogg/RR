@@ -1,9 +1,10 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn base_direct_package_loading_helpers_have_builtin_types() {
+pub(crate) fn base_direct_package_loading_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["pkg".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::scalar(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::scalar(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Char;
 
     let b0 = fn_ir.add_block();
@@ -17,7 +18,7 @@ fn base_direct_package_loading_helpers_have_builtin_types() {
         None,
     );
     let bool_true = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Bool(true)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Bool(true)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -159,9 +160,10 @@ fn base_direct_package_loading_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_connection_sys_helpers_have_builtin_types() {
+pub(crate) fn base_direct_connection_sys_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["path".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();
@@ -412,9 +414,10 @@ fn base_direct_connection_sys_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_runtime_helpers_have_builtin_types() {
+pub(crate) fn base_direct_runtime_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["path".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();

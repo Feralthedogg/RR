@@ -1,7 +1,8 @@
 # Adaptive Phase Ordering Design
 
-This page describes a proposed design for function-sensitive phase ordering in
-Tachyon.
+This page started as the design for function-sensitive phase ordering in
+Tachyon. It now documents the implemented scheduler surface and the remaining
+design boundary.
 
 Today the heavy optimizer in `src/mir/opt.rs` runs one hard-coded pass order
 for every non-conservative function selected by the heavy tier. That keeps the

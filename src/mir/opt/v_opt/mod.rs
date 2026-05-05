@@ -8,7 +8,8 @@ mod transform;
 mod types;
 
 pub(crate) use analysis::same_length_proven;
-pub use api::{VOptStats, optimize, optimize_with_stats, optimize_with_stats_with_whitelist};
+pub use api::VOptStats;
+pub(crate) use api::optimize_with_stats_with_whitelist_and_loops;
 pub(crate) use planning::is_builtin_vector_safe_call;
 pub(crate) use planning::{Axis3D, ReduceKind, VectorPlan};
 pub(crate) use transform::try_apply_vectorization_transactionally;

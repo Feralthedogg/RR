@@ -1,5 +1,5 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.PhaseOrderClusterSoundness.
+Require Import MirInvariantBundle.
+Require Import PhaseOrderClusterSoundness.
 
 Module RRPhaseOrderGuardSoundness.
 

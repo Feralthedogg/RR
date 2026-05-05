@@ -1,6 +1,6 @@
-use RR::compiler::{
-    CompileOutputOptions, IncrementalOptions, IncrementalSession, OptLevel,
-    compile_with_configs_incremental_with_output_options, compile_with_configs_with_options,
+use rr::compiler::{
+    CompileOutputOptions, IncrementalCompileRequest, IncrementalOptions, IncrementalSession,
+    OptLevel, compile_incremental_request, compile_with_configs_with_options,
     default_parallel_config, default_type_config,
 };
 use std::fs;
@@ -83,55 +83,63 @@ main()
         .expect("baseline compile should succeed");
 
         let mut session = IncrementalSession::default();
-        let first = compile_with_configs_incremental_with_output_options(
-            entry,
-            src,
-            OptLevel::O2,
-            default_type_config(),
-            default_parallel_config(),
-            IncrementalOptions::all_phases(),
-            output_opts,
-            Some(&mut session),
-        )
+        let first = compile_incremental_request(IncrementalCompileRequest {
+            entry_path: entry,
+            entry_input: src,
+            opt_level: OptLevel::O2,
+            type_cfg: default_type_config(),
+            parallel_cfg: default_parallel_config(),
+            compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+            options: IncrementalOptions::all_phases(),
+            output_options: output_opts,
+            session: Some(&mut session),
+            profile: None,
+        })
         .expect("first incremental compile should succeed");
-        let second = compile_with_configs_incremental_with_output_options(
-            entry,
-            src,
-            OptLevel::O2,
-            default_type_config(),
-            default_parallel_config(),
-            IncrementalOptions::all_phases(),
-            output_opts,
-            Some(&mut session),
-        )
+        let second = compile_incremental_request(IncrementalCompileRequest {
+            entry_path: entry,
+            entry_input: src,
+            opt_level: OptLevel::O2,
+            type_cfg: default_type_config(),
+            parallel_cfg: default_parallel_config(),
+            compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+            options: IncrementalOptions::all_phases(),
+            output_options: output_opts,
+            session: Some(&mut session),
+            profile: None,
+        })
         .expect("second incremental compile should succeed");
-        let strict = compile_with_configs_incremental_with_output_options(
-            entry,
-            src,
-            OptLevel::O2,
-            default_type_config(),
-            default_parallel_config(),
-            IncrementalOptions {
+        let strict = compile_incremental_request(IncrementalCompileRequest {
+            entry_path: entry,
+            entry_input: src,
+            opt_level: OptLevel::O2,
+            type_cfg: default_type_config(),
+            parallel_cfg: default_parallel_config(),
+            compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+            options: IncrementalOptions {
                 strict_verify: true,
                 ..IncrementalOptions::all_phases()
             },
-            output_opts,
-            Some(&mut session),
-        )
+            output_options: output_opts,
+            session: Some(&mut session),
+            profile: None,
+        })
         .expect("strict incremental seed compile should succeed");
-        let strict_hit = compile_with_configs_incremental_with_output_options(
-            entry,
-            src,
-            OptLevel::O2,
-            default_type_config(),
-            default_parallel_config(),
-            IncrementalOptions {
+        let strict_hit = compile_incremental_request(IncrementalCompileRequest {
+            entry_path: entry,
+            entry_input: src,
+            opt_level: OptLevel::O2,
+            type_cfg: default_type_config(),
+            parallel_cfg: default_parallel_config(),
+            compiler_parallel_cfg: rr::compiler::CompilerParallelConfig::default(),
+            options: IncrementalOptions {
                 strict_verify: true,
                 ..IncrementalOptions::all_phases()
             },
-            output_opts,
-            Some(&mut session),
-        )
+            output_options: output_opts,
+            session: Some(&mut session),
+            profile: None,
+        })
         .expect("strict incremental hit compile should succeed");
 
         assert_eq!(

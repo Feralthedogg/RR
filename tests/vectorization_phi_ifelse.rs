@@ -20,6 +20,10 @@ fn compile_rr(rr_bin: &Path, rr_src: &Path, out: &Path, level: &str) {
     );
 }
 
+fn contains_all(code: &str, needles: &[&str]) -> bool {
+    needles.iter().all(|needle| code.contains(needle))
+}
+
 #[test]
 fn tesseract_emits_expected_vectorized_kernels() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -38,19 +42,53 @@ fn tesseract_emits_expected_vectorized_kernels() {
 
     let code = fs::read_to_string(&out).expect("failed to read O2 output");
     assert!(
-        code.contains("visc <-")
-            && code.contains("rr_gather(u, rr_index_vec_floor(adj_r))")
-            && code.contains("rr_gather(u, rr_index_vec_floor(adj_l))")
-            && code.contains("rr_gather(v, rr_index_vec_floor(adj_u))")
-            && code.contains("rr_gather(v, rr_index_vec_floor(adj_d))"),
+        contains_all(
+            &code,
+            &[
+                "visc <-",
+                "rr_gather(u, rr_index_vec_floor(adj_r))",
+                "rr_gather(u, rr_index_vec_floor(adj_l))",
+                "rr_gather(v, rr_index_vec_floor(adj_u))",
+                "rr_gather(v, rr_index_vec_floor(adj_d))",
+            ],
+        ) || contains_all(
+            &code,
+            &[
+                "visc <-",
+                "n_d <- rr_index_vec_floor(n_d)",
+                "n_l <- rr_index_vec_floor(n_l)",
+                "n_r <- rr_index_vec_floor(n_r)",
+                "n_u <- rr_index_vec_floor(n_u)",
+                "rr_gather(u, n_r)",
+                "rr_gather(u, n_l)",
+                "rr_gather(v, n_u)",
+                "rr_gather(v, n_d)",
+            ],
+        ),
         "expected Smagorinsky kernel to lower to vector gather form"
     );
     assert!(
-        (code.contains("du1 <-") || code.contains("du <-"))
-            && code.contains("rr_gather(h, rr_index_vec_floor(adj_r))")
-            && code.contains("rr_gather(h, rr_index_vec_floor(adj_l))")
-            && code.contains("rr_gather(u, rr_index_vec_floor(adj_l))")
-            && code.contains("rr_gather(u, rr_index_vec_floor(adj_r))"),
+        contains_all(
+            &code,
+            &[
+                "rr_gather(h, rr_index_vec_floor(adj_r))",
+                "rr_gather(h, rr_index_vec_floor(adj_l))",
+                "rr_gather(u, rr_index_vec_floor(adj_l))",
+                "rr_gather(u, rr_index_vec_floor(adj_r))",
+            ],
+        ) || contains_all(
+            &code,
+            &[
+                "n_d <- rr_index_vec_floor(n_d)",
+                "n_l <- rr_index_vec_floor(n_l)",
+                "n_r <- rr_index_vec_floor(n_r)",
+                "n_u <- rr_index_vec_floor(n_u)",
+                "rr_gather(h, n_r)",
+                "rr_gather(h, n_l)",
+                "rr_gather(u, n_l)",
+                "rr_gather(u, n_r)",
+            ],
+        ),
         "expected tendency kernel to lower to vector gather form"
     );
     assert!(
@@ -70,9 +108,11 @@ fn tesseract_emits_expected_vectorized_kernels() {
     assert!(
         (code.contains("return(rr_named_list(\"px\", px, \"py\", py, \"pf\", pf))")
             || code.contains("return(list(px = px, py = py, pf = pf))"))
-            && Regex::new(r"particles <- Sym_\d+\(p_x, p_y, p_f, u, v, (?:dt|0\.1), (?:N|40)\)")
+            && (Regex::new(r"particles <- Sym_\d+\(p_x, p_y, p_f, u, v, (?:dt|0\.1), (?:N|40)\)",)
                 .expect("invalid particle regex")
                 .is_match(&code)
+                || code.contains("particles <- advect_particles(p_x, p_y, p_f, u, v, dt, N)")
+                || code.contains("particles <- advect_particles(p_x, p_y, p_f, u, v, 0.1, 40)"))
             && ((code.contains("p_x <- rr_field_get(particles, \"px\")")
                 || code.contains("p_x <- particles[[\"px\"]]"))
                 && (code.contains("p_y <- rr_field_get(particles, \"py\")")

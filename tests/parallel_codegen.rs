@@ -1,5 +1,5 @@
-use RR::compiler::{OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs};
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::internal::typeck::{NativeBackend, TypeConfig, TypeMode};
+use rr::compiler::{OptLevel, ParallelBackend, ParallelConfig, ParallelMode, compile_with_configs};
 
 #[test]
 fn emits_parallel_runtime_prelude_and_vector_wrapper_call() {

@@ -1,4 +1,4 @@
-use RR::runtime::R_RUNTIME;
+use rr::runtime::R_RUNTIME;
 
 #[test]
 fn rr_bool_requires_logical_scalar() {

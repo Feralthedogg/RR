@@ -30,7 +30,7 @@ print(f(4L))
         source,
         "licm_default_tier.rr",
         "-O2",
-        &[],
+        &[("RR_VERBOSE_LOG", "1")],
     );
     assert!(
         ok,

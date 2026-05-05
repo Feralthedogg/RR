@@ -2,7 +2,7 @@ From Stdlib Require Import String.
 From Stdlib Require Import ZArith.
 From Stdlib Require Import Bool.
 
-Require Import RRProofs.MirInvariantBundle.
+Require Import MirInvariantBundle.
 
 Open Scope string_scope.
 Open Scope Z_scope.

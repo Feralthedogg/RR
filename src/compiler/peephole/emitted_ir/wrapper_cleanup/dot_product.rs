@@ -1,4 +1,8 @@
-fn parse_accumulate_product_line_ir(line: &str, acc: &str) -> Option<(String, String, String)> {
+use super::*;
+pub(crate) fn parse_accumulate_product_line_ir(
+    line: &str,
+    acc: &str,
+) -> Option<(String, String, String)> {
     let pattern = format!(
         r"^(?P<lhs>{}) <- \({} \+ \((?P<a>{})\[(?P<idx_a>{})\] \* (?P<b>{})\[(?P<idx_b>{})\]\)\)$",
         IDENT_PATTERN,
@@ -20,7 +24,7 @@ fn parse_accumulate_product_line_ir(line: &str, acc: &str) -> Option<(String, St
     Some((lhs_vec.to_string(), rhs_vec.to_string(), idx_a.to_string()))
 }
 
-fn apply_collapse_trivial_dot_product_wrappers_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_collapse_trivial_dot_product_wrappers_ir(program: &mut EmittedProgram) {
     fn is_zero_literal(expr: &str) -> bool {
         matches!(expr.trim(), "0" | "0L" | "0.0")
     }
@@ -198,9 +202,7 @@ fn apply_collapse_trivial_dot_product_wrappers_ir(program: &mut EmittedProgram) 
     }
 }
 
-pub(in super::super) fn collapse_trivial_dot_product_wrappers_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn collapse_trivial_dot_product_wrappers_ir(lines: Vec<String>) -> Vec<String> {
     if !has_trivial_dot_product_wrapper_candidates_ir(&lines) {
         return lines;
     }

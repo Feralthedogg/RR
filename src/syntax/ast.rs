@@ -58,6 +58,10 @@ pub enum StmtKind {
     },
     Break,
     Next,
+    UnsafeRBlock {
+        code: String,
+        read_only: bool,
+    },
     ExprStmt {
         expr: Expr,
     },

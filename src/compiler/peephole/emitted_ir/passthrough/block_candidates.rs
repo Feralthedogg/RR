@@ -1,4 +1,5 @@
-fn build_block_end_map_ir(lines: &[String]) -> Vec<Option<usize>> {
+use super::*;
+pub(crate) fn build_block_end_map_ir(lines: &[String]) -> Vec<Option<usize>> {
     let mut out = vec![None; lines.len()];
     let mut stack: Vec<usize> = Vec::new();
     for (idx, line) in lines.iter().enumerate() {
@@ -16,7 +17,7 @@ fn build_block_end_map_ir(lines: &[String]) -> Vec<Option<usize>> {
     out
 }
 
-fn has_terminal_repeat_next_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_terminal_repeat_next_candidates_ir(lines: &[String]) -> bool {
     let block_end_map = build_block_end_map_ir(lines);
     for (idx, line) in lines.iter().enumerate() {
         if line.trim() != "repeat {" {
@@ -36,7 +37,7 @@ fn has_terminal_repeat_next_candidates_ir(lines: &[String]) -> bool {
     false
 }
 
-fn has_identical_if_else_tail_assign_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_identical_if_else_tail_assign_candidates_ir(lines: &[String]) -> bool {
     let block_end_map = build_block_end_map_ir(lines);
     for (idx, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -69,7 +70,7 @@ fn has_identical_if_else_tail_assign_candidates_ir(lines: &[String]) -> bool {
     false
 }
 
-fn has_tail_assign_slice_return_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_tail_assign_slice_return_candidates_ir(lines: &[String]) -> bool {
     build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .any(|func| {
@@ -105,7 +106,7 @@ fn has_tail_assign_slice_return_candidates_ir(lines: &[String]) -> bool {
         })
 }
 
-fn has_unreachable_sym_helper_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_unreachable_sym_helper_candidates_ir(lines: &[String]) -> bool {
     let functions = build_function_text_index(lines, parse_function_header_ir);
     let sym_funcs: FxHashMap<String, IndexedFunction> = functions
         .iter()

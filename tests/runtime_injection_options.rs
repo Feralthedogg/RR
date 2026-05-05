@@ -1,4 +1,4 @@
-use RR::compiler::{
+use rr::compiler::{
     CompileOutputOptions, OptLevel, compile_with_configs, compile_with_configs_with_options,
 };
 use std::fs;
@@ -132,8 +132,8 @@ print(addv(c(1.0, 2.0), c(3.0, 4.0)))
         rr_path.to_str().expect("non-utf8 path"),
         src,
         OptLevel::O2,
-        RR::compiler::default_type_config(),
-        RR::compiler::default_parallel_config(),
+        rr::compiler::default_type_config(),
+        rr::compiler::default_parallel_config(),
     )
     .expect("compile should succeed")
     .0;
@@ -187,8 +187,8 @@ print(pick(c(4.0, 5.0, 6.0), 2.0))
         rr_path.to_str().expect("non-utf8 path"),
         src,
         OptLevel::O0,
-        RR::compiler::default_type_config(),
-        RR::compiler::default_parallel_config(),
+        rr::compiler::default_type_config(),
+        rr::compiler::default_parallel_config(),
     )
     .expect("compile should succeed")
     .0;
@@ -241,8 +241,8 @@ print(kept())
         rr_path.to_str().expect("non-utf8 path"),
         src,
         OptLevel::O1,
-        RR::compiler::default_type_config(),
-        RR::compiler::default_parallel_config(),
+        rr::compiler::default_type_config(),
+        rr::compiler::default_parallel_config(),
         CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: false,
@@ -256,8 +256,8 @@ print(kept())
         rr_path.to_str().expect("non-utf8 path"),
         src,
         OptLevel::O1,
-        RR::compiler::default_type_config(),
-        RR::compiler::default_parallel_config(),
+        rr::compiler::default_type_config(),
+        rr::compiler::default_parallel_config(),
         CompileOutputOptions {
             inject_runtime: true,
             preserve_all_defs: true,

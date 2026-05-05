@@ -1,4 +1,5 @@
-fn build_map_plan(fn_ir: &FnIR, lp: &LoopInfo, scop: &ScopRegion) -> Option<VectorPlan> {
+use super::*;
+pub(crate) fn build_map_plan(fn_ir: &FnIR, lp: &LoopInfo, scop: &ScopRegion) -> Option<VectorPlan> {
     if scop.dimensions.len() != 1 {
         if super::poly_trace_enabled() {
             eprintln!("   [poly-codegen] map reject: expected one dimension");
@@ -194,7 +195,7 @@ fn build_map_plan(fn_ir: &FnIR, lp: &LoopInfo, scop: &ScopRegion) -> Option<Vect
     None
 }
 
-fn build_whole_vector_map_assignment(
+pub(crate) fn build_whole_vector_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
     dest: ValueId,
@@ -282,7 +283,7 @@ fn build_whole_vector_map_assignment(
     ))
 }
 
-fn build_multi_whole_vector_map_assignments(
+pub(crate) fn build_multi_whole_vector_map_assignments(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -330,7 +331,7 @@ fn build_multi_whole_vector_map_assignments(
     (assignments.len() >= 2).then_some((assignments, guards))
 }
 
-fn build_single_whole_vector_map_assignment(
+pub(crate) fn build_single_whole_vector_map_assignment(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -366,7 +367,7 @@ fn build_single_whole_vector_map_assignment(
     build_whole_vector_map_assignment(fn_ir, scop, dest, expr_root)
 }
 
-fn build_single_range_vector_map_assignment(
+pub(crate) fn build_single_range_vector_map_assignment(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(PreparedVectorAssignment, VectorMapOperands)> {
@@ -452,7 +453,7 @@ fn build_single_range_vector_map_assignment(
     ))
 }
 
-fn build_multi_range_vector_map_assignments(
+pub(crate) fn build_multi_range_vector_map_assignments(
     fn_ir: &mut FnIR,
     scop: &ScopRegion,
 ) -> Option<(Vec<PreparedVectorAssignment>, Vec<VectorMapOperands>)> {
@@ -539,7 +540,7 @@ fn build_multi_range_vector_map_assignments(
     (assignments.len() >= 2).then_some((assignments, guards))
 }
 
-fn build_whole_vector_reduce_assignment(
+pub(crate) fn build_whole_vector_reduce_assignment(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -671,7 +672,7 @@ fn build_whole_vector_reduce_assignment(
     ))
 }
 
-fn build_single_whole_vector_reduce_assignment(
+pub(crate) fn build_single_whole_vector_reduce_assignment(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -695,7 +696,7 @@ fn build_single_whole_vector_reduce_assignment(
     Some(assignment)
 }
 
-fn build_multi_whole_vector_reduce_assignments(
+pub(crate) fn build_multi_whole_vector_reduce_assignments(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,

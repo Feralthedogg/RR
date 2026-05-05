@@ -1,4 +1,5 @@
-pub(super) fn strip_single_blank_spacers(output: &mut String) {
+use super::*;
+pub(crate) fn strip_single_blank_spacers(output: &mut String) {
     let lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.len() < 3 {
         return;
@@ -51,7 +52,7 @@ pub(super) fn strip_single_blank_spacers(output: &mut String) {
     *output = rewritten;
 }
 
-pub(super) fn compact_blank_lines(output: &mut String) {
+pub(crate) fn compact_blank_lines(output: &mut String) {
     let mut out = String::new();
     let mut blank_run = 0usize;
     for line in output.lines() {
@@ -76,7 +77,7 @@ pub(super) fn compact_blank_lines(output: &mut String) {
     *output = out;
 }
 
-pub(super) fn strip_orphan_rr_cse_pruned_markers(output: &mut String) {
+pub(crate) fn strip_orphan_rr_cse_pruned_markers(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

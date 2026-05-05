@@ -1,4 +1,5 @@
-pub(super) fn rewrite_one_or_two_use_named_scalar_index_reads_in_straight_line_region(
+use super::*;
+pub(crate) fn rewrite_one_or_two_use_named_scalar_index_reads_in_straight_line_region(
     output: &mut String,
 ) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
@@ -40,8 +41,8 @@ pub(super) fn rewrite_one_or_two_use_named_scalar_index_reads_in_straight_line_r
 
         let mut use_line_idxs = Vec::new();
         let mut valid = true;
-        for line_no in idx + 1..region_end {
-            let line_trimmed = lines[line_no].trim();
+        for (line_no, line) in lines.iter().enumerate().take(region_end).skip(idx + 1) {
+            let line_trimmed = line.trim();
             if line_trimmed.is_empty() {
                 continue;
             }

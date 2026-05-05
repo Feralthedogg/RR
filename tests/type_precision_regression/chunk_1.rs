@@ -1,27 +1,27 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn arithmetic_keeps_int_double_boundary_precise() {
+pub(crate) fn arithmetic_keeps_int_double_boundary_precise() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
     let b0 = fn_ir.add_block();
     fn_ir.entry = b0;
     fn_ir.body_head = b0;
 
     let i5 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(5)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(5)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let i2 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let div = fn_ir.add_value(
         ValueKind::Binary {
-            op: RR::syntax::ast::BinOp::Div,
+            op: rr::compiler::internal::syntax::ast::BinOp::Div,
             lhs: i5,
             rhs: i2,
         },
@@ -31,7 +31,7 @@ fn arithmetic_keeps_int_double_boundary_precise() {
     );
     let modu = fn_ir.add_value(
         ValueKind::Binary {
-            op: RR::syntax::ast::BinOp::Mod,
+            op: rr::compiler::internal::syntax::ast::BinOp::Mod,
             lhs: i5,
             rhs: i2,
         },
@@ -51,7 +51,7 @@ fn arithmetic_keeps_int_double_boundary_precise() {
 }
 
 #[test]
-fn hir_type_lowering_preserves_option_union_and_result_shape() {
+pub(crate) fn hir_type_lowering_preserves_option_union_and_result_shape() {
     let option_int = hir_ty_to_type_state(&Ty::Option(Box::new(Ty::Int)));
     assert_eq!(option_int.prim, PrimTy::Int);
     assert_eq!(option_int.shape, ShapeTy::Scalar);
@@ -76,8 +76,8 @@ fn hir_type_lowering_preserves_option_union_and_result_shape() {
     assert_eq!(matrix_term, TypeTerm::Matrix(Box::new(TypeTerm::Double)));
 
     let df_term = hir_ty_to_type_term(&Ty::DataFrame(vec![
-        (RR::hir::def::SymbolId(1), Ty::Int),
-        (RR::hir::def::SymbolId(2), Ty::Double),
+        (rr::compiler::internal::hir::def::SymbolId(1), Ty::Int),
+        (rr::compiler::internal::hir::def::SymbolId(2), Ty::Double),
     ]));
     assert_eq!(
         df_term,
@@ -86,9 +86,9 @@ fn hir_type_lowering_preserves_option_union_and_result_shape() {
 }
 
 #[test]
-fn index_refines_scalar_type_from_structural_term() {
+pub(crate) fn index_refines_scalar_type_from_structural_term() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["xs".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Int));
 
     let b0 = fn_ir.add_block();
@@ -102,7 +102,7 @@ fn index_refines_scalar_type_from_structural_term() {
         None,
     );
     let idx = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(1)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(1)),
         Span::dummy(),
         Facts::empty(),
         None,

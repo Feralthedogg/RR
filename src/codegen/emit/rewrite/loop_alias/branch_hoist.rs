@@ -1,4 +1,5 @@
-pub(super) fn hoist_branch_local_pure_scalar_assigns_used_after_branch(output: &mut String) {
+use super::*;
+pub(crate) fn hoist_branch_local_pure_scalar_assigns_used_after_branch(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

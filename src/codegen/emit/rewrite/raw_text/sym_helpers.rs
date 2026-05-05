@@ -1,4 +1,5 @@
-pub(super) fn strip_unreachable_sym_helpers(output: &mut String) {
+use super::*;
+pub(crate) fn strip_unreachable_sym_helpers(output: &mut String) {
     let lines: Vec<String> = output.lines().map(str::to_string).collect();
     if lines.is_empty() {
         return;

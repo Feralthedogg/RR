@@ -23,10 +23,12 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Getting Started', link: '/getting-started' },
+          { text: 'What is New in 2.0', link: '/whats-new-2.0' },
           { text: 'RR for R Users', link: '/r-for-r-users' },
           { text: 'Writing RR', link: '/writing-rr' },
           { text: 'CLI', link: '/cli' },
           { text: 'Configuration', link: '/configuration' },
+          { text: 'Package Manager Design', link: '/package-manager-design' },
         ],
       },
       {
@@ -42,7 +44,10 @@ export default defineConfig({
         items: [
           { text: 'Overview', link: '/compiler/' },
           { text: 'Pipeline', link: '/compiler/pipeline' },
+          { text: 'IR Model', link: '/compiler/ir-model' },
           { text: 'Optimization', link: '/compiler/optimization' },
+          { text: 'SROA', link: '/compiler/sroa' },
+          { text: 'Unsafe Boundaries', link: '/compiler/unsafe-boundaries' },
           { text: 'Testing & QA', link: '/compiler/testing' },
           { text: 'Contributing Audit', link: '/compiler/contributing-audit' },
         ],
@@ -63,8 +68,18 @@ export default defineConfig({
           ],
         },
         {
+          text: 'Optimization',
+          items: [
+            { text: 'Tachyon Optimizer', link: '/compiler/optimization' },
+            { text: 'Adaptive Phase Ordering', link: '/compiler/adaptive-phase-ordering' },
+            { text: 'Compile-Time Reduction', link: '/compiler/compile-time-reduction' },
+            { text: 'MIR SROA Design', link: '/compiler/sroa' },
+          ],
+        },
+        {
           text: 'Development',
           items: [
+            { text: 'Unsafe Boundaries', link: '/compiler/unsafe-boundaries' },
             { text: 'Testing & QA', link: '/compiler/testing' },
             { text: 'Contributing Audit', link: '/compiler/contributing-audit' },
           ],
@@ -75,6 +90,7 @@ export default defineConfig({
           text: 'Start Here',
           items: [
             { text: 'Docs Home', link: '/' },
+            { text: 'What is New in 2.0', link: '/whats-new-2.0' },
             { text: 'Getting Started', link: '/getting-started' },
             { text: 'RR for R Users', link: '/r-for-r-users' },
           ],
@@ -85,6 +101,8 @@ export default defineConfig({
           items: [
             { text: 'Writing RR for Performance & Safety', link: '/writing-rr' },
             { text: 'CLI Reference', link: '/cli' },
+            { text: 'What is New in 2.0', link: '/whats-new-2.0' },
+            { text: 'Package Manager Design', link: '/package-manager-design' },
           ],
         },
         {
@@ -125,7 +143,11 @@ export default defineConfig({
             { text: 'Parallel Compilation', link: '/compiler/parallel-compilation' },
             { text: 'IR Model (HIR & MIR)', link: '/compiler/ir-model' },
             { text: 'Tachyon Optimizer', link: '/compiler/optimization' },
+            { text: 'Adaptive Phase Ordering', link: '/compiler/adaptive-phase-ordering' },
+            { text: 'Compile-Time Reduction', link: '/compiler/compile-time-reduction' },
+            { text: 'MIR SROA Design', link: '/compiler/sroa' },
             { text: 'Runtime & Errors', link: '/compiler/runtime-and-errors' },
+            { text: 'Unsafe Boundaries', link: '/compiler/unsafe-boundaries' },
             { text: 'Testing & QA', link: '/compiler/testing' },
             { text: 'Contributing Audit', link: '/compiler/contributing-audit' },
           ],

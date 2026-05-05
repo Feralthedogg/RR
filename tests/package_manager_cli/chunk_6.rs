@@ -1,7 +1,7 @@
 use super::package_manager_cli_common::*;
 
 #[test]
-fn registry_diff_reports_changed_and_added_files() {
+pub(crate) fn registry_diff_reports_changed_and_added_files() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -84,7 +84,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn registry_channels_can_be_assigned_and_used_for_install() {
+pub(crate) fn registry_channels_can_be_assigned_and_used_for_install() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")
@@ -238,7 +238,7 @@ fn add_one(x) {
 }
 
 #[test]
-fn registry_risk_reports_metadata_and_diff_based_factors() {
+pub(crate) fn registry_risk_reports_metadata_and_diff_based_factors() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox_root = root
         .join("target")

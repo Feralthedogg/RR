@@ -140,7 +140,7 @@ Relevant path:
 
 `-O0` runs stabilization only.
 
-`-O1/-O2` run the optimizing pipeline:
+`-O1/-O2/-O3/-Oz` run the optimizing pipeline:
 
 - always tier
 - selective heavy tier
@@ -153,6 +153,10 @@ The important policy split is now:
   - uses the baseline `Balanced` heavy-tier schedule
 - `-O2`
   - enables adaptive heavy-tier phase ordering by default
+- `-O3`
+  - uses adaptive ordering with larger bounded budgets and aggressive pass groups
+- `-Oz`
+  - uses the balanced schedule and disables the full-program inline tier
 
 Relevant path:
 
@@ -194,7 +198,7 @@ covered here rather than treated as an optimizer-only issue.
 By default the emitted artifact is treated as a whole-program result rather than
 a definition-preserving transpilation dump. That means:
 
-- the pipeline may trim unreachable top-level `Sym_*` definitions
+- the pipeline may trim unreachable generated helper definitions
 - emitted-R cleanup may strip helper definitions that are not reachable from the
   synthesized entry closure
 
@@ -227,7 +231,7 @@ It still runs mandatory codegen-safety work:
 - de-SSA
 - cleanup after de-SSA
 
-`-O1/-O2` additionally run optimization passes that may:
+`-O1/-O2/-O3/-Oz` additionally run optimization passes that may:
 
 - vectorize loops
 - reduce loops

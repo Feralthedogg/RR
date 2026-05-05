@@ -167,7 +167,7 @@ fn docs_tidy_data_mask_surface_matches_code() {
 
 #[test]
 fn docs_cli_long_options_match_driver_usage() {
-    let code = read("src/main_usage.rs");
+    let code = read("src/main/usage.rs");
     let body = extract_function_body(&code, "pub(crate) fn print_usage()");
     let code_opts = long_options(body);
 
@@ -176,7 +176,7 @@ fn docs_cli_long_options_match_driver_usage() {
 
     assert_eq!(
         doc_opts, code_opts,
-        "docs/cli.md long-option surface drifted from src/main_usage.rs::print_usage"
+        "docs/cli.md long-option surface drifted from src/main/usage.rs::print_usage"
     );
 }
 
@@ -185,16 +185,35 @@ fn docs_configuration_envs_match_public_config_surface() {
     let mut code_envs = BTreeSet::new();
     for rel in [
         "build.rs",
+        "src/error.rs",
         "src/compiler/pipeline.rs",
+        "src/compiler/pipeline/cli_api.rs",
         "src/compiler/incremental.rs",
+        "src/compiler/incremental/paths.rs",
+        "src/compiler/incremental/profile.rs",
+        "src/compiler/pipeline/phases/source_emit/cached_emit.rs",
+        "src/compiler/pipeline/phases/source_emit/raw_emit/debug.rs",
+        "src/compiler/pipeline/phases/tachyon_runtime.rs",
         "src/hir/lower.rs",
         "src/mir/opt/config.rs",
+        "src/mir/opt/fuel.rs",
         "src/mir/opt/inline.rs",
+        "src/mir/opt/inline/driver.rs",
+        "src/mir/opt/outline/policy.rs",
+        "src/mir/opt/unroll/policy.rs",
         "src/mir/opt/bce.rs",
         "src/mir/opt/poly/mod.rs",
         "src/mir/opt/poly/schedule.rs",
+        "src/mir/opt/poly/schedule/tile_policy.rs",
+        "src/mir/opt/poly/schedule/types.rs",
         "src/mir/opt/v_opt/debug.rs",
         "src/runtime/runtime_prelude.R",
+        "src/runtime/runtime_prelude/config.R",
+        "src/runtime/runtime_prelude/indexing.R",
+        "src/runtime/runtime_prelude/matrix_ops.R",
+        "src/runtime/runtime_prelude/array3_ops.R",
+        "src/runtime/runtime_prelude/records_closures.R",
+        "src/runtime/runtime_prelude/reductions.R",
         "tests/perf_regression_gate.rs",
         "tests/example_perf_smoke.rs",
         "tests/common/mod.rs",

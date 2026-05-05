@@ -1,18 +1,30 @@
-fn analyze_function_terms(fn_ir: &mut FnIR, fn_ret: &FxHashMap<String, TypeTerm>) -> TypeTerm {
-    terms::analyze_function_terms(fn_ir, fn_ret)
+use super::*;
+pub(crate) fn analyze_function_terms(
+    fn_ir: &mut FnIR,
+    fn_ret: &FxHashMap<String, TypeTerm>,
+) -> TypeTerm {
+    terms::term_helpers::analyze_function_terms(fn_ir, fn_ret)
 }
 
-fn infer_value_term(fn_ir: &FnIR, vid: ValueId, fn_ret: &FxHashMap<String, TypeTerm>) -> TypeTerm {
-    terms::infer_value_term(fn_ir, vid, fn_ret)
+pub(crate) fn infer_value_term(
+    fn_ir: &FnIR,
+    vid: ValueId,
+    fn_ret: &FxHashMap<String, TypeTerm>,
+) -> TypeTerm {
+    terms::value_terms::infer_value_term(fn_ir, vid, fn_ret)
 }
 
-fn named_call_arg(args: &[ValueId], names: &[Option<String>], target: &str) -> Option<ValueId> {
+pub(crate) fn named_call_arg(
+    args: &[ValueId],
+    names: &[Option<String>],
+    target: &str,
+) -> Option<ValueId> {
     args.iter()
         .zip(names.iter())
         .find_map(|(arg, name)| (name.as_deref() == Some(target)).then_some(*arg))
 }
 
-fn positional_call_arg(
+pub(crate) fn positional_call_arg(
     args: &[ValueId],
     names: &[Option<String>],
     index: usize,
@@ -23,7 +35,7 @@ fn positional_call_arg(
     }
 }
 
-fn infer_named_package_call_type(
+pub(crate) fn infer_named_package_call_type(
     fn_ir: &FnIR,
     callee: &str,
     args: &[ValueId],

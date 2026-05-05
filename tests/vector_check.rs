@@ -113,8 +113,9 @@ fn vector_check_compiles_and_preserves_semantics() {
         o1_code.contains("x + x")
             || o1_code.contains("(x + x)")
             || o1_code.contains("seq_len(20L) + seq_len(20L)")
+            || o1_code.contains("seq_len(20L) * 2L")
             || o1_code.contains("rr_intrinsic_vec_add_f64("),
-        "expected optimized arithmetic expression in O1 output (direct add or intrinsic add)"
+        "expected optimized arithmetic expression in O1 output (direct multiply/add or intrinsic add)"
     );
     if let Some(rscript) = rscript_path().filter(|p| rscript_available(p)) {
         let (s0, out0, err0) = run_rscript(&rscript, &o0);

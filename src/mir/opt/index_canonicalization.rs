@@ -1,7 +1,7 @@
 use super::*;
 
 impl TachyonEngine {
-    fn is_floor_like_single_positional_call(
+    pub(crate) fn is_floor_like_single_positional_call(
         callee: &str,
         args: &[ValueId],
         names: &[Option<String>],
@@ -19,8 +19,8 @@ impl TachyonEngine {
             .is_none()
     }
 
-    fn param_slot_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
-        fn resolve_var_alias_slot(
+    pub(crate) fn param_slot_for_value(fn_ir: &FnIR, vid: ValueId) -> Option<usize> {
+        pub(crate) fn resolve_var_alias_slot(
             fn_ir: &FnIR,
             var: &str,
             seen_vals: &mut FxHashSet<ValueId>,
@@ -54,7 +54,7 @@ impl TachyonEngine {
             slot
         }
 
-        fn resolve_value_slot(
+        pub(crate) fn resolve_value_slot(
             fn_ir: &FnIR,
             vid: ValueId,
             seen_vals: &mut FxHashSet<ValueId>,
@@ -99,11 +99,11 @@ impl TachyonEngine {
         )
     }
 
-    fn int_vector_ty_for_param_slot(slot: usize) -> TypeState {
+    pub(crate) fn int_vector_ty_for_param_slot(slot: usize) -> TypeState {
         TypeState::vector(PrimTy::Int, false).with_len(Some(LenSym((slot as u32) + 1)))
     }
 
-    fn collect_floor_index_param_slots(
+    pub(crate) fn collect_floor_index_param_slots(
         fn_ir: &FnIR,
         floor_helpers: &FxHashSet<String>,
     ) -> FxHashSet<usize> {
@@ -155,8 +155,12 @@ impl TachyonEngine {
         slots
     }
 
-    fn value_base_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
-        fn rec(fn_ir: &FnIR, vid: ValueId, seen: &mut FxHashSet<ValueId>) -> Option<String> {
+    pub(crate) fn value_base_var_name(fn_ir: &FnIR, vid: ValueId) -> Option<String> {
+        pub(crate) fn rec(
+            fn_ir: &FnIR,
+            vid: ValueId,
+            seen: &mut FxHashSet<ValueId>,
+        ) -> Option<String> {
             if !seen.insert(vid) {
                 return None;
             }
@@ -186,7 +190,7 @@ impl TachyonEngine {
         rec(fn_ir, vid, &mut FxHashSet::default())
     }
 
-    fn collect_floor_index_base_vars(
+    pub(crate) fn collect_floor_index_base_vars(
         fn_ir: &FnIR,
         floor_helpers: &FxHashSet<String>,
     ) -> FxHashSet<String> {
@@ -238,7 +242,7 @@ impl TachyonEngine {
         vars
     }
 
-    fn value_is_proven_int_index_vector(
+    pub(crate) fn value_is_proven_int_index_vector(
         fn_ir: &FnIR,
         vid: ValueId,
         proven_param_slots: &FxHashSet<usize>,
@@ -256,7 +260,7 @@ impl TachyonEngine {
         false
     }
 
-    pub(super) fn collect_proven_floor_index_param_slots(
+    pub(crate) fn collect_proven_floor_index_param_slots(
         all_fns: &FxHashMap<String, FnIR>,
         floor_helpers: &FxHashSet<String>,
     ) -> FxHashMap<String, FxHashSet<usize>> {
@@ -340,7 +344,7 @@ impl TachyonEngine {
         proven_by_fn
     }
 
-    fn has_var_index_vector_canonicalization(fn_ir: &FnIR, var_name: &str) -> bool {
+    pub(crate) fn has_var_index_vector_canonicalization(fn_ir: &FnIR, var_name: &str) -> bool {
         for bb in &fn_ir.blocks {
             for ins in &bb.instrs {
                 let Instr::Assign { dst, src, .. } = ins else {
@@ -365,7 +369,7 @@ impl TachyonEngine {
         false
     }
 
-    fn mark_floor_index_param_metadata(
+    pub(crate) fn mark_floor_index_param_metadata(
         fn_ir: &mut FnIR,
         slots: &FxHashSet<usize>,
         floor_helpers: &FxHashSet<String>,
@@ -532,7 +536,7 @@ impl TachyonEngine {
         changed
     }
 
-    pub(super) fn canonicalize_floor_index_params(
+    pub(crate) fn canonicalize_floor_index_params(
         fn_ir: &mut FnIR,
         proven_param_slots: Option<&FxHashSet<usize>>,
         floor_helpers: &FxHashSet<String>,

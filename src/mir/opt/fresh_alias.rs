@@ -112,6 +112,7 @@ fn optimize_function(fn_ir: &mut FnIR, fresh_user_calls: &FxHashSet<String>) -> 
                     }
                 }
                 Instr::Eval { .. } => {}
+                Instr::UnsafeRBlock { .. } => fresh_vars.clear(),
             }
         }
     }
@@ -204,6 +205,7 @@ fn transfer_block_state(
                 }
             }
             Instr::Eval { .. } => {}
+            Instr::UnsafeRBlock { .. } => state.clear(),
         }
     }
     state
@@ -230,62 +232,7 @@ fn fresh_source_value_with_fallback(
     fresh_vars: &FxHashMap<String, ValueId>,
     fresh_user_calls: &FxHashSet<String>,
 ) -> Option<(ValueId, bool)> {
-    if let Some(found) = fresh_source_value(fn_ir, src, fresh_vars, fresh_user_calls) {
-        return Some(found);
-    }
-    match &fn_ir.values.get(src)?.kind {
-        ValueKind::Load { var } => {
-            global_fresh_var_recipe(fn_ir, var, fresh_user_calls).map(|recipe| (recipe, true))
-        }
-        _ => None,
-    }
-}
-
-fn global_fresh_var_recipe(
-    fn_ir: &FnIR,
-    var: &str,
-    fresh_user_calls: &FxHashSet<String>,
-) -> Option<ValueId> {
-    fn rec(
-        fn_ir: &FnIR,
-        var: &str,
-        fresh_user_calls: &FxHashSet<String>,
-        seen: &mut FxHashSet<String>,
-    ) -> Option<ValueId> {
-        if !seen.insert(var.to_string()) {
-            return None;
-        }
-
-        let mut assign_src: Option<ValueId> = None;
-        for block in &fn_ir.blocks {
-            for instr in &block.instrs {
-                match instr {
-                    Instr::Assign { dst, src, .. } if dst == var => match assign_src {
-                        None => assign_src = Some(*src),
-                        Some(prev) if prev == *src => {}
-                        Some(_) => return None,
-                    },
-                    Instr::StoreIndex1D { base, .. }
-                    | Instr::StoreIndex2D { base, .. }
-                    | Instr::StoreIndex3D { base, .. } => {
-                        if resolve_base_var(fn_ir, *base).as_deref() == Some(var) {
-                            return None;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let src = assign_src?;
-        match &fn_ir.values[src].kind {
-            ValueKind::Call { callee, .. } if is_fresh_call(callee, fresh_user_calls) => Some(src),
-            ValueKind::Load { var: inner } => rec(fn_ir, inner, fresh_user_calls, seen),
-            _ => None,
-        }
-    }
-
-    rec(fn_ir, var, fresh_user_calls, &mut FxHashSet::default())
+    fresh_source_value(fn_ir, src, fresh_vars, fresh_user_calls)
 }
 
 fn resolve_base_var(fn_ir: &FnIR, base: ValueId) -> Option<String> {
@@ -462,10 +409,10 @@ fn collect_fresh_returning_user_functions(all_fns: &FxHashMap<String, FnIR>) -> 
                         },
                         Instr::StoreIndex1D { base, .. }
                         | Instr::StoreIndex2D { base, .. }
-                        | Instr::StoreIndex3D { base, .. } => {
-                            if resolve_base_var(fn_ir, *base).as_deref() == Some(var) {
-                                return None;
-                            }
+                        | Instr::StoreIndex3D { base, .. }
+                            if resolve_base_var(fn_ir, *base).as_deref() == Some(var) =>
+                        {
+                            return None;
                         }
                         _ => {}
                     }
@@ -555,7 +502,8 @@ fn collect_fresh_returning_user_functions(all_fns: &FxHashMap<String, FnIR>) -> 
                     }
                     Instr::StoreIndex1D { .. }
                     | Instr::StoreIndex2D { .. }
-                    | Instr::StoreIndex3D { .. } => {
+                    | Instr::StoreIndex3D { .. }
+                    | Instr::UnsafeRBlock { .. } => {
                         ctx.pure_memo.insert(name.to_string(), false);
                         ctx.visiting_pure.remove(name);
                         return false;
@@ -643,4 +591,86 @@ fn collect_fresh_returning_user_functions(all_fns: &FxHashMap<String, FnIR>) -> 
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mir::flow::Facts;
+    use crate::syntax::ast::Lit;
+    use crate::utils::Span;
+
+    #[test]
+    fn fresh_alias_does_not_replay_global_recipe_across_unproven_branch() {
+        let mut fn_ir = FnIR::new("caller".to_string(), vec!["p_x".to_string()]);
+        let entry = fn_ir.add_block();
+        let bind_particles = fn_ir.add_block();
+        let join = fn_ir.add_block();
+        fn_ir.entry = entry;
+        fn_ir.body_head = entry;
+
+        let p_x = fn_ir.add_value(
+            ValueKind::Param { index: 0 },
+            Span::default(),
+            Facts::empty(),
+            Some("p_x".to_string()),
+        );
+        let cond = fn_ir.add_value(
+            ValueKind::Const(Lit::Bool(true)),
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let particles_call = fn_ir.add_value(
+            ValueKind::Call {
+                callee: "Sym_186".to_string(),
+                args: vec![p_x],
+                names: vec![None],
+            },
+            Span::default(),
+            Facts::empty(),
+            None,
+        );
+        let particles_load = fn_ir.add_value(
+            ValueKind::Load {
+                var: "particles".to_string(),
+            },
+            Span::default(),
+            Facts::empty(),
+            Some("particles".to_string()),
+        );
+
+        fn_ir.blocks[entry].term = Terminator::If {
+            cond,
+            then_bb: bind_particles,
+            else_bb: join,
+        };
+        fn_ir.blocks[bind_particles].instrs.push(Instr::Assign {
+            dst: "particles".to_string(),
+            src: particles_call,
+            span: Span::default(),
+        });
+        fn_ir.blocks[bind_particles].term = Terminator::Goto(join);
+        fn_ir.blocks[join].instrs.push(Instr::Assign {
+            dst: "later".to_string(),
+            src: particles_load,
+            span: Span::default(),
+        });
+        fn_ir.blocks[join].term = Terminator::Return(Some(particles_load));
+
+        let fresh_user_calls = FxHashSet::from_iter(["Sym_186".to_string()]);
+        let changed = optimize_function_with_fresh_user_calls(&mut fn_ir, &fresh_user_calls);
+
+        assert!(
+            !changed,
+            "fresh-alias must not synthesize a fresh call when dataflow cannot prove the alias reaches this block"
+        );
+        let Instr::Assign { src, .. } = fn_ir.blocks[join].instrs[0] else {
+            panic!("expected later assignment");
+        };
+        assert_eq!(
+            src, particles_load,
+            "stale global fresh recipes must not be replayed across an unproven control-flow join"
+        );
+    }
 }

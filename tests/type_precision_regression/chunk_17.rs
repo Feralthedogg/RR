@@ -1,9 +1,10 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn base_direct_connection_helpers_have_builtin_types() {
+pub(crate) fn base_direct_connection_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["text".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();
@@ -282,9 +283,10 @@ fn base_direct_connection_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_table_io_helpers_have_builtin_types() {
+pub(crate) fn base_direct_table_io_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec!["path".to_string()]);
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Char, false);
+    fn_ir.param_ty_hints[0] =
+        rr::compiler::internal::typeck::TypeState::vector(PrimTy::Char, false);
     fn_ir.param_term_hints[0] = TypeTerm::Vector(Box::new(TypeTerm::Char));
 
     let b0 = fn_ir.add_block();
@@ -520,13 +522,13 @@ fn base_direct_table_io_helpers_have_builtin_types() {
 }
 
 #[test]
-fn base_direct_apply_helpers_have_builtin_types() {
+pub(crate) fn base_direct_apply_helpers_have_builtin_types() {
     let mut fn_ir = FnIR::new(
         "Sym_main".to_string(),
         vec!["xs".to_string(), "df".to_string()],
     );
-    fn_ir.param_ty_hints[0] = RR::typeck::TypeState::vector(PrimTy::Any, false);
-    fn_ir.param_ty_hints[1] = RR::typeck::TypeState::matrix(PrimTy::Any, false);
+    fn_ir.param_ty_hints[0] = rr::compiler::internal::typeck::TypeState::vector(PrimTy::Any, false);
+    fn_ir.param_ty_hints[1] = rr::compiler::internal::typeck::TypeState::matrix(PrimTy::Any, false);
     fn_ir.param_term_hints[0] = TypeTerm::List(Box::new(TypeTerm::Any));
     fn_ir.param_term_hints[1] = TypeTerm::DataFrame(Vec::new());
 

@@ -358,10 +358,22 @@ fn compile_case(case: &CaseSpec, forced_opt: Option<&str>) -> CompileResult {
         .env
         .iter()
         .any(|(key, _)| key == "RR_STRICT_LET" || key == "RR_STRICT_ASSIGN");
+    let mut needs_legacy_implicit_decl = case_requests_legacy_strict_let_flag(&case.flags)
+        || case.env.iter().any(|(key, value)| {
+            matches!(key.as_str(), "RR_STRICT_LET" | "RR_STRICT_ASSIGN")
+                && is_legacy_strict_let_value(value)
+        });
     if !strict_let_overridden {
         // Most file-regression fixtures predate the strict-let default and are
         // intended to exercise parser/typeck/optimizer behavior instead.
         cmd.arg("--strict-let").arg("0");
+        needs_legacy_implicit_decl = true;
+    }
+    if needs_legacy_implicit_decl {
+        cmd.env("RR_ALLOW_LEGACY_IMPLICIT_DECL", "1");
+    }
+    if case_requests_gradual_type_mode(&case.flags) {
+        cmd.env("RR_ALLOW_GRADUAL_TYPE_MODE", "1");
     }
     for arg in compile_env_args(&case.env) {
         cmd.arg(arg);
@@ -370,6 +382,9 @@ fn compile_case(case: &CaseSpec, forced_opt: Option<&str>) -> CompileResult {
         if !is_compile_policy_env(key) {
             cmd.env(key, value);
         }
+    }
+    if case_requires_verbose_log(case) && !case.env.iter().any(|(key, _)| key == "RR_VERBOSE_LOG") {
+        cmd.env("RR_VERBOSE_LOG", "1");
     }
     let output = cmd
         .output()
@@ -387,6 +402,25 @@ fn has_opt_flag(flags: &[String]) -> bool {
     flags
         .iter()
         .any(|flag| matches!(flag.as_str(), "-O0" | "-O1" | "-O2" | "-o0" | "-o1" | "-o2"))
+}
+
+fn case_requests_legacy_strict_let_flag(flags: &[String]) -> bool {
+    flag_value(flags, "--strict-let").is_some_and(is_legacy_strict_let_value)
+}
+
+fn case_requests_gradual_type_mode(flags: &[String]) -> bool {
+    flag_value(flags, "--type-mode").is_some_and(|value| value == "gradual")
+}
+
+fn flag_value<'a>(flags: &'a [String], flag_name: &str) -> Option<&'a str> {
+    flags
+        .windows(2)
+        .find(|pair| pair[0] == flag_name)
+        .map(|pair| pair[1].as_str())
+}
+
+fn is_legacy_strict_let_value(value: &str) -> bool {
+    matches!(value, "0" | "off" | "false")
 }
 
 fn is_compile_policy_env(key: &str) -> bool {
@@ -412,6 +446,37 @@ fn compile_env_args(env_kv: &[(String, String)]) -> Vec<&str> {
         }
     }
     args
+}
+
+fn case_requires_verbose_log(case: &CaseSpec) -> bool {
+    case.stdout_contains
+        .iter()
+        .chain(case.stdout_not_contains.iter())
+        .any(|needle| stdout_needle_requires_verbose_log(needle))
+}
+
+fn stdout_needle_requires_verbose_log(needle: &str) -> bool {
+    [
+        "Vectorized:",
+        "Reduced:",
+        "Simplified:",
+        "VecSkip:",
+        "VecCand:",
+        "VecApply:",
+        "VecShape:",
+        "VecFallback:",
+        "PhaseOrder:",
+        "Poly:",
+        "PolySched:",
+        "PolyAuto:",
+        "Proof:",
+        "ProofWhy:",
+        "Passes:",
+        "Infra:",
+        "Budget:",
+    ]
+    .iter()
+    .any(|prefix| needle.contains(prefix))
 }
 
 fn assert_compile_success(case: &CaseSpec, compile: &CompileResult) {

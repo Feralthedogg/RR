@@ -1,4 +1,5 @@
-fn lower_generic_map_schedule(
+use super::*;
+pub(crate) fn lower_generic_map_schedule(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -14,13 +15,15 @@ fn lower_generic_map_schedule(
         let mut trial = fn_ir.clone();
         if !rebuild_generic_fissioned_sequence(
             &mut trial,
-            lp,
-            scop,
-            schedule,
-            site.preheader,
-            site.exit_bb,
-            false,
-            rebuild_generic_loop_nest,
+            GenericFissionRequest {
+                lp,
+                scop,
+                schedule,
+                preheader: site.preheader,
+                exit_bb: site.exit_bb,
+                skip_accessless_assigns: false,
+                lower_one: rebuild_generic_loop_nest,
+            },
         ) {
             return false;
         }
@@ -79,7 +82,7 @@ fn lower_generic_map_schedule(
     true
 }
 
-fn lower_generic_fission_sequence_with_builder(
+pub(crate) fn lower_generic_fission_sequence_with_builder(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -93,13 +96,15 @@ fn lower_generic_fission_sequence_with_builder(
     let mut trial = fn_ir.clone();
     if !rebuild_generic_fissioned_sequence(
         &mut trial,
-        lp,
-        scop,
-        schedule,
-        site.preheader,
-        site.exit_bb,
-        skip_accessless_assigns,
-        lower_one,
+        GenericFissionRequest {
+            lp,
+            scop,
+            schedule,
+            preheader: site.preheader,
+            exit_bb: site.exit_bb,
+            skip_accessless_assigns,
+            lower_one,
+        },
     ) {
         return false;
     }
@@ -107,7 +112,7 @@ fn lower_generic_fission_sequence_with_builder(
     true
 }
 
-fn lower_generic_tiled_1d(
+pub(crate) fn lower_generic_tiled_1d(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -124,13 +129,15 @@ fn lower_generic_tiled_1d(
         let mut trial = fn_ir.clone();
         if !rebuild_generic_fissioned_sequence(
             &mut trial,
-            lp,
-            scop,
-            schedule,
-            site.preheader,
-            site.exit_bb,
-            skip_accessless_assigns,
-            rebuild_generic_tiled_1d_loop_nest,
+            GenericFissionRequest {
+                lp,
+                scop,
+                schedule,
+                preheader: site.preheader,
+                exit_bb: site.exit_bb,
+                skip_accessless_assigns,
+                lower_one: rebuild_generic_tiled_1d_loop_nest,
+            },
         ) {
             return false;
         }
@@ -180,7 +187,7 @@ fn lower_generic_tiled_1d(
     true
 }
 
-fn lower_generic_skew2d(
+pub(crate) fn lower_generic_skew2d(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -197,13 +204,15 @@ fn lower_generic_skew2d(
         let mut trial = fn_ir.clone();
         if !rebuild_generic_fissioned_sequence(
             &mut trial,
-            lp,
-            scop,
-            schedule,
-            site.preheader,
-            site.exit_bb,
-            skip_accessless_assigns,
-            rebuild_generic_skewed_2d_loop_nest,
+            GenericFissionRequest {
+                lp,
+                scop,
+                schedule,
+                preheader: site.preheader,
+                exit_bb: site.exit_bb,
+                skip_accessless_assigns,
+                lower_one: rebuild_generic_skewed_2d_loop_nest,
+            },
         ) {
             return false;
         }
@@ -241,7 +250,7 @@ fn lower_generic_skew2d(
     true
 }
 
-fn lower_generic_tiled_2d(
+pub(crate) fn lower_generic_tiled_2d(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -258,13 +267,15 @@ fn lower_generic_tiled_2d(
         let mut trial = fn_ir.clone();
         if !rebuild_generic_fissioned_sequence(
             &mut trial,
-            lp,
-            scop,
-            schedule,
-            site.preheader,
-            site.exit_bb,
-            skip_accessless_assigns,
-            rebuild_generic_tiled_2d_loop_nest,
+            GenericFissionRequest {
+                lp,
+                scop,
+                schedule,
+                preheader: site.preheader,
+                exit_bb: site.exit_bb,
+                skip_accessless_assigns,
+                lower_one: rebuild_generic_tiled_2d_loop_nest,
+            },
         ) {
             return false;
         }
@@ -314,7 +325,7 @@ fn lower_generic_tiled_2d(
     true
 }
 
-fn lower_generic_tiled_3d(
+pub(crate) fn lower_generic_tiled_3d(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -331,13 +342,15 @@ fn lower_generic_tiled_3d(
         let mut trial = fn_ir.clone();
         if !rebuild_generic_fissioned_sequence(
             &mut trial,
-            lp,
-            scop,
-            schedule,
-            site.preheader,
-            site.exit_bb,
-            skip_accessless_assigns,
-            rebuild_generic_tiled_3d_loop_nest,
+            GenericFissionRequest {
+                lp,
+                scop,
+                schedule,
+                preheader: site.preheader,
+                exit_bb: site.exit_bb,
+                skip_accessless_assigns,
+                lower_one: rebuild_generic_tiled_3d_loop_nest,
+            },
         ) {
             return false;
         }
@@ -387,7 +400,7 @@ fn lower_generic_tiled_3d(
     true
 }
 
-fn lower_generic_reduce_schedule(
+pub(crate) fn lower_generic_reduce_schedule(
     fn_ir: &mut FnIR,
     lp: &LoopInfo,
     scop: &ScopRegion,
@@ -403,13 +416,15 @@ fn lower_generic_reduce_schedule(
         let mut trial = fn_ir.clone();
         if !rebuild_generic_fissioned_sequence(
             &mut trial,
-            lp,
-            scop,
-            schedule,
-            site.preheader,
-            site.exit_bb,
-            true,
-            rebuild_generic_loop_nest,
+            GenericFissionRequest {
+                lp,
+                scop,
+                schedule,
+                preheader: site.preheader,
+                exit_bb: site.exit_bb,
+                skip_accessless_assigns: true,
+                lower_one: rebuild_generic_loop_nest,
+            },
         ) {
             return false;
         }

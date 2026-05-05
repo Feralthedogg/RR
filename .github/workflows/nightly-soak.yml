@@ -9,6 +9,56 @@ env:
   RR_ISL_LINK: static
 
 jobs:
+  signal-pipeline-benchmark-report:
+    name: Signal Pipeline Benchmark Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install R + Native Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends r-base-core clang libisl-dev libgmp-dev
+
+      - name: Generate Signal Pipeline Memory Report
+        run: |
+          python3 scripts/bench_signal_pipeline_memory.py \
+            --warm-iters 3 \
+            --out-dir .artifacts/nightly-soak/signal-pipeline-memory \
+            --csv-out .artifacts/nightly-soak/signal-pipeline-memory/signal-pipeline-memory.csv \
+            --svg-out .artifacts/nightly-soak/signal-pipeline-memory/signal-pipeline-memory.svg
+
+      - name: Publish Signal Pipeline Memory Summary
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import csv
+          from pathlib import Path
+
+          path = Path(".artifacts/nightly-soak/signal-pipeline-memory/signal-pipeline-memory.csv")
+          rows = list(csv.DictReader(path.open()))
+          print("## Signal Pipeline Memory Report")
+          print()
+          print("| Case | Alloc MB | Alloc events | Warm iters |")
+          print("| --- | ---: | ---: | ---: |")
+          for row in rows:
+              print(f"| {row['label']} | {row['alloc_mb']} | {row['alloc_events']} | {row['warm_iters']} |")
+          PY
+
+      - name: Upload Signal Pipeline Benchmark Report
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-signal-pipeline-benchmark-report
+          path: .artifacts/nightly-soak/signal-pipeline-memory
+          if-no-files-found: error
+
   recommended-package-coverage:
     name: Recommended Package Coverage
     runs-on: ubuntu-latest

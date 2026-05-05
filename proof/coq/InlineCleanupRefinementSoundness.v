@@ -1,6 +1,6 @@
-Require Import RRProofs.MirSemanticsLite.
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.CfgOptSoundness.
+Require Import MirSemanticsLite.
+Require Import MirInvariantBundle.
+Require Import CfgOptSoundness.
 
 Module RRInlineCleanupRefinementSoundness.
 

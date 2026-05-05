@@ -1,7 +1,7 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn stats_symbolic_helpers_have_direct_types() {
+pub(crate) fn stats_symbolic_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -9,19 +9,25 @@ fn stats_symbolic_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("~ x^2 + y".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "~ x^2 + y".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let x_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let y_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -107,7 +113,7 @@ fn stats_symbolic_helpers_have_direct_types() {
 }
 
 #[test]
-fn stats_power_helpers_have_direct_types() {
+pub(crate) fn stats_power_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -115,49 +121,49 @@ fn stats_power_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let three_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(3)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(3)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let ten = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(10.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(10.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let fifty = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(50.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(50.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let p02 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(0.2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(0.2)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let p04 = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(0.4)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(0.4)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let twenty = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(20.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(20.0)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -258,7 +264,7 @@ fn stats_power_helpers_have_direct_types() {
 }
 
 #[test]
-fn stats_contrast_helpers_have_direct_types() {
+pub(crate) fn stats_contrast_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -266,49 +272,63 @@ fn stats_contrast_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let three_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(3)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(3)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let a = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("a".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "a".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let b = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("b".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "b".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let c_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("c".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "c".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("am ~ mpg".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "am ~ mpg".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let response_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let var_x = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let var_z = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("z".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "z".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,

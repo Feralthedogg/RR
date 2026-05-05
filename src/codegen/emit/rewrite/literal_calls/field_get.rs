@@ -1,4 +1,5 @@
-pub(super) fn rewrite_literal_field_get_calls(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_literal_field_get_calls(output: &mut String) {
     if !output.contains("rr_field_get(") {
         return;
     }
@@ -10,10 +11,7 @@ pub(super) fn rewrite_literal_field_get_calls(output: &mut String) {
         }
         let mut rewritten = line.to_string();
         let mut search_start = 0usize;
-        loop {
-            let Some(start) = find_next_call(&rewritten, search_start, "rr_field_get") else {
-                break;
-            };
+        while let Some(start) = find_next_call(&rewritten, search_start, "rr_field_get") {
             let call_start = start + "rr_field_get".len();
             let Some(call_end) = find_matching_call_close(&rewritten, call_start) else {
                 break;

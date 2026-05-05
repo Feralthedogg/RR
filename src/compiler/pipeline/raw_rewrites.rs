@@ -54,7 +54,7 @@ pub(crate) fn rewrite_trivial_clamp_helper_calls_in_raw_emitted_r(output: &str) 
     out
 }
 
-fn extract_ifelse_range_expr(line: &str) -> Option<String> {
+pub(crate) fn extract_ifelse_range_expr(line: &str) -> Option<String> {
     let start = line.find("rr_ifelse_strict((")? + "rr_ifelse_strict((".len();
     let rest = &line[start..];
     let mut depth = 0i32;

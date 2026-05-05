@@ -1,10 +1,12 @@
 mod common;
 
-use RR::compiler::{
-    IncrementalOptions, OptLevel, compile_with_configs_incremental, default_parallel_config,
-    default_type_config, module_tree_fingerprint, module_tree_snapshot,
-};
 use common::{set_current_dir_for_test, unique_dir};
+use rr::compiler::{
+    CompileMode, CompileOutputOptions, CompileProfile, IncrementalCompileRequest,
+    IncrementalOptions, OptLevel, compile_incremental_request, compile_with_configs_incremental,
+    default_compiler_parallel_config, default_parallel_config, default_type_config,
+    module_tree_fingerprint, module_tree_snapshot,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -78,6 +80,70 @@ main()
     );
     assert_eq!(first.r_code, second.r_code);
     assert_eq!(first.source_map.len(), second.source_map.len());
+    common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
+}
+
+#[test]
+fn incremental_phase1_profile_hit_records_compile_mode() {
+    let env_guard = common::env_lock().lock().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sandbox_root = root.join("target").join("tests").join("incremental_phase1");
+    fs::create_dir_all(&sandbox_root).expect("failed to create sandbox root");
+    let proj_dir = unique_dir(&sandbox_root, "profile_hit");
+    fs::create_dir_all(&proj_dir).expect("failed to create project dir");
+    let cache_dir = proj_dir.join(".rr-cache");
+    common::set_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR", &cache_dir);
+
+    let main_path = proj_dir.join("main.rr");
+    let source = r#"
+fn main() {
+  print(7L)
+}
+main()
+"#;
+    fs::write(&main_path, source).expect("failed to write main.rr");
+
+    let opts = IncrementalOptions::phase1_only();
+    let path_str = main_path.to_string_lossy().to_string();
+    let output_options = CompileOutputOptions {
+        compile_mode: CompileMode::FastDev,
+        ..Default::default()
+    };
+
+    let first = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
+        type_cfg: default_type_config(),
+        parallel_cfg: default_parallel_config(),
+        compiler_parallel_cfg: default_compiler_parallel_config(),
+        options: opts,
+        output_options,
+        session: None,
+        profile: None,
+    })
+    .expect("phase1 seed compile failed");
+    assert!(!first.stats.phase1_artifact_hit);
+
+    let mut profile = CompileProfile::default();
+    let second = compile_incremental_request(IncrementalCompileRequest {
+        entry_path: &path_str,
+        entry_input: source,
+        opt_level: OptLevel::O1,
+        type_cfg: default_type_config(),
+        parallel_cfg: default_parallel_config(),
+        compiler_parallel_cfg: default_compiler_parallel_config(),
+        options: opts,
+        output_options,
+        session: None,
+        profile: Some(&mut profile),
+    })
+    .expect("phase1 profile-hit compile failed");
+    assert!(second.stats.phase1_artifact_hit);
+    assert_eq!(profile.compile_mode, "fast-dev");
+    assert!(profile.incremental.enabled);
+    assert!(profile.incremental.phase1_artifact_hit);
+
     common::remove_env_var_for_test(&env_guard, "RR_INCREMENTAL_CACHE_DIR");
 }
 

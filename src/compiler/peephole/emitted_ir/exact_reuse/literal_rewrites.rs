@@ -1,4 +1,5 @@
-pub(in super::super) fn rewrite_literal_field_get_calls_ir(lines: Vec<String>) -> Vec<String> {
+use super::*;
+pub(crate) fn rewrite_literal_field_get_calls_ir(lines: Vec<String>) -> Vec<String> {
     if !has_literal_field_get_candidates_ir(&lines) {
         return lines;
     }
@@ -36,16 +37,13 @@ pub(in super::super) fn rewrite_literal_field_get_calls_ir(lines: Vec<String>) -
     program.into_lines()
 }
 
-fn rewrite_literal_named_list_line_ir(line: &str) -> String {
+pub(crate) fn rewrite_literal_named_list_line_ir(line: &str) -> String {
     let mut rewritten = line.to_string();
     let mut search_start = 0usize;
-    loop {
-        let Some(start) = rewritten[search_start..]
-            .find("rr_named_list(")
-            .map(|offset| search_start + offset)
-        else {
-            break;
-        };
+    while let Some(start) = rewritten[search_start..]
+        .find("rr_named_list(")
+        .map(|offset| search_start + offset)
+    {
         let call_start = start + "rr_named_list".len();
         let mut depth = 0i32;
         let mut end = None;
@@ -99,7 +97,7 @@ fn rewrite_literal_named_list_line_ir(line: &str) -> String {
     rewritten
 }
 
-pub(in super::super) fn rewrite_literal_named_list_calls_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn rewrite_literal_named_list_calls_ir(lines: Vec<String>) -> Vec<String> {
     if !has_literal_named_list_candidates_ir(&lines) {
         return lines;
     }
@@ -124,9 +122,7 @@ pub(in super::super) fn rewrite_literal_named_list_calls_ir(lines: Vec<String>) 
     program.into_lines()
 }
 
-pub(in super::super) fn simplify_nested_index_vec_floor_calls_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn simplify_nested_index_vec_floor_calls_ir(lines: Vec<String>) -> Vec<String> {
     if !has_nested_index_vec_floor_candidates_ir(&lines) {
         return lines;
     }
@@ -181,7 +177,7 @@ pub(in super::super) fn simplify_nested_index_vec_floor_calls_ir(
     program.into_lines()
 }
 
-fn literal_field_read_expr_re() -> Option<&'static regex::Regex> {
+pub(crate) fn literal_field_read_expr_re() -> Option<&'static regex::Regex> {
     static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         compile_regex(format!(

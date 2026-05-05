@@ -1,4 +1,5 @@
-fn rewrite_trimmed_helper_calls_in_text(
+use super::*;
+pub(crate) fn rewrite_trimmed_helper_calls_in_text(
     text: &str,
     trims: &FxHashMap<String, HelperTrimIr>,
 ) -> String {
@@ -83,7 +84,7 @@ fn rewrite_trimmed_helper_calls_in_text(
     }
 }
 
-fn has_unused_helper_param_candidates_ir(lines: &[String]) -> bool {
+pub(crate) fn has_unused_helper_param_candidates_ir(lines: &[String]) -> bool {
     build_function_text_index(lines, parse_function_header_ir)
         .into_iter()
         .any(|func| {
@@ -106,11 +107,24 @@ fn has_unused_helper_param_candidates_ir(lines: &[String]) -> bool {
                     used_params.insert(ident);
                 }
             }
-            func.params.iter().any(|param| !used_params.contains(param))
+            func.params.iter().any(|param| {
+                !used_params.contains(param)
+                    && !helper_param_is_used_by_semantic_index_temp(param, &used_params)
+            })
         })
 }
 
-fn apply_strip_unused_helper_params_ir(program: &mut EmittedProgram) {
+pub(crate) fn helper_param_is_used_by_semantic_index_temp(
+    param: &str,
+    used_params: &FxHashSet<String>,
+) -> bool {
+    let Some(suffix) = param.strip_prefix("n_") else {
+        return false;
+    };
+    used_params.contains(&format!("idx_{suffix}"))
+}
+
+pub(crate) fn apply_strip_unused_helper_params_ir(program: &mut EmittedProgram) {
     let mut trims = FxHashMap::<String, HelperTrimIr>::default();
 
     for (item_idx, item) in program.items.iter().enumerate() {
@@ -163,7 +177,11 @@ fn apply_strip_unused_helper_params_ir(program: &mut EmittedProgram) {
         let kept_indices: Vec<usize> = params
             .iter()
             .enumerate()
-            .filter_map(|(idx, param)| used_params.contains(param).then_some(idx))
+            .filter_map(|(idx, param)| {
+                (used_params.contains(param)
+                    || helper_param_is_used_by_semantic_index_temp(param, &used_params))
+                .then_some(idx)
+            })
             .collect();
         if kept_indices.len() < params.len() {
             trims.insert(
@@ -210,7 +228,7 @@ fn apply_strip_unused_helper_params_ir(program: &mut EmittedProgram) {
     }
 }
 
-pub(in super::super) fn strip_unused_helper_params_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn strip_unused_helper_params_ir(lines: Vec<String>) -> Vec<String> {
     if !has_unused_helper_param_candidates_ir(&lines) {
         return lines;
     }

@@ -1,5 +1,5 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.PhaseOrderOptimizerSoundness.
+Require Import MirInvariantBundle.
+Require Import PhaseOrderOptimizerSoundness.
 From Stdlib Require Import List Bool.
 Import ListNotations.
 Open Scope bool_scope.

@@ -491,9 +491,11 @@ Phase 0: Design and claim boundary.
 
 Phase 1: Add use graph and candidate analysis with diagnostics only.
 
-Current implementation note: `src/mir/opt/sroa.rs` contains the analysis spine
-and the reduced rewrite pass. Set `RR_SROA_TRACE=1` for per-function candidate
-counts or `RR_SROA_TRACE=verbose` for per-candidate detail.
+Current implementation note: `src/mir/opt/sroa.rs` is the pass facade. The
+rewrite spine is split under `src/mir/opt/sroa/core_rewrite/`, while cross-call
+record argument and record-return specialization live under
+`src/mir/opt/sroa/call_specialization/`. Set `RR_SROA_TRACE=1` for per-function
+candidate counts or `RR_SROA_TRACE=verbose` for per-candidate detail.
 
 Phase 2: Implement straight-line `RecordLit` plus `FieldGet` replacement.
 

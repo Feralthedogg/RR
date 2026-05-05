@@ -21,13 +21,13 @@ pub(crate) fn infer_builtin(callee: &str, arg_tys: &[TypeState]) -> Option<TypeS
         "which" => {
             let first = first_arg_type_state(arg_tys);
             if matches!(first.shape, ShapeTy::Scalar) {
-                Some(TypeState::scalar(PrimTy::Int, false))
+                Some(TypeState::scalar(PrimTy::Int, true))
             } else {
-                Some(TypeState::vector(PrimTy::Int, false).with_len(first.len_sym))
+                Some(TypeState::vector(PrimTy::Int, true).with_len(first.len_sym))
             }
         }
-        "which.min" | "which.max" => Some(TypeState::scalar(PrimTy::Int, false)),
-        "isTRUE" | "isFALSE" => Some(TypeState::scalar(PrimTy::Logical, false)),
+        "which.min" | "which.max" => Some(TypeState::scalar(PrimTy::Int, true)),
+        "isTRUE" | "isFALSE" => Some(TypeState::scalar(PrimTy::Logical, true)),
         "lengths" => {
             let first = first_arg_type_state(arg_tys);
             Some(TypeState::vector(PrimTy::Int, false).with_len(first.len_sym))
@@ -130,13 +130,10 @@ pub(crate) fn infer_builtin(callee: &str, arg_tys: &[TypeState]) -> Option<TypeS
             }
         }
         "c" => {
-            let mut out = TypeState::vector(PrimTy::Any, false);
+            let all_non_na = arg_tys.iter().all(|t| t.na == crate::typeck::NaTy::Never);
+            let mut out = TypeState::vector(PrimTy::Any, all_non_na);
             for t in arg_tys {
-                let promoted = if t.shape == ShapeTy::Vector {
-                    TypeState::vector(t.prim, t.na == crate::typeck::NaTy::Never)
-                } else {
-                    TypeState::vector(t.prim, false)
-                };
+                let promoted = TypeState::vector(t.prim, t.na == crate::typeck::NaTy::Never);
                 out = out.join(promoted);
             }
             if arg_tys.len() == 1 {
@@ -144,124 +141,30 @@ pub(crate) fn infer_builtin(callee: &str, arg_tys: &[TypeState]) -> Option<TypeS
             }
             Some(out)
         }
-        "abs" | "pmax" | "pmin" => {
-            let prim = promoted_numeric_prim(arg_tys);
-            if !any_vector_shape(arg_tys) && !all_known_scalar_shape(arg_tys) {
-                return None;
-            }
-            if prim == PrimTy::Any && !all_known_numeric_prim(arg_tys) {
-                return None;
-            }
-            let prim = if matches!(prim, PrimTy::Int | PrimTy::Double) {
-                prim
-            } else {
-                PrimTy::Double
-            };
-            if any_vector_shape(arg_tys) {
-                Some(TypeState::vector(prim, false).with_len(shared_vector_len_sym(arg_tys)))
-            } else {
-                Some(TypeState::scalar(prim, false))
-            }
-        }
-        "min" | "max" => {
-            if !any_vector_shape(arg_tys) && !all_known_scalar_shape(arg_tys) {
-                return None;
-            }
-            let prim = promoted_numeric_prim(arg_tys);
-            if prim == PrimTy::Any && !all_known_numeric_prim(arg_tys) {
-                return None;
-            }
-            Some(TypeState::scalar(
-                match prim {
-                    PrimTy::Int => PrimTy::Int,
-                    _ => PrimTy::Double,
-                },
-                false,
-            ))
-        }
-        "sum" => {
-            if !any_vector_shape(arg_tys) && !all_known_scalar_shape(arg_tys) {
-                return None;
-            }
-            let prim = promoted_numeric_prim(arg_tys);
-            if prim == PrimTy::Any && !all_known_numeric_prim(arg_tys) {
-                return None;
-            }
-            Some(TypeState::scalar(
-                match prim {
-                    PrimTy::Int => PrimTy::Int,
-                    _ => PrimTy::Double,
-                },
-                false,
-            ))
-        }
-        "prod" | "var" | "sd" => {
-            if !any_vector_shape(arg_tys) && !all_known_scalar_shape(arg_tys) && !arg_tys.is_empty()
-            {
-                return None;
-            }
-            Some(TypeState::scalar(PrimTy::Double, false))
-        }
-        "mean" => {
-            if !any_vector_shape(arg_tys) && !all_known_scalar_shape(arg_tys) {
-                return None;
-            }
-            Some(TypeState::scalar(PrimTy::Double, false))
-        }
-        "sign" => {
-            if !any_vector_shape(arg_tys) && !all_known_scalar_shape(arg_tys) {
-                return None;
-            }
-            let prim = match promoted_numeric_prim(arg_tys) {
-                PrimTy::Int => PrimTy::Int,
-                PrimTy::Double => PrimTy::Double,
-                _ => return None,
-            };
-            if any_vector_shape(arg_tys) {
-                Some(TypeState::vector(prim, false).with_len(shared_vector_len_sym(arg_tys)))
-            } else {
-                Some(TypeState::scalar(prim, false))
-            }
-        }
+        "abs" | "pmax" | "pmin" => numeric_shape_preserving_output_type(arg_tys),
+        "min" | "max" | "sum" => scalar_numeric_reduction_output_type(arg_tys),
+        "prod" => double_numeric_reduction_output_type(arg_tys, DOUBLE_PRODUCT_REDUCTION),
+        "var" | "sd" => double_numeric_reduction_output_type(arg_tys, DOUBLE_VARIANCE_REDUCTION),
+        "mean" => double_numeric_reduction_output_type(arg_tys, DOUBLE_MEAN_REDUCTION),
+        "sign" => sign_output_type(arg_tys),
         "sqrt" | "log" | "log10" | "log2" | "exp" | "atan" | "atan2" | "asin" | "acos" | "sin"
         | "cos" | "tan" | "sinh" | "cosh" | "tanh" | "gamma" | "lgamma" | "floor" | "ceiling"
-        | "trunc" | "round" => {
-            if !any_vector_shape(arg_tys) && !all_known_scalar_shape(arg_tys) {
-                return None;
-            }
-            if any_vector_shape(arg_tys) {
-                Some(
-                    TypeState::vector(PrimTy::Double, false)
-                        .with_len(shared_vector_len_sym(arg_tys)),
-                )
-            } else {
-                Some(TypeState::scalar(PrimTy::Double, false))
-            }
-        }
-        "is.na" | "is.finite" => {
-            if !any_vector_shape(arg_tys) && !all_known_scalar_shape(arg_tys) {
-                return None;
-            }
-            if any_vector_shape(arg_tys) {
-                Some(
-                    TypeState::vector(PrimTy::Logical, false)
-                        .with_len(shared_vector_len_sym(arg_tys)),
-                )
-            } else {
-                Some(TypeState::scalar(PrimTy::Logical, false))
-            }
-        }
-        "numeric" | "double" => Some(TypeState::vector(PrimTy::Double, false)),
-        "integer" => Some(TypeState::vector(PrimTy::Int, false)),
-        "logical" => Some(TypeState::vector(PrimTy::Logical, false)),
-        "character" => Some(TypeState::vector(PrimTy::Char, false)),
+        | "trunc" | "round" => vectorized_prim_output_type(arg_tys, PrimTy::Double, false),
+        "is.na" | "is.finite" => vectorized_prim_output_type(arg_tys, PrimTy::Logical, true),
+        "numeric" | "double" => Some(TypeState::vector(PrimTy::Double, true)),
+        "integer" => Some(TypeState::vector(PrimTy::Int, true)),
+        "logical" => Some(TypeState::vector(PrimTy::Logical, true)),
+        "character" => Some(TypeState::vector(PrimTy::Char, true)),
         "rep" | "rep.int" => {
             let first = arg_tys.first().copied().unwrap_or(TypeState::unknown());
             let prim = match first.shape {
                 ShapeTy::Matrix | ShapeTy::Vector | ShapeTy::Scalar => first.prim,
                 ShapeTy::Unknown => PrimTy::Any,
             };
-            Some(TypeState::vector(prim, false))
+            Some(TypeState::vector(
+                prim,
+                first.na == crate::typeck::NaTy::Never,
+            ))
         }
         "matrix" => Some(TypeState::matrix(PrimTy::Double, false)),
         "t" | "rbind" | "cbind" => Some(TypeState::matrix(first_numeric_prim(arg_tys), false)),
@@ -283,5 +186,110 @@ pub(crate) fn infer_builtin(callee: &str, arg_tys: &[TypeState]) -> Option<TypeS
         }
         "crossprod" | "tcrossprod" => Some(TypeState::matrix(PrimTy::Double, false)),
         _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DoubleNumericReduction {
+    allow_empty_input: bool,
+    preserves_non_na_inputs: bool,
+}
+
+const DOUBLE_PRODUCT_REDUCTION: DoubleNumericReduction = DoubleNumericReduction {
+    allow_empty_input: true,
+    preserves_non_na_inputs: true,
+};
+
+const DOUBLE_VARIANCE_REDUCTION: DoubleNumericReduction = DoubleNumericReduction {
+    allow_empty_input: true,
+    preserves_non_na_inputs: false,
+};
+
+const DOUBLE_MEAN_REDUCTION: DoubleNumericReduction = DoubleNumericReduction {
+    allow_empty_input: false,
+    preserves_non_na_inputs: false,
+};
+
+fn numeric_shape_is_known(arg_tys: &[TypeState]) -> bool {
+    any_vector_shape(arg_tys) || all_known_scalar_shape(arg_tys)
+}
+
+fn numeric_shape_is_known_or_empty(arg_tys: &[TypeState], allow_empty: bool) -> bool {
+    numeric_shape_is_known(arg_tys) || (allow_empty && arg_tys.is_empty())
+}
+
+fn checked_promoted_numeric_prim(arg_tys: &[TypeState]) -> Option<PrimTy> {
+    let prim = promoted_numeric_prim(arg_tys);
+    if prim == PrimTy::Any && !all_known_numeric_prim(arg_tys) {
+        None
+    } else {
+        Some(prim)
+    }
+}
+
+fn numeric_shape_preserving_output_type(arg_tys: &[TypeState]) -> Option<TypeState> {
+    if !numeric_shape_is_known(arg_tys) {
+        return None;
+    }
+    let prim = match checked_promoted_numeric_prim(arg_tys)? {
+        PrimTy::Int => PrimTy::Int,
+        PrimTy::Double => PrimTy::Double,
+        _ => PrimTy::Double,
+    };
+    vectorized_prim_output_type(arg_tys, prim, false)
+}
+
+fn scalar_numeric_reduction_output_type(arg_tys: &[TypeState]) -> Option<TypeState> {
+    if !numeric_shape_is_known(arg_tys) {
+        return None;
+    }
+    let prim = match checked_promoted_numeric_prim(arg_tys)? {
+        PrimTy::Int => PrimTy::Int,
+        _ => PrimTy::Double,
+    };
+    Some(TypeState::scalar(
+        prim,
+        arg_tys.iter().all(|t| t.na == crate::typeck::NaTy::Never),
+    ))
+}
+
+fn double_numeric_reduction_output_type(
+    arg_tys: &[TypeState],
+    reduction: DoubleNumericReduction,
+) -> Option<TypeState> {
+    if !numeric_shape_is_known_or_empty(arg_tys, reduction.allow_empty_input) {
+        return None;
+    }
+    Some(TypeState::scalar(
+        PrimTy::Double,
+        reduction.preserves_non_na_inputs
+            && arg_tys.iter().all(|t| t.na == crate::typeck::NaTy::Never),
+    ))
+}
+
+fn sign_output_type(arg_tys: &[TypeState]) -> Option<TypeState> {
+    if !numeric_shape_is_known(arg_tys) {
+        return None;
+    }
+    let prim = match promoted_numeric_prim(arg_tys) {
+        PrimTy::Int => PrimTy::Int,
+        PrimTy::Double => PrimTy::Double,
+        _ => return None,
+    };
+    vectorized_prim_output_type(arg_tys, prim, false)
+}
+
+fn vectorized_prim_output_type(
+    arg_tys: &[TypeState],
+    prim: PrimTy,
+    non_na: bool,
+) -> Option<TypeState> {
+    if !numeric_shape_is_known(arg_tys) {
+        return None;
+    }
+    if any_vector_shape(arg_tys) {
+        Some(TypeState::vector(prim, non_na).with_len(shared_vector_len_sym(arg_tys)))
+    } else {
+        Some(TypeState::scalar(prim, non_na))
     }
 }

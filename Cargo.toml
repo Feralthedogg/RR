@@ -1,6 +1,6 @@
 [package]
 name = "RR"
-version = "1.4.0"
+version = "2.0.0"
 edition = "2024"
 authors = ["Feral"]
 description = "The RR Compiler"
@@ -8,6 +8,14 @@ repository = "https://github.com/Feralthedogg/RR"
 license = "MIT"
 keywords = ["compiler", "r-language", "optimization", "static-analysis"]
 categories = ["compilers", "science", "development-tools"]
+
+[lib]
+name = "rr"
+path = "src/lib.rs"
+
+[features]
+default = []
+fuzz-internals = []
 
 [package.metadata.wix]
 upgrade-guid = "AC34955C-4FEF-46F3-9AC1-7F2C1FC8937D"

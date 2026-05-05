@@ -10,11 +10,11 @@ hero:
       text: Start Here
       link: /getting-started
     - theme: alt
+      text: What's New in 2.0
+      link: /whats-new-2.0
+    - theme: alt
       text: RR for R Users
       link: /r-for-r-users
-    - theme: alt
-      text: CLI Reference
-      link: /cli
 
 features:
   - title: First Compile
@@ -32,8 +32,9 @@ features:
 If your goal is "show me how to use RR", start here:
 
 1. Read [Getting Started](/getting-started) for the shortest path from checkout to a running program.
-2. Read [RR for R Users](/r-for-r-users) if you already know R and want the RR mental model quickly.
-3. Keep [CLI Reference](/cli) nearby once you want exact command forms and flags.
+2. Read [What Is New in 2.0](/whats-new-2.0) if you are upgrading from RR 1.x.
+3. Read [RR for R Users](/r-for-r-users) if you already know R and want the RR mental model quickly.
+4. Keep [CLI Reference](/cli) nearby once you want exact command forms and flags.
 
 Build RR, compile one file, and run it:
 
@@ -69,11 +70,23 @@ RR build . --out-dir build -O2
 RR watch . -O2
 ```
 
+## Current Surface Notes
+
+- `unsafe r { ... }` is the read/write raw R escape hatch. RR preserves the raw
+  R body and treats the affected function conservatively.
+- `unsafe r(read) { ... }` is the narrower read-only form for probes and logging.
+  It can read RR-visible locals without forcing opaque interop or post-block
+  local reloads, but assigning to RR locals inside the block is outside the
+  stable contract.
+- The exact trust boundary is documented in [Language Reference](/language),
+  [R Interop](/r-interop), and [Unsafe Boundaries](/compiler/unsafe-boundaries).
+
 ## User Docs
 
 Use these pages when you want to write RR code and get work done.
 
 - [Getting Started](/getting-started)
+- [What Is New in 2.0](/whats-new-2.0)
 - [RR for R Users](/r-for-r-users)
 - [Writing RR for Performance and Safety](/writing-rr)
 - [CLI Reference](/cli)
@@ -81,6 +94,7 @@ Use these pages when you want to write RR code and get work done.
 - [Configuration](/configuration)
 - [R Interop](/r-interop)
 - [Compatibility and Limits](/compatibility)
+- [Package Manager Design](/package-manager-design)
 
 ## Compiler Docs
 
@@ -88,9 +102,14 @@ Use these pages when you want the implementation-side view:
 
 - [Compiler Overview](/compiler/)
 - [Compiler Pipeline](/compiler/pipeline)
+- [Parallel Compilation](/compiler/parallel-compilation)
 - [IR Model](/compiler/ir-model)
 - [Tachyon Optimizer](/compiler/optimization)
+- [Adaptive Phase Ordering](/compiler/adaptive-phase-ordering)
+- [Compile-Time Reduction](/compiler/compile-time-reduction)
+- [MIR SROA Design](/compiler/sroa)
 - [Runtime and Error Model](/compiler/runtime-and-errors)
+- [Unsafe Boundaries](/compiler/unsafe-boundaries)
 - [Testing and Quality Gates](/compiler/testing)
 - [Contributing Audit Checklist](/compiler/contributing-audit)
 
@@ -99,9 +118,10 @@ Use these pages when you want the implementation-side view:
 If you are new to RR:
 
 1. Read [Getting Started](/getting-started).
-2. Read [RR for R Users](/r-for-r-users).
-3. Read [CLI Reference](/cli).
-4. Read [Language Reference](/language).
+2. Read [What Is New in 2.0](/whats-new-2.0) if you are upgrading existing code.
+3. Read [RR for R Users](/r-for-r-users).
+4. Read [CLI Reference](/cli).
+5. Read [Language Reference](/language).
 
 If you are shipping RR code:
 

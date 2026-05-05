@@ -1,12 +1,11 @@
 mod common;
 
-use RR::compiler::{
-    CompileMode, CompileOutputOptions, CompileProfile, CompilerParallelConfig,
-    CompilerParallelMode, OptLevel,
-    compile_with_configs_with_options_and_compiler_parallel_and_profile, default_parallel_config,
-    default_type_config,
-};
 use common::unique_dir;
+use rr::compiler::{
+    CompileMode, CompileOutputOptions, CompileProfile, CompileWithProfileRequest,
+    CompilerParallelConfig, CompilerParallelMode, OptLevel, compile_with_profile_request,
+    default_parallel_config, default_type_config,
+};
 use std::path::PathBuf;
 use std::sync::MutexGuard;
 
@@ -20,16 +19,16 @@ fn compile_with_profile(
 ) -> CompileProfile {
     common::set_env_var_for_test(env_guard, "RR_INCREMENTAL_CACHE_DIR", cache_dir);
     let mut profile = CompileProfile::default();
-    compile_with_configs_with_options_and_compiler_parallel_and_profile(
+    compile_with_profile_request(CompileWithProfileRequest {
         entry_path,
-        source,
-        OptLevel::O1,
-        default_type_config(),
-        default_parallel_config(),
+        entry_input: source,
+        opt_level: OptLevel::O1,
+        type_cfg: default_type_config(),
+        parallel_cfg: default_parallel_config(),
         compiler_parallel_cfg,
         output_opts,
-        Some(&mut profile),
-    )
+        profile: Some(&mut profile),
+    })
     .expect("compile failed");
     common::remove_env_var_for_test(env_guard, "RR_INCREMENTAL_CACHE_DIR");
     profile
@@ -45,7 +44,7 @@ fn output_opts(compile_mode: CompileMode) -> CompileOutputOptions {
 fn stage<'a>(
     profile: &'a CompileProfile,
     label: &str,
-) -> &'a RR::compiler::CompilerParallelStageProfile {
+) -> &'a rr::compiler::CompilerParallelStageProfile {
     profile
         .compiler_parallel
         .stage(label)

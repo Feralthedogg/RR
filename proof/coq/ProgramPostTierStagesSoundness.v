@@ -1,5 +1,5 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.OptimizerPipelineSoundness.
+Require Import MirInvariantBundle.
+Require Import OptimizerPipelineSoundness.
 
 Module RRProgramPostTierStagesSoundness.
 

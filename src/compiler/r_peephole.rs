@@ -1,5 +1,5 @@
 use crate::compiler::peephole::{
-    PeepholeProfile,
+    PeepholeOptions, PeepholeProfile,
     alias::{
         invalidate_aliases_for_write, is_peephole_temp, normalize_expr_with_aliases, resolve_alias,
         rewrite_known_aliases,
@@ -11,8 +11,19 @@ use crate::compiler::peephole::{
         split_top_level_args,
     },
     vector::{
-        hoist_repeated_vector_helper_calls_within_lines, rewrite_direct_vec_helper_expr,
-        rewrite_forward_exact_vector_helper_reuse, rewrite_forward_temp_aliases,
+        define_missing_o3_semantic_index_temps_with_map,
+        hoist_aggressive_repeated_vector_helper_calls_within_lines,
+        hoist_aggressive_repeated_vector_helper_calls_within_lines_with_map,
+        hoist_loop_invariant_indexed_gathers, hoist_o3_repeated_index_vec_floor_calls_across_lines,
+        hoist_o3_repeated_index_vec_floor_calls_across_lines_with_map,
+        hoist_repeated_vector_helper_calls_within_lines, mark_unused_tachyon_exprmap_temps,
+        materialize_loop_indexed_vector_helper_calls, materialize_o3_exact_gather_index_temps,
+        materialize_o3_large_ifelse_branches,
+        materialize_o3_large_repeated_arithmetic_subexpressions,
+        materialize_o3_semantic_gather_subexpressions, rewrite_direct_vec_helper_expr,
+        rewrite_forward_exact_vector_helper_reuse,
+        rewrite_forward_exact_vector_helper_reuse_aggressive, rewrite_forward_temp_aliases,
+        semanticize_o3_vector_cse_temp_names,
     },
 };
 use regex::{Captures, Regex};
@@ -58,22 +69,23 @@ use self::dead_code_rewrites::{
     strip_dead_temps_with_cache, strip_dead_temps_with_cache_and_profile,
 };
 use self::emitted_ir_rewrites::{
-    collapse_identical_if_else_tail_assignments_late_ir, collapse_inlined_copy_vec_sequences_ir,
-    collapse_singleton_assign_slice_scalar_edits_ir, collapse_trivial_dot_product_wrappers_ir,
-    collapse_trivial_passthrough_return_wrappers_ir, collapse_trivial_scalar_clamp_wrappers_ir,
-    rewrite_dead_zero_loop_seeds_before_for_ir, rewrite_forward_exact_expr_reuse_ir,
-    rewrite_forward_exact_pure_call_reuse_ir, rewrite_index_only_mutated_param_shadow_aliases_ir,
-    rewrite_literal_field_get_calls_ir, rewrite_literal_named_list_calls_ir,
-    rewrite_metric_helper_return_calls_ir, rewrite_metric_helper_statement_calls_ir,
-    rewrite_readonly_param_aliases_ir, rewrite_remaining_readonly_param_shadow_uses_ir,
-    rewrite_simple_expr_helper_calls_ir, run_empty_else_match_cleanup_bundle_ir,
-    run_exact_finalize_cleanup_bundle_ir, run_exact_pre_cleanup_bundle_ir,
-    run_exact_pre_full_ir_bundle, run_exact_pre_ir_bundle, run_exact_reuse_ir_bundle,
-    run_post_passthrough_metric_bundle_ir, run_secondary_empty_else_finalize_bundle_ir,
-    run_secondary_exact_bundle_ir, run_secondary_exact_expr_bundle_ir,
-    run_secondary_helper_ir_bundle, run_simple_expr_cleanup_bundle_ir,
-    simplify_nested_index_vec_floor_calls_ir, strip_arg_aliases_in_trivial_return_wrappers_ir,
-    strip_dead_simple_eval_lines_ir, strip_empty_else_blocks_ir, strip_noop_self_assignments_ir,
+    SimpleExprCleanupConfig, collapse_identical_if_else_tail_assignments_late_ir,
+    collapse_inlined_copy_vec_sequences_ir, collapse_singleton_assign_slice_scalar_edits_ir,
+    collapse_trivial_dot_product_wrappers_ir, collapse_trivial_passthrough_return_wrappers_ir,
+    collapse_trivial_scalar_clamp_wrappers_ir, rewrite_dead_zero_loop_seeds_before_for_ir,
+    rewrite_forward_exact_expr_reuse_ir, rewrite_forward_exact_pure_call_reuse_ir,
+    rewrite_index_only_mutated_param_shadow_aliases_ir, rewrite_literal_field_get_calls_ir,
+    rewrite_literal_named_list_calls_ir, rewrite_metric_helper_return_calls_ir,
+    rewrite_metric_helper_statement_calls_ir, rewrite_readonly_param_aliases_ir,
+    rewrite_remaining_readonly_param_shadow_uses_ir, rewrite_simple_expr_helper_calls_ir,
+    run_empty_else_match_cleanup_bundle_ir, run_exact_finalize_cleanup_bundle_ir,
+    run_exact_pre_cleanup_bundle_ir, run_exact_pre_full_ir_bundle, run_exact_pre_ir_bundle,
+    run_exact_reuse_ir_bundle, run_post_passthrough_metric_bundle_ir,
+    run_secondary_empty_else_finalize_bundle_ir, run_secondary_exact_bundle_ir,
+    run_secondary_exact_expr_bundle_ir, run_secondary_helper_ir_bundle,
+    run_simple_expr_cleanup_bundle_ir, simplify_nested_index_vec_floor_calls_ir,
+    strip_arg_aliases_in_trivial_return_wrappers_ir, strip_dead_simple_eval_lines_ir,
+    strip_empty_else_blocks_ir, strip_noop_self_assignments_ir,
     strip_redundant_identical_pure_rebinds_ir, strip_redundant_nested_temp_reassigns_ir,
     strip_redundant_tail_assign_slice_return_ir, strip_terminal_repeat_nexts_ir,
     strip_unreachable_sym_helpers_ir, strip_unused_arg_aliases_ir, strip_unused_helper_params_ir,
@@ -98,22 +110,22 @@ use self::facts_rewrites::{
 };
 use self::full_range_rewrites::{
     compact_expr, has_one_based_full_range_index_alias_read_candidates, parse_break_guard,
-    rewrite_full_range_conditional_scalar_loops, rewrite_inline_full_range_slice_ops,
-    rewrite_one_based_full_range_index_alias_reads, run_secondary_full_range_bundle,
-    strip_redundant_outer_parens,
+    rewrite_full_range_conditional_scalar_loops, rewrite_index1_read_vec_calls,
+    rewrite_inline_full_range_slice_ops, rewrite_one_based_full_range_index_alias_reads,
+    run_secondary_full_range_bundle, strip_redundant_outer_parens,
 };
 use self::guard_simplify_rewrites::{
     rewrite_guard_truthy_line, rewrite_if_truthy_line, simplify_not_finite_or_zero_guard_parens,
     simplify_same_var_is_na_or_not_finite_guards, simplify_wrapped_not_finite_parens,
 };
 #[cfg(test)]
+use self::helpers_cleanup::helper_calls::{collect_simple_expr_helpers, substitute_helper_expr};
+#[cfg(test)]
 use self::helpers_cleanup::strip_unused_arg_aliases;
 use self::helpers_cleanup::{
     collapse_inlined_copy_vec_sequences, collapse_trivial_dot_product_wrappers,
     strip_dead_simple_eval_lines, strip_noop_self_assignments,
 };
-#[cfg(test)]
-use self::helpers_cleanup::{collect_simple_expr_helpers, substitute_helper_expr};
 use self::index_read_rewrites::{
     literal_field_get_re, literal_record_field_name, rewrite_index_access_patterns,
 };
@@ -153,6 +165,7 @@ use self::pipeline_stage_rewrites::compose_line_maps;
 use self::scalar_reuse_rewrites::rewrite_shifted_square_scalar_reuse;
 #[cfg(test)]
 use self::shadow_alias_rewrites::rewrite_readonly_param_aliases;
+use crate::compiler::peephole::stage_catalog::peephole_stage_catalog_is_well_formed;
 
 pub(crate) fn optimize_emitted_r(code: &str, direct_builtin_call_map: bool) -> String {
     optimize_emitted_r_with_context(code, direct_builtin_call_map, &FxHashSet::default()).0
@@ -172,10 +185,9 @@ pub(crate) fn optimize_emitted_r_with_context(
 ) -> (String, Vec<u32>) {
     optimize_emitted_r_with_context_and_fresh_with_options(
         code,
-        direct_builtin_call_map,
         pure_user_calls,
         &FxHashSet::default(),
-        false,
+        PeepholeOptions::new(direct_builtin_call_map),
     )
 }
 
@@ -187,10 +199,9 @@ pub(crate) fn optimize_emitted_r_with_context_and_fresh(
 ) -> (String, Vec<u32>) {
     optimize_emitted_r_with_context_and_fresh_with_options(
         code,
-        direct_builtin_call_map,
         pure_user_calls,
         fresh_user_calls,
-        false,
+        PeepholeOptions::new(direct_builtin_call_map),
     )
 }
 
@@ -198,49 +209,35 @@ pub(crate) fn optimize_emitted_r_with_context_and_fresh(
 /// context collected by earlier compiler stages.
 pub(crate) fn optimize_emitted_r_with_context_and_fresh_with_options(
     code: &str,
-    direct_builtin_call_map: bool,
     pure_user_calls: &FxHashSet<String>,
     fresh_user_calls: &FxHashSet<String>,
-    preserve_all_defs: bool,
+    options: PeepholeOptions,
 ) -> (String, Vec<u32>) {
-    optimize_emitted_r_pipeline_impl_with_profile(
-        code,
-        direct_builtin_call_map,
-        pure_user_calls,
-        fresh_user_calls,
-        preserve_all_defs,
-        false,
-    )
-    .0
+    optimize_emitted_r_pipeline_impl_with_profile(code, pure_user_calls, fresh_user_calls, options)
+        .0
 }
 
-pub(crate) fn optimize_emitted_r_with_context_and_fresh_with_options_and_profile(
+pub(crate) fn optimize_emitted_r_with_context_and_fresh_with_profile(
     code: &str,
-    direct_builtin_call_map: bool,
     pure_user_calls: &FxHashSet<String>,
     fresh_user_calls: &FxHashSet<String>,
-    preserve_all_defs: bool,
-    fast_dev: bool,
+    options: PeepholeOptions,
 ) -> ((String, Vec<u32>), PeepholeProfile) {
-    optimize_emitted_r_pipeline_impl_with_profile(
-        code,
-        direct_builtin_call_map,
-        pure_user_calls,
-        fresh_user_calls,
-        preserve_all_defs,
-        fast_dev,
-    )
+    optimize_emitted_r_pipeline_impl_with_profile(code, pure_user_calls, fresh_user_calls, options)
 }
 
 pub(crate) fn rewrite_selected_simple_expr_helper_calls_in_text(
     code: &str,
     helper_names: &[&str],
 ) -> String {
-    helpers_cleanup::rewrite_selected_simple_expr_helper_calls_in_text(code, helper_names)
+    helpers_cleanup::helper_calls::rewrite_selected_simple_expr_helper_calls_in_text(
+        code,
+        helper_names,
+    )
 }
 
 pub(crate) fn simplify_nested_index_vec_floor_calls_in_text(code: &str) -> String {
-    helpers_cleanup::simplify_nested_index_vec_floor_calls_in_text(code)
+    helpers_cleanup::helper_calls::simplify_nested_index_vec_floor_calls_in_text(code)
 }
 
 #[cfg(test)]

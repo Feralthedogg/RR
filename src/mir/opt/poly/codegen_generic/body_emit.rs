@@ -1,4 +1,5 @@
-fn scop_subset_with_stmt(scop: &ScopRegion, stmt: PolyStmt) -> ScopRegion {
+use super::*;
+pub(crate) fn scop_subset_with_stmt(scop: &ScopRegion, stmt: PolyStmt) -> ScopRegion {
     ScopRegion {
         header: scop.header,
         latch: scop.latch,
@@ -10,18 +11,25 @@ fn scop_subset_with_stmt(scop: &ScopRegion, stmt: PolyStmt) -> ScopRegion {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn rebuild_generic_fissioned_sequence(
+pub(crate) type GenericLowerOne =
+    fn(&mut FnIR, &LoopInfo, &ScopRegion, &SchedulePlan, usize, usize, bool) -> bool;
+
+pub(crate) struct GenericFissionRequest<'a> {
+    pub(crate) lp: &'a LoopInfo,
+    pub(crate) scop: &'a ScopRegion,
+    pub(crate) schedule: &'a SchedulePlan,
+    pub(crate) preheader: usize,
+    pub(crate) exit_bb: usize,
+    pub(crate) skip_accessless_assigns: bool,
+    pub(crate) lower_one: GenericLowerOne,
+}
+
+pub(crate) fn rebuild_generic_fissioned_sequence(
     fn_ir: &mut FnIR,
-    lp: &LoopInfo,
-    scop: &ScopRegion,
-    schedule: &SchedulePlan,
-    preheader: usize,
-    exit_bb: usize,
-    skip_accessless_assigns: bool,
-    lower_one: fn(&mut FnIR, &LoopInfo, &ScopRegion, &SchedulePlan, usize, usize, bool) -> bool,
+    request: GenericFissionRequest<'_>,
 ) -> bool {
-    let stmts = scop
+    let stmts = request
+        .scop
         .statements
         .iter()
         .filter(|stmt| !stmt.accesses.is_empty())
@@ -30,28 +38,29 @@ fn rebuild_generic_fissioned_sequence(
     if stmts.len() <= 1 {
         return false;
     }
-    let mut next_preheader = preheader;
+    let mut next_preheader = request.preheader;
     for (idx, stmt) in stmts.into_iter().enumerate() {
         let next_exit = if idx + 1
-            == scop
+            == request
+                .scop
                 .statements
                 .iter()
                 .filter(|stmt| !stmt.accesses.is_empty())
                 .count()
         {
-            exit_bb
+            request.exit_bb
         } else {
             fn_ir.add_block()
         };
-        let subset = scop_subset_with_stmt(scop, stmt);
-        if !lower_one(
+        let subset = scop_subset_with_stmt(request.scop, stmt);
+        if !(request.lower_one)(
             fn_ir,
-            lp,
+            request.lp,
             &subset,
-            schedule,
+            request.schedule,
             next_preheader,
             next_exit,
-            skip_accessless_assigns,
+            request.skip_accessless_assigns,
         ) {
             return false;
         }
@@ -60,7 +69,7 @@ fn rebuild_generic_fissioned_sequence(
     true
 }
 
-fn build_loop_level(
+pub(crate) fn build_loop_level(
     fn_ir: &mut FnIR,
     dims: &[super::LoopDimension],
     level: usize,
@@ -149,7 +158,7 @@ fn build_loop_level(
     Some(init_bb)
 }
 
-fn emit_loop_iv_aliases(
+pub(crate) fn emit_loop_iv_aliases(
     fn_ir: &mut FnIR,
     body_bb: usize,
     scop: &ScopRegion,
@@ -170,7 +179,7 @@ fn emit_loop_iv_aliases(
     Some(())
 }
 
-fn emit_generic_body(
+pub(crate) fn emit_generic_body(
     fn_ir: &mut FnIR,
     body_bb: usize,
     scop: &ScopRegion,
@@ -193,12 +202,9 @@ fn emit_generic_body(
             continue;
         }
         if skip_accessless_assigns
-            && matches!(&stmt.kind, PolyStmtKind::Assign { .. })
             && stmt.accesses.is_empty()
+            && let PolyStmtKind::Assign { dst } = &stmt.kind
         {
-            let PolyStmtKind::Assign { dst } = &stmt.kind else {
-                unreachable!();
-            };
             let needed_later = scop.statements[idx + 1..]
                 .iter()
                 .any(|later| stmt_mentions_var(fn_ir, later, dst));
@@ -211,7 +217,7 @@ fn emit_generic_body(
     Some(())
 }
 
-fn stmt_is_progress_assign(fn_ir: &FnIR, scop: &ScopRegion, stmt: &PolyStmt) -> bool {
+pub(crate) fn stmt_is_progress_assign(fn_ir: &FnIR, scop: &ScopRegion, stmt: &PolyStmt) -> bool {
     let (PolyStmtKind::Assign { dst }, Some(expr_root)) = (&stmt.kind, stmt.expr_root) else {
         return false;
     };
@@ -237,7 +243,7 @@ fn stmt_is_progress_assign(fn_ir: &FnIR, scop: &ScopRegion, stmt: &PolyStmt) -> 
     }
 }
 
-fn stmt_mentions_var(fn_ir: &FnIR, stmt: &PolyStmt, var: &str) -> bool {
+pub(crate) fn stmt_mentions_var(fn_ir: &FnIR, stmt: &PolyStmt, var: &str) -> bool {
     let mut seen = FxHashSet::default();
     if stmt
         .expr_root
@@ -256,7 +262,7 @@ fn stmt_mentions_var(fn_ir: &FnIR, stmt: &PolyStmt, var: &str) -> bool {
     }
 }
 
-fn emit_generic_stmt(
+pub(crate) fn emit_generic_stmt(
     fn_ir: &mut FnIR,
     body_bb: usize,
     stmt: &PolyStmt,
@@ -322,7 +328,7 @@ fn emit_generic_stmt(
     }
 }
 
-fn build_load(fn_ir: &mut FnIR, var: String) -> ValueId {
+pub(crate) fn build_load(fn_ir: &mut FnIR, var: String) -> ValueId {
     fn_ir.add_value(
         ValueKind::Load { var: var.clone() },
         Span::dummy(),
@@ -331,7 +337,7 @@ fn build_load(fn_ir: &mut FnIR, var: String) -> ValueId {
     )
 }
 
-fn materialize_symbol_value(
+pub(crate) fn materialize_symbol_value(
     fn_ir: &mut FnIR,
     symbol: &AffineSymbol,
     loop_var_map: &FxHashMap<String, String>,
@@ -372,7 +378,7 @@ fn materialize_symbol_value(
     }
 }
 
-fn materialize_affine_expr(
+pub(crate) fn materialize_affine_expr(
     fn_ir: &mut FnIR,
     expr: &AffineExpr,
     loop_var_map: &FxHashMap<String, String>,

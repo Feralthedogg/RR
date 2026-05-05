@@ -2,8 +2,8 @@
 
 mod common;
 
-use RR::typeck::{NativeBackend, TypeConfig, TypeMode};
 use libfuzzer_sys::{Corpus, fuzz_target};
+use rr::typeck::{NativeBackend, TypeConfig, TypeMode};
 
 fuzz_target!(|data: &[u8]| -> Corpus {
     let Some(src) = common::decode_source(data) else {

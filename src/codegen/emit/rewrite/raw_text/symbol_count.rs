@@ -1,4 +1,5 @@
-fn count_symbol_occurrences_local(line: &str, symbol: &str) -> usize {
+use super::*;
+pub(crate) fn count_symbol_occurrences_local(line: &str, symbol: &str) -> usize {
     if line.is_empty() || symbol.is_empty() || !line.contains(symbol) {
         return 0;
     }

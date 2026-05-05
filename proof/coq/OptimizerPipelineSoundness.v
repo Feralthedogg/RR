@@ -1,8 +1,8 @@
-Require Import RRProofs.MirInvariantBundle.
-Require Import RRProofs.DataflowOptSoundness.
-Require Import RRProofs.CfgOptSoundness.
-Require Import RRProofs.LoopOptSoundness.
-Require Import RRProofs.DeSsaBoundarySoundness.
+Require Import MirInvariantBundle.
+Require Import DataflowOptSoundness.
+Require Import CfgOptSoundness.
+Require Import LoopOptSoundness.
+Require Import DeSsaBoundarySoundness.
 
 Module RROptimizerPipelineSoundness.
 

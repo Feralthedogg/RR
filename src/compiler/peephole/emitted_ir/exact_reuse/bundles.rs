@@ -1,4 +1,5 @@
-fn has_exact_expr_candidates_ir(lines: &[String]) -> bool {
+use super::*;
+pub(crate) fn has_exact_expr_candidates_ir(lines: &[String]) -> bool {
     lines.iter().any(|line| {
         assign_re()
             .and_then(|re| re.captures(line.trim()))
@@ -8,12 +9,12 @@ fn has_exact_expr_candidates_ir(lines: &[String]) -> bool {
 }
 
 #[derive(Default)]
-pub(in super::super) struct ExactPreBundleProfile {
-    pub(in super::super) pre_elapsed_ns: u128,
-    pub(in super::super) cleanup_elapsed_ns: u128,
+pub(crate) struct ExactPreBundleProfile {
+    pub(crate) pre_elapsed_ns: u128,
+    pub(crate) cleanup_elapsed_ns: u128,
 }
 
-pub(in super::super) fn run_exact_pre_full_ir_bundle(
+pub(crate) fn run_exact_pre_full_ir_bundle(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> (Vec<String>, ExactPreBundleProfile) {
@@ -51,7 +52,7 @@ pub(in super::super) fn run_exact_pre_full_ir_bundle(
     (program.into_lines(), profile)
 }
 
-pub(in super::super) fn run_secondary_exact_expr_bundle_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_secondary_exact_expr_bundle_ir(lines: Vec<String>) -> Vec<String> {
     let needs_exact_expr = has_exact_expr_candidates_ir(&lines);
     let needs_noop_assign = scan_basic_cleanup_candidates_ir(&lines).needs_noop_assign;
     if !needs_exact_expr && !needs_noop_assign {
@@ -67,7 +68,7 @@ pub(in super::super) fn run_secondary_exact_expr_bundle_ir(lines: Vec<String>) -
     program.into_lines()
 }
 
-pub(in super::super) fn run_secondary_exact_bundle_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_secondary_exact_bundle_ir(lines: Vec<String>) -> Vec<String> {
     let needs_dead_zero = has_dead_zero_loop_seed_candidates_ir(&lines);
     let needs_terminal_next = has_terminal_repeat_next_candidates_ir(&lines);
     let needs_exact_expr = has_exact_expr_candidates_ir(&lines);
@@ -91,7 +92,7 @@ pub(in super::super) fn run_secondary_exact_bundle_ir(lines: Vec<String>) -> Vec
     run_secondary_exact_local_scalar_bundle(program.into_lines())
 }
 
-pub(in super::super) fn run_exact_finalize_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_exact_finalize_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
     let scan = scan_basic_cleanup_candidates_ir(&lines);
     let needs_dead_eval = scan.needs_dead_eval;
     let needs_noop_assign = scan.needs_noop_assign;
@@ -116,7 +117,7 @@ pub(in super::super) fn run_exact_finalize_cleanup_bundle_ir(lines: Vec<String>)
     program.into_lines()
 }
 
-pub(in super::super) fn collapse_identical_if_else_tail_assignments_late_ir(
+pub(crate) fn collapse_identical_if_else_tail_assignments_late_ir(
     lines: Vec<String>,
 ) -> Vec<String> {
     let mut program = EmittedProgram::parse(&lines);
@@ -125,13 +126,13 @@ pub(in super::super) fn collapse_identical_if_else_tail_assignments_late_ir(
 }
 
 #[derive(Default)]
-pub(in super::super) struct ExactReuseBundleProfile {
-    pub(in super::super) pure_call_elapsed_ns: u128,
-    pub(in super::super) expr_elapsed_ns: u128,
-    pub(in super::super) rebind_elapsed_ns: u128,
+pub(crate) struct ExactReuseBundleProfile {
+    pub(crate) pure_call_elapsed_ns: u128,
+    pub(crate) expr_elapsed_ns: u128,
+    pub(crate) rebind_elapsed_ns: u128,
 }
 
-pub(in super::super) fn run_exact_reuse_ir_bundle(
+pub(crate) fn run_exact_reuse_ir_bundle(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> (Vec<String>, ExactReuseBundleProfile) {
@@ -156,7 +157,7 @@ pub(in super::super) fn run_exact_reuse_ir_bundle(
     (program.into_lines(), profile)
 }
 
-pub(in super::super) fn run_exact_pre_ir_bundle(
+pub(crate) fn run_exact_pre_ir_bundle(
     lines: Vec<String>,
     pure_user_calls: &FxHashSet<String>,
 ) -> Vec<String> {

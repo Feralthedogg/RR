@@ -1,11 +1,12 @@
-fn has_nested_index_vec_floor_candidates_ir(lines: &[String]) -> bool {
+use super::*;
+pub(crate) fn has_nested_index_vec_floor_candidates_ir(lines: &[String]) -> bool {
     let Some(re) = nested_index_vec_floor_re() else {
         return false;
     };
     lines.iter().any(|line| re.is_match(line))
 }
 
-fn apply_simplify_nested_index_vec_floor_calls_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_simplify_nested_index_vec_floor_calls_ir(program: &mut EmittedProgram) {
     let Some(re) = nested_index_vec_floor_re() else {
         return;
     };
@@ -55,9 +56,7 @@ fn apply_simplify_nested_index_vec_floor_calls_ir(program: &mut EmittedProgram) 
     }
 }
 
-pub(in super::super) fn run_post_passthrough_wrapper_cleanup_bundle_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn run_post_passthrough_wrapper_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
     let needs_floor = has_nested_index_vec_floor_candidates_ir(&lines);
     let needs_copy = has_inlined_copy_vec_sequence_candidates_ir(&lines);
     if !needs_floor && !needs_copy {

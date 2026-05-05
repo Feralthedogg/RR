@@ -1,4 +1,5 @@
-pub(super) fn rewrite_adjacent_duplicate_symbol_assignments(output: &mut String) {
+use super::*;
+pub(crate) fn rewrite_adjacent_duplicate_symbol_assignments(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.len() < 2 {
         return;
@@ -47,7 +48,7 @@ pub(super) fn rewrite_adjacent_duplicate_symbol_assignments(output: &mut String)
     *output = rewritten;
 }
 
-pub(super) fn rewrite_duplicate_pure_call_assignments(
+pub(crate) fn rewrite_duplicate_pure_call_assignments(
     output: &mut String,
     pure_user_calls: &FxHashSet<String>,
 ) {
@@ -87,6 +88,11 @@ pub(super) fn rewrite_duplicate_pure_call_assignments(
                 break;
             }
             if line.contains("<- function") {
+                break;
+            }
+            if let Some(base) = indexed_store_base_local(&line_trimmed)
+                && (base == lhs || deps.contains(base))
+            {
                 break;
             }
             if let Some((next_lhs, next_rhs)) = parse_local_assign_line(&line_trimmed) {

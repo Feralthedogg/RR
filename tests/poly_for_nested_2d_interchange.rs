@@ -35,6 +35,20 @@ fn compile_for_nested_2d_interchange(name: &str, rr_src: &str) -> (String, Strin
     (stats, emitted)
 }
 
+fn assert_no_terminal_next_before_poly_step(emitted: &str) {
+    let lines = emitted.lines().collect::<Vec<_>>();
+    let has_bad_step_order = lines.windows(2).any(|window| {
+        window[0].trim() == "next"
+            && window[1].contains(".__poly_gen_iv_")
+            && window[1].contains("<-")
+    });
+    assert!(
+        !has_bad_step_order,
+        "generated poly loop step must not be placed after terminal next:\n{}",
+        emitted
+    );
+}
+
 #[test]
 fn poly_applies_for_nested_2d_interchange_map() {
     let (stats, emitted) = compile_for_nested_2d_interchange(
@@ -66,6 +80,7 @@ print(poly_for_nested_2d_interchange_map(4, 4))
         "expected for-loop 2d interchange map to rebuild generic loops without matrix helper, got:\n{}",
         emitted
     );
+    assert_no_terminal_next_before_poly_step(&emitted);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use crate::typeck::term::TypeTerm;
 
-pub(super) fn infer_ggplot2_term(callee: &str, _arg_terms: &[TypeTerm]) -> Option<TypeTerm> {
+pub(crate) fn infer_ggplot2_term(callee: &str, _arg_terms: &[TypeTerm]) -> Option<TypeTerm> {
     match callee {
         "ggplot2::ggsave" => Some(TypeTerm::Char),
         "ggplot2::aes"

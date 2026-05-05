@@ -3,7 +3,7 @@ use super::*;
 impl TachyonEngine {
     // Required lowering-to-codegen stabilization passes.
     // This must run even in O0, because codegen cannot emit Phi.
-    fn stabilize_for_codegen_inner(
+    pub(crate) fn stabilize_for_codegen_inner(
         &self,
         all_fns: &mut FxHashMap<String, FnIR>,
         verify_start: bool,
@@ -48,7 +48,18 @@ impl TachyonEngine {
             if verify_start && !Self::verify_or_reject(fn_ir, "PrepareForCodegen/Start") {
                 continue;
             }
-            let _ = de_ssa::run(fn_ir);
+            let mut local_profile = TachyonRunProfile::default();
+            let loop_opt = loop_opt::MirLoopOptimizer::new();
+            let _ = self.run_chronos_function_sequence(chronos::ChronosFunctionSequenceRequest {
+                stage: chronos::ChronosStage::PrepareForCodegen,
+                passes: chronos::PREPARE_FOR_CODEGEN_DESSA_PASSES,
+                fn_ir,
+                loop_optimizer: &loop_opt,
+                user_call_whitelist: None,
+                fresh_user_calls: None,
+                stats: &mut local_profile.pulse_stats,
+                timings: &mut local_profile.pass_timings,
+            });
             // Keep this lightweight but convergent to avoid dead temp noise after De-SSA.
             // Conservative interop functions skip cleanup to preserve package/runtime semantics.
             if !fn_ir.requires_conservative_optimization() {
@@ -56,9 +67,18 @@ impl TachyonEngine {
                 let mut guard = 0;
                 while changed && guard < 8 {
                     guard += 1;
-                    changed = false;
-                    changed |= self.simplify_cfg(fn_ir);
-                    changed |= self.dce(fn_ir);
+                    changed = self
+                        .run_chronos_function_sequence(chronos::ChronosFunctionSequenceRequest {
+                            stage: chronos::ChronosStage::PrepareForCodegen,
+                            passes: chronos::PREPARE_FOR_CODEGEN_CLEANUP_PASSES,
+                            fn_ir,
+                            loop_optimizer: &loop_opt,
+                            user_call_whitelist: None,
+                            fresh_user_calls: None,
+                            stats: &mut local_profile.pulse_stats,
+                            timings: &mut local_profile.pass_timings,
+                        })
+                        .is_changed();
                 }
             }
             let _ = Self::verify_or_reject(fn_ir, "PrepareForCodegen/End");

@@ -17,17 +17,27 @@ pub(crate) fn parse_raw_clamp_guard_line(line: &str) -> Option<(String, String, 
 
 pub(crate) fn parse_raw_repeat_guard_cmp_line(line: &str) -> Option<(String, String, String)> {
     let trimmed = line.trim();
-    let inner = trimmed
-        .strip_prefix("if (!(")
-        .or_else(|| trimmed.strip_prefix("if !("))?
-        .strip_suffix(")) break")
-        .or_else(|| {
-            trimmed
-                .strip_prefix("if (!(")
-                .or_else(|| trimmed.strip_prefix("if !("))
-                .and_then(|s| s.strip_suffix(") break"))
-        })?
-        .trim();
+    let inner = if let Some(inner) = trimmed
+        .strip_prefix("if (!rr_truthy1(")
+        .and_then(|s| s.strip_suffix(")) break"))
+    {
+        let args = split_top_level_args(inner)?;
+        args.first()?.trim().to_string()
+    } else {
+        trimmed
+            .strip_prefix("if (!(")
+            .or_else(|| trimmed.strip_prefix("if !("))?
+            .strip_suffix(")) break")
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("if (!(")
+                    .or_else(|| trimmed.strip_prefix("if !("))
+                    .and_then(|s| s.strip_suffix(") break"))
+            })?
+            .trim()
+            .to_string()
+    };
+    let inner = strip_redundant_outer_parens(&inner).trim();
     for op in ["<=", "<"] {
         let needle = format!(" {op} ");
         let Some((lhs, rhs)) = inner.split_once(&needle) else {
@@ -63,25 +73,125 @@ pub(crate) fn latest_raw_literal_assignment_before(
     None
 }
 
-pub(crate) fn restore_missing_repeat_loop_counter_updates_in_raw_emitted_r(output: &str) -> String {
-    fn latest_raw_literal_seed_before(lines: &[String], idx: usize, var: &str) -> Option<String> {
-        for line in lines.iter().take(idx).rev() {
-            let Some((lhs, rhs)) = parse_raw_assign_line(line.trim()) else {
-                continue;
-            };
-            if lhs != var {
-                continue;
-            }
-            let rhs = strip_redundant_outer_parens(rhs).trim();
-            let numeric = rhs.trim_end_matches('L').trim_end_matches('l');
-            if numeric.parse::<f64>().ok().is_some() {
-                return Some(rhs.to_string());
-            }
+pub(crate) fn raw_lines_to_output(original: &str, lines: Vec<String>) -> String {
+    let mut out = lines.join("\n");
+    if original.ends_with('\n') || !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
+pub(crate) fn raw_line_indent(line: &str) -> String {
+    line.chars()
+        .take_while(|ch| ch.is_ascii_whitespace())
+        .collect()
+}
+
+pub(crate) fn latest_raw_literal_seed_before(
+    lines: &[String],
+    idx: usize,
+    var: &str,
+) -> Option<String> {
+    for line in lines.iter().take(idx).rev() {
+        let Some((lhs, rhs)) = parse_raw_assign_line(line.trim()) else {
+            continue;
+        };
+        if lhs != var {
+            continue;
+        }
+        let rhs = strip_redundant_outer_parens(rhs).trim();
+        let numeric = rhs.trim_end_matches('L').trim_end_matches('l');
+        if numeric.parse::<f64>().ok().is_some() {
+            return Some(rhs.to_string());
+        }
+        break;
+    }
+    None
+}
+
+pub(crate) fn raw_repeat_counter_step(seed: &str) -> &'static str {
+    if seed.contains('.') {
+        "1.0"
+    } else if seed.ends_with('L') || seed.ends_with('l') {
+        "1L"
+    } else {
+        "1"
+    }
+}
+
+pub(crate) fn parse_raw_constant_repeat_guard(line: &str) -> Option<(String, String, String)> {
+    let trimmed = line.trim();
+    let inner = trimmed
+        .strip_prefix("if (!(")
+        .or_else(|| trimmed.strip_prefix("if !("))?
+        .strip_suffix(")) break")
+        .or_else(|| {
+            trimmed
+                .strip_prefix("if (!(")
+                .or_else(|| trimmed.strip_prefix("if !("))
+                .and_then(|s| s.strip_suffix(") break"))
+        })?
+        .trim();
+    for op in ["<=", "<"] {
+        let needle = format!(" {op} ");
+        let Some((lhs, rhs)) = inner.split_once(&needle) else {
+            continue;
+        };
+        let lhs = strip_redundant_outer_parens(lhs.trim());
+        let rhs = rhs.trim();
+        if lhs.is_empty() || rhs.is_empty() {
+            continue;
+        }
+        let numeric = lhs.trim_end_matches('L').trim_end_matches('l');
+        if numeric.parse::<f64>().ok().is_some() {
+            return Some((lhs.to_string(), op.to_string(), rhs.to_string()));
+        }
+    }
+    None
+}
+
+pub(crate) fn raw_repeat_body_counter_usage(
+    lines: &[String],
+    guard_idx: usize,
+    loop_end: usize,
+    iter_var: &str,
+) -> (bool, bool) {
+    let mut body_uses_iter = false;
+    let mut body_assigns_iter = false;
+    for line in lines.iter().take(loop_end).skip(guard_idx + 1) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "# rr-cse-pruned" {
+            continue;
+        }
+        if let Some((lhs, _rhs)) = parse_raw_assign_line(trimmed)
+            && lhs == iter_var
+        {
+            body_assigns_iter = true;
             break;
         }
-        None
+        if line_contains_symbol(trimmed, iter_var) {
+            body_uses_iter = true;
+        }
     }
+    (body_uses_iter, body_assigns_iter)
+}
 
+pub(crate) fn repeat_counter_increment_insert_idx(
+    lines: &[String],
+    guard_idx: usize,
+    loop_end: usize,
+) -> usize {
+    ((guard_idx + 1)..loop_end)
+        .rev()
+        .find(|line_idx| {
+            let trimmed = lines[*line_idx].trim();
+            !trimmed.is_empty() && trimmed != "# rr-cse-pruned"
+        })
+        .filter(|line_idx| lines[*line_idx].trim() == "next")
+        .unwrap_or(loop_end)
+}
+
+pub(crate) fn restore_missing_repeat_loop_counter_updates_in_raw_emitted_r(output: &str) -> String {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return output.to_string();
@@ -118,48 +228,16 @@ pub(crate) fn restore_missing_repeat_loop_counter_updates_in_raw_emitted_r(outpu
             continue;
         };
 
-        let mut body_uses_iter = false;
-        let mut body_assigns_iter = false;
-        for line in lines.iter().take(loop_end).skip(guard_idx + 1) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed == "# rr-cse-pruned" {
-                continue;
-            }
-            if let Some((lhs, _rhs)) = parse_raw_assign_line(trimmed)
-                && lhs == iter_var
-            {
-                body_assigns_iter = true;
-                break;
-            }
-            if line_contains_symbol(trimmed, &iter_var) {
-                body_uses_iter = true;
-            }
-        }
+        let (body_uses_iter, body_assigns_iter) =
+            raw_repeat_body_counter_usage(&lines, guard_idx, loop_end, &iter_var);
         if body_assigns_iter || !body_uses_iter {
             idx = loop_end + 1;
             continue;
         }
 
-        let indent = lines[guard_idx]
-            .chars()
-            .take_while(|ch| ch.is_ascii_whitespace())
-            .collect::<String>();
-        let step = if seed.contains('.') {
-            "1.0"
-        } else if seed.ends_with('L') || seed.ends_with('l') {
-            "1L"
-        } else {
-            "1"
-        };
-
-        let insert_idx = ((guard_idx + 1)..loop_end)
-            .rev()
-            .find(|line_idx| {
-                let trimmed = lines[*line_idx].trim();
-                !trimmed.is_empty() && trimmed != "# rr-cse-pruned"
-            })
-            .filter(|line_idx| lines[*line_idx].trim() == "next")
-            .unwrap_or(loop_end);
+        let indent = raw_line_indent(&lines[guard_idx]);
+        let step = raw_repeat_counter_step(&seed);
+        let insert_idx = repeat_counter_increment_insert_idx(&lines, guard_idx, loop_end);
         lines.insert(
             insert_idx,
             format!("{indent}{iter_var} <- ({iter_var} + {step})"),
@@ -167,47 +245,12 @@ pub(crate) fn restore_missing_repeat_loop_counter_updates_in_raw_emitted_r(outpu
         idx = loop_end + 2;
     }
 
-    let mut out = lines.join("\n");
-    if output.ends_with('\n') || !out.is_empty() {
-        out.push('\n');
-    }
-    out
+    raw_lines_to_output(output, lines)
 }
 
 pub(crate) fn restore_constant_one_guard_repeat_loop_counters_in_raw_emitted_r(
     output: &str,
 ) -> String {
-    fn parse_constant_guard(line: &str) -> Option<(String, String, String)> {
-        let trimmed = line.trim();
-        let inner = trimmed
-            .strip_prefix("if (!(")
-            .or_else(|| trimmed.strip_prefix("if !("))?
-            .strip_suffix(")) break")
-            .or_else(|| {
-                trimmed
-                    .strip_prefix("if (!(")
-                    .or_else(|| trimmed.strip_prefix("if !("))
-                    .and_then(|s| s.strip_suffix(") break"))
-            })?
-            .trim();
-        for op in ["<=", "<"] {
-            let needle = format!(" {op} ");
-            let Some((lhs, rhs)) = inner.split_once(&needle) else {
-                continue;
-            };
-            let lhs = strip_redundant_outer_parens(lhs.trim());
-            let rhs = rhs.trim();
-            if lhs.is_empty() || rhs.is_empty() {
-                continue;
-            }
-            let numeric = lhs.trim_end_matches('L').trim_end_matches('l');
-            if numeric.parse::<f64>().ok().is_some() {
-                return Some((lhs.to_string(), op.to_string(), rhs.to_string()));
-            }
-        }
-        None
-    }
-
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return output.to_string();
@@ -231,7 +274,8 @@ pub(crate) fn restore_constant_one_guard_repeat_loop_counters_in_raw_emitted_r(
             idx = loop_end + 1;
             continue;
         };
-        let Some((start_lit, cmp, bound)) = parse_constant_guard(&lines[guard_idx]) else {
+        let Some((start_lit, cmp, bound)) = parse_raw_constant_repeat_guard(&lines[guard_idx])
+        else {
             idx = loop_end + 1;
             continue;
         };
@@ -246,39 +290,25 @@ pub(crate) fn restore_constant_one_guard_repeat_loop_counters_in_raw_emitted_r(
             continue;
         }
 
-        let indent = lines[guard_idx]
-            .chars()
-            .take_while(|ch| ch.is_ascii_whitespace())
-            .collect::<String>();
-        let repeat_indent = lines[idx]
-            .chars()
-            .take_while(|ch| ch.is_ascii_whitespace())
-            .collect::<String>();
+        let indent = raw_line_indent(&lines[guard_idx]);
+        let repeat_indent = raw_line_indent(&lines[idx]);
         lines.insert(idx, format!("{repeat_indent}{idx_var} <- {start_lit}"));
         lines[guard_idx + 1] = if cmp == "<=" {
             format!("{indent}if (!({idx_var} <= {bound})) break")
         } else {
             format!("{indent}if (!({idx_var} < {bound})) break")
         };
-        let one = if start_lit.contains('.') {
-            "1.0"
-        } else if start_lit.ends_with('L') || start_lit.ends_with('l') {
-            "1L"
-        } else {
-            "1"
-        };
         lines.insert(
             loop_end + 1,
-            format!("{indent}{idx_var} <- ({idx_var} + {one})"),
+            format!(
+                "{indent}{idx_var} <- ({idx_var} + {})",
+                raw_repeat_counter_step(&start_lit)
+            ),
         );
         idx = loop_end + 3;
     }
 
-    let mut out = lines.join("\n");
-    if output.ends_with('\n') || !out.is_empty() {
-        out.push('\n');
-    }
-    out
+    raw_lines_to_output(output, lines)
 }
 
 pub(crate) fn rewrite_exact_safe_loop_index_write_calls_in_raw_emitted_r(output: &str) -> String {
@@ -359,11 +389,7 @@ pub(crate) fn rewrite_exact_safe_loop_index_write_calls_in_raw_emitted_r(output:
         repeat_idx = next_repeat + 1;
     }
 
-    let mut out = lines.join("\n");
-    if output.ends_with('\n') || !out.is_empty() {
-        out.push('\n');
-    }
-    out
+    raw_lines_to_output(output, lines)
 }
 
 pub(crate) fn rewrite_seq_len_full_overwrite_inits_in_raw_emitted_r(output: &str) -> String {
@@ -457,19 +483,12 @@ pub(crate) fn rewrite_seq_len_full_overwrite_inits_in_raw_emitted_r(output: &str
 
         lines[idx] = format!(
             "{}{} <- rep.int(0, {})",
-            lines[idx]
-                .chars()
-                .take_while(|ch| ch.is_ascii_whitespace())
-                .collect::<String>(),
+            raw_line_indent(&lines[idx]),
             lhs,
             seq_inner
         );
         idx = loop_end + 1;
     }
 
-    let mut out = lines.join("\n");
-    if output.ends_with('\n') || !out.is_empty() {
-        out.push('\n');
-    }
-    out
+    raw_lines_to_output(output, lines)
 }

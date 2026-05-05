@@ -77,7 +77,7 @@ pub(crate) fn restore_buffer_swaps_after_temp_copy_in_raw_emitted_r(output: &str
     out
 }
 
-fn raw_line_writes_symbol(line: &str, symbol: &str) -> bool {
+pub(crate) fn raw_line_writes_symbol(line: &str, symbol: &str) -> bool {
     let trimmed = line.trim();
     parse_raw_assign_line(trimmed).is_some_and(|(lhs, _)| lhs == symbol)
         || trimmed.starts_with(&format!("{symbol}["))

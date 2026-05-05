@@ -1,4 +1,5 @@
-pub(super) fn strip_unused_raw_arg_aliases(output: &mut String) {
+use super::*;
+pub(crate) fn strip_unused_raw_arg_aliases(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;
@@ -45,7 +46,7 @@ pub(super) fn strip_unused_raw_arg_aliases(output: &mut String) {
     *output = rewritten;
 }
 
-pub(super) fn rewrite_readonly_raw_arg_aliases(output: &mut String) {
+pub(crate) fn rewrite_readonly_raw_arg_aliases(output: &mut String) {
     let mut lines: Vec<String> = output.lines().map(|line| line.to_string()).collect();
     if lines.is_empty() {
         return;

@@ -1,8 +1,8 @@
 [meta]
 title = "Contributing to RR (Compiler Code Style)"
 subtitle = "This file is generated from `policy/contributing_rules.toml`. Edit the policy file, not the rendered Markdown."
-current_line = "RR Tachyon v1.4.0"
-manual_audit_status_date = "2026-04-04"
+current_line = "RR Tachyon v2.0.0"
+manual_audit_status_date = "2026-05-05"
 
 [scope]
 intro = "This guide applies to RR compiler implementation work under `src/**`, `tests/**`, `scripts/**`, `docs/**`, and verification tooling. It does not define style for user-authored `.rr` programs."
@@ -52,7 +52,7 @@ rule_summaries = [
   "`MUST` use `RRException` for user-facing failures and ICE for compiler bugs; expected user failures `MUST NOT` `panic!` or silently fallback.",
   "`MUST` make `perl scripts/contributing_audit.pl`, `cargo check`, `cargo clippy --all-targets -- -D warnings`, and at least one minimal targeted test pass; `SHOULD` use `scripts/verify_cleanroom.sh` when you need a cleanroom result.",
   "`MUST` keep hot paths free of hidden allocation such as `to_string()` or `clone()` in loops, and `#[inline(always)]` still `MUST` carry benchmark evidence.",
-  "`MUST` keep `unsafe` adjacent to `// SAFETY:` with a real reason safe alternatives are insufficient and a narrow/local scope.",
+  "`MUST` keep `unsafe` directly adjacent to `// SAFETY:` with the invariant, why safe alternatives are insufficient, and the narrow/local scope.",
   "`MUST` explain why, use structured `TODO/FIXME/NOTE`, and `SHOULD` delete stale comments immediately.",
 ]
 exception_summary = "1. Document why. 2. State impact and scope. 3. Add targeted tests or benchmark evidence when relevant."
@@ -222,10 +222,11 @@ number = 15
 title = "Unsafe Code Policy"
 guidance = [
   "`MUST NOT` use `unsafe` unless it is necessary and justified.",
-  "`MUST` include an adjacent `// SAFETY:` comment explaining the invariant contract.",
-  "`SHOULD` explain why safe alternatives were insufficient.",
+  "`MUST` include a directly adjacent `// SAFETY:` comment explaining the invariant contract.",
+  "`SHOULD` explain in that safety comment why safe alternatives were insufficient.",
   "`MUST` keep unsafe preconditions visible, locally checkable, and narrowly scoped.",
   "`SHOULD` add targeted tests for invariants relied on by `unsafe`.",
+  "`SHOULD` document any long-lived unsafe boundary in `docs/compiler/unsafe-boundaries.md`.",
 ]
 
 [[rules]]
@@ -280,7 +281,7 @@ items = [
   "Behavior is deterministic for the same input and configuration.",
   "Relevant tests and checks were executed, including `perl scripts/contributing_audit.pl` and at least one minimal targeted test for the changed behavior or invariant.",
   "Touched semantic areas such as cache behavior, fallback behavior, numeric semantics, and IR invariants were reviewed for correctness.",
-  "`unsafe`, mutable global state, and environment-sensitive paths were reviewed to confirm they cannot change compilation correctness.",
+  "`unsafe`, mutable global state, and environment-sensitive paths were reviewed against `docs/compiler/unsafe-boundaries.md` to confirm they cannot change compilation correctness.",
   "Docs updated if CLI/runtime/error semantics changed.",
 ]
 
@@ -325,7 +326,7 @@ manual_review = [
   "Confirm externally visible behavior is still deterministic anywhere ordering, hashing, or parallel scheduling could matter.",
   "Confirm touched semantic areas such as cache behavior, fallback behavior, numeric semantics, and IR invariants still match intent.",
   "Confirm hot paths did not pick up hidden allocation, formatting, clone cost, or other non-obvious work beyond what automation can prove.",
-  "Confirm `unsafe`, mutable global state, wall-clock access, cwd access, and temp-path usage cannot change compilation correctness.",
+  "Confirm `unsafe`, mutable global state, wall-clock access, cwd access, and temp-path usage cannot change compilation correctness, and update `docs/compiler/unsafe-boundaries.md` when the unsafe boundary changes.",
   "Confirm docs, benchmark evidence, and any exception notes are still accurate rather than placeholder text.",
 ]
 watch_items = [

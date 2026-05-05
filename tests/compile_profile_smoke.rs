@@ -3,10 +3,10 @@ mod common;
 use common::unique_dir;
 use serde_json::Value;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn clear_whole_output_emit_caches(cache_dir: &PathBuf) {
+fn clear_whole_output_emit_caches(cache_dir: &Path) {
     let fn_cache_dir = cache_dir.join("function-emits");
     let entries = fs::read_dir(&fn_cache_dir).expect("function cache dir should exist");
     for entry in entries.flatten() {
@@ -64,6 +64,7 @@ main()
 
     let profile = fs::read_to_string(&profile_file).expect("failed to read compile profile json");
     assert!(profile.contains("\"schema\": \"rr-compile-profile\""));
+    assert!(profile.contains("\"version\": 4"));
     assert!(profile.contains("\"source_analysis\""));
     assert!(profile.contains("\"canonicalization\""));
     assert!(profile.contains("\"mir_synthesis\""));
@@ -128,6 +129,7 @@ main()
     assert!(profile.contains("\"peephole_secondary_helper_simple_expr_elapsed_ns\""));
     assert!(profile.contains("\"peephole_secondary_helper_full_range_elapsed_ns\""));
     assert!(profile.contains("\"peephole_secondary_helper_named_copy_elapsed_ns\""));
+    assert!(profile.contains("\"peephole_secondary_record_sroa_elapsed_ns\""));
     assert!(profile.contains("\"peephole_secondary_finalize_cleanup_elapsed_ns\""));
     assert!(profile.contains("\"peephole_secondary_finalize_bundle_elapsed_ns\""));
     assert!(profile.contains("\"peephole_secondary_finalize_dead_temp_elapsed_ns\""));
@@ -141,6 +143,11 @@ main()
     assert!(profile.contains("\"parsed_modules\": 1"));
     assert!(profile.contains("\"lowered_functions\": 2"));
     assert!(profile.contains("\"passes\":"));
+    assert!(profile.contains("\"pass_decisions\":"));
+    assert!(profile.contains("\"optimization_opportunities\":"));
+    assert!(profile.contains("\"proof_key\":"));
+    assert!(profile.contains("\"legality\":"));
+    assert!(profile.contains("\"profitability\":"));
     assert!(profile.contains("\"elapsed_ns\":"));
     assert!(profile.contains("\"inject_runtime\": false"));
 }

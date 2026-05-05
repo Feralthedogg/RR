@@ -1,4 +1,7 @@
-#![allow(dead_code)]
+#![expect(
+    dead_code,
+    reason = "shared integration-test fixtures are selected per test"
+)]
 
 pub mod random_error_cases;
 pub mod random_rr;
@@ -53,7 +56,7 @@ pub fn remove_env_var_for_test(_guard: &MutexGuard<'_, ()>, key: &str) {
 }
 
 pub struct ScopedCurrentDir {
-    prev: PathBuf,
+    pub(crate) prev: PathBuf,
 }
 
 impl Drop for ScopedCurrentDir {
@@ -132,6 +135,7 @@ pub fn compile_rr_env_with_args(
     for arg in compile_env_args(env_kv) {
         cmd.arg(arg);
     }
+    apply_compile_env_hatches(&mut cmd, env_kv);
     for (k, v) in env_kv {
         if !is_compile_config_env(k) {
             cmd.env(k, v);
@@ -169,6 +173,7 @@ pub fn run_compile_case(
     for arg in compile_env_args(env_kv) {
         cmd.arg(arg);
     }
+    apply_compile_env_hatches(&mut cmd, env_kv);
     for (k, v) in env_kv {
         if !is_compile_config_env(k) {
             cmd.env(k, v);
@@ -183,7 +188,7 @@ pub fn run_compile_case(
     )
 }
 
-fn is_compile_config_env(key: &str) -> bool {
+pub(crate) fn is_compile_config_env(key: &str) -> bool {
     const TYPE_MODE_ENV: &str = concat!("RR_", "TYPE_MODE");
     const NATIVE_BACKEND_ENV: &str = concat!("RR_", "NATIVE_BACKEND");
     const PARALLEL_MODE_ENV: &str = concat!("RR_", "PARALLEL_MODE");
@@ -207,7 +212,7 @@ fn is_compile_config_env(key: &str) -> bool {
     )
 }
 
-fn compile_env_args<'a>(env_kv: &'a [(&'a str, &'a str)]) -> Vec<&'a str> {
+pub(crate) fn compile_env_args<'a>(env_kv: &'a [(&'a str, &'a str)]) -> Vec<&'a str> {
     const TYPE_MODE_ENV: &str = concat!("RR_", "TYPE_MODE");
     const NATIVE_BACKEND_ENV: &str = concat!("RR_", "NATIVE_BACKEND");
     const PARALLEL_MODE_ENV: &str = concat!("RR_", "PARALLEL_MODE");
@@ -256,4 +261,32 @@ fn compile_env_args<'a>(env_kv: &'a [(&'a str, &'a str)]) -> Vec<&'a str> {
         }
     }
     args
+}
+
+fn apply_compile_env_hatches(cmd: &mut Command, env_kv: &[(&str, &str)]) {
+    if requests_legacy_implicit_decl(env_kv) {
+        cmd.env("RR_ALLOW_LEGACY_IMPLICIT_DECL", "1");
+    }
+    if requests_gradual_type_mode(env_kv) {
+        cmd.env("RR_ALLOW_GRADUAL_TYPE_MODE", "1");
+    }
+}
+
+fn requests_legacy_implicit_decl(env_kv: &[(&str, &str)]) -> bool {
+    env_kv.iter().any(|(key, value)| {
+        matches!(*key, "RR_STRICT_LET" | "RR_STRICT_ASSIGN") && is_legacy_strict_let_value(value)
+    })
+}
+
+fn is_legacy_strict_let_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "off" | "false"
+    )
+}
+
+fn requests_gradual_type_mode(env_kv: &[(&str, &str)]) -> bool {
+    env_kv
+        .iter()
+        .any(|(key, value)| *key == "RR_TYPE_MODE" && value.eq_ignore_ascii_case("gradual"))
 }

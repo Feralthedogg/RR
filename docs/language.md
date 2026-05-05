@@ -533,6 +533,60 @@ Current lexer limits:
   - `rec.x -= y`
   - lowered as `lhs = lhs <op> rhs`
 
+### Unsafe R Blocks
+
+RR supports a statement-level raw R escape hatch:
+
+```rust
+unsafe r {
+  energy <- sum(values * values)
+  print(energy)
+}
+```
+
+For read-only logging/probing code, RR also supports:
+
+```rust
+unsafe r(read) {
+  print(energy)
+}
+```
+
+The compiler preserves the block body as R source text and emits it at the same
+statement position inside the generated function. RR does not parse or typecheck
+the R body. Braces inside R strings, comments, and nested R functions are
+handled by the lexer so the outer `unsafe r { ... }` block can contain normal R
+code. RR locals and parameters emitted as R bindings are visible by their normal
+names inside the raw R body; assignments in the raw R body can update those
+bindings for later RR statements.
+
+Claim boundary:
+
+- `unsafe r { ... }` is statement-only and currently has no RR return value.
+- The containing MIR function is marked opaque interop and optimized
+  conservatively.
+- Raw R post-emission cleanup is skipped for a function that contains an unsafe
+  R block, so compiler text rewrites cannot alter the raw user code.
+- After the block, RR conservatively reloads generated-function-frame locals
+  because the raw R body may assign through ordinary R lexical scope.
+- There is no template-capture syntax today. Refer to emitted RR locals and
+  parameters directly, and do not depend on compiler-generated temporaries or
+  mangled helper symbols.
+- `unsafe r(read) { ... }` is a no-write promise. It can read RR-visible
+  generated-function-frame bindings without marking the whole function opaque or
+  reloading locals afterward. If the raw R body assigns to RR locals anyway,
+  later RR statements are outside the stable language contract.
+- This is not a sandbox. The R code can read or mutate R-visible state and is
+  the user's responsibility, like Rust `unsafe` or C inline assembly.
+- Lambda capture discovery scans raw R identifiers conservatively, so current
+  lifted closures capture RR locals named inside unsafe R blocks. If RR adds
+  deeper closure or nested-environment lowering, captured-variable behavior
+  around `unsafe r` must be treated as a separate compatibility and
+  optimizer-boundary audit.
+- This source feature is separate from Rust `unsafe` in RR's compiler
+  implementation; compiler-side unsafe rules are documented in
+  [Unsafe Boundaries](compiler/unsafe-boundaries.md).
+
 ### Functions
 
 - Declaration forms:
@@ -821,8 +875,10 @@ Important newline rule:
 From `src/hir/lower.rs`:
 
 - default: assignment to undeclared name is a compile error
-- legacy relaxed mode: `--strict-let off` allows implicit declaration
-- warning mode: `--warn-implicit-decl on` emits implicit-declaration warnings when relaxed mode is enabled
+- RR 2.0 stable CLI: `--strict-let on`
+- temporary migration mode: set `RR_ALLOW_LEGACY_IMPLICIT_DECL=1` before using
+  `--strict-let off`
+- warning mode: `--warn-implicit-decl on` emits implicit-declaration warnings when migration mode is enabled
 
 ## Function and Closure Semantics
 

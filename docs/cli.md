@@ -2,7 +2,7 @@
 
 This page is the driver manual for RR.
 
-Current compiler line: `RR Tachyon v1.4.0`.
+Current compiler line: `RR Tachyon v2.0.0`.
 
 ## Audience
 
@@ -668,7 +668,7 @@ Use direct compile when:
 
 - one `.rr` file should become one `.R` file
 - you want to inspect generated output directly
-- you want exact control over `-O0/-O1/-O2`
+- you want exact control over `-O0/-O1/-O2/-O3/-Oz`
 
 ### `run`
 
@@ -682,9 +682,9 @@ Input may be:
 - a directory
 - a `.rr` file
 
-If input is `.` or a directory, RR resolves `main.rr`.
-Managed projects prefer `src/main.rr`; legacy projects still fall back to root
-`main.rr`.
+If input is `.` or a directory, RR resolves `src/main.rr`.
+Root-level `main.rr` is no longer a directory fallback in RR 2.0; pass it as an
+explicit `.rr` file when compiling older single-file projects.
 
 Project `run` expects the entry file to define `fn main()`.
 If the source does not already call `main()` at top level, RR appends that call
@@ -705,8 +705,9 @@ Default output root for managed projects:
 
 - `Build/debug/`
 
-If the target directory contains `src/main.rr` or `main.rr`, RR treats it as a
-project build and compiles only that entry.
+If the target directory contains `src/main.rr`, RR treats it as a project build
+and compiles only that entry. Root-level `main.rr` must be passed explicitly as
+a file.
 
 If the target directory does not contain a runnable entry, RR falls back to the
 older tree-build behavior and compiles every `*.rr` file it finds.
@@ -753,15 +754,25 @@ at `--keep-r` so you can inspect the generated artifact.
 - `-O0`
 - `-O1`
 - `-O2`
+- `-O3`
+- `-Oz`
 - `-o <file>`
 - `--out-dir <dir>`
 - `--compile-mode <standard|fast-dev>`
 - `--profile-compile`
 - `--profile-compile-out <file>`
+- `--profile-use <file>`
 - `--bin`
 - `--lib`
 
-RR now distinguishes all three optimization tiers:
+`--profile-compile` writes `rr-compile-profile` JSON. Schema version `4` is the
+RR 2.0 profile schema reset and includes Tachyon pass-decision,
+optimization-opportunity, fuel, outlining, unroll, and cache counters in
+addition to pass timings. `--profile-use <file>` feeds hot-count data into the
+Tachyon budget planner; accepted line forms are `name=count`, `name: count`, and
+`name count`.
+
+RR now distinguishes five optimization tiers:
 
 - `-O0`
   - stabilization only
@@ -769,16 +780,20 @@ RR now distinguishes all three optimization tiers:
   - optimizing pipeline with the baseline `Balanced` schedule
 - `-O2`
   - optimizing pipeline with adaptive phase ordering enabled by default
+- `-O3`
+  - opt-in aggressive mode with larger bounded optimizer budgets and experimental pass groups enabled for balanced plans
+- `-Oz`
+  - size-oriented mode with the balanced schedule, experimental pass groups filtered out, and full-program inlining disabled
 
 Compile-mode defaults:
 
 - direct legacy compile starts in `standard`
 - `RR build`, `RR run`, and `RR watch` start in `fast-dev`
-- `-O2` on `build` promotes back to `standard` unless you explicitly override `--compile-mode`
+- `-O2`, `-O3`, and `-Oz` on managed flows promote back to `standard` unless you explicitly override `--compile-mode`
 
 ### Type and Backend Policy
 
-- `--type-mode strict|gradual`
+- `--type-mode strict`
 - `--native-backend off|optional|required`
 - `--parallel-mode off|optional|required`
 - `--parallel-backend auto|r|openmp`
@@ -792,7 +807,7 @@ Compile-mode defaults:
 
 ### Language and Declaration Policy
 
-- `--strict-let on|off`
+- `--strict-let on`
 - `--warn-implicit-decl on|off`
 
 ### Incremental and Watch
@@ -815,7 +830,7 @@ Compile-mode defaults:
   - not accepted on `run`, `build`, or `watch`
 - `--preserve-all-defs`
   - accepted on direct compile, `run`, `build`, and `watch`
-  - keeps unreachable top-level `Sym_*` definitions in emitted R
+  - keeps otherwise unreachable generated helper definitions in emitted R
 - `--preserve-all-def`
   - alias for `--preserve-all-defs`
 
@@ -842,7 +857,7 @@ The direct compile path emits `.R` artifacts with:
 By default RR treats emitted R as a whole-program artifact:
 
 - reachable top-level definitions are kept
-- unreachable `Sym_*` helpers may be stripped
+- unreachable generated helpers may be stripped
 
 If you need a more source-preserving artifact, pass `--preserve-all-defs` or
 `--preserve-all-def`.
@@ -883,8 +898,10 @@ Use it when:
 - you plan to inspect or call helper definitions from generated R
 - you do not want whole-program dead-definition stripping
 
-Without this flag, RR is free to drop unused top-level `Sym_*` definitions as
-part of normal emitted-R cleanup.
+Without this flag, RR is free to drop unused generated helper definitions as
+part of normal emitted-R cleanup. RR 2.0 preserves source-visible RR
+function/variable names where possible, but generated helper names and layout
+remain internal and unstable.
 
 ### Builtin Naming
 

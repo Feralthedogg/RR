@@ -2,24 +2,25 @@
 //!
 //! These passes normalize literal helper calls, branch structure, and
 //! slice/index aliases after emission but before the full peephole pipeline.
-
 use super::*;
 
 pub(crate) fn simplify_same_var_is_na_or_not_finite_guards_in_raw_emitted_r(
     output: &str,
 ) -> String {
-    let rewritten =
-        raw_same_var_is_na_or_not_finite_re().replace_all(output, |caps: &Captures<'_>| {
-            let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("");
-            let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("");
-            if lhs == rhs {
-                format!("!(is.finite({lhs}))")
-            } else {
-                caps.get(0)
-                    .map(|m| m.as_str().to_string())
-                    .unwrap_or_default()
-            }
-        });
+    let Some(re) = raw_same_var_is_na_or_not_finite_re() else {
+        return output.to_string();
+    };
+    let rewritten = re.replace_all(output, |caps: &Captures<'_>| {
+        let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("");
+        let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("");
+        if lhs == rhs {
+            format!("!(is.finite({lhs}))")
+        } else {
+            caps.get(0)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default()
+        }
+    });
     let mut out = rewritten.into_owned();
     if output.ends_with('\n') && !out.ends_with('\n') {
         out.push('\n');
@@ -28,7 +29,10 @@ pub(crate) fn simplify_same_var_is_na_or_not_finite_guards_in_raw_emitted_r(
 }
 
 pub(crate) fn simplify_not_finite_or_zero_guard_parens_in_raw_emitted_r(output: &str) -> String {
-    let rewritten = raw_not_finite_or_zero_guard_re().replace_all(output, |caps: &Captures<'_>| {
+    let Some(re) = raw_not_finite_or_zero_guard_re() else {
+        return output.to_string();
+    };
+    let rewritten = re.replace_all(output, |caps: &Captures<'_>| {
         let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("");
         let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("");
         let inner = caps.name("inner").map(|m| m.as_str()).unwrap_or("");
@@ -48,7 +52,10 @@ pub(crate) fn simplify_not_finite_or_zero_guard_parens_in_raw_emitted_r(output: 
 }
 
 pub(crate) fn simplify_wrapped_not_finite_parens_in_raw_emitted_r(output: &str) -> String {
-    let rewritten = raw_wrapped_not_finite_cond_re().replace_all(output, |caps: &Captures<'_>| {
+    let Some(re) = raw_wrapped_not_finite_cond_re() else {
+        return output.to_string();
+    };
+    let rewritten = re.replace_all(output, |caps: &Captures<'_>| {
         let inner = caps.name("inner").map(|m| m.as_str()).unwrap_or("");
         format!("({inner})")
     });
@@ -67,10 +74,7 @@ pub(crate) fn rewrite_literal_named_list_calls_in_raw_emitted_r(output: &str) ->
             continue;
         }
         let mut rewritten = line.to_string();
-        loop {
-            let Some(start) = rewritten.find("rr_named_list(") else {
-                break;
-            };
+        while let Some(start) = rewritten.find("rr_named_list(") {
             let call_start = start + "rr_named_list".len();
             let Some(call_end) = find_matching_call_close(&rewritten, call_start) else {
                 break;
@@ -118,10 +122,7 @@ pub(crate) fn rewrite_literal_field_get_calls_in_raw_emitted_r(output: &str) -> 
             continue;
         }
         let mut rewritten = line.to_string();
-        loop {
-            let Some(start) = rewritten.find("rr_field_get(") else {
-                break;
-            };
+        while let Some(start) = rewritten.find("rr_field_get(") {
             let call_start = start + "rr_field_get".len();
             let Some(call_end) = find_matching_call_close(&rewritten, call_start) else {
                 break;
@@ -208,6 +209,89 @@ pub(crate) fn restore_particle_state_rebinds_in_raw_emitted_r(output: &str) -> S
         out.push('\n');
     }
     out
+}
+
+pub(crate) fn strip_stale_particle_state_replays_in_raw_emitted_r(output: &str) -> String {
+    let mut out = Vec::new();
+    let mut have_particles = false;
+    let mut px_from_particles = false;
+    let mut py_from_particles = false;
+    let mut pf_from_particles = false;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("<- function") {
+            have_particles = false;
+            px_from_particles = false;
+            py_from_particles = false;
+            pf_from_particles = false;
+        }
+
+        if trimmed.starts_with("particles <- Sym_186(") {
+            have_particles = true;
+            px_from_particles = false;
+            py_from_particles = false;
+            pf_from_particles = false;
+            out.push(line.to_string());
+            continue;
+        }
+
+        match trimmed {
+            "p_x <- particles[[\"px\"]]" if have_particles => {
+                px_from_particles = true;
+                out.push(line.to_string());
+                continue;
+            }
+            "p_y <- particles[[\"py\"]]" if have_particles => {
+                py_from_particles = true;
+                out.push(line.to_string());
+                continue;
+            }
+            "p_f <- particles[[\"pf\"]]" if have_particles => {
+                pf_from_particles = true;
+                out.push(line.to_string());
+                continue;
+            }
+            _ => {}
+        }
+
+        let stale_px = have_particles
+            && px_from_particles
+            && trimmed.starts_with("p_x <- Sym_186(")
+            && trimmed.ends_with("[[\"px\"]]");
+        let stale_py = have_particles
+            && py_from_particles
+            && trimmed.starts_with("p_y <- Sym_186(")
+            && trimmed.ends_with("[[\"py\"]]");
+        let stale_pf = have_particles
+            && pf_from_particles
+            && trimmed.starts_with("p_f <- Sym_186(")
+            && trimmed.ends_with("[[\"pf\"]]");
+        if stale_px || stale_py || stale_pf {
+            continue;
+        }
+
+        if trimmed.starts_with("p_x <- ") {
+            px_from_particles = false;
+        } else if trimmed.starts_with("p_y <- ") {
+            py_from_particles = false;
+        } else if trimmed.starts_with("p_f <- ") {
+            pf_from_particles = false;
+        } else if trimmed.starts_with("particles <- ") {
+            have_particles = false;
+            px_from_particles = false;
+            py_from_particles = false;
+            pf_from_particles = false;
+        }
+
+        out.push(line.to_string());
+    }
+
+    let mut rewritten = out.join("\n");
+    if output.ends_with('\n') || !rewritten.is_empty() {
+        rewritten.push('\n');
+    }
+    rewritten
 }
 
 pub(crate) fn rewrite_slice_bound_aliases_in_raw_emitted_r(output: &str) -> String {

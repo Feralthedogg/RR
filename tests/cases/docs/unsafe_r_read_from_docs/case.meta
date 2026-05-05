@@ -1,0 +1,6 @@
+expect=compile-ok
+flag=--no-runtime
+flag=-O2
+emit_contains=# rr-unsafe-r-read-begin
+emit_contains=print(energy)
+emit_not_contains=# rr-opaque-interop: unsafe R block

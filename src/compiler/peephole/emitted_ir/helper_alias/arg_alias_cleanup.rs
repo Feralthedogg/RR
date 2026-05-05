@@ -1,4 +1,5 @@
-pub(in super::super) fn rewrite_readonly_param_aliases_ir(lines: Vec<String>) -> Vec<String> {
+use super::*;
+pub(crate) fn rewrite_readonly_param_aliases_ir(lines: Vec<String>) -> Vec<String> {
     if !has_arg_alias_cleanup_candidates_ir(&lines) {
         return lines;
     }
@@ -7,7 +8,7 @@ pub(in super::super) fn rewrite_readonly_param_aliases_ir(lines: Vec<String>) ->
     program.into_lines()
 }
 
-pub(in super::super) fn run_arg_alias_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn run_arg_alias_cleanup_bundle_ir(lines: Vec<String>) -> Vec<String> {
     if !has_arg_alias_cleanup_candidates_ir(&lines) {
         return lines;
     }
@@ -19,7 +20,7 @@ pub(in super::super) fn run_arg_alias_cleanup_bundle_ir(lines: Vec<String>) -> V
     program.into_lines()
 }
 
-pub(in super::super) fn strip_unused_arg_aliases_ir(lines: Vec<String>) -> Vec<String> {
+pub(crate) fn strip_unused_arg_aliases_ir(lines: Vec<String>) -> Vec<String> {
     if !has_arg_alias_cleanup_candidates_ir(&lines) {
         return lines;
     }
@@ -28,7 +29,7 @@ pub(in super::super) fn strip_unused_arg_aliases_ir(lines: Vec<String>) -> Vec<S
     program.into_lines()
 }
 
-fn apply_strip_unused_arg_aliases_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_strip_unused_arg_aliases_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -49,7 +50,7 @@ fn apply_strip_unused_arg_aliases_ir(program: &mut EmittedProgram) {
     }
 }
 
-fn apply_rewrite_readonly_param_aliases_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_rewrite_readonly_param_aliases_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -96,9 +97,7 @@ fn apply_rewrite_readonly_param_aliases_ir(program: &mut EmittedProgram) {
     }
 }
 
-pub(in super::super) fn rewrite_remaining_readonly_param_shadow_uses_ir(
-    lines: Vec<String>,
-) -> Vec<String> {
+pub(crate) fn rewrite_remaining_readonly_param_shadow_uses_ir(lines: Vec<String>) -> Vec<String> {
     if !has_arg_alias_cleanup_candidates_ir(&lines) {
         return lines;
     }
@@ -107,7 +106,7 @@ pub(in super::super) fn rewrite_remaining_readonly_param_shadow_uses_ir(
     program.into_lines()
 }
 
-fn apply_rewrite_remaining_readonly_param_shadow_uses_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_rewrite_remaining_readonly_param_shadow_uses_ir(program: &mut EmittedProgram) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;
@@ -152,7 +151,7 @@ fn apply_rewrite_remaining_readonly_param_shadow_uses_ir(program: &mut EmittedPr
     }
 }
 
-pub(in super::super) fn rewrite_index_only_mutated_param_shadow_aliases_ir(
+pub(crate) fn rewrite_index_only_mutated_param_shadow_aliases_ir(
     lines: Vec<String>,
 ) -> Vec<String> {
     if !has_arg_alias_cleanup_candidates_ir(&lines) {
@@ -163,7 +162,9 @@ pub(in super::super) fn rewrite_index_only_mutated_param_shadow_aliases_ir(
     program.into_lines()
 }
 
-fn apply_rewrite_index_only_mutated_param_shadow_aliases_ir(program: &mut EmittedProgram) {
+pub(crate) fn apply_rewrite_index_only_mutated_param_shadow_aliases_ir(
+    program: &mut EmittedProgram,
+) {
     for item in &mut program.items {
         let EmittedItem::Function(function) = item else {
             continue;

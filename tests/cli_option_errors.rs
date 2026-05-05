@@ -178,14 +178,12 @@ fn run_missing_main_reports_recovery_hint() {
     );
     let stderr = stderr_text(&output);
     assert!(
-        stderr.contains("src/main.rr or main.rr not found"),
+        stderr.contains("src/main.rr not found"),
         "expected missing-entry diagnostic, got:\n{}",
         stderr
     );
     assert!(
-        stderr.contains("add src/main.rr")
-            || stderr.contains("legacy main.rr")
-            || stderr.contains("explicit .rr file path"),
+        stderr.contains("add src/main.rr") || stderr.contains("explicit .rr file path"),
         "expected recovery hint for missing entry file, got:\n{}",
         stderr
     );
@@ -214,7 +212,7 @@ fn watch_missing_main_reports_recovery_hint() {
     );
     let stderr = stderr_text(&output);
     assert!(
-        stderr.contains("src/main.rr or main.rr not found"),
+        stderr.contains("src/main.rr not found"),
         "expected missing-entry diagnostic, got:\n{}",
         stderr
     );
@@ -255,7 +253,7 @@ fn watch_non_rr_file_reports_watch_specific_hint() {
         stderr
     );
     assert!(
-        stderr.contains("point RR watch at a directory containing src/main.rr or main.rr"),
+        stderr.contains("point RR watch at a directory containing src/main.rr"),
         "expected watch-specific invalid-target recovery hint, got:\n{}",
         stderr
     );
@@ -325,9 +323,9 @@ fn build_project_mode_ignores_unreadable_unrelated_subtree() {
     fs::create_dir_all(&sandbox).expect("failed to create sandbox root");
     let proj = sandbox.join(format!("build_scan_failure_{}", std::process::id()));
     let _ = fs::remove_dir_all(&proj);
-    fs::create_dir_all(&proj).expect("failed to create project dir");
+    fs::create_dir_all(proj.join("src")).expect("failed to create project dirs");
     fs::write(
-        proj.join("main.rr"),
+        proj.join("src").join("main.rr"),
         r#"
 fn main() {
   print(1L)
@@ -335,7 +333,7 @@ fn main() {
 main()
 "#,
     )
-    .expect("failed to write main.rr");
+    .expect("failed to write src/main.rr");
 
     let blocked = proj.join("blocked");
     fs::create_dir_all(&blocked).expect("failed to create blocked dir");
@@ -423,9 +421,9 @@ fn run_missing_rscript_reports_recovery_hint() {
     fs::create_dir_all(&sandbox).expect("failed to create sandbox root");
     let proj = sandbox.join(format!("run_missing_rscript_{}", std::process::id()));
     let _ = fs::remove_dir_all(&proj);
-    fs::create_dir_all(&proj).expect("failed to create project dir");
+    fs::create_dir_all(proj.join("src")).expect("failed to create project dirs");
     fs::write(
-        proj.join("main.rr"),
+        proj.join("src").join("main.rr"),
         r#"
 fn main() {
   print(1L)
@@ -433,7 +431,7 @@ fn main() {
 main()
 "#,
     )
-    .expect("failed to write main.rr");
+    .expect("failed to write src/main.rr");
 
     let output = Command::new(rr_bin())
         .current_dir(&proj)
@@ -464,7 +462,7 @@ main()
         stderr
     );
     assert!(
-        !proj.join("main.gen.R").exists(),
+        !proj.join("src").join("main.gen.R").exists(),
         "generated artifact should be removed when --keep-r is not set"
     );
 }
@@ -476,9 +474,9 @@ fn run_missing_rscript_with_keep_r_preserves_generated_artifact() {
     fs::create_dir_all(&sandbox).expect("failed to create sandbox root");
     let proj = sandbox.join(format!("run_missing_rscript_keep_r_{}", std::process::id()));
     let _ = fs::remove_dir_all(&proj);
-    fs::create_dir_all(&proj).expect("failed to create project dir");
+    fs::create_dir_all(proj.join("src")).expect("failed to create project dirs");
     fs::write(
-        proj.join("main.rr"),
+        proj.join("src").join("main.rr"),
         r#"
 fn main() {
   print(1L)
@@ -486,7 +484,7 @@ fn main() {
 main()
 "#,
     )
-    .expect("failed to write main.rr");
+    .expect("failed to write src/main.rr");
 
     let output = Command::new(rr_bin())
         .current_dir(&proj)
@@ -508,7 +506,7 @@ main()
         stderr
     );
     assert!(
-        proj.join("main.gen.R").exists(),
+        proj.join("src").join("main.gen.R").exists(),
         "generated artifact should be preserved when --keep-r is set"
     );
 }
@@ -521,9 +519,9 @@ fn run_unwritable_generated_artifact_path_reports_recovery_hint() {
     fs::create_dir_all(&sandbox).expect("failed to create sandbox root");
     let proj = sandbox.join(format!("run_unwritable_gen_{}", std::process::id()));
     let _ = fs::remove_dir_all(&proj);
-    fs::create_dir_all(&proj).expect("failed to create project dir");
+    fs::create_dir_all(proj.join("src")).expect("failed to create project dirs");
     fs::write(
-        proj.join("main.rr"),
+        proj.join("src").join("main.rr"),
         r#"
 fn main() {
   print(1L)
@@ -531,13 +529,14 @@ fn main() {
 main()
 "#,
     )
-    .expect("failed to write main.rr");
+    .expect("failed to write src/main.rr");
 
-    let mut perms = fs::metadata(&proj)
-        .expect("failed to stat project dir")
+    let src_dir = proj.join("src");
+    let mut perms = fs::metadata(&src_dir)
+        .expect("failed to stat src dir")
         .permissions();
     perms.set_mode(0o555);
-    fs::set_permissions(&proj, perms).expect("failed to chmod project dir read-only");
+    fs::set_permissions(&src_dir, perms).expect("failed to chmod src dir read-only");
 
     let output = Command::new(rr_bin())
         .current_dir(&proj)
@@ -548,11 +547,11 @@ main()
         .output()
         .expect("failed to run rr run with unwritable generated artifact path");
 
-    let mut restore = fs::metadata(&proj)
-        .expect("failed to restat project dir")
+    let mut restore = fs::metadata(&src_dir)
+        .expect("failed to restat src dir")
         .permissions();
     restore.set_mode(0o755);
-    fs::set_permissions(&proj, restore).expect("failed to restore project dir permissions");
+    fs::set_permissions(&src_dir, restore).expect("failed to restore src dir permissions");
 
     assert!(
         !output.status.success(),
@@ -572,7 +571,7 @@ main()
         stderr
     );
     assert!(
-        !proj.join("main.gen.R").exists(),
+        !proj.join("src").join("main.gen.R").exists(),
         "generated artifact should not exist when write fails"
     );
 }
@@ -587,7 +586,8 @@ fn run_unreadable_input_reports_recovery_hint() {
     let _ = fs::remove_dir_all(&proj);
     fs::create_dir_all(&proj).expect("failed to create project dir");
 
-    let main_path = proj.join("main.rr");
+    fs::create_dir_all(proj.join("src")).expect("failed to create src dir");
+    let main_path = proj.join("src").join("main.rr");
     fs::write(
         &main_path,
         r#"
@@ -641,7 +641,8 @@ fn watch_unreadable_input_reports_recovery_hint() {
     let _ = fs::remove_dir_all(&proj);
     fs::create_dir_all(&proj).expect("failed to create project dir");
 
-    let main_path = proj.join("main.rr");
+    fs::create_dir_all(proj.join("src")).expect("failed to create src dir");
+    let main_path = proj.join("src").join("main.rr");
     fs::write(
         &main_path,
         r#"
@@ -694,9 +695,9 @@ fn watch_unusable_output_dir_reports_recovery_hint() {
     fs::create_dir_all(&sandbox).expect("failed to create sandbox root");
     let proj = sandbox.join(format!("watch_bad_out_dir_{}", std::process::id()));
     let _ = fs::remove_dir_all(&proj);
-    fs::create_dir_all(&proj).expect("failed to create project dir");
+    fs::create_dir_all(proj.join("src")).expect("failed to create project dirs");
     fs::write(
-        proj.join("main.rr"),
+        proj.join("src").join("main.rr"),
         r#"
 fn main() {
   print(1L)
@@ -704,7 +705,7 @@ fn main() {
 main()
 "#,
     )
-    .expect("failed to write main.rr");
+    .expect("failed to write src/main.rr");
 
     let bad_root = proj.join("not_a_directory");
     fs::write(&bad_root, "file").expect("failed to create blocking file path");
@@ -746,9 +747,9 @@ fn watch_unwritable_output_file_reports_recovery_hint() {
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&proj);
-    fs::create_dir_all(&proj).expect("failed to create project dir");
+    fs::create_dir_all(proj.join("src")).expect("failed to create project dirs");
     fs::write(
-        proj.join("main.rr"),
+        proj.join("src").join("main.rr"),
         r#"
 fn main() {
   print(1L)
@@ -756,7 +757,7 @@ fn main() {
 main()
 "#,
     )
-    .expect("failed to write main.rr");
+    .expect("failed to write src/main.rr");
 
     let out_file = proj.join("watched.R");
     fs::write(&out_file, "seed").expect("failed to seed watched.R");
@@ -804,9 +805,9 @@ fn build_unusable_out_dir_reports_recovery_hint() {
     fs::create_dir_all(&sandbox).expect("failed to create sandbox root");
     let proj = sandbox.join(format!("build_bad_out_dir_{}", std::process::id()));
     let _ = fs::remove_dir_all(&proj);
-    fs::create_dir_all(&proj).expect("failed to create project dir");
+    fs::create_dir_all(proj.join("src")).expect("failed to create project dirs");
     fs::write(
-        proj.join("main.rr"),
+        proj.join("src").join("main.rr"),
         r#"
 fn main() {
   print(1L)
@@ -814,7 +815,7 @@ fn main() {
 main()
 "#,
     )
-    .expect("failed to write main.rr");
+    .expect("failed to write src/main.rr");
 
     let bad_root = proj.join("not_a_directory");
     fs::write(&bad_root, "file").expect("failed to create blocking file path");
@@ -852,9 +853,9 @@ fn build_unwritable_output_file_reports_recovery_hint() {
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&proj);
-    fs::create_dir_all(&proj).expect("failed to create project dir");
+    fs::create_dir_all(proj.join("src")).expect("failed to create project dirs");
     fs::write(
-        proj.join("main.rr"),
+        proj.join("src").join("main.rr"),
         r#"
 fn main() {
   print(1L)
@@ -862,11 +863,11 @@ fn main() {
 main()
 "#,
     )
-    .expect("failed to write main.rr");
+    .expect("failed to write src/main.rr");
 
     let out_dir = proj.join("build");
-    fs::create_dir_all(&out_dir).expect("failed to create build dir");
-    let out_file = out_dir.join("main.R");
+    fs::create_dir_all(out_dir.join("src")).expect("failed to create build/src dir");
+    let out_file = out_dir.join("src").join("main.R");
     fs::write(&out_file, "seed").expect("failed to seed main.R");
     let mut perms = fs::metadata(&out_file)
         .expect("failed to stat main.R")

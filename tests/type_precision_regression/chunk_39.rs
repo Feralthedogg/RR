@@ -1,7 +1,7 @@
 use super::type_precision_regression_common::*;
 
 #[test]
-fn stats_na_helpers_have_direct_types() {
+pub(crate) fn stats_na_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -9,7 +9,7 @@ fn stats_na_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str(
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
             "mpg ~ wt + offset(hp)".to_string(),
         )),
         Span::dummy(),
@@ -25,31 +25,31 @@ fn stats_na_helpers_have_direct_types() {
         None,
     );
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let four = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(4.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(4.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let na = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Na),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Na),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -303,7 +303,7 @@ fn stats_na_helpers_have_direct_types() {
 }
 
 #[test]
-fn stats_formula_helpers_have_direct_types() {
+pub(crate) fn stats_formula_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -311,13 +311,17 @@ fn stats_formula_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("mpg ~ wt + hp".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "mpg ~ wt + hp".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let response_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("response".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "response".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -511,7 +515,7 @@ fn stats_formula_helpers_have_direct_types() {
 }
 
 #[test]
-fn stats_matrix_formula_helpers_have_direct_types() {
+pub(crate) fn stats_matrix_formula_helpers_have_direct_types() {
     let mut fn_ir = FnIR::new("Sym_main".to_string(), vec![]);
 
     let b0 = fn_ir.add_block();
@@ -519,19 +523,19 @@ fn stats_matrix_formula_helpers_have_direct_types() {
     fn_ir.body_head = b0;
 
     let one = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(1.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(1.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let two = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(2.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(2.0)),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let three = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Float(3.0)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Float(3.0)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -557,7 +561,7 @@ fn stats_matrix_formula_helpers_have_direct_types() {
         None,
     );
     let two_i = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Int(2)),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Int(2)),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -603,13 +607,17 @@ fn stats_matrix_formula_helpers_have_direct_types() {
         None,
     );
     let x_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("x".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "x".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
     );
     let z_name = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("z".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "z".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,
@@ -635,7 +643,9 @@ fn stats_matrix_formula_helpers_have_direct_types() {
         None,
     );
     let formula_src = fn_ir.add_value(
-        ValueKind::Const(RR::syntax::ast::Lit::Str("y ~ x + z".to_string())),
+        ValueKind::Const(rr::compiler::internal::syntax::ast::Lit::Str(
+            "y ~ x + z".to_string(),
+        )),
         Span::dummy(),
         Facts::empty(),
         None,

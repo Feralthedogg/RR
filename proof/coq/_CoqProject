@@ -1,4 +1,3 @@
--Q . RRProofs
 LicmLoopCarried.v
 PhiLoopCarried.v
 MirSubsetHoist.v
@@ -25,6 +24,8 @@ ProgramOptPlanSoundness.v
 ProgramPhasePipelineSoundness.v
 ProgramTierExecutionSoundness.v
 ProgramPostTierStagesSoundness.v
+ChronosPassManagerSoundness.v
+PeepholeLineSemantics.v
 ProgramRunProfileInnerSoundness.v
 ProgramApiWrapperSoundness.v
 CompilerEndToEndSoundness.v

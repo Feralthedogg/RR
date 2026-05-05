@@ -1,4 +1,5 @@
-fn is_raw_alloc_like_expr_local(expr: &str) -> bool {
+use super::*;
+pub(crate) fn is_raw_alloc_like_expr_local(expr: &str) -> bool {
     [
         "rep.int(",
         "numeric(",
@@ -13,14 +14,14 @@ fn is_raw_alloc_like_expr_local(expr: &str) -> bool {
     .any(|prefix| expr.starts_with(prefix))
 }
 
-fn is_raw_branch_rebind_candidate_local(expr: &str) -> bool {
+pub(crate) fn is_raw_branch_rebind_candidate_local(expr: &str) -> bool {
     is_raw_alloc_like_expr_local(expr)
         || expr.chars().all(RBackend::is_symbol_char)
         || expr.trim_end_matches('L').parse::<f64>().is_ok()
         || matches!(expr, "TRUE" | "FALSE" | "NA" | "NULL")
 }
 
-fn raw_vec_fill_signature_local(expr: &str) -> Option<(String, String)> {
+pub(crate) fn raw_vec_fill_signature_local(expr: &str) -> Option<(String, String)> {
     let expr = strip_outer_parens_local(expr);
     if let Some(inner) = expr
         .strip_prefix("rep.int(")
@@ -43,7 +44,7 @@ fn raw_vec_fill_signature_local(expr: &str) -> Option<(String, String)> {
     None
 }
 
-fn raw_branch_rebind_exprs_equivalent_local(prev_rhs: &str, rhs: &str) -> bool {
+pub(crate) fn raw_branch_rebind_exprs_equivalent_local(prev_rhs: &str, rhs: &str) -> bool {
     let prev_rhs = strip_outer_parens_local(prev_rhs);
     let rhs = strip_outer_parens_local(rhs);
     if prev_rhs == rhs {
@@ -54,7 +55,7 @@ fn raw_branch_rebind_exprs_equivalent_local(prev_rhs: &str, rhs: &str) -> bool {
         .is_some_and(|(lhs_sig, rhs_sig)| lhs_sig == rhs_sig)
 }
 
-fn is_inlineable_named_scalar_expr_local(rhs: &str) -> bool {
+pub(crate) fn is_inlineable_named_scalar_expr_local(rhs: &str) -> bool {
     let rhs = strip_outer_parens_local(rhs);
     if rhs.is_empty()
         || rhs.contains('"')

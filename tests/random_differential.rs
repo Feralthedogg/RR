@@ -194,7 +194,13 @@ fn generated_rr_programs_match_reference_r_across_opt_levels() {
             case.name, reference.stdout, reference.stderr, case.ref_r_src
         );
 
-        for (flag, tag) in [("-O0", "o0"), ("-O1", "o1"), ("-O2", "o2")] {
+        for (flag, tag) in [
+            ("-O0", "o0"),
+            ("-O1", "o1"),
+            ("-O2", "o2"),
+            ("-O3", "o3"),
+            ("-Oz", "oz"),
+        ] {
             let out_path = proj_dir.join(format!("{}_{}.R", case.name, tag));
             compile_rr_env_with_args(
                 &rr_bin,

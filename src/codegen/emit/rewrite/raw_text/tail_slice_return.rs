@@ -1,4 +1,5 @@
-pub(super) fn strip_redundant_tail_assign_slice_return(output: &mut String) {
+use super::*;
+pub(crate) fn strip_redundant_tail_assign_slice_return(output: &mut String) {
     let lines: Vec<String> = output.lines().map(str::to_string).collect();
     if lines.is_empty() || !lines.iter().any(|line| line.contains("rr_assign_slice(")) {
         return;

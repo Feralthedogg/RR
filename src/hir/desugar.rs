@@ -157,6 +157,15 @@ impl Desugarer {
             }
             HirStmt::Break { span } => Ok(HirStmt::Break { span }),
             HirStmt::Next { span } => Ok(HirStmt::Next { span }),
+            HirStmt::UnsafeRBlock {
+                code,
+                read_only,
+                span,
+            } => Ok(HirStmt::UnsafeRBlock {
+                code,
+                read_only,
+                span,
+            }),
         }
     }
 

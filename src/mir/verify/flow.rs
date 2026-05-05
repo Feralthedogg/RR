@@ -1,4 +1,5 @@
-fn compute_reachable(fn_ir: &FnIR) -> FxHashSet<BlockId> {
+use super::*;
+pub(crate) fn compute_reachable(fn_ir: &FnIR) -> FxHashSet<BlockId> {
     let mut reachable = FxHashSet::default();
     let mut queue = vec![fn_ir.entry];
     reachable.insert(fn_ir.entry);
@@ -10,10 +11,8 @@ fn compute_reachable(fn_ir: &FnIR) -> FxHashSet<BlockId> {
 
         if let Some(blk) = fn_ir.blocks.get(bid) {
             match &blk.term {
-                Terminator::Goto(target) => {
-                    if reachable.insert(*target) {
-                        queue.push(*target);
-                    }
+                Terminator::Goto(target) if reachable.insert(*target) => {
+                    queue.push(*target);
                 }
                 Terminator::If {
                     then_bb, else_bb, ..
@@ -33,7 +32,7 @@ fn compute_reachable(fn_ir: &FnIR) -> FxHashSet<BlockId> {
     reachable
 }
 
-fn compute_must_defined_vars(
+pub(crate) fn compute_must_defined_vars(
     fn_ir: &FnIR,
     reachable: &FxHashSet<BlockId>,
     preds: &[Vec<BlockId>],
@@ -127,7 +126,7 @@ fn compute_must_defined_vars(
     (in_defs, out_defs)
 }
 
-fn first_undefined_load_in_value(
+pub(crate) fn first_undefined_load_in_value(
     fn_ir: &FnIR,
     root: ValueId,
     defined: &FxHashSet<VarId>,
@@ -235,7 +234,10 @@ fn first_undefined_load_in_value(
     )
 }
 
-fn collect_used_values(fn_ir: &FnIR, reachable: &FxHashSet<BlockId>) -> FxHashSet<ValueId> {
+pub(crate) fn collect_used_values(
+    fn_ir: &FnIR,
+    reachable: &FxHashSet<BlockId>,
+) -> FxHashSet<ValueId> {
     fn push_if_valid(
         fn_ir: &FnIR,
         used: &mut FxHashSet<ValueId>,
@@ -282,6 +284,7 @@ fn collect_used_values(fn_ir: &FnIR, reachable: &FxHashSet<BlockId>) -> FxHashSe
                         push_if_valid(fn_ir, &mut used, &mut worklist, v);
                     }
                 }
+                Instr::UnsafeRBlock { .. } => {}
             }
         }
 
@@ -365,7 +368,7 @@ fn collect_used_values(fn_ir: &FnIR, reachable: &FxHashSet<BlockId>) -> FxHashSe
     used
 }
 
-fn is_reserved_binding(name: &str) -> bool {
+pub(crate) fn is_reserved_binding(name: &str) -> bool {
     name.starts_with(".phi_")
         || name.starts_with(".tachyon_")
         || name.starts_with("Sym_")
